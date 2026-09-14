@@ -1,0 +1,27 @@
+name: Octo scope isolation
+on:
+  pull_request:
+    paths:
+      - internal/octointegration/**
+      - internal/router/routes_octo.go
+      - internal/router/router.go
+      - internal/container/container.go
+      - migrations/**
+      - .github/workflows/octo-scopes.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scopes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./internal/octointegration -count=1
+      - run: go test ./internal/router -run 'TestOcto' -count=1

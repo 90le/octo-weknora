@@ -679,6 +679,7 @@ export default {
       autoSaveNeedSecret: '签名 Token 模式需要填写 HMAC 密钥后才能自动保存。'
     },
     tabs: {
+      octo: 'Octo 群与子区',
       im: 'IM 集成',
       embed: '网页嵌入',
       api: 'API 集成',
