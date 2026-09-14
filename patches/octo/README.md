@@ -6,6 +6,8 @@ The draft visibility patch was recovered from the previous deployment based on u
 
 This is not a new Octo integration feature. Applying a patch and passing formatting checks does not prove compatibility with the current upstream. Run the focused service tests before merging or deploying.
 
+Local Windows test attempt: blocked during compilation because CGO is disabled and pg_query Parse/Deparse symbols are unavailable. No test pass is claimed. A focused Ubuntu CI job enables CGO and executes the actual service tests.
+
 Focused command:
 
 ```sh

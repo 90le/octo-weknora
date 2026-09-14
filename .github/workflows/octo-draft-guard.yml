@@ -1,0 +1,27 @@
+name: Octo draft visibility guard
+
+on:
+  pull_request:
+    paths:
+      - internal/application/service/knowledgebase_search*.go
+      - internal/application/service/knowledgebase_draft_visibility_test.go
+      - .github/workflows/octo-draft-guard.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  draft-visibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test published-document filtering
+        run: go test ./internal/application/service -run 'TestDraftKnowledgeVisibility|TestDraftExcludedFromPrimaryAndEnrichmentResults' -count=1
