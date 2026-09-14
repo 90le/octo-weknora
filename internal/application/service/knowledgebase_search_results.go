@@ -237,7 +237,7 @@ func (s *knowledgeBaseService) assembleSearchResults(
 		}
 
 		score := idx.scores[chunk.ID]
-		if knowledge, ok := knowledgeMap[chunk.KnowledgeID]; ok {
+		if knowledge, ok := knowledgeMap[chunk.KnowledgeID]; ok && isPublishedSearchKnowledge(knowledge) {
 			matchType := idx.matchTypes[chunk.ID]
 			matchedContent := idx.matchedContents[chunk.ID]
 			searchResults = append(searchResults, s.buildSearchResult(chunk, knowledge, score, matchType, matchedContent))
@@ -265,7 +265,7 @@ func (s *knowledgeBaseService) assembleSearchResults(
 				score = 0.0
 			}
 
-			if knowledge, ok := knowledgeMap[chunk.KnowledgeID]; ok {
+			if knowledge, ok := knowledgeMap[chunk.KnowledgeID]; ok && isPublishedSearchKnowledge(knowledge) {
 				matchType := types.MatchTypeParentChunk
 				if specificType, exists := idx.matchTypes[chunkID]; exists {
 					matchType = specificType
@@ -350,4 +350,17 @@ func (s *knowledgeBaseService) isSearchableChunk(chunk *types.Chunk) bool {
 		types.ChunkTypeFAQ,
 		types.ChunkTypeImageOCR, types.ChunkTypeImageCaption,
 	}, chunk.ChunkType)
+}
+
+// The database document state is authoritative even when an external index
+// still contains old chunks during draft/unpublish or asynchronous cleanup.
+func isPublishedSearchKnowledge(k *types.Knowledge) bool {
+	if k == nil || k.EnableStatus != "enabled" {
+		return false
+	}
+	if k.IsManual() {
+		meta, err := k.ManualMetadata()
+		return err == nil && meta != nil && meta.Status == types.ManualKnowledgeStatusPublish
+	}
+	return true
 }
