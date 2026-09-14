@@ -679,6 +679,7 @@ export default {
       autoSaveNeedSecret: '서명 토큰 모드는 자동 저장 전에 HMAC secret이 필요합니다.'
     },
     tabs: {
+      octo: 'Octo groups',
       im: 'IM 통합',
       embed: '웹 임베드',
       api: 'API 연동',

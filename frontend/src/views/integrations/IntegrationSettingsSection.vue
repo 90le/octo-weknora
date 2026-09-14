@@ -1,6 +1,7 @@
 <template>
   <div class="integrations-settings">
     <div class="integrations-settings__body" :class="{ 'integrations-settings__body--landing': isLandingSection }">
+      <OctoScopePanel v-if="tab === 'octo'" />
       <div v-if="tab === 'im'" class="section">
         <div class="section-header">
           <h2>{{ $t('agentEditor.im.title') }}</h2>
@@ -46,6 +47,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import OctoScopePanel from '@/views/integrations/OctoScopePanel.vue'
 import IMChannelPanel from '@/components/IMChannelPanel.vue'
 import AgentEmbedChannelPanel from '@/components/AgentEmbedChannelPanel.vue'
 import ApiIntegrationSettings from '@/views/integrations/ApiIntegrationSettings.vue'

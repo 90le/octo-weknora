@@ -3,6 +3,7 @@ package octointegration
 import (
 	"context"
 	"errors"
+	"github.com/Tencent/WeKnora/internal/types"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,6 +20,9 @@ func testStore(t *testing.T) *Store {
 	}
 	raw, _ := db.DB()
 	t.Cleanup(func() { _ = raw.Close() })
+	if err := db.AutoMigrate(&types.AuditLog{}); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Exec("CREATE TABLE knowledge_bases (id VARCHAR(36) PRIMARY KEY, tenant_id BIGINT NOT NULL, deleted_at TIMESTAMP)").Error; err != nil {
 		t.Fatal(err)
 	}
@@ -127,5 +131,20 @@ func TestScopeIdentityAndValidation(t *testing.T) {
 	}
 	if _, err := s.List(ctx, 0, 0); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("missing tenant: %v", err)
+	}
+}
+
+func TestScopeMutationRollsBackWhenAuditFails(t *testing.T) {
+	s, ctx := testStore(t), context.Background()
+	if err := s.db.Exec("DROP TABLE audit_logs").Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.Create(ctx, Scope{TenantID: 1, AccountID: "bot", GroupID: "g", DisplayName: "group"})
+	if err == nil {
+		t.Fatal("expected audit error")
+	}
+	rows, err := s.List(ctx, 1, 0)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("mutation committed without audit: %+v %v", rows, err)
 	}
 }

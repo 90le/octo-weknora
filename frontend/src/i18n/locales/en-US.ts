@@ -6551,6 +6551,7 @@ export default {
     },
     title: 'Publish & Integrations',
     tabs: {
+      octo: 'Octo groups',
       im: 'IM Integration',
       embed: 'Web Embed',
       api: 'API Integration',

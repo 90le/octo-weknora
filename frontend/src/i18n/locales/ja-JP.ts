@@ -6551,6 +6551,7 @@ export default {
     },
     title: '公開と連携',
     tabs: {
+      octo: 'Octo groups',
       im: 'IM連携',
       embed: 'Web埋め込み',
       api: 'API連携',

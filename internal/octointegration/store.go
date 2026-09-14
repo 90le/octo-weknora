@@ -3,10 +3,12 @@ package octointegration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -77,7 +79,10 @@ func (s *Store) Create(ctx context.Context, scope Scope) (*Scope, error) {
 				return err
 			}
 		}
-		return tx.Create(&scope).Error
+		if err := tx.Create(&scope).Error; err != nil {
+			return err
+		}
+		return audit(tx, ctx, scope.TenantID, scope.ID, "octo.scope.created", map[string]interface{}{"account_id": scope.AccountID, "group_id": scope.GroupID, "subarea_id": scope.SubareaID})
 	})
 	return &scope, err
 }
@@ -109,8 +114,13 @@ func (s *Store) Update(ctx context.Context, tenant uint64, id, name string, inhe
 	if err := validateScope(*scope); err != nil {
 		return err
 	}
-	return s.db.WithContext(ctx).Model(&Scope{}).Where("tenant_id = ? AND id = ?", tenant, id).
-		Updates(map[string]interface{}{"display_name": name, "name_source": "configured", "inherit_parent": inherit}).Error
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&Scope{}).Where("tenant_id = ? AND id = ?", tenant, id).
+			Updates(map[string]interface{}{"display_name": name, "name_source": "configured", "inherit_parent": inherit}).Error; err != nil {
+			return err
+		}
+		return audit(tx, ctx, tenant, id, "octo.scope.updated", map[string]interface{}{"display_name": name, "inherit_parent": inherit})
+	})
 }
 
 // SetBinding never deletes a KB. The caller must already pass native KB write
@@ -121,7 +131,10 @@ func (s *Store) SetBinding(ctx context.Context, tenant uint64, scopeID, kbID str
 			return err
 		}
 		if !enabled {
-			return tx.Where("tenant_id = ? AND scope_id = ? AND knowledge_base_id = ?", tenant, scopeID, kbID).Delete(&Binding{}).Error
+			if err := tx.Where("tenant_id = ? AND scope_id = ? AND knowledge_base_id = ?", tenant, scopeID, kbID).Delete(&Binding{}).Error; err != nil {
+				return err
+			}
+			return audit(tx, ctx, tenant, scopeID, "octo.binding.removed", map[string]interface{}{"knowledge_base_id": kbID})
 		}
 		var count int64
 		if err := tx.Table("knowledge_bases").Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", kbID, tenant).Count(&count).Error; err != nil {
@@ -131,8 +144,21 @@ func (s *Store) SetBinding(ctx context.Context, tenant uint64, scopeID, kbID str
 			return gorm.ErrRecordNotFound
 		}
 		b := Binding{TenantID: tenant, ScopeID: scopeID, KnowledgeBaseID: kbID}
-		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&b).Error
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&b).Error; err != nil {
+			return err
+		}
+		return audit(tx, ctx, tenant, scopeID, "octo.binding.added", map[string]interface{}{"knowledge_base_id": kbID})
 	})
+}
+
+// Audit and mutation commit together in the existing native audit table.
+func audit(tx *gorm.DB, ctx context.Context, tenant uint64, scope string, action types.AuditAction, details map[string]interface{}) error {
+	actor, _ := types.UserIDFromContext(ctx)
+	data, err := json.Marshal(details)
+	if err != nil {
+		return err
+	}
+	return tx.Create(&types.AuditLog{TenantID: tenant, ActorUserID: actor, ActorRole: string(types.CallerFromContext(ctx).Role), Action: action, ScopeType: "octo_scope", ScopeID: scope, Details: types.JSON(data), CreatedAt: time.Now()}).Error
 }
 
 // Effective is an administrative preview, not a public retrieval authorization.
@@ -165,11 +191,19 @@ func (s *Store) Effective(ctx context.Context, tenant uint64, id string) ([]Effe
 	return result, err
 }
 
-func (s *Store) Uses(ctx context.Context, tenant uint64, kb string) ([]Binding, error) {
+type ScopeUse struct {
+	ScopeID     string `json:"scope_id"`
+	DisplayName string `json:"display_name"`
+	AccountID   string `json:"account_id"`
+	GroupID     string `json:"group_id"`
+	SubareaID   string `json:"subarea_id"`
+}
+
+func (s *Store) Uses(ctx context.Context, tenant uint64, kb string) ([]ScopeUse, error) {
 	if tenant == 0 {
 		return nil, ErrInvalid
 	}
-	rows := []Binding{}
-	err := s.db.WithContext(ctx).Where("tenant_id = ? AND knowledge_base_id = ?", tenant, kb).Order("scope_id").Find(&rows).Error
+	rows := []ScopeUse{}
+	err := s.db.WithContext(ctx).Table("octo_scope_bindings AS b").Select("b.scope_id, s.display_name, s.account_id, s.group_id, s.subarea_id").Joins("JOIN octo_scopes AS s ON s.id = b.scope_id AND s.tenant_id = b.tenant_id").Where("b.tenant_id = ? AND b.knowledge_base_id = ?", tenant, kb).Order("s.account_id, s.group_id, s.subarea_id").Scan(&rows).Error
 	return rows, err
 }

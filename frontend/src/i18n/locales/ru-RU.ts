@@ -679,6 +679,7 @@ export default {
       autoSaveNeedSecret: 'Для signed-token режима нужен HMAC secret перед автосохранением.'
     },
     tabs: {
+      octo: 'Octo groups',
       im: 'IM-интеграция',
       embed: 'Веб-встраивание',
       api: 'API-интеграция',
