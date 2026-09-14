@@ -28,8 +28,12 @@ func RegisterOctoRoutes(r *gin.RouterGroup, h *octointegration.Handler, g *rbacG
 	// No API-key route policy is registered: the native API-key gate denies
 	// these admin configuration endpoints, including for full-access keys.
 	admin.GET("/scopes", h.List)
+	admin.GET("/connections", h.Connections)
+	admin.PUT("/connections/:account_id/credentials", h.PutConnection)
 	admin.POST("/scopes", h.Create)
 	admin.PUT("/scopes/:scope_id", h.Update)
+	admin.POST("/scopes/:scope_id/sync", h.SyncName)
+	admin.GET("/scopes/:scope_id/members/:uid/role", h.MemberRole)
 	admin.GET("/scopes/:scope_id/effective-bindings", h.Effective)
 	admin.PUT("/scopes/:scope_id/knowledge-bases/:id", g.KBAccessWrite("id"), h.Bind)
 	admin.DELETE("/scopes/:scope_id/knowledge-bases/:id", g.KBAccessWrite("id"), h.Unbind)

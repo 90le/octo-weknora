@@ -10,15 +10,24 @@ import (
 	"gorm.io/gorm"
 )
 
-type Handler struct{ store *Store }
+type Handler struct {
+	store    *Store
+	platform *platformClient
+}
 
-func NewHandler(db *gorm.DB) *Handler { return &Handler{store: NewStore(db)} }
+func NewHandler(db *gorm.DB) *Handler {
+	return &Handler{store: NewStore(db), platform: newPlatformClient()}
+}
 
 func tenant(c *gin.Context) uint64 { return c.GetUint64(types.TenantIDContextKey.String()) }
 
 func respond(c *gin.Context, status int, data interface{}, err error) {
 	if err != nil {
 		switch {
+		case errors.Is(err, ErrEncryption):
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Octo credential encryption is unavailable; configure the native SYSTEM_AES_KEY"})
+		case errors.Is(err, ErrPlatform):
+			c.JSON(http.StatusBadGateway, gin.H{"error": "Octo verification failed; the last verified metadata has been retained"})
 		case errors.Is(err, ErrInvalid):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid scope configuration"})
 		case errors.Is(err, gorm.ErrRecordNotFound):
@@ -65,8 +74,42 @@ func (h *Handler) Create(c *gin.Context) {
 		respond(c, 0, nil, ErrInvalid)
 		return
 	}
-	row, err := h.store.Create(c.Request.Context(), Scope{TenantID: tenant(c), AccountID: req.AccountID, GroupID: req.GroupID, SubareaID: req.SubareaID, DisplayName: req.DisplayName, InheritParent: req.InheritParent})
+	row, err := h.store.CreateVerified(c.Request.Context(), Scope{TenantID: tenant(c), AccountID: req.AccountID, GroupID: req.GroupID, SubareaID: req.SubareaID, InheritParent: req.InheritParent}, h.platform)
 	respond(c, http.StatusCreated, row, err)
+}
+
+func (h *Handler) Connections(c *gin.Context) {
+	rows, err := h.store.Connections(c.Request.Context(), tenant(c))
+	respond(c, http.StatusOK, rows, err)
+}
+func (h *Handler) PutConnection(c *gin.Context) {
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respond(c, 0, nil, ErrInvalid)
+		return
+	}
+	err := h.store.PutConnection(c.Request.Context(), tenant(c), c.Param("account_id"), req.Token)
+	respond(c, http.StatusOK, gin.H{"configured": true}, err)
+}
+func (h *Handler) SyncName(c *gin.Context) {
+	row, err := h.store.SyncName(c.Request.Context(), tenant(c), c.Param("scope_id"), h.platform)
+	respond(c, http.StatusOK, row, err)
+}
+func (h *Handler) MemberRole(c *gin.Context) {
+	scope, err := h.store.Get(c.Request.Context(), tenant(c), c.Param("scope_id"))
+	if err != nil {
+		respond(c, 0, nil, err)
+		return
+	}
+	_, token, err := h.store.connection(c.Request.Context(), tenant(c), scope.AccountID)
+	if err != nil {
+		respond(c, 0, nil, err)
+		return
+	}
+	role, err := h.platform.member(c.Request.Context(), token, *scope, c.Param("uid"))
+	respond(c, http.StatusOK, role, err)
 }
 
 func (h *Handler) Update(c *gin.Context) {
