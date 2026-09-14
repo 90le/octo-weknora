@@ -34,3 +34,9 @@ Record both the application source commit and generated recipe SHA-256. A source
 Verified: CI, restored-database migrations 91–95, isolated startup and authenticated KB access, running image identities, unchanged three-KB inventory, and one live hybrid search after switching. The search returned HTTP 200 with results in 1.09 seconds; this is one functional check, not a capacity benchmark.
 
 Not claimed: post-release end-to-end Octo conversation acceptance, a new document parsing regression, or completion of the future Octo management module.
+
+## 可选解析器缓存布局
+
+`python scripts/octo_build_recipe.py --cache-parser --output /tmp/Dockerfile.octo` 将 Rust/Anydoc 构建放到完整应用源码与提交元数据之前，只依赖固定的解析器目录和构建脚本。后续业务修改可复用这部分 Docker 层，不关闭解析器，也不跳过网络校验。
+
+结构检查已通过；当前发布仍使用先前验证的配方。首次采用这个新选项仍需验证完整镜像和解析功能，不能把结构检查当成实际缓存加速验收。
