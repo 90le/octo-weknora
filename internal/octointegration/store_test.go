@@ -33,6 +33,13 @@ func testStore(t *testing.T) *Store {
 	if err := db.Exec(string(migration)).Error; err != nil {
 		t.Fatal(err)
 	}
+	next, err := os.ReadFile("../../migrations/sqlite/000018_octo_connections.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(string(next)).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Exec("INSERT INTO knowledge_bases(id, tenant_id) VALUES ('kb-a', 1), ('kb-b', 2)").Error; err != nil {
 		t.Fatal(err)
 	}

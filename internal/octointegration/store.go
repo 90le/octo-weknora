@@ -24,10 +24,14 @@ type Scope struct {
 	SubareaID   string `json:"subarea_id"`
 	DisplayName string `json:"display_name"`
 	// Names entered by an administrator are not claimed to be platform-verified.
-	NameSource    string    `json:"name_source"`
-	InheritParent bool      `json:"inherit_parent"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	NameSource    string     `json:"name_source"`
+	SyncStatus    string     `json:"sync_status"`
+	SyncError     string     `json:"sync_error"`
+	CheckedAt     *time.Time `json:"checked_at"`
+	VerifiedAt    *time.Time `json:"verified_at"`
+	InheritParent bool       `json:"inherit_parent"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 func (Scope) TableName() string { return "octo_scopes" }
@@ -72,6 +76,7 @@ func (s *Store) Create(ctx context.Context, scope Scope) (*Scope, error) {
 	}
 	scope.ID = uuid.NewString()
 	scope.NameSource = "configured"
+	scope.SyncStatus = "unverified"
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if scope.SubareaID != "" {
 			var parent Scope
@@ -110,13 +115,16 @@ func (s *Store) Update(ctx context.Context, tenant uint64, id, name string, inhe
 	if err != nil {
 		return err
 	}
+	if scope.NameSource == "octo" && name != scope.DisplayName {
+		return ErrInvalid
+	}
 	scope.DisplayName, scope.InheritParent = name, inherit
 	if err := validateScope(*scope); err != nil {
 		return err
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&Scope{}).Where("tenant_id = ? AND id = ?", tenant, id).
-			Updates(map[string]interface{}{"display_name": name, "name_source": "configured", "inherit_parent": inherit}).Error; err != nil {
+			Updates(map[string]interface{}{"display_name": name, "inherit_parent": inherit}).Error; err != nil {
 			return err
 		}
 		return audit(tx, ctx, tenant, id, "octo.scope.updated", map[string]interface{}{"display_name": name, "inherit_parent": inherit})
