@@ -147,7 +147,9 @@ async function checkRole() {
     const r = await inspectMemberRole(s.id, uid)
     if (version !== selectionVersion) return
     const names: Record<string, string> = { owner: '群主', admin: '群管理员', member: '普通成员', unknown: '未能确认身份' }
-    roleResult.value = `${r.data.uid}：${names[r.data.role] || '未知角色'}。${r.data.reason === 'bot_admin_not_proven' ? '平台未提供可验证的 Bot 管理字段，不能据此授权。' : '此结果仅核对群角色，不授予知识库权限。'}`
+    roleResult.value = r.data.reason === 'bot_admin_not_proven'
+      ? `${r.data.uid}：Bot 管理身份待验证。平台未提供可验证的 Bot 管理字段，不能据此授权。`
+      : `${r.data.uid}：${names[r.data.role] || '未知角色'}。此结果仅核对群角色，不授予知识库权限。`
   } catch { if (version === selectionVersion) roleResult.value = '角色核对失败，未作授权判断。' }
   finally { if (version === selectionVersion) roleLoading.value = false }
 }
