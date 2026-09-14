@@ -31,7 +31,7 @@ func respond(c *gin.Context, status int, data interface{}, err error) {
 		case errors.Is(err, ErrInvalid):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid scope configuration"})
 		case errors.Is(err, gorm.ErrRecordNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": "scope or knowledge base not found in this workspace"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "scope, connection or knowledge base not found in this workspace"})
 		case errors.Is(err, gorm.ErrDuplicatedKey):
 			c.JSON(http.StatusConflict, gin.H{"error": "scope already exists"})
 		default:

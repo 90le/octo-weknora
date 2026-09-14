@@ -52,7 +52,7 @@ func (s *Store) PutConnection(ctx context.Context, tenant uint64, account, token
 		if err := tx.Model(&Scope{}).Where("tenant_id = ? AND account_id = ?", tenant, account).Updates(map[string]interface{}{"sync_status": "needs_refresh", "sync_error": ""}).Error; err != nil {
 			return err
 		}
-		return audit(tx, ctx, tenant, account, "octo.connection.updated", map[string]interface{}{"credential_changed": true})
+		return audit(tx, ctx, tenant, "", "octo.connection.updated", map[string]interface{}{"account_id": account, "credential_changed": true})
 	})
 }
 

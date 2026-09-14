@@ -46,10 +46,19 @@ func (p *platformClient) get(ctx context.Context, token, path string, out interf
 		return ErrPlatform
 	}
 	var envelope struct {
-		Data json.RawMessage `json:"data"`
+		Data    json.RawMessage `json:"data"`
+		Success *bool           `json:"success"`
 	}
-	if json.Unmarshal(b, &envelope) == nil && len(envelope.Data) > 0 && string(envelope.Data) != "null" {
-		b = envelope.Data
+	if json.Unmarshal(b, &envelope) == nil {
+		if envelope.Success != nil && !*envelope.Success {
+			return ErrPlatform
+		}
+		if len(envelope.Data) > 0 {
+			if string(envelope.Data) == "null" {
+				return ErrPlatform
+			}
+			b = envelope.Data
+		}
 	}
 	if err := json.Unmarshal(b, out); err != nil {
 		return ErrPlatform
@@ -65,7 +74,7 @@ type platformScope struct {
 }
 
 func (p *platformClient) scope(ctx context.Context, token string, s Scope) (*platformScope, error) {
-	if !validID(s.GroupID) || strings.ContainsAny(s.GroupID, "/\\?#%") || (s.SubareaID != "" && (!validID(s.SubareaID) || strings.ContainsAny(s.SubareaID, "/\\?#%"))) {
+	if !validID(s.GroupID) || s.GroupID == "." || s.GroupID == ".." || strings.ContainsAny(s.GroupID, "/\\?#%") || (s.SubareaID != "" && (!validID(s.SubareaID) || s.SubareaID == "." || s.SubareaID == ".." || strings.ContainsAny(s.SubareaID, "/\\?#%"))) {
 		return nil, ErrInvalid
 	}
 	path := "/v1/bot/groups/" + url.PathEscape(s.GroupID)
