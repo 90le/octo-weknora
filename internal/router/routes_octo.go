@@ -14,9 +14,13 @@ import (
 func RegisterOctoRoutes(r *gin.RouterGroup, h *octointegration.Handler, g *rbacGuards) {
 	// Reuse native RBAC but never inherit its legacy log-only rollout mode.
 	cfg := config.Config{}
-	if g.cfg != nil { cfg = *g.cfg }
+	if g.cfg != nil {
+		cfg = *g.cfg
+	}
 	tenantConfig := config.TenantConfig{}
-	if cfg.Tenant != nil { tenantConfig = *cfg.Tenant }
+	if cfg.Tenant != nil {
+		tenantConfig = *cfg.Tenant
+	}
 	enforce := true
 	tenantConfig.EnableRBAC = &enforce
 	cfg.Tenant = &tenantConfig
