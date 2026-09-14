@@ -290,6 +290,22 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 		return nil, err
 	}
 
+	// Filter authoritative document state before applying the primary-match cap,
+	// so stale draft index hits cannot crowd out eligible published documents.
+	if len(deduplicatedChunks) > 0 {
+		metadata, err := s.fetchKnowledgeDataWithShared(ctx, types.MustTenantIDFromContext(ctx), s.buildChunkIndex(deduplicatedChunks).knowledgeIDs)
+		if err != nil {
+			return nil, err
+		}
+		eligible := make([]*types.IndexWithScore, 0, len(deduplicatedChunks))
+		for _, hit := range deduplicatedChunks {
+			if isPublishedSearchKnowledge(metadata[hit.KnowledgeID]) {
+				eligible = append(eligible, hit)
+			}
+		}
+		deduplicatedChunks = eligible
+	}
+
 	// Truncate to the primary-match cap. MatchCount is guaranteed positive by
 	// the normalization at the top of this function; the slice bound below
 	// depends on that.
