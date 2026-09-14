@@ -14,6 +14,8 @@ import (
 // 000041 task queue, 000053 system settings, 000055 processing spans,
 // 000063 knowledge multi-tags, 000093 browser authorization.
 var versionedSQLiteTables = []string{
+	"octo_scopes",
+	"octo_scope_bindings",
 	"memory_extraction_sessions",
 	"task_pending_ops",
 	"task_dead_letters",
@@ -40,7 +42,7 @@ var versionedSQLiteColumns = map[string][]string{
 	"mcp_tool_approvals": {"enabled"},                        // 000091
 }
 
-const expectedSQLiteMigrationVersion = 16
+const expectedSQLiteMigrationVersion = 17
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var ErrInvalid = errors.New("invalid Octo scope")
@@ -130,7 +131,7 @@ func (s *Store) SetBinding(ctx context.Context, tenant uint64, scopeID, kbID str
 			return gorm.ErrRecordNotFound
 		}
 		b := Binding{TenantID: tenant, ScopeID: scopeID, KnowledgeBaseID: kbID}
-		return tx.Where("tenant_id = ? AND scope_id = ? AND knowledge_base_id = ?", tenant, scopeID, kbID).FirstOrCreate(&b).Error
+		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&b).Error
 	})
 }
 
