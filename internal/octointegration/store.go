@@ -183,8 +183,17 @@ func (s *Store) Effective(ctx context.Context, tenant uint64, id string) ([]Effe
 		if err := tx.Table("octo_scope_bindings AS b").Select("b.*").Joins("JOIN knowledge_bases AS k ON k.id = b.knowledge_base_id AND k.tenant_id = b.tenant_id AND k.deleted_at IS NULL").Where("b.tenant_id = ? AND b.scope_id IN ?", tenant, ids).Order("b.knowledge_base_id, b.scope_id").Scan(&bindings).Error; err != nil {
 			return err
 		}
+		positions := make(map[string]int)
 		for _, b := range bindings {
-			result = append(result, EffectiveBinding{KnowledgeBaseID: b.KnowledgeBaseID, FromScopeID: b.ScopeID, Inherited: b.ScopeID != id})
+			entry := EffectiveBinding{KnowledgeBaseID: b.KnowledgeBaseID, FromScopeID: b.ScopeID, Inherited: b.ScopeID != id}
+			if pos, exists := positions[b.KnowledgeBaseID]; exists {
+				if !entry.Inherited {
+					result[pos] = entry
+				}
+				continue
+			}
+			positions[b.KnowledgeBaseID] = len(result)
+			result = append(result, entry)
 		}
 		return nil
 	})

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/config"
+	"github.com/Tencent/WeKnora/internal/middleware"
 	"github.com/Tencent/WeKnora/internal/octointegration"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/gin-gonic/gin"
@@ -47,5 +48,16 @@ func TestOctoRequiresWorkspace(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/octo/scopes", nil))
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d", w.Code)
+	}
+}
+
+func TestOctoAdminRoutesAreNotEnabledForAPIKeys(t *testing.T) {
+	r := gin.New()
+	g := &rbacGuards{apiKeyAuthorizer: middleware.NewAPIKeyRouteAuthorizer()}
+	RegisterOctoRoutes(r.Group("/api/v1"), &octointegration.Handler{}, g)
+	for _, route := range r.Routes() {
+		if _, ok := g.apiKeyAuthorizer.Lookup(route.Method, route.Path); ok {
+			t.Fatalf("unexpected API key access: %s %s", route.Method, route.Path)
+		}
 	}
 }

@@ -61,6 +61,16 @@ func TestScopeIsolationAndInheritance(t *testing.T) {
 	if err != nil || len(got) != 1 || !got[0].Inherited || got[0].FromScopeID != parent.ID {
 		t.Fatalf("inheritance: %+v %v", got, err)
 	}
+	if err := s.SetBinding(ctx, 1, child.ID, "kb-a", true); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.Effective(ctx, 1, child.ID)
+	if err != nil || len(got) != 1 || got[0].Inherited {
+		t.Fatalf("duplicate direct/inherited binding: %+v %v", got, err)
+	}
+	if err := s.SetBinding(ctx, 1, child.ID, "kb-a", false); err != nil {
+		t.Fatal(err)
+	}
 	got, err = s.Effective(ctx, 1, other.ID)
 	if err != nil || len(got) != 0 {
 		t.Fatalf("cross-account leak: %+v %v", got, err)
