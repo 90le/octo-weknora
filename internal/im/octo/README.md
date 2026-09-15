@@ -33,6 +33,10 @@ Neither behavior is an authorization mechanism for public Octo groups.
    and stale identity handling. Keep public IM principals read-only by default.
 3. Namespace dedup by channel/Bot and maintain per-user sessions partitioned by
    the full native group/subarea channel key. A subarea is not a quote thread.
+   Native `resolveUserSession` currently keys by platform/user/chat/tenant/agent
+   without IMChannelID in its lookup. Thus two Bots sharing an Agent can collide,
+   including DMs with empty ChatID. Add an explicit channel/session namespace;
+   do not change the real outgoing channel ID to disguise this missing dimension.
    Revoke/reset stale session knowledge access when bindings change.
 4. Persist inbound acceptance and downstream failure state. The current runner
    delegates durable queuing to its `accept` callback; it does not promise
