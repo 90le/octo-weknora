@@ -720,6 +720,12 @@ export default {
     connectionFailed: '연결 실패',
     isRequired: '은(는) 필수입니다',
     credentialsLabel: '자격 증명',
+    github: {
+      repository: 'GitHub repository', repositoryRequired: 'Enter a GitHub repository',
+      hint: 'Sync documents at a fixed commit and preserve folders. Code, hidden files and dependencies are excluded. Limits: 2000 documents, 64 MiB per sync, 16 MiB per file.',
+      tokenHint: 'Optional for public repositories. Private repositories require a read-only Contents token. Stored encrypted; never returned.',
+      pathsHint: 'One file or directory per line, for example README.md or docs. Empty includes all supported documents.',
+    },
     gitlab: {
       baseUrl: 'GitLab URL', accessToken: '개인 액세스 토큰', projects: 'GitLab 프로젝트',
       projectsHint: '프로젝트 ID 또는 네임스페이스 경로(예: group/project)를 입력하고, 필요에 따라 브랜치와 디렉터리를 지정하세요.',
@@ -851,6 +857,7 @@ export default {
       yuque: '위큐 지식베이스에서 문서 동기화',
       ima: 'Tencent IMA 지식베이스에서 문서, 노트 및 파일 동기화 (AI 세션과 동영상 분석은 지원되지 않음)',
       rss: 'RSS / Atom 피드에서 글 동기화',
+      github: 'Sync GitHub repository documents',
       gitlab: 'GitLab 프로젝트의 파일 동기화'
     },
     connector: {
@@ -862,6 +869,7 @@ export default {
       yuque: '위큐 (Yuque)',
       ima: 'Tencent IMA',
       rss: 'RSS / Atom 피드',
+      github: 'GitHub',
       gitlab: 'GitLab'
     },
     logDetail: {
@@ -6552,6 +6560,7 @@ export default {
     channelNotion: 'Notion',
     channelYuque: 'Yuque',
     channelGitLab: 'GitLab',
+    channelGitHub: 'GitHub',
     channelIma: 'Tencent IMA',
     channelUpload: '업로드',
     channelManual: '수동',

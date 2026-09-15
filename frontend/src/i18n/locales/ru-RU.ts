@@ -720,6 +720,12 @@ export default {
     connectionFailed: 'Подключение не удалось',
     isRequired: 'обязательно для заполнения',
     credentialsLabel: 'учётные данные',
+    github: {
+      repository: 'GitHub repository', repositoryRequired: 'Enter a GitHub repository',
+      hint: 'Sync documents at a fixed commit and preserve folders. Code, hidden files and dependencies are excluded. Limits: 2000 documents, 64 MiB per sync, 16 MiB per file.',
+      tokenHint: 'Optional for public repositories. Private repositories require a read-only Contents token. Stored encrypted; never returned.',
+      pathsHint: 'One file or directory per line, for example README.md or docs. Empty includes all supported documents.',
+    },
     gitlab: {
       baseUrl: 'URL GitLab', accessToken: 'Персональный токен доступа', projects: 'Проекты GitLab',
       projectsHint: 'Укажите ID проекта или путь в пространстве имён (например group/project), а также при необходимости ветку и каталоги.',
@@ -851,6 +857,7 @@ export default {
       yuque: 'Синхронизация документов из баз знаний Yuque',
       ima: 'Синхронизация документов, заметок и файлов из баз знаний Tencent IMA (ИИ-сессии и разбор видео не поддерживаются)',
       rss: 'Синхронизация статей из лент RSS / Atom',
+      github: 'Sync GitHub repository documents',
       gitlab: 'Синхронизация файлов из проектов GitLab'
     },
     connector: {
@@ -862,6 +869,7 @@ export default {
       yuque: 'Yuque (Юйцюэ)',
       ima: 'Tencent IMA',
       rss: 'RSS / Atom лента',
+      github: 'GitHub',
       gitlab: 'GitLab'
     },
     logDetail: {
@@ -6552,6 +6560,7 @@ export default {
     channelNotion: 'Notion',
     channelYuque: 'Yuque',
     channelGitLab: 'GitLab',
+    channelGitHub: 'GitHub',
     channelIma: 'Tencent IMA',
     channelUpload: 'Загрузка',
     channelManual: 'Вручную',
