@@ -130,6 +130,30 @@ func (ch *IMChannel) BeforeSave(tx *gorm.DB) error {
 
 // validateSessionMode checks that SessionMode holds a supported value.
 func (ch *IMChannel) validateSessionMode() error {
+	if ch.Platform == "octo" {
+		if ch.SessionMode != string(SessionModeUser) || ch.Mode != "websocket" {
+			return fmt.Errorf("Octo requires websocket and user session mode")
+		}
+		ch.OutputMode = "full"
+		config, err := ParseCredentials(ch.Credentials)
+		if err != nil || GetString(config, "account_id") == "" || GetString(config, "bot_uid") == "" {
+			return fmt.Errorf("Octo account_id and bot_uid required")
+		}
+		for _, key := range []string{"allowed_dm_uids", "allowed_bot_uids"} {
+			if raw, exists := config[key]; exists {
+				values, ok := raw.([]interface{})
+				if !ok || len(values) > 100 {
+					return fmt.Errorf("invalid Octo UID allowlist")
+				}
+				for _, value := range values {
+					uid, ok := value.(string)
+					if !ok || uid == "" || len(uid) > 128 || strings.ContainsAny(uid, " \r\n\t") {
+						return fmt.Errorf("invalid Octo UID")
+					}
+				}
+			}
+		}
+	}
 	switch SessionMode(ch.SessionMode) {
 	case SessionModeUser, SessionModeThread:
 		return nil
@@ -159,6 +183,10 @@ func (ch *IMChannel) computeBotIdentity() string {
 	}
 
 	switch ch.Platform {
+	case "octo":
+		if uid := str("bot_uid"); uid != "" {
+			return "octo:" + uid
+		}
 	case "wecom":
 		switch ch.Mode {
 		case "websocket":

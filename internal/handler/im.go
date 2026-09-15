@@ -18,6 +18,7 @@ import (
 var validIMPlatforms = map[string]bool{
 	"wecom": true, "feishu": true, "lark": true, "slack": true, "telegram": true, "dingtalk": true,
 	"mattermost": true, "wechat": true, "qqbot": true, "yunzhijia": true,
+	"octo": true,
 }
 
 // invalidIMPlatformError is the 400 message listing the accepted platforms. It
