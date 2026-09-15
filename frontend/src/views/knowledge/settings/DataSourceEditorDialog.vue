@@ -1217,7 +1217,7 @@ function resourceRowState(id: string): CheckState {
 
 const stepTitles = computed(() => [
   t('datasource.step.selectType'),
-  t('datasource.step.credentials'),
+  t(form.value.type === 'local_folder' ? 'datasource.sectionBasic' : 'datasource.step.credentials'),
   t('datasource.step.resources'),
   t('datasource.step.strategy'),
 ])
@@ -1774,7 +1774,8 @@ const drawerConfirmText = computed(() => {
         </t-select>
       </section>
 
-      <section class="setting-drawer__section">
+      <p v-if="form.config.settings.mode === 'source'" class="form-desc">{{ t('datasource.source.snapshotHint') }}</p>
+      <section v-else class="setting-drawer__section">
         <h4 class="setting-drawer__section-title">{{ t('datasource.syncModeLabel') }}</h4>
         <div class="form-item form-item--flat">
           <div class="option-group" role="radiogroup" :aria-label="t('datasource.syncModeLabel')">

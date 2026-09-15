@@ -721,6 +721,11 @@ export default {
     isRequired: '은(는) 필수입니다',
     credentialsLabel: '자격 증명',
     source: {
+      "search": "Search",
+      "platformLink": "Platform file link",
+      "snapshot": "Read-only snapshot",
+      "snapshotHint": "Sync captures a read-only snapshot and reuses unchanged content. Failures preserve the previous usable snapshot.",
+
       "usage": "Source usage",
       "documents": "Document ingestion",
       "readonly": "Read-only code and text",
@@ -885,7 +890,7 @@ export default {
       ima: 'Tencent IMA 지식베이스에서 문서, 노트 및 파일 동기화 (AI 세션과 동영상 분석은 지원되지 않음)',
       rss: 'RSS / Atom 피드에서 글 동기화',
       local_folder: 'Read approved server directories as documents or source code',
-      github: 'Sync GitHub repository documents',
+      github: 'Sync repository documents or browse full source code',
       gitlab: 'GitLab 프로젝트의 파일 동기화'
     },
     connector: {

@@ -721,6 +721,11 @@ export default {
     isRequired: 'обязательно для заполнения',
     credentialsLabel: 'учётные данные',
     source: {
+      "search": "Search",
+      "platformLink": "Platform file link",
+      "snapshot": "Read-only snapshot",
+      "snapshotHint": "Sync captures a read-only snapshot and reuses unchanged content. Failures preserve the previous usable snapshot.",
+
       "usage": "Source usage",
       "documents": "Document ingestion",
       "readonly": "Read-only code and text",
@@ -885,7 +890,7 @@ export default {
       ima: 'Синхронизация документов, заметок и файлов из баз знаний Tencent IMA (ИИ-сессии и разбор видео не поддерживаются)',
       rss: 'Синхронизация статей из лент RSS / Atom',
       local_folder: 'Read approved server directories as documents or source code',
-      github: 'Sync GitHub repository documents',
+      github: 'Sync repository documents or browse full source code',
       gitlab: 'Синхронизация файлов из проектов GitLab'
     },
     connector: {

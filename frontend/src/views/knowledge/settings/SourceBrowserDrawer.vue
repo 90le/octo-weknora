@@ -47,7 +47,7 @@ watch(()=>[visible.value,props.kbId,props.initialSourceId,props.initialPath,prop
   <div class="source-controls">
    <t-select v-model="selected" @change="selectSource"><t-option v-for="source in sources" :key="source.id" :value="source.id" :label="source.name" /></t-select>
    <t-input v-model="query" :placeholder="t('datasource.source.searchHint')" @enter="search" clearable />
-   <t-button :loading="loading" @click="search">{{ t('common.search') }}</t-button>
+   <t-button :loading="loading" @click="search">{{ t('datasource.source.search') }}</t-button>
   </div>
   <p class="source-caption">{{ t('datasource.source.readonly') }} · {{ current?.file_count||0 }} {{ t('datasource.source.files') }} <span v-if="snapshot">· {{ snapshot.slice(0,12) }}</span></p>
   <t-alert v-if="skipped" theme="info" :message="t('datasource.source.skipped',{count:skipped})" />
@@ -66,7 +66,7 @@ watch(()=>[visible.value,props.kbId,props.initialSourceId,props.initialPath,prop
    </aside>
    <main class="source-content">
     <template v-if="content">
-     <div class="source-file-heading"><strong>{{ content.path }}</strong><t-link v-if="remoteURL" :href="remoteURL" target="_blank" rel="noopener noreferrer">{{ t('datasource.source.origin') }}</t-link></div>
+     <div class="source-file-heading"><strong>{{ content.path }}</strong><t-link :href="content.preview_url" target="_blank" rel="noopener noreferrer">{{ t('datasource.source.platformLink') }}</t-link><t-link v-if="remoteURL" :href="remoteURL" target="_blank" rel="noopener noreferrer">{{ t('datasource.source.origin') }}</t-link></div>
      <p class="source-caption">{{ content.start_line }}–{{ content.end_line }} / {{ content.total_lines }} · {{ content.revision.slice(0,24) }}</p>
      <p v-if="!remoteURL" class="source-caption">{{ t('datasource.source.localCitation') }}</p>
      <p v-if="content.truncated" class="source-caption">{{ t('datasource.source.partialRead') }}</p>

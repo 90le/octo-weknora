@@ -6333,6 +6333,11 @@ export default {
     isRequired: 'は必須です',
     credentialsLabel: '認証情報',
     source: {
+      "search": "Search",
+      "platformLink": "Platform file link",
+      "snapshot": "Read-only snapshot",
+      "snapshotHint": "Sync captures a read-only snapshot and reuses unchanged content. Failures preserve the previous usable snapshot.",
+
       "usage": "Source usage",
       "documents": "Document ingestion",
       "readonly": "Read-only code and text",
@@ -6456,7 +6461,7 @@ export default {
       rss: 'RSS / Atomフィードから記事を同期します',
       ima: 'Tencent IMAのナレッジベースからドキュメント、ノート、ファイルを同期します（AIセッションと動画の解析は非対応）',
       local_folder: 'Read approved server directories as documents or source code',
-      github: 'Sync GitHub repository documents',
+      github: 'Sync repository documents or browse full source code',
       gitlab: 'GitLabプロジェクトからファイルを同期します'
     },
     drive: {

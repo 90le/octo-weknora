@@ -6333,6 +6333,11 @@ export default {
     isRequired: 'is required',
     credentialsLabel: 'credentials',
     source: {
+      "search": "Search",
+      "platformLink": "Platform file link",
+      "snapshot": "Read-only snapshot",
+      "snapshotHint": "Sync captures a read-only snapshot and reuses unchanged content. Failures preserve the previous usable snapshot.",
+
       "usage": "Source usage",
       "documents": "Document ingestion",
       "readonly": "Read-only code and text",
@@ -6456,7 +6461,7 @@ export default {
       rss: 'Sync articles from RSS / Atom feeds',
       ima: 'Sync documents, notes and files from Tencent IMA knowledge bases (AI sessions and video parses are not supported)',
       local_folder: 'Read approved server directories as documents or source code',
-      github: 'Sync GitHub repository documents',
+      github: 'Sync repository documents or browse full source code',
       gitlab: 'Sync files from GitLab projects'
     },
     drive: {
