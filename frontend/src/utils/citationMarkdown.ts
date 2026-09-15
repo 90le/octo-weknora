@@ -47,9 +47,27 @@ function parseTagAttributes(attrString: string): Record<string, string> {
   ATTRIBUTE_REGEX.lastIndex = 0
   let match: RegExpExecArray | null
   while ((match = ATTRIBUTE_REGEX.exec(attrString)) !== null) {
-    attributes[match[1]] = match[2]
+    attributes[match[1]] = decodeCitationAttribute(match[2])
   }
   return attributes
+}
+
+function decodeCitationAttribute(value: string): string {
+  const named: Record<string,string> = {amp:'&',quot:'"',apos:"'",lt:'<',gt:'>'}
+  return value.replace(/&(?:amp|quot|apos|lt|gt|#\d+|#x[\da-f]+);/gi, entity => {
+    const key=entity.slice(1,-1).toLowerCase()
+    if (key in named) return named[key]
+    const code=key.startsWith('#x')?parseInt(key.slice(2),16):parseInt(key.slice(1),10)
+    return code>0&&code<=0x10ffff?String.fromCodePoint(code):entity
+  })
+}
+
+function safeCitationUrl(value: string): boolean {
+  try {
+    const parsed=new URL(value,'https://weknora.invalid')
+    if (!['http:','https:'].includes(parsed.protocol)) return false
+    return /^https?:\/\//i.test(value) || (value.startsWith('/') && !value.startsWith('//') && parsed.origin==='https://weknora.invalid')
+  } catch { return false }
 }
 
 function escapeHtml(text: string): string {
@@ -154,7 +172,7 @@ export function preprocessCitationTags(
       const attrs = parseTagAttributes(attrString)
       const url = attrs.url || ''
       const title = attrs.title || ''
-      if (!url) return ''
+      if (!url || !safeCitationUrl(url)) return ''
 
       let domain = url
       try {
@@ -165,9 +183,12 @@ export function preprocessCitationTags(
       } catch {
         // keep original
       }
+      if (title && (url.startsWith('/platform/knowledge-bases/') || /^https:\/\/github\.com\/[^/]+\/[^/]+\/blob\//.test(url))) {
+        domain=truncateMiddle(title.split('/').pop()||title,32)
+      }
       const safeTitle = escapeHtml(title)
       const safeUrl = escapeHtml(url)
-      return `<a class="citation citation-web" data-url="${safeUrl}" href="${safeUrl}" target="_blank" rel="noopener noreferrer"><span class="citation-icon citation-icon--web" aria-hidden="true"></span><span class="citation-domain">${domain}</span><span class="citation-tip"><span class="tip-title">${safeTitle}</span><span class="tip-url">${safeUrl}</span></span></a>`
+      return `<a class="citation citation-web" data-url="${safeUrl}" href="${safeUrl}" target="_blank" rel="noopener noreferrer"><span class="citation-icon citation-icon--web" aria-hidden="true"></span><span class="citation-domain">${escapeHtml(domain)}</span><span class="citation-tip"><span class="tip-title">${safeTitle}</span><span class="tip-url">${safeUrl}</span></span></a>`
     })
     .replace(KB_TAG_ATTR_RE, (_m, attrString: string) => {
       const attrs = parseTagAttributes(attrString)

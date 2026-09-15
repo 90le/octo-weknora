@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/datasource"
+	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -39,6 +40,21 @@ func NewConnector() *Connector {
 	return &Connector{http: c}
 }
 func (*Connector) Type() string { return types.ConnectorTypeGitHub }
+
+// VerifyCommit is used by approved local mirrors before emitting a remote
+// citation. A local-only commit or inaccessible private repository gets no URL.
+func VerifyCommit(ctx context.Context, repository, commit string, credentials map[string]interface{}) bool {
+	cfg := &types.DataSourceConfig{Credentials: credentials, Settings: map[string]interface{}{"repository": repository, "ref": commit}}
+	s, err := parseSelection(cfg)
+	if err != nil {
+		return false
+	}
+	if token(cfg) == "" {
+		return NewConnector().publicCommitExists(ctx, s.Repository, commit)
+	}
+	actual, _, err := NewConnector().head(ctx, cfg, s)
+	return err == nil && actual == commit
+}
 
 type selection struct {
 	Repository string   `json:"repository"`
@@ -132,6 +148,14 @@ func (c *Connector) get(ctx context.Context, cfg *types.DataSourceConfig, endpoi
 	return nil
 }
 func (c *Connector) Validate(ctx context.Context, cfg *types.DataSourceConfig) error {
+	if err := snapshot.ValidateSettings(cfg); err != nil {
+		return err
+	}
+	if cfg != nil && snapshot.IsSource(cfg) {
+		if _, err := snapshot.FromEnvironment(); err != nil {
+			return err
+		}
+	}
 	if cfg == nil {
 		return datasource.ErrInvalidConfig
 	}
@@ -141,6 +165,10 @@ func (c *Connector) Validate(ctx context.Context, cfg *types.DataSourceConfig) e
 	if _, ok := cfg.Settings["repository"]; ok {
 		s, err := parseSelection(cfg)
 		if err != nil {
+			return err
+		}
+		if snapshot.IsSource(cfg) && token(cfg) == "" {
+			_, err = c.publicHead(ctx, s)
 			return err
 		}
 		_, _, err = c.head(ctx, cfg, s)

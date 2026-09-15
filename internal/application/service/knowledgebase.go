@@ -1039,6 +1039,7 @@ func (s *knowledgeBaseService) deleteDataSourcesForKnowledgeBase(ctx context.Con
 			logger.Warnf(ctx, "Failed to delete data source %s for KB %s: %v", ds.ID, kbID, err)
 			continue
 		}
+		removeSourceCache(ds)
 		if s.dsScheduler != nil {
 			s.dsScheduler.Remove(ds.ID)
 		}

@@ -39,6 +39,8 @@ func (r *sourceRegistry) ModelOutput(result *types.ToolResult) string {
 		return failedToolModelText(result.Output, result.Error)
 	}
 	switch displayType {
+	case "source_snapshot":
+		return r.modelSourceSnapshot(stringValue(result.Data, "action"), result.Output)
 	case "grep_results":
 		return r.modelKnowledgeOutput("keyword", mapsValue(result.Data["chunk_results"]), result.Output)
 	case "search_results":

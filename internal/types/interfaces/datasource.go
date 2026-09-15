@@ -7,6 +7,15 @@ import (
 	"github.com/hibiken/asynq"
 )
 
+// SourceSnapshotReader is the read-only directory contract for native UI and
+// Agent adapters. Callers must carry a resolved native KB read grant.
+type SourceSnapshotReader interface {
+	ListSourceSnapshots(context.Context, string) ([]types.SourceSummary, error)
+	SourceTree(context.Context, string, string, string, string, int) (*types.SourceTree, error)
+	ReadSourceFile(context.Context, string, string, string, string, int, int) (*types.SourceRead, error)
+	SearchSourceFiles(context.Context, string, string, string, string, string) (*types.SourceSearch, error)
+}
+
 // DataSourceService defines the interface for data source management operations
 type DataSourceService interface {
 	// CreateDataSource creates a new data source configuration

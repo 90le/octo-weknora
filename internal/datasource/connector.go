@@ -3,6 +3,7 @@ package datasource
 import (
 	"context"
 
+	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -49,6 +50,12 @@ type Connector interface {
 	// Returns items that have changed since the last sync, a new cursor for the next sync,
 	// and an error if the operation fails.
 	FetchIncremental(ctx context.Context, config *types.DataSourceConfig, cursor *types.SyncCursor) ([]types.FetchedItem, *types.SyncCursor, error)
+}
+
+// SnapshotConnector produces an immutable, language-independent text view.
+// The service owns persistence/activation and never sends these files to RAG.
+type SnapshotConnector interface {
+	BuildSnapshot(context.Context, *types.DataSourceConfig, *snapshot.Builder) error
 }
 
 // StreamHandler receives items and progress checkpoints emitted during a
@@ -149,6 +156,7 @@ type ConnectorMetadata struct {
 // GetConnectorMetadata returns metadata for all available connectors
 // This is used by the frontend to display connector options
 var ConnectorMetadataRegistry = map[string]ConnectorMetadata{
+	"local_folder": {Type: "local_folder", Name: "Server folder", Description: "Sync documents or browse read-only source snapshots from approved server folders", Priority: 5, AuthType: "none", Capabilities: []string{"incremental", "snapshot", "hierarchical"}},
 	types.ConnectorTypeFeishu: {
 		Type:         types.ConnectorTypeFeishu,
 		Name:         "Feishu (飞书)",
@@ -216,10 +224,10 @@ var ConnectorMetadataRegistry = map[string]ConnectorMetadata{
 	types.ConnectorTypeGitHub: {
 		Type:         types.ConnectorTypeGitHub,
 		Name:         "GitHub",
-		Description:  "Sync repository documents from GitHub at a fixed commit",
+		Description:  "Sync GitHub documents or read-only source snapshots at a fixed commit",
 		Priority:     4,
 		AuthType:     "token",
-		Capabilities: []string{"incremental", "deletion_sync", "hierarchical"},
+		Capabilities: []string{"incremental", "deletion_sync", "hierarchical", "snapshot"},
 	},
 	types.ConnectorTypeGoogleDrive: {
 		Type:         types.ConnectorTypeGoogleDrive,
