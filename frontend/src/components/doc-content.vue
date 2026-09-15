@@ -22,6 +22,7 @@ import { diffWikiLines, type WikiDiffLine } from '@/utils/wikiLineDiff';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import DocumentPreview from '@/components/document-preview.vue';
+import { resolveRepositoryHTMLLinks } from '@/utils/repositoryLinks';
 import KnowledgeProcessingTimeline from '@/components/knowledge-processing-timeline.vue';
 import { resolveKnowledgeDownloadFileName } from '@/views/knowledge/knowledgeDownloadFileName';
 import { isKnownPreviewableExt, resolveFilePreviewExt } from '@/utils/filePreview';
@@ -938,7 +939,7 @@ const processMarkdown = (markdownText) => {
   // 最终安全清理
   let result = sanitizeHTML(html);
 
-  return result;
+  return resolveRepositoryHTMLLinks(result, props.details?.channel === 'github' ? props.details?.source : undefined);
 };
 const handleClose = () => {
   emit("closeDoc", false);
@@ -1735,7 +1736,7 @@ const handleChunkPageChange = (pageInfo: { current: number }) => {
           </div>
         </section>
 
-        <section v-if="details.type === 'url'" class="setting-drawer__section">
+        <section v-if="details.type === 'url' || (details.channel === 'github' && details.source)" class="setting-drawer__section">
           <h4 class="setting-drawer__section-title">{{ $t('knowledgeBase.urlSource') }}</h4>
           <div class="url_link_box">
             <a :href="isValidURL(details.source) ? details.source : 'javascript:void(0)'"
@@ -2133,6 +2134,7 @@ const handleChunkPageChange = (pageInfo: { current: number }) => {
 
           <div v-else-if="viewMode === 'preview'">
             <DocumentPreview :knowledgeId="details.id" :fileType="details.file_type" :fileName="details.title"
+              :sourceUrl="details.channel === 'github' ? details.source : undefined"
               :active="viewMode === 'preview'" />
           </div>
         </section>
