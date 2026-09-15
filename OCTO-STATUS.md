@@ -38,6 +38,8 @@ Octo 管理首批功能已部署：工作区隔离的群／子区配置、KB 绑
 - 最新 [后端 CI](https://github.com/90le/octo-weknora/actions/runs/34925290877)、[前端 CI](https://github.com/90le/octo-weknora/actions/runs/34925290781)、[检索可见性专项](https://github.com/90le/octo-weknora/actions/runs/34925290810)、lint 均通过。隔离启动、受限 API 访问和正式镜像回读通过；未扩大原有 API Key 的范围，验收库由原生管理员页面创建。
 - `--cache-parser` 已用于完整后端镜像构建并通过；下一次构建真实命中原生解析器缓存。发布辅助脚本的构建结果文件启动竞态已修复，没有跳过隔离检查。
 
+本地代码工作树清理被自动审批策略拦截，未执行删除；主仓库提交已完成，工作树暂时保留。
+
 临时验收 KB、数据源、资料和对话已通过原生操作清理并回读：原有 4 个 KB、5 个区域和 6 条绑定保持原状。最终检索保护上线后再次问答通过，未发送 Octo 群消息。
 
 配置方法和限制见 [GitHub 数据源说明](internal/datasource/connector/github/README.md)。本次安全替换只作用于新增 GitHub 文档路径，没有静默重写其他连接器。首版限制 2000 文档、单文件 16 MiB／单批 64 MiB；超限或树截断明确失败。不是整库原子切换，也没有源码搜索工具。
