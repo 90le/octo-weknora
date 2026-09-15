@@ -2431,7 +2431,7 @@ const hasKnowledgeBase = computed(() => {
 
 const showRerankModelField = computed(() => {
   if (!isAgentMode.value) return hasKnowledgeBase.value;
-  return hasKnowledgeBase.value || agentRequiresRerankModel(formData.value.config);
+  return agentRequiresRerankModel(formData.value.config);
 });
 
 // 当前配置下进入到智能体作用域的知识库列表
@@ -3376,6 +3376,7 @@ const contextTemplatePlaceholder = computed(() => {
 
 // 是否需要配置 ReRank 模型（仅当关联的知识库中有 RAG 类型时需要）
 const needsRerankModel = computed(() => {
+  if (isAgentMode.value) return agentRequiresRerankModel(formData.value.config);
   if (!hasKnowledgeBase.value) return false;
   const mode = kbSelectionMode.value;
   if (mode === 'all') {
