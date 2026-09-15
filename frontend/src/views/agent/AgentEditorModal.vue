@@ -2383,6 +2383,7 @@ const allTools = computed(() => [
   // 基础思考类
   { value: 'thinking', label: t('agentEditor.tools.thinking'), description: t('agentEditor.tools.thinkingDesc'), group: 'base' },
   { value: 'todo_write', label: t('agentEditor.tools.todoWrite'), description: t('agentEditor.tools.todoWriteDesc'), group: 'base' },
+  { value: 'source_browse', label: t('datasource.source.browse'), description: t('datasource.source.sourceHint'), group: 'source' },
   // 知识库语义/关键词检索
   { value: 'grep_chunks', label: t('agentEditor.tools.grepChunks'), description: t('agentEditor.tools.grepChunksDesc'), group: 'rag' },
   { value: 'knowledge_search', label: t('agentEditor.tools.knowledgeSearch'), description: t('agentEditor.tools.knowledgeSearchDesc'), group: 'rag' },
@@ -2411,6 +2412,7 @@ const allTools = computed(() => [
 // 工具分组元信息
 const toolGroups = computed(() => [
   { key: 'base', label: t('agentEditor.tools.groupBase') },
+  { key: 'source', label: t('datasource.source.readonly') },
   { key: 'rag', label: t('agentEditor.tools.groupRag') },
   { key: 'wiki_read', label: t('agentEditor.tools.groupWikiRead') },
   { key: 'wiki_edit', label: t('agentEditor.tools.groupWikiEdit') },
