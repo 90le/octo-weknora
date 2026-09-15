@@ -22,12 +22,21 @@ func (c *Connector) BuildSnapshot(ctx context.Context, cfg *types.DataSourceConf
 	if err != nil {
 		return err
 	}
-	commit, _, err := c.head(ctx, cfg, s)
+	var commit string
+	if token(cfg) == "" {
+		commit, err = c.publicHead(ctx, s)
+	} else {
+		commit, _, err = c.head(ctx, cfg, s)
+	}
 	if err != nil {
 		return err
 	}
 	b.SetRevision(commit)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/repos/"+s.Repository+"/tarball/"+commit, nil)
+	archiveURL := apiBase + "/repos/" + s.Repository + "/tarball/" + commit
+	if token(cfg) == "" {
+		archiveURL = "https://codeload.github.com/" + s.Repository + "/tar.gz/" + commit
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, archiveURL, nil)
 	if err != nil {
 		return errors.New("invalid repository archive request")
 	}

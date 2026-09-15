@@ -49,6 +49,9 @@ func VerifyCommit(ctx context.Context, repository, commit string, credentials ma
 	if err != nil {
 		return false
 	}
+	if token(cfg) == "" {
+		return NewConnector().publicCommitExists(ctx, s.Repository, commit)
+	}
 	actual, _, err := NewConnector().head(ctx, cfg, s)
 	return err == nil && actual == commit
 }
@@ -162,6 +165,10 @@ func (c *Connector) Validate(ctx context.Context, cfg *types.DataSourceConfig) e
 	if _, ok := cfg.Settings["repository"]; ok {
 		s, err := parseSelection(cfg)
 		if err != nil {
+			return err
+		}
+		if snapshot.IsSource(cfg) && token(cfg) == "" {
+			_, err = c.publicHead(ctx, s)
 			return err
 		}
 		_, _, err = c.head(ctx, cfg, s)
