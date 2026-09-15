@@ -6058,7 +6058,7 @@ export default {
     },
     im: {
       title: 'IM連携',
-      description: 'WeCom、Feishu、Lark、Slack、Telegram、DingTalk、Mattermost、WeChat、QQBot、Yunzhijiaなどのインスタントメッセージングプラットフォームにエージェントを接続します',
+      description: 'Octo、WeCom、Feishu、Lark、Slack、Telegram、DingTalk、Mattermost、WeChat、QQBot、Yunzhijiaなどのインスタントメッセージングプラットフォームにエージェントを接続します',
       feishu: 'Feishu',
       lark: 'Lark',
       slack: 'Slack',

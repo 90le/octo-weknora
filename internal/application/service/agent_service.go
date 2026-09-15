@@ -185,6 +185,7 @@ func (s *agentService) CreateAgentEngine(
 	eventBus *event.EventBus,
 	sessionID, assistantMessageID string,
 ) (interfaces.AgentEngine, error) {
+	config = types.RestrictIMAgentConfig(ctx, config)
 	logger.Infof(ctx, "Creating agent engine with custom EventBus")
 
 	// 1. Validate config
@@ -268,6 +269,7 @@ func (s *agentService) CreateAgentEngine(
 	// empty skills manager or skill tools that cannot succeed.
 	offerSkills := config.SkillsEnabled &&
 		(len(config.SkillDirs) > 0 || len(config.TenantSkills) > 0)
+	offerSkills = offerSkills || skills.InstructionSourceFromContext(ctx) != nil
 	if offerSkills {
 		skillsManager, err := s.initializeSkillsManager(ctx, sessionID, config, toolRegistry)
 		if err != nil {
@@ -584,13 +586,14 @@ func (s *agentService) initializeSkillsManager(
 	skillsConfig := &skills.ManagerConfig{
 		SkillDirs:     config.SkillDirs,
 		AllowedSkills: config.AllowedSkills,
-		Enabled:       config.SkillsEnabled,
+		Enabled:       config.SkillsEnabled || skills.InstructionSourceFromContext(ctx) != nil,
 	}
 
 	skillsManager := skills.NewManager(skillsConfig, sandboxMgr)
 	if source := s.tenantSkillSource(ctx, config); source != nil {
 		skillsManager.WithTenantSource(source)
 	}
+	skillsManager.WithInstructionSource(skills.InstructionSourceFromContext(ctx))
 
 	// Initialize (discover skills)
 	if err := skillsManager.Initialize(ctx); err != nil {
@@ -608,7 +611,7 @@ func (s *agentService) initializeSkillsManager(
 			shellEnabled = true
 		}
 	}
-	if config.SkillsEnabled {
+	if config.SkillsEnabled || skills.InstructionSourceFromContext(ctx) != nil {
 		var reader *tools.ReadFileTool
 		if tool, err := toolRegistry.GetTool(tools.ToolReadFile); err == nil {
 			reader, _ = tool.(*tools.ReadFileTool)

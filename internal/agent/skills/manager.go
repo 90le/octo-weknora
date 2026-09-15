@@ -100,7 +100,9 @@ type Manager struct {
 	// tenantSource holds the skills installed into this run's sandbox image.
 	// When set it is the only source the model is told about: a host skill
 	// directory is not what execution would find inside the sandbox.
-	tenantSource SkillSource
+	tenantSource      SkillSource
+	instructionSource SkillSource
+	instructionNames  map[string]bool
 
 	// Configuration
 	skillDirs     []string
@@ -152,10 +154,25 @@ func (m *Manager) WithTenantSource(source SkillSource) *Manager {
 	return m
 }
 
+// WithInstructionSource supplements, never replaces, installed tenant skills.
+// Same-name collisions fail initialization rather than silently shadowing them.
+func (m *Manager) WithInstructionSource(source SkillSource) *Manager {
+	if source != nil {
+		m.instructionSource = readOnlySkillSource{source}
+	}
+	return m
+}
+
 // resolveSource decides which source owns one skill name. An installed image
 // is the only copy the sandbox can run: falling back to a host skill directory
 // would advertise files that are not in the image.
 func (m *Manager) resolveSource(skillName string) SkillSource {
+	m.mu.RLock()
+	isInstruction := m.instructionNames[skillName]
+	m.mu.RUnlock()
+	if isInstruction {
+		return m.instructionSource
+	}
 	if m.tenantSource != nil {
 		return m.tenantSource
 	}
@@ -166,10 +183,39 @@ func (m *Manager) resolveSource(skillName string) SkillSource {
 // installed into the sandbox image, that image is the source of truth; a host
 // skill directory is not what execution would find inside the sandbox.
 func (m *Manager) discoverAllSkills() ([]*SkillMetadata, error) {
+	var metadata []*SkillMetadata
+	var err error
 	if m.tenantSource != nil {
-		return m.tenantSource.DiscoverSkills()
+		metadata, err = m.tenantSource.DiscoverSkills()
+	} else {
+		metadata, err = m.loader.Reload()
 	}
-	return m.loader.Reload()
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]bool{}
+	if m.instructionSource != nil {
+		extra, err := m.instructionSource.DiscoverSkills()
+		if err != nil {
+			return nil, err
+		}
+		seen := map[string]bool{}
+		for _, item := range metadata {
+			seen[item.Name] = true
+		}
+		for _, item := range extra {
+			if seen[item.Name] {
+				return nil, fmt.Errorf("duplicate instruction skill: %s", item.Name)
+			}
+			seen[item.Name] = true
+			names[item.Name] = true
+			metadata = append(metadata, item)
+		}
+	}
+	m.mu.Lock()
+	m.instructionNames = names
+	m.mu.Unlock()
+	return metadata, nil
 }
 
 // Initialize discovers all skills and caches their metadata

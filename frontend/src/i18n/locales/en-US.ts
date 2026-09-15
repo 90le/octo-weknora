@@ -6058,7 +6058,7 @@ export default {
     },
     im: {
       title: 'IM Integration',
-      description: 'Connect agent to instant messaging platforms like WeCom, Feishu, Lark, Slack, Telegram, DingTalk, Mattermost, WeChat, QQBot and Yunzhijia',
+      description: 'Connect agent to instant messaging platforms like Octo, WeCom, Feishu, Lark, Slack, Telegram, DingTalk, Mattermost, WeChat, QQBot and Yunzhijia',
       feishu: 'Feishu',
       lark: 'Lark',
       slack: 'Slack',

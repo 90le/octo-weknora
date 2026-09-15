@@ -41,20 +41,21 @@ func (IMChannel) TableName() string {
 // are never included — use Admin+ Create/Update responses to read back
 // values immediately after a mutation.
 type IMChannelSummary struct {
-	ID                    string    `json:"id"`
-	TenantID              uint64    `json:"tenant_id"`
-	AgentID               string    `json:"agent_id"`
-	Platform              string    `json:"platform"`
-	Name                  string    `json:"name"`
-	Enabled               bool      `json:"enabled"`
-	Mode                  string    `json:"mode"`
-	OutputMode            string    `json:"output_mode"`
-	KnowledgeBaseID       string    `json:"knowledge_base_id"`
-	BotIdentity           string    `json:"bot_identity"`
-	SessionMode           string    `json:"session_mode"`
-	CredentialsConfigured bool      `json:"credentials_configured"`
-	CreatedAt             time.Time `json:"created_at"`
-	UpdatedAt             time.Time `json:"updated_at"`
+	PublicConfig          map[string]interface{} `json:"public_config,omitempty"`
+	ID                    string                 `json:"id"`
+	TenantID              uint64                 `json:"tenant_id"`
+	AgentID               string                 `json:"agent_id"`
+	Platform              string                 `json:"platform"`
+	Name                  string                 `json:"name"`
+	Enabled               bool                   `json:"enabled"`
+	Mode                  string                 `json:"mode"`
+	OutputMode            string                 `json:"output_mode"`
+	KnowledgeBaseID       string                 `json:"knowledge_base_id"`
+	BotIdentity           string                 `json:"bot_identity"`
+	SessionMode           string                 `json:"session_mode"`
+	CredentialsConfigured bool                   `json:"credentials_configured"`
+	CreatedAt             time.Time              `json:"created_at"`
+	UpdatedAt             time.Time              `json:"updated_at"`
 }
 
 // SummarizeIMChannel converts a stored channel into its list response shape.
@@ -82,6 +83,43 @@ func SummarizeIMChannels(channels []IMChannel) []IMChannelSummary {
 	out := make([]IMChannelSummary, 0, len(channels))
 	for _, ch := range channels {
 		out = append(out, SummarizeIMChannel(ch))
+	}
+	return out
+}
+
+// SummarizeIMChannelsForRole exposes only explicitly non-secret Octo settings to
+// administrators editing a channel. The credentials map itself is never returned.
+func SummarizeIMChannelsForRole(channels []IMChannel, role types.TenantRole) []IMChannelSummary {
+	out := SummarizeIMChannels(channels)
+	if !role.HasPermission(types.TenantRoleAdmin) {
+		return out
+	}
+	for i, ch := range channels {
+		if ch.Platform != "octo" {
+			continue
+		}
+		config, err := ParseCredentials(ch.Credentials)
+		if err != nil {
+			continue
+		}
+		public := map[string]interface{}{}
+		for _, key := range []string{"account_id", "bot_uid"} {
+			if value, ok := config[key].(string); ok {
+				public[key] = value
+			}
+		}
+		for _, key := range []string{"allowed_dm_uids", "allowed_bot_uids"} {
+			values := []string{}
+			if items, ok := config[key].([]interface{}); ok {
+				for _, item := range items {
+					if value, ok := item.(string); ok {
+						values = append(values, value)
+					}
+				}
+			}
+			public[key] = values
+		}
+		out[i].PublicConfig = public
 	}
 	return out
 }
@@ -130,6 +168,30 @@ func (ch *IMChannel) BeforeSave(tx *gorm.DB) error {
 
 // validateSessionMode checks that SessionMode holds a supported value.
 func (ch *IMChannel) validateSessionMode() error {
+	if ch.Platform == "octo" {
+		if ch.SessionMode != string(SessionModeUser) || ch.Mode != "websocket" {
+			return fmt.Errorf("Octo requires websocket and user session mode")
+		}
+		ch.OutputMode = "full"
+		config, err := ParseCredentials(ch.Credentials)
+		if err != nil || GetString(config, "account_id") == "" || GetString(config, "bot_uid") == "" {
+			return fmt.Errorf("Octo account_id and bot_uid required")
+		}
+		for _, key := range []string{"allowed_dm_uids", "allowed_bot_uids"} {
+			if raw, exists := config[key]; exists {
+				values, ok := raw.([]interface{})
+				if !ok || len(values) > 100 {
+					return fmt.Errorf("invalid Octo UID allowlist")
+				}
+				for _, value := range values {
+					uid, ok := value.(string)
+					if !ok || uid == "" || len(uid) > 128 || strings.ContainsAny(uid, " \r\n\t") {
+						return fmt.Errorf("invalid Octo UID")
+					}
+				}
+			}
+		}
+	}
 	switch SessionMode(ch.SessionMode) {
 	case SessionModeUser, SessionModeThread:
 		return nil
@@ -159,6 +221,10 @@ func (ch *IMChannel) computeBotIdentity() string {
 	}
 
 	switch ch.Platform {
+	case "octo":
+		if uid := str("bot_uid"); uid != "" {
+			return "octo:" + uid
+		}
 	case "wecom":
 		switch ch.Mode {
 		case "websocket":

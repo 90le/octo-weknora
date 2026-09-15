@@ -355,20 +355,5 @@ func (s *knowledgeBaseService) isSearchableChunk(chunk *types.Chunk) bool {
 // The database document state is authoritative even when an external index
 // still contains old chunks during draft/unpublish or asynchronous cleanup.
 func isPublishedSearchKnowledge(k *types.Knowledge) bool {
-	if k == nil || k.EnableStatus != "enabled" {
-		return false
-	}
-	if k.Channel == types.ConnectorTypeGitHub || k.Channel == "local_folder" {
-		var metadata map[string]string
-		if json.Unmarshal(k.Metadata, &metadata) != nil || metadata["sync_target_external_id"] != "" {
-			// The native indexer enables chunks before repository synchronization
-			// adopts the candidate. Keep that preparation window out of answers.
-			return false
-		}
-	}
-	if k.IsManual() {
-		meta, err := k.ManualMetadata()
-		return err == nil && meta != nil && meta.Status == types.ManualKnowledgeStatusPublish
-	}
-	return true
+	return types.IsPublishedKnowledgeForAnswer(k)
 }

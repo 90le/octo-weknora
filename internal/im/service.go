@@ -21,6 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Tencent/WeKnora/internal/agent/skills"
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/config"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
@@ -1704,6 +1705,17 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 
 	// Resolve threadID for key building — only include in thread mode to avoid
 	// leaking thread scope into user-mode rate limit / inflight keys.
+	scope, scopeErr := authorizeExecution(ctx, adapter, channel, msg)
+	if scopeErr != nil {
+		return scopeErr
+	}
+	msg.executionScope = scope
+	if scope != nil && scope.SenderName != "" {
+		msg.UserName = scope.SenderName
+	}
+	if channel.Platform == "octo" && channel.SessionMode == string(SessionModeThread) {
+		return fmt.Errorf("Octo requires per-user sessions within each group or subarea")
+	}
 	threadID := ""
 	if channel.SessionMode == string(SessionModeThread) {
 		threadID = msg.ThreadID
@@ -1765,6 +1777,9 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 	}
 	sessionCtx := context.WithValue(ctx, types.TenantInfoContextKey, tenant)
 	sessionCtx = withIMIdentity(sessionCtx, tenantID, channelID, msg)
+	if scope != nil {
+		sessionCtx = types.WithIMKnowledgeScope(sessionCtx, scope.KnowledgeBaseIDs)
+	}
 
 	// 2. Resolve or create a WeKnora session
 	channelSession, err := s.resolveSession(sessionCtx, msg, tenantID, agentID, channelID, channel.SessionMode)
@@ -1785,6 +1800,10 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 
 	// ── Slash-command dispatch ──
 	// Commands are handled before the QA pipeline so they respond instantly.
+	customAgent, err = scopeAgent(customAgent, scope)
+	if err != nil {
+		return err
+	}
 	if cmd, args, ok := s.cmdRegistry.Parse(msg.Content); ok {
 		return s.handleCommand(sessionCtx, cmd, args, msg, adapter, channel, channelSession, customAgent)
 	}
@@ -1854,6 +1873,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 		adapter:   adapter,
 		channel:   channel,
 		channelID: channelID,
+		scope:     scope,
 		tenant:    tenant,
 		userKey:   userKey,
 	}
@@ -1943,8 +1963,30 @@ func (s *Service) executeQARequest(req *qaRequest) {
 	// runQA after the assistant message is created (that's when we have the
 	// sessionID + messageID needed to poll StreamManager).
 
-	// kbIDs is left empty so the QA pipeline resolves them from the agent config.
+	// Scoped channels revalidate queued work. An authorization change cancels this
+	// run before reading attachments or querying knowledge; it never falls back.
 	var kbIDs []string
+	if req.scope != nil {
+		current, scopeErr := authorizeExecution(ctx, req.adapter, req.channel, req.msg)
+		if scopeErr != nil || scopeFingerprint(current) != scopeFingerprint(req.scope) {
+			logger.Warnf(ctx, "[IM] scoped request canceled after authorization changed")
+			return
+		}
+		kbIDs = append([]string(nil), current.KnowledgeBaseIDs...)
+	}
+	if req.scope != nil {
+		if provider, ok := req.adapter.(ExecutionContextProvider); ok {
+			contextText, source, contextErr := provider.ExecutionContext(ctx, req.msg)
+			if contextErr != nil {
+				logger.Warnf(ctx, "[IM] scoped context unavailable")
+				return
+			}
+			ctx = skills.WithInstructionSource(ctx, source)
+			if contextText != "" {
+				ctx = context.WithValue(ctx, executionContextKey{}, contextText)
+			}
+		}
+	}
 	attachments, imageURLs, downloaded, err := s.prepareIMAttachments(ctx, req.msg, req.adapter)
 	if err != nil {
 		logger.Warnf(ctx, "[IM] attachment preparation failed: %v", err)
@@ -1953,7 +1995,7 @@ func (s *Service) executeQARequest(req *qaRequest) {
 		}
 		return
 	}
-	if req.channel.KnowledgeBaseID != "" && downloaded != nil {
+	if req.scope == nil && req.channel.KnowledgeBaseID != "" && downloaded != nil {
 		go s.processDownloadedFileToKnowledgeBase(
 			context.WithoutCancel(ctx), req.channel, downloaded,
 		)
@@ -2294,12 +2336,26 @@ func imInitialSessionTitle(msg *IncomingMessage, identityTitle func(*IncomingMes
 // re-maps an existing session, that JOIN needs a one-row-per-session guard.
 func (s *Service) resolveUserSession(ctx context.Context, msg *IncomingMessage, tenantID uint64, agentID string, imChannelID string) (*ChannelSession, error) {
 	var cs ChannelSession
-	result := s.db.Where("platform = ? AND user_id = ? AND chat_id = ? AND tenant_id = ? AND agent_id = ? AND deleted_at IS NULL",
-		string(msg.Platform), msg.UserID, msg.ChatID, tenantID, agentID).
-		First(&cs)
+	lookup := func() *gorm.DB {
+		query := s.db.WithContext(ctx).Where("platform = ? AND user_id = ? AND chat_id = ? AND tenant_id = ? AND agent_id = ? AND deleted_at IS NULL",
+			string(msg.Platform), msg.UserID, msg.ChatID, tenantID, agentID)
+		if msg.Platform == "octo" {
+			query = query.Where("im_channel_id = ?", imChannelID)
+		}
+		return query
+	}
+	result := lookup().First(&cs)
 
 	if result.Error == nil {
-		return &cs, nil
+		if sessionScopeMatches(&cs, msg.executionScope) {
+			return &cs, nil
+		}
+		// Keep historical messages for audit, but never reattach a conversation
+		// whose knowledge access was narrowed or revoked and reconfigured.
+		if err := s.db.WithContext(ctx).Delete(&cs).Error; err != nil {
+			return nil, err
+		}
+		result.Error = gorm.ErrRecordNotFound
 	}
 
 	if result.Error != gorm.ErrRecordNotFound {
@@ -2332,16 +2388,18 @@ func (s *Service) resolveUserSession(ctx context.Context, msg *IncomingMessage, 
 		TenantID:    tenantID,
 		AgentID:     agentID,
 		IMChannelID: imChannelID,
+		Metadata:    sessionScopeMetadata(msg.executionScope),
 	}
 	if err := s.db.Create(&cs).Error; err != nil {
 		if delErr := s.db.Where("id = ?", createdSession.ID).Delete(createdSession).Error; delErr != nil {
 			logger.Warnf(ctx, "[IM] Failed to clean up orphaned session %s: %v", createdSession.ID, delErr)
 		}
 		var existing ChannelSession
-		if findErr := s.db.Where("platform = ? AND user_id = ? AND chat_id = ? AND tenant_id = ? AND agent_id = ? AND deleted_at IS NULL",
-			string(msg.Platform), msg.UserID, msg.ChatID, tenantID, agentID).
-			First(&existing).Error; findErr != nil {
+		if findErr := lookup().First(&existing).Error; findErr != nil {
 			return nil, fmt.Errorf("create channel session: %w (lookup fallback: %v)", err, findErr)
+		}
+		if !sessionScopeMatches(&existing, msg.executionScope) {
+			return nil, ErrScopeDenied
 		}
 		return &existing, nil
 	}
@@ -2787,6 +2845,7 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 	go func() {
 		var err error
 		req := buildIMQARequest(session, msg.Content, assistantMsg.ID, userMsg.ID, customAgent, kbIDs, msg.Quote, attachments)
+		addExecutionContext(ctx, req)
 		req.ImageURLs = imageURLs
 		if req.QuotedContext != "" {
 			logger.Debugf(qaCtx, "[IM] QuotedContext set: length=%d", len(req.QuotedContext))
@@ -3048,6 +3107,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	go func() {
 		var err error
 		req := buildIMQARequest(session, query, assistantMsg.ID, userMsg.ID, customAgent, kbIDs, quote, attachments)
+		addExecutionContext(ctx, req)
 		req.ImageURLs = imageURLs
 		if req.QuotedContext != "" {
 			logger.Debugf(ctx, "[IM] QuotedContext set: length=%d", len(req.QuotedContext))

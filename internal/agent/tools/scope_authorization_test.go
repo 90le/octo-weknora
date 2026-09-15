@@ -14,6 +14,28 @@ type scopeKnowledgeService struct {
 	tags      map[string][]*types.KnowledgeTag
 }
 
+func TestPublicIMDocumentReadsEnforcePublication(t *testing.T) {
+	targets := types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb"}}
+	ctx := types.WithIMKnowledgeScope(context.Background(), []string{"kb"})
+	for _, knowledge := range []*types.Knowledge{
+		{ID: "doc", KnowledgeBaseID: "kb", EnableStatus: "disabled"},
+		{ID: "doc", KnowledgeBaseID: "kb", EnableStatus: "enabled", Type: types.KnowledgeTypeManual, Metadata: types.JSON(`{"status":"draft"}`)},
+		{ID: "doc", KnowledgeBaseID: "kb", EnableStatus: "enabled", Channel: types.ConnectorTypeGitHub, Metadata: types.JSON(`{"sync_target_external_id":"candidate"}`)},
+	} {
+		service := &scopeKnowledgeService{knowledge: knowledge}
+		if _, err := authorizeKnowledgeInSearchTargets(ctx, targets, "doc", service); err == nil {
+			t.Fatal("unpublished content exposed")
+		}
+		if _, err := authorizeKnowledgeInSearchTargets(context.Background(), targets, "doc", service); err != nil {
+			t.Fatal("native editing scope changed")
+		}
+	}
+	service := &scopeKnowledgeService{knowledge: &types.Knowledge{ID: "doc", KnowledgeBaseID: "kb", EnableStatus: "enabled", Type: types.KnowledgeTypeManual, Metadata: types.JSON(`{"status":"publish"}`)}}
+	if _, err := authorizeKnowledgeInSearchTargets(ctx, targets, "doc", service); err != nil {
+		t.Fatal("published content rejected")
+	}
+}
+
 type scopeChunkService struct {
 	interfaces.ChunkService
 	chunk *types.Chunk
