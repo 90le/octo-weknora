@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/im"
@@ -98,7 +99,15 @@ func runtimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint64, acc
 			if db.WithContext(ctx).Table("knowledge_bases").Where("tenant_id = ? AND id = ? AND deleted_at IS NULL", tenant, channel.KnowledgeBaseID).Count(&count).Error != nil || count != 1 {
 				return nil, im.ErrScopeDenied
 			}
-			return &im.ExecutionScope{KnowledgeBaseIDs: []string{channel.KnowledgeBaseID}, Revision: channel.UpdatedAt.String() + connection.UpdatedAt.String()}, nil
+			result := &im.ExecutionScope{KnowledgeBaseIDs: []string{channel.KnowledgeBaseID}, Revision: channel.UpdatedAt.String() + connection.UpdatedAt.String()}
+			var profile struct {
+				UID  string `json:"uid"`
+				Name string `json:"name"`
+			}
+			if a.api.request(ctx, http.MethodGet, "/v1/bot/user/info?uid="+url.QueryEscape(msg.UserID), nil, &profile) == nil && profile.UID == msg.UserID {
+				result.SenderName = safeDisplayName(profile.Name)
+			}
+			return result, nil
 		}
 		kind := byte(2)
 		if msg.Extra["octo_subarea_id"] != "" {
@@ -151,7 +160,7 @@ func runtimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint64, acc
 			if member.UID != msg.UserID {
 				continue
 			}
-			senderName = strings.TrimSpace(strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(member.Name))
+			senderName = safeDisplayName(member.Name)
 			if string(member.Robot) == "0" || string(member.Robot) == "false" {
 				admitted = true
 			}
@@ -183,6 +192,14 @@ func runtimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint64, acc
 }
 
 func flag(value json.RawMessage) bool { return string(value) == "1" || string(value) == "true" }
+func safeDisplayName(name string) string {
+	name = strings.TrimSpace(strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(name))
+	runes := []rune(name)
+	if len(runes) > 128 {
+		return string(runes[:128])
+	}
+	return name
+}
 func configuredUID(config map[string]interface{}, key, uid string) bool {
 	values, ok := config[key].([]interface{})
 	if !ok {

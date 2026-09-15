@@ -168,7 +168,7 @@
             <p class="form-desc">
               {{ formData.platform === 'mattermost' ? $t('agentEditor.im.mattermostModeHint') :
                 formData.platform === 'yunzhijia' ? $t('agentEditor.im.yunzhijiaModeHint') :
-                  $t('agentEditor.im.modeHint') }}
+                  formData.platform === 'octo' ? '通过 WebSocket 连接，无需开放公网回调地址。' : $t('agentEditor.im.modeHint') }}
             </p>
           </div>
 
@@ -206,7 +206,7 @@
                 {{ $t('agentEditor.im.sessionModeThread') }}
               </button>
             </div>
-            <p class="form-desc">{{ $t('agentEditor.im.sessionModeHint') }}</p>
+            <p class="form-desc">{{ formData.platform === 'octo' ? '每位用户在每个群／子区拥有独立对话。子区使用自己的知识库绑定。' : $t('agentEditor.im.sessionModeHint') }}</p>
           </div>
         </section>
 
@@ -229,11 +229,11 @@
       <!-- Step 3: File knowledge base -->
       <div v-else-if="wizardStep === 2" class="im-step-body">
         <section class="setting-drawer__section im-drawer__section">
-          <h4 class="setting-drawer__section-title">{{ $t('agentEditor.im.sectionKnowledge') }}</h4>
+          <h4 class="setting-drawer__section-title">{{ formData.platform === 'octo' ? '私聊知识范围' : $t('agentEditor.im.sectionKnowledge') }}</h4>
           <div class="form-item">
             <label class="form-label">{{ formData.platform === 'octo' ? '私聊知识库' : $t('agentEditor.im.fileKnowledgeBase') }}</label>
             <t-select v-model="formData.knowledge_base_id"
-              :placeholder="$t('agentEditor.im.fileKnowledgeBasePlaceholder')" clearable filterable>
+              :placeholder="formData.platform === 'octo' ? '选择私聊可查询的知识库' : $t('agentEditor.im.fileKnowledgeBasePlaceholder')" clearable filterable>
               <t-option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id" :label="kb.name" />
             </t-select>
             <p v-if="formData.platform === 'octo'" class="form-desc">仅供白名单中的私聊用户查询。群和子区使用「Octo 群与子区」中各自的绑定；附件不会自动入库。</p>
@@ -251,8 +251,11 @@
             <template v-if="formData.platform === 'octo'">
               <div class="form-item">
                 <label class="form-label required">Octo 连接标识</label>
-                <t-input v-model="formData.credentials.account_id" placeholder="已在 Octo 群与子区中配置的连接标识" />
+                <t-select v-model="formData.credentials.account_id" :loading="octoConnectionsLoading" placeholder="选择已配置的 Octo 连接" filterable>
+                  <t-option v-for="connection in octoConnections" :key="connection.account_id" :value="connection.account_id" :label="connection.account_id" />
+                </t-select>
                 <p class="form-desc">复用已保存的加密连接，无需在这里重复填写 Token。</p>
+                <p class="form-desc">连接密钥更换后，重新启用此渠道以加载新连接。启用前确认同一 Bot 没有同时连接其他接收服务。</p>
               </div>
               <div class="form-item">
                 <label class="form-label required">Bot UID</label>
@@ -618,6 +621,7 @@ import {
 import { useChatResourcesStore } from '@/stores/chatResources';
 import type { IMChannel } from '@/api/agent';
 import { useAuthStore } from '@/stores/auth';
+import { listConnections as listOctoConnections } from '@/api/octo';
 import SettingDrawer from '@/components/settings/SettingDrawer.vue';
 import IntegrationsAgentFilter from '@/components/IntegrationsAgentFilter.vue';
 import wecomLogo from '@/assets/img/im/wecom.svg';
@@ -671,12 +675,14 @@ const editingChannel = ref<IMChannel | null>(null);
 const editingEnabled = ref(true);
 const wizardStep = ref(0);
 const channelNameTouched = ref(false);
+const octoConnections = ref<Array<{ account_id: string }>>([]);
+const octoConnectionsLoading = ref(false);
 
 const stepTitles = computed(() => [
   t('agentEditor.im.stepBasic'),
   t('agentEditor.im.stepConnection'),
-  t('agentEditor.im.stepKnowledge'),
-  t('agentEditor.im.stepCredentials'),
+  formData.value.platform === 'octo' ? '私聊知识范围' : t('agentEditor.im.stepKnowledge'),
+  formData.value.platform === 'octo' ? '连接与访问范围' : t('agentEditor.im.stepCredentials'),
 ]);
 
 const drawerStepDescription = computed(() => stepTitles.value[wizardStep.value] ?? '');
@@ -832,6 +838,14 @@ const wechatBound = computed(() => {
     formData.value.credentials.ilink_bot_id;
 });
 
+
+watch(() => [formData.value.platform, showCreateDialog.value], async ([platform, visible]) => {
+  if (platform !== 'octo' || !visible) return;
+  octoConnectionsLoading.value = true;
+  try { octoConnections.value = (await listOctoConnections()).data || []; }
+  catch { octoConnections.value = []; MessagePlugin.warning('暂时无法加载 Octo 连接，请稍后重试。'); }
+  finally { octoConnectionsLoading.value = false; }
+});
 
 function onPlatformChange(val: string | number | boolean) {
   if (editingChannel.value) return;

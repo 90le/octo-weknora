@@ -47,6 +47,10 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/bot/user/info" {
+			fmt.Fprint(w, `{"uid":"owner","name":"验收用户"}`)
+			return
+		}
 		fmt.Fprint(w, `[{"uid":"human","robot":0},{"uid":"untrusted_bot","robot":1}]`)
 	}))
 	defer server.Close()
@@ -80,8 +84,12 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 	}
 	msg.ChatType = im.ChatTypeDirect
 	msg.UserID = "owner"
-	if _, err = a.AuthorizeExecution(context.Background(), nil, msg); err != nil {
+	dmScope, err := a.AuthorizeExecution(context.Background(), nil, msg)
+	if err != nil {
 		t.Fatal("explicit DM denied")
+	}
+	if dmScope.SenderName != "验收用户" {
+		t.Fatal("native DM name was not resolved")
 	}
 	if err = db.Exec(`UPDATE octo_connections SET token='rotated'`).Error; err != nil {
 		t.Fatal(err)
