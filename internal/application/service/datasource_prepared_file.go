@@ -97,6 +97,13 @@ func (s *DataSourceService) ingestPreparedFile(ctx context.Context, ds *types.Da
 		case <-time.After(2 * time.Second):
 		}
 	}
+	if sourceURL := item.Metadata["github_url"]; sourceURL != "" {
+		// Native retrieval and document details expose Knowledge.Source, not
+		// connector-specific metadata. Publish the pinned URL before retiring old.
+		if err := repo.UpdateKnowledgeColumn(ctx, candidate.ID, "source", sourceURL); err != nil {
+			return old != nil, err
+		}
+	}
 	if old != nil {
 		if err := s.knowledgeService.DeleteKnowledge(ctx, old.ID); err != nil {
 			return true, fmt.Errorf("new version ready; previous version cleanup failed: %w", err)
@@ -107,6 +114,15 @@ func (s *DataSourceService) ingestPreparedFile(ctx context.Context, ds *types.Da
 	}
 	// Update only metadata, never write stale parse/enable fields over the
 	// native asynchronous enrichment worker's state.
+	// Retain metadata written by the native parser when adopting the candidate.
+	var processedMetadata map[string]string
+	if json.Unmarshal(candidate.Metadata, &processedMetadata) == nil {
+		for key, value := range processedMetadata {
+			if _, exists := metadata[key]; !exists {
+				metadata[key] = value
+			}
+		}
+	}
 	metadata["external_id"] = item.ExternalID
 	delete(metadata, "sync_target_external_id")
 	b, err := json.Marshal(metadata)

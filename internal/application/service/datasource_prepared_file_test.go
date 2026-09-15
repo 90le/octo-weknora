@@ -37,6 +37,10 @@ func (r *preparedRepo) GetKnowledgeByID(ctx context.Context, _ uint64, id string
 	return r.rows[id], nil
 }
 func (r *preparedRepo) UpdateKnowledgeColumn(_ context.Context, id, col string, value interface{}) error {
+	if col == "source" {
+		r.rows[id].Source = value.(string)
+		return nil
+	}
 	r.events = append(r.events, "adopt:"+id)
 	r.rows[id].Metadata = value.(types.JSON)
 	return nil
@@ -104,6 +108,7 @@ func TestPreparedSyncKeepsOldOnParseFailure(t *testing.T) {
 }
 func TestPreparedSyncRetiresOnlyAfterReady(t *testing.T) {
 	s, ks, ds, item := preparedFixture()
+	item.Metadata["github_url"] = "https://github.com/test/docs/blob/commit/guide.md"
 	updated, err := s.ingestItem(context.Background(), ds, item, nil)
 	require.NoError(t, err)
 	require.True(t, updated)
@@ -112,6 +117,7 @@ func TestPreparedSyncRetiresOnlyAfterReady(t *testing.T) {
 	k, err := ks.r.FindByDataSourceExternalID(context.Background(), 7, "kb", "ds", "doc")
 	require.NoError(t, err)
 	require.Equal(t, "new", k.ID)
+	require.Equal(t, item.Metadata["github_url"], k.Source)
 }
 func TestPreparedSyncCancellationKeepsOld(t *testing.T) {
 	s, ks, ds, item := preparedFixture()

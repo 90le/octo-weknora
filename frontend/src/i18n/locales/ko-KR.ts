@@ -6560,6 +6560,7 @@ export default {
     channelNotion: 'Notion',
     channelYuque: 'Yuque',
     channelGitLab: 'GitLab',
+    channelGitHub: 'GitHub',
     channelIma: 'Tencent IMA',
     channelUpload: '업로드',
     channelManual: '수동',

@@ -585,6 +585,7 @@ export default {
     channelNotion: 'Notion',
     channelYuque: 'Yuque',
     channelGitLab: 'GitLab',
+    channelGitHub: 'GitHub',
     channelIma: 'Tencent IMA',
     channelUpload: 'Upload',
     channelManual: 'Manual',

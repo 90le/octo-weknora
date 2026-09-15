@@ -6562,6 +6562,7 @@ export default {
     channelNotion: 'Notion',
     channelYuque: '语雀',
     channelGitLab: 'GitLab',
+    channelGitHub: 'GitHub',
     channelIma: '腾讯 IMA',
     channelUpload: '上传',
     channelManual: '手动',
