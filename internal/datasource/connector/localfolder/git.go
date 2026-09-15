@@ -16,6 +16,7 @@ import (
 
 type gitInfo struct {
 	Commit, Remote string
+	Prefix         string
 	Files          map[string]string
 	Verified       bool
 }
@@ -77,6 +78,9 @@ func inspectGit(ctx context.Context, root string) gitInfo {
 		return g
 	}
 	g.Remote = "https://github.com/" + repo
+	if prefix, err := run("rev-parse", "--show-prefix"); err == nil {
+		g.Prefix = strings.TrimSpace(string(prefix))
+	}
 	tree, err := run("ls-tree", "-rz", "--full-tree", g.Commit)
 	if err != nil {
 		g.Remote = ""
@@ -95,6 +99,7 @@ func inspectGit(ctx context.Context, root string) gitInfo {
 	return g
 }
 func (g gitInfo) reference(p string, body []byte) (string, string) {
+	p = g.Prefix + p
 	if !g.Verified || g.Remote == "" || g.Files[p] == "" {
 		return "", ""
 	}

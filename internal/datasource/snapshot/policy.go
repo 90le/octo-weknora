@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"path"
 	"strings"
 
@@ -19,6 +20,31 @@ var DefaultExcludes = []string{"node_modules", "vendor", "dist", "build", ".venv
 
 func IsSource(config *types.DataSourceConfig) bool {
 	return config != nil && config.Settings["mode"] == "source"
+}
+
+func ValidateSettings(config *types.DataSourceConfig) error {
+	if config == nil {
+		return errors.New("source configuration missing")
+	}
+	if value, exists := config.Settings["mode"]; exists {
+		mode, ok := value.(string)
+		if !ok || (mode != "" && mode != "documents" && mode != "source") {
+			return errors.New("source mode must be documents or source")
+		}
+	}
+	if value, exists := config.Settings["exclude"]; exists {
+		var rules []string
+		b, err := json.Marshal(value)
+		if err != nil || value == nil || json.Unmarshal(b, &rules) != nil || len(rules) > 100 {
+			return errors.New("exclusions must be a list of at most 100 paths")
+		}
+		for _, rule := range rules {
+			if len(rule) > 1024 || strings.ContainsAny(rule, "\\\x00\r\n") {
+				return errors.New("invalid exclusion rule")
+			}
+		}
+	}
+	return nil
 }
 func Selection(config *types.DataSourceConfig) string {
 	b, _ := json.Marshal(config.Settings)

@@ -89,6 +89,9 @@ func parse(cfg *types.DataSourceConfig) (settings, error) {
 	return c, nil
 }
 func (c *Connector) Validate(ctx context.Context, cfg *types.DataSourceConfig) error {
+	if err := snapshot.ValidateSettings(cfg); err != nil {
+		return err
+	}
 	tenant, _ := types.TenantIDFromContext(ctx)
 	s, err := parse(cfg)
 	if err != nil {

@@ -145,6 +145,9 @@ func (c *Connector) get(ctx context.Context, cfg *types.DataSourceConfig, endpoi
 	return nil
 }
 func (c *Connector) Validate(ctx context.Context, cfg *types.DataSourceConfig) error {
+	if err := snapshot.ValidateSettings(cfg); err != nil {
+		return err
+	}
 	if cfg != nil && snapshot.IsSource(cfg) {
 		if _, err := snapshot.FromEnvironment(); err != nil {
 			return err

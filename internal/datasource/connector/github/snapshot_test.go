@@ -19,6 +19,7 @@ func TestArchiveSnapshotUsesAllTextLanguagesWithoutForwardingToken(t *testing.T)
 	var data bytes.Buffer
 	gz := gzip.NewWriter(&data)
 	tw := tar.NewWriter(gz)
+	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "pax_global_header", Typeflag: tar.TypeXGlobalHeader, PAXRecords: map[string]string{"comment": "pinned commit"}}))
 	for _, p := range []string{"main.js", "main.php", "main.py", ".env", "node_modules/lib.js"} {
 		body := []byte("first\nsecond\n")
 		require.NoError(t, tw.WriteHeader(&tar.Header{Name: "repo-root/" + p, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}))

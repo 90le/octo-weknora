@@ -81,6 +81,11 @@ func (c *Connector) BuildSnapshot(ctx context.Context, cfg *types.DataSourceConf
 		if err != nil {
 			return errors.New("GitHub archive is incomplete or exceeds its size limit")
 		}
+		// GitHub emits a global PAX header carrying the commit comment before
+		// the repository directory. It is metadata, not the archive root.
+		if header.Typeflag == tar.TypeXGlobalHeader {
+			continue
+		}
 		name := strings.TrimSuffix(header.Name, "/")
 		if !snapshot.SafePath(name) {
 			return errors.New("invalid path in GitHub archive")
