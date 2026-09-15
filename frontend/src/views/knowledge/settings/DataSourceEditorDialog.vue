@@ -17,6 +17,7 @@ import {
   type Resource,
 } from '@/api/datasource'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
+import GitHubSourceFields from './GitHubSourceFields.vue'
 import DataSourceTypeIcon from './DataSourceTypeIcon.vue'
 import { getDatasourceIconUrl } from './datasourceIcons'
 
@@ -627,6 +628,12 @@ const connectorDefs = computed<ConnectorDef[]>(() => [
     ],
   },
   {
+    type: 'github', available: true, docUrl: 'https://docs.github.com/en/rest/repos/contents', permissionDocUrl: '', permissionPageUrl: '', requiredPermissions: [],
+    fields: [
+      { key: 'access_token', labelKey: 'datasource.gitlab.accessToken', placeholder: '', secret: true, optional: true, hintKey: 'datasource.github.tokenHint' },
+    ],
+  },
+  {
     type: 'gitlab', available: true, docUrl: '', permissionDocUrl: '', permissionPageUrl: '', requiredPermissions: [],
     fields: [
       { key: 'base_url', labelKey: 'datasource.gitlab.baseUrl', placeholder: 'https://gitlab.example.com' },
@@ -767,6 +774,8 @@ function selectType(def: ConnectorDef) {
   form.value.type = def.type
   form.value.name = t(`datasource.connector.${def.type}`)
   form.value.config.credentials = {}
+  form.value.config.settings = {}
+  if (def.type === 'github') form.value.sync_deletions = false
   if (isGitLabConnector(def.type)) addGitLabProject()
   rssAuthHeaders.value = []
   step.value = 1
@@ -1008,6 +1017,10 @@ async function nextStep() {
       return
     }
   }
+  if (step.value === 2 && form.value.type === 'github' && !String(form.value.config.settings.repository || '').trim()) {
+    MessagePlugin.warning(t('datasource.github.repositoryRequired'))
+    return
+  }
   step.value++
   if (step.value === 2) {
     // Drive connectors need a user-supplied folder_token before listing.
@@ -1020,7 +1033,7 @@ async function nextStep() {
       }
       return
     }
-    if (isGitLabConnector(form.value.type)) return
+    if (isGitLabConnector(form.value.type) || form.value.type === 'github') return
     loadResources()
   }
 }
@@ -1223,7 +1236,7 @@ const drawerConfirmText = computed(() => {
     v-model:visible="visible"
     :title="drawerTitle"
     :description="drawerDescription"
-    :class="[form.type ? `datasource-editor-drawer datasource-editor-drawer--${form.type}` : 'datasource-editor-drawer', { 'ds-fixed-step': step === 2 && !isGitLabConnector(form.type) }]"
+    :class="[form.type ? `datasource-editor-drawer datasource-editor-drawer--${form.type}` : 'datasource-editor-drawer', { 'ds-fixed-step': step === 2 && !isGitLabConnector(form.type) && form.type !== 'github' }]"
     :hide-footer="step === 0"
     :confirm-text="drawerConfirmText"
     :confirm-loading="submitting || (step === 1 && testing)"
@@ -1559,7 +1572,8 @@ const drawerConfirmText = computed(() => {
 
     <!-- Step 2: Select resources -->
     <section v-if="step === 2" class="setting-drawer__section ds-resource-section">
-      <template v-if="isGitLabConnector(form.type)">
+      <GitHubSourceFields v-if="form.type === 'github'" v-model="form.config.settings" />
+      <template v-else-if="isGitLabConnector(form.type)">
         <h4 class="setting-drawer__section-title">{{ t('datasource.gitlab.projects') }}</h4>
         <p class="ds-resource-hint">{{ t('datasource.gitlab.projectsHint') }}</p>
         <div class="gitlab-project-list">

@@ -6331,6 +6331,12 @@ export default {
     connectionFailed: '接続に失敗しました',
     isRequired: 'は必須です',
     credentialsLabel: '認証情報',
+    github: {
+      repository: 'GitHub repository', repositoryRequired: 'Enter a GitHub repository',
+      hint: 'Sync documents at a fixed commit and preserve folders. Code, hidden files and dependencies are excluded. Limits: 2000 documents, 64 MiB per sync, 16 MiB per file.',
+      tokenHint: 'Optional for public repositories. Private repositories require a read-only Contents token. Stored encrypted; never returned.',
+      pathsHint: 'One file or directory per line, for example README.md or docs. Empty includes all supported documents.',
+    },
     gitlab: {
       baseUrl: 'GitLab URL', accessToken: 'パーソナルアクセストークン', projects: 'GitLabプロジェクト',
       projectsHint: 'プロジェクトIDまたはネームスペースのパス（例: group/project）を入力します。ブランチとディレクトリは任意です。',
@@ -6408,6 +6414,7 @@ export default {
       yuque: 'Yuque',
       rss: 'RSS / Atomフィード',
       ima: 'Tencent IMA',
+      github: 'GitHub',
       gitlab: 'GitLab'
     },
     connectorDesc: {
@@ -6419,6 +6426,7 @@ export default {
       yuque: 'Yuqueのナレッジベースからドキュメントを同期します',
       rss: 'RSS / Atomフィードから記事を同期します',
       ima: 'Tencent IMAのナレッジベースからドキュメント、ノート、ファイルを同期します（AIセッションと動画の解析は非対応）',
+      github: 'Sync GitHub repository documents',
       gitlab: 'GitLabプロジェクトからファイルを同期します'
     },
     drive: {
