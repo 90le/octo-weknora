@@ -46,6 +46,8 @@ PostgreSQL 迁移 `000096_octo_scopes`、`000097_octo_connections`；SQLite 迁�
 
 ## 原生数据源扩展设计（2026-09-15，待实现）
 
+实现更新：GitHub **文档**来源、安全替换和固定链接已落地，见 [进度](OCTO-STATUS.md) 与 [配置说明](internal/datasource/connector/github/README.md)。下表保留设计复核时的原生基线；服务器目录、源码快照与混合用途仍待实现。
+
 ### 核对结论与复用边界
 
 本地核对基线 `0f73bbf`；证据是可执行注册与服务调用，不能把连接器元数据当成可用能力。
