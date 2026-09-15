@@ -137,3 +137,10 @@ func TestPreparedSyncSkipsUnchangedContent(t *testing.T) {
 	require.ErrorAs(t, err, &duplicate)
 	require.Empty(t, ks.r.events)
 }
+
+func TestPreparedSyncDoesNotAdoptWhileParserCanStillWrite(t *testing.T) {
+	now := time.Now()
+	for _, status := range []string{types.ParseStatusPending, types.ParseStatusProcessing, types.ParseStatusFinalizing} {
+		require.False(t, indexedForSync(&types.Knowledge{EnableStatus: "enabled", ProcessedAt: &now, ParseStatus: status}))
+	}
+}

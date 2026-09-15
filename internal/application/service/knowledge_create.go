@@ -170,6 +170,11 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		EmbeddingModelID: kb.EmbeddingModelID,
 		Metadata:         metadataJSON,
 	}
+	// Repository provenance must exist before enqueue: the parser carries this
+	// record through asynchronous saves, which would overwrite a later source patch.
+	if channel == types.ConnectorTypeGitHub && strings.HasPrefix(metadata["github_url"], "https://github.com/") {
+		knowledge.Source = metadata["github_url"]
+	}
 
 	if processOverrides != nil {
 		if err := knowledge.SetProcessOverrides(processOverrides); err != nil {

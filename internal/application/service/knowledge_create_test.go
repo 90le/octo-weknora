@@ -192,6 +192,16 @@ func TestCreateKnowledgeFromFilePersistsStoredFilePathOnCreate(t *testing.T) {
 	require.Equal(t, 1, task.calls)
 }
 
+func TestCreateKnowledgeFromGitHubPinsSourceBeforeParserEnqueue(t *testing.T) {
+	repo := &createKnowledgeFileRepoStub{}
+	svc := &knowledgeService{repo: repo, kbService: &createKnowledgeFileKBServiceStub{kb: &types.KnowledgeBase{ID: "kb-1"}}, fileSvc: &createKnowledgeFileServiceStub{}, task: &createKnowledgeTaskEnqueuerStub{}}
+	u := "https://github.com/test/docs/blob/0123456789012345678901234567890123456789/doc.txt"
+	k, err := svc.CreateKnowledgeFromFile(newCreateKnowledgeFileContext(), "kb-1", newMultipartFileHeader(t, "doc.txt", "hello"), map[string]string{"github_url": u}, nil, "", nil, types.ConnectorTypeGitHub, nil)
+	require.NoError(t, err)
+	require.Equal(t, u, k.Source)
+	require.Equal(t, u, repo.createdKnowledge.Source)
+}
+
 func TestCreateKnowledgeFromImageFallsBackWhenLegacyStorageConfigIsIncomplete(t *testing.T) {
 	t.Parallel()
 

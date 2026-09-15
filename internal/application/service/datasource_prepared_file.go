@@ -136,6 +136,7 @@ func (s *DataSourceService) ingestPreparedFile(ctx context.Context, ds *types.Da
 }
 
 func indexedForSync(k *types.Knowledge) bool {
-	return k != nil && k.EnableStatus == "enabled" && k.ProcessedAt != nil &&
-		(k.ParseStatus == types.ParseStatusCompleted || k.ParseStatus == types.ParseStatusProcessing || k.ParseStatus == types.ParseStatusFinalizing)
+	// Enabled means searchable, not quiescent: the parser may still save its
+	// original metadata during processing/finalizing. Adopt only after it finishes.
+	return k != nil && k.EnableStatus == "enabled" && k.ProcessedAt != nil && k.ParseStatus == types.ParseStatusCompleted
 }
