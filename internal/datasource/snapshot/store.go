@@ -69,13 +69,20 @@ func (b *Builder) Add(ctx context.Context, p string, body []byte, sourceURL, rev
 		b.Skip("binary_or_unsupported_encoding")
 		return nil
 	}
+	if bytes.HasPrefix(body, []byte("version https://git-lfs.github.com/spec/v1")) {
+		b.Skip("git_lfs_pointer")
+		return nil
+	}
 	if len(b.manifest.Files) >= MaxFiles || b.size+int64(len(body)) > MaxTotalBytes {
 		return errors.New("source snapshot limit exceeded; narrow the selected paths")
 	}
 	h := sha256.Sum256(body)
 	object := hex.EncodeToString(h[:])
 	target := filepath.Join(b.store.scope(b.ds), "objects", object)
-	if _, err := os.Stat(target); os.IsNotExist(err) {
+	if _, err := os.Stat(target); err != nil {
+		if !os.IsNotExist(err) {
+			return errors.New("source object unavailable")
+		}
 		f, err := os.CreateTemp(filepath.Dir(target), ".object-")
 		if err != nil {
 			return errors.New("cannot write source object")
@@ -150,6 +157,17 @@ func (s *Store) Load(ds *types.DataSource, cfg *types.DataSourceConfig, id strin
 	defer f.Close()
 	var m types.SourceSnapshot
 	if json.NewDecoder(io.LimitReader(f, 32<<20)).Decode(&m) != nil || m.ID != id || m.DataSourceID != ds.ID || m.TenantID != ds.TenantID || m.KnowledgeBaseID != ds.KnowledgeBaseID || m.Selection != Selection(cfg) {
+		return nil, ErrUnavailable
+	}
+	check := m
+	check.ID = ""
+	check.CreatedAt = time.Time{}
+	data, err := json.Marshal(check)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	hash := sha256.Sum256(data)
+	if hex.EncodeToString(hash[:]) != id {
 		return nil, ErrUnavailable
 	}
 	return &m, nil

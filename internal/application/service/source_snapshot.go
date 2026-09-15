@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/datasource"
@@ -239,6 +240,9 @@ func lineURL(base string, start, end int) string {
 	if base == "" {
 		return ""
 	}
+	if end < start {
+		return base
+	}
 	return fmt.Sprintf("%s#L%d-L%d", base, start, end)
 }
 func (s *DataSourceService) ReadSourceFile(ctx context.Context, kbID, sourceID, version, p string, start, end int) (*types.SourceRead, error) {
@@ -281,7 +285,7 @@ func (s *DataSourceService) ReadSourceFile(ctx context.Context, kbID, sourceID, 
 		content = strings.Join(lines[start-1:end], "\n")
 	}
 	if len(content) > 65536 {
-		content = content[:65536]
+		content = truncateSourceText(content, 65536)
 		truncated = true
 	}
 	revision := f.Revision
@@ -332,7 +336,7 @@ func (s *DataSourceService) SearchSourceFiles(ctx context.Context, kbID, sourceI
 				continue
 			}
 			if len(line) > 1200 {
-				line = line[:1200]
+				line = truncateSourceText(line, 1200)
 			}
 			out.Matches = append(out.Matches, types.SourceMatch{Path: f.Path, Line: i + 1, Text: line, SourceURL: lineURL(f.SourceURL, i+1, i+1)})
 			if len(out.Matches) >= 40 {
@@ -342,6 +346,16 @@ func (s *DataSourceService) SearchSourceFiles(ctx context.Context, kbID, sourceI
 		}
 	}
 	return out, nil
+}
+
+func truncateSourceText(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.ValidString(s[:n]) {
+		n--
+	}
+	return s[:n]
 }
 
 func removeSourceCache(ds *types.DataSource) {

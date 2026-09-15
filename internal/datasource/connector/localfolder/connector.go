@@ -293,6 +293,10 @@ func (c *Connector) walk(ctx context.Context, cfg *types.DataSourceConfig, visit
 				limit = 16 << 20
 			}
 			if before.Size() > limit {
+				if snapshot.IsSource(cfg) {
+					skip("too_large")
+					continue
+				}
 				return fmt.Errorf("source file exceeds size limit: %s", p)
 			}
 			f, err := dir.Open(e.Name())
@@ -364,6 +368,9 @@ func (c *Connector) FetchIncremental(ctx context.Context, cfg *types.DataSourceC
 			return errors.New("folder document batch limit exceeded; narrow directory selection")
 		}
 		items = append(items, types.FetchedItem{ExternalID: "local:" + s.RootID + ":" + p, FileName: path.Join(s.RootID, p), Title: p, Content: body, SourceResourceID: s.RootID, Metadata: map[string]string{"channel": Type, "source_type": Type, "source_version": version, "source_path": p}})
+		if len(body) == 0 {
+			items[len(items)-1].Metadata["fetch_error"] = "empty source document; previous version preserved"
+		}
 		return nil
 	}, func(string) {})
 	if err != nil {

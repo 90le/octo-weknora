@@ -60,12 +60,14 @@ func (c *Connector) BuildSnapshot(ctx context.Context, cfg *types.DataSourceConf
 	if resp.StatusCode != http.StatusOK {
 		return errors.New("GitHub archive unavailable; check access or rate limits")
 	}
-	gz, err := gzip.NewReader(io.LimitReader(resp.Body, 256<<20))
+	compressed := &io.LimitedReader{R: resp.Body, N: (256 << 20) + 1}
+	gz, err := gzip.NewReader(compressed)
 	if err != nil {
 		return errors.New("invalid GitHub archive")
 	}
 	defer gz.Close()
-	tr := tar.NewReader(io.LimitReader(gz, 1<<30))
+	expanded := &io.LimitedReader{R: gz, N: (1 << 30) + 1}
+	tr := tar.NewReader(expanded)
 	prefix := ""
 	found := map[string]bool{}
 	for {
@@ -134,6 +136,9 @@ func (c *Connector) BuildSnapshot(ctx context.Context, cfg *types.DataSourceConf
 		if root != "" && !found[root] {
 			return errors.New("selected repository path is missing")
 		}
+	}
+	if compressed.N <= 1 || expanded.N <= 1 {
+		return errors.New("repository archive exceeds its size limit")
 	}
 	return nil
 }
