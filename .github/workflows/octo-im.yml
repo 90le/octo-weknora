@@ -1,0 +1,22 @@
+name: Octo IM adapter
+on:
+  pull_request:
+    paths:
+      - internal/im/octo/**
+      - .github/workflows/octo-im.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  adapter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race ./internal/im/octo/... -count=1
