@@ -358,7 +358,7 @@ func isPublishedSearchKnowledge(k *types.Knowledge) bool {
 	if k == nil || k.EnableStatus != "enabled" {
 		return false
 	}
-	if k.Channel == types.ConnectorTypeGitHub {
+	if k.Channel == types.ConnectorTypeGitHub || k.Channel == "local_folder" {
 		var metadata map[string]string
 		if json.Unmarshal(k.Metadata, &metadata) != nil || metadata["sync_target_external_id"] != "" {
 			// The native indexer enables chunks before repository synchronization

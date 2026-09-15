@@ -295,11 +295,17 @@ func RegisterDataSourceRoutes(
 	credHandler *handler.DataSourceCredentialsHandler,
 	g *rbacGuards,
 ) {
+	read := g.apiKeyGroup(r.Group("/knowledge-bases/:id/sources"), apiKeyRetrieve(apiKeyFullAccess()))
+	read.GET("", g.Viewer(), g.KBAccessRead("id"), handler.SourceSnapshots)
+	read.GET("/:source_id/tree", g.Viewer(), g.KBAccessRead("id"), handler.SourceSnapshotTree)
+	read.GET("/:source_id/read", g.Viewer(), g.KBAccessRead("id"), handler.SourceSnapshotRead)
+	read.GET("/:source_id/search", g.Viewer(), g.KBAccessRead("id"), handler.SourceSnapshotSearch)
 	// Data source routes
 	ds := g.apiKeyGroup(r.Group("/datasource"), apiKeyManageDataSources(apiKeyFullAccess()))
 	{
 		// Get available connector types — Viewer+
 		ds.GET("/types", g.Viewer(), handler.GetAvailableConnectors)
+		ds.GET("/local-roots", g.Admin(), handler.SourceLocalRoots)
 
 		// Validate credentials without persistence (for "Test Connection" button) — Admin+
 		ds.POST("/validate-credentials", g.Admin(), handler.ValidateCredentials)

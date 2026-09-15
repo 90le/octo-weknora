@@ -15,6 +15,8 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/datasource"
+	"github.com/Tencent/WeKnora/internal/datasource/connector/localfolder"
+	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -209,7 +211,7 @@ func (s *DataSourceService) UpdateDataSource(ctx context.Context, ds *types.Data
 		configActuallyChanged = !reflect.DeepEqual(*mergedCfg, *existingParsedCfg)
 	}
 	hasCreds := mergedCfg != nil && mergedCfg.HasConfiguredCredentials(ds.Type)
-	if (hasCreds || ds.Type == types.ConnectorTypeGitHub) && (ds.Type != existing.Type || configActuallyChanged) {
+	if (hasCreds || ds.Type == types.ConnectorTypeGitHub || ds.Type == localfolder.Type) && (ds.Type != existing.Type || configActuallyChanged) {
 		if err := s.validateDataSourceConfig(ctx, ds); err != nil {
 			return nil, err
 		}
@@ -333,6 +335,8 @@ func (s *DataSourceService) DeleteDataSource(ctx context.Context, id string) err
 		return err
 	}
 
+	// Remove only generated source snapshots, never the input folder.
+	removeSourceCache(existing)
 	// Remove cron schedule
 	s.scheduler.Remove(id)
 
@@ -534,6 +538,8 @@ func (s *DataSourceService) PauseDataSource(ctx context.Context, id string) erro
 		return err
 	}
 
+	// Remove only generated source snapshots, never the input folder.
+	removeSourceCache(existing)
 	// Remove cron schedule
 	s.scheduler.Remove(id)
 
@@ -670,6 +676,9 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	// Surface the KB's multimodal/VLM state to the connector so it only extracts
 	// embedded images for OCR when the KB can actually ingest them (never persisted).
 	config.MultimodalEnabled = kb.IsMultimodalEnabled()
+	if snapshot.IsSource(config) {
+		return s.processSourceSnapshot(ctx, ds, config, connector, syncLog, wasPaused)
+	}
 
 	// Streaming path: connectors that support it interleave fetch→ingest→
 	// checkpoint so a large sync bounds memory and resumes after a timeout
@@ -766,7 +775,7 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 
 	// A repository manifest is only acknowledged after all selected documents
 	// are usable. Partial imports must be retried from the previous manifest.
-	if nextCursor != nil && (ds.Type != types.ConnectorTypeGitHub || result.Failed == 0) {
+	if nextCursor != nil && ((ds.Type != types.ConnectorTypeGitHub && ds.Type != localfolder.Type) || result.Failed == 0) {
 		cursorJSON, _ := nextCursor.ToJSON()
 		ds.LastSyncCursor = cursorJSON
 	}
@@ -1242,7 +1251,7 @@ func (s *DataSourceService) validateDataSourceConfig(ctx context.Context, ds *ty
 //
 // Returns (isUpdate, error) — isUpdate is true when an existing item was replaced.
 func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource, item *types.FetchedItem, tagIDs []string) (bool, error) {
-	if ds.Type == types.ConnectorTypeGitHub {
+	if ds.Type == types.ConnectorTypeGitHub || ds.Type == localfolder.Type {
 		return s.ingestPreparedFile(ctx, ds, item, tagIDs)
 	}
 	// Channel decides the knowledge "source" label shown in the UI. Prefer the

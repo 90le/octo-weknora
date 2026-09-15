@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/datasource"
+	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -132,6 +133,11 @@ func (c *Connector) get(ctx context.Context, cfg *types.DataSourceConfig, endpoi
 	return nil
 }
 func (c *Connector) Validate(ctx context.Context, cfg *types.DataSourceConfig) error {
+	if cfg != nil && snapshot.IsSource(cfg) {
+		if _, err := snapshot.FromEnvironment(); err != nil {
+			return err
+		}
+	}
 	if cfg == nil {
 		return datasource.ErrInvalidConfig
 	}

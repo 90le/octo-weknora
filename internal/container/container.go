@@ -62,6 +62,7 @@ import (
 	githubConnector "github.com/Tencent/WeKnora/internal/datasource/connector/github"
 	gitlabConnector "github.com/Tencent/WeKnora/internal/datasource/connector/gitlab"
 	imaConnector "github.com/Tencent/WeKnora/internal/datasource/connector/ima"
+	localFolderConnector "github.com/Tencent/WeKnora/internal/datasource/connector/localfolder"
 	notionConnector "github.com/Tencent/WeKnora/internal/datasource/connector/notion"
 	rssConnector "github.com/Tencent/WeKnora/internal/datasource/connector/rss"
 	yuqueConnector "github.com/Tencent/WeKnora/internal/datasource/connector/yuque"
@@ -1718,6 +1719,9 @@ func initConnectorRegistry() (*datasource.ConnectorRegistry, error) {
 		errs = errors.Join(errs, fmt.Errorf("register github connector: %w", err))
 	}
 
+	if err := registry.Register(localFolderConnector.NewConnector()); err != nil {
+		errs = errors.Join(errs, err)
+	}
 	// Future connectors will be registered here:
 	// if err := registry.Register(confluenceConnector.NewConnector()); err != nil { ... }
 
