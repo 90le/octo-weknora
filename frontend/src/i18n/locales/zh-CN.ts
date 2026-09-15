@@ -721,6 +721,10 @@ export default {
     isRequired: '为必填项',
     credentialsLabel: '凭证',
     source: {
+      "snapshotHint": "每次同步生成只读快照，未变化的内容复用；失败时保留上一份可用快照。",
+      "snapshot": "只读快照",
+      "platformLink": "平台文件链接",
+      "search": "搜索",
       "usage": "来源用途",
       "documents": "文档入库",
       "readonly": "源码与文本只读",
@@ -887,7 +891,7 @@ export default {
       ima: '同步腾讯 IMA 知识库中的文档、笔记与文件（暂不支持 AI 会话与视频解析）',
       rss: '同步 RSS / Atom 订阅源中的文章',
       local_folder: '从获准服务器目录同步文档或读取完整源码',
-      github: '同步 GitHub 仓库文档（不向量化源码）',
+      github: '同步仓库文档或只读检索完整源码',
       gitlab: '同步 GitLab 项目中的文件'
     },
     connector: {

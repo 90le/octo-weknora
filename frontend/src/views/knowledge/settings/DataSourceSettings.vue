@@ -279,7 +279,7 @@ onBeforeUnmount(stopPolling)
               </div>
             </div>
             <p class="ds-card__subtitle">
-              {{ connectorLabel(ds.type) }} · {{ syncModeLabel(ds.sync_mode) }}
+              {{ connectorLabel(ds.type) }} · {{ ds.config?.settings?.mode === 'source' ? t('datasource.source.snapshot') : syncModeLabel(ds.sync_mode) }}
               <span class="ds-card__sep">·</span>
               <span class="ds-card__status" :class="`ds-card__status--${ds.status}`">
                 <span class="ds-status-dot" aria-hidden="true" />
