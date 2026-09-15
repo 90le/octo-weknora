@@ -14,6 +14,7 @@ import { humanizeCron, relativeTime } from '@/utils/cronHumanize'
 import DataSourceEditorDialog from './DataSourceEditorDialog.vue'
 import DataSourceSyncLogs from './DataSourceSyncLogs.vue'
 import DataSourceTypeIcon from './DataSourceTypeIcon.vue'
+import SourceBrowserDrawer from './SourceBrowserDrawer.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{ kbId: string }>()
@@ -31,6 +32,8 @@ const loading = ref(false)
 const editorVisible = ref(false)
 const editingDs = ref<DataSource | null>(null)
 const logsVisible = ref(false)
+const sourceVisible = ref(false)
+const sourceId = ref('')
 const logsDsId = ref('')
 const logsDsName = ref('')
 const pollTimer = ref<number | null>(null)
@@ -224,6 +227,7 @@ onBeforeUnmount(stopPolling)
                   </t-button>
                   <template #dropdown>
                     <t-dropdown-menu>
+                      <t-dropdown-item v-if="ds.config?.settings?.mode === 'source'" @click="sourceId=ds.id;sourceVisible=true">{{ t('datasource.source.browse') }}</t-dropdown-item>
                       <t-dropdown-item v-if="canManageDataSource" @click="openEdit(ds)">
                         <t-icon name="edit" /> {{ t('datasource.edit') }}
                       </t-dropdown-item>
@@ -337,6 +341,7 @@ onBeforeUnmount(stopPolling)
       :data-source-name="logsDsName"
     />
   </div>
+  <SourceBrowserDrawer v-model:visible="sourceVisible" :kb-id="kbId" :initial-source-id="sourceId" />
 </template>
 
 <style scoped lang="less">

@@ -18,6 +18,8 @@ import {
 } from '@/api/datasource'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import GitHubSourceFields from './GitHubSourceFields.vue'
+import SourceModeFields from './SourceModeFields.vue'
+import LocalFolderSourceFields from './LocalFolderSourceFields.vue'
 import DataSourceTypeIcon from './DataSourceTypeIcon.vue'
 import { getDatasourceIconUrl } from './datasourceIcons'
 
@@ -627,6 +629,7 @@ const connectorDefs = computed<ConnectorDef[]>(() => [
       { key: 'auth_headers', labelKey: 'datasource.field.authHeaders', placeholder: '', optional: true, hintKey: 'datasource.field.authHeadersHint', fieldType: 'custom_headers' },
     ],
   },
+  { type: 'local_folder', available: true, docUrl: '', permissionDocUrl: '', permissionPageUrl: '', requiredPermissions: [], fields: [] },
   {
     type: 'github', available: true, docUrl: 'https://docs.github.com/en/rest/repos/contents', permissionDocUrl: '', permissionPageUrl: '', requiredPermissions: [],
     fields: [
@@ -775,7 +778,7 @@ function selectType(def: ConnectorDef) {
   form.value.name = t(`datasource.connector.${def.type}`)
   form.value.config.credentials = {}
   form.value.config.settings = {}
-  if (def.type === 'github') form.value.sync_deletions = false
+  if (def.type === 'github' || def.type === 'local_folder') form.value.sync_deletions = false
   if (isGitLabConnector(def.type)) addGitLabProject()
   rssAuthHeaders.value = []
   step.value = 1
@@ -1021,6 +1024,9 @@ async function nextStep() {
     MessagePlugin.warning(t('datasource.github.repositoryRequired'))
     return
   }
+  if (step.value === 2 && form.value.type === 'local_folder' && !form.value.config.settings.root_id) {
+    MessagePlugin.warning(t('datasource.source.chooseRoot')); return
+  }
   step.value++
   if (step.value === 2) {
     // Drive connectors need a user-supplied folder_token before listing.
@@ -1033,7 +1039,7 @@ async function nextStep() {
       }
       return
     }
-    if (isGitLabConnector(form.value.type) || form.value.type === 'github') return
+    if (isGitLabConnector(form.value.type) || form.value.type === 'github' || form.value.type === 'local_folder') return
     loadResources()
   }
 }
@@ -1236,7 +1242,7 @@ const drawerConfirmText = computed(() => {
     v-model:visible="visible"
     :title="drawerTitle"
     :description="drawerDescription"
-    :class="[form.type ? `datasource-editor-drawer datasource-editor-drawer--${form.type}` : 'datasource-editor-drawer', { 'ds-fixed-step': step === 2 && !isGitLabConnector(form.type) && form.type !== 'github' }]"
+    :class="[form.type ? `datasource-editor-drawer datasource-editor-drawer--${form.type}` : 'datasource-editor-drawer', { 'ds-fixed-step': step === 2 && !isGitLabConnector(form.type) && !['github','local_folder'].includes(form.type) }]"
     :hide-footer="step === 0"
     :confirm-text="drawerConfirmText"
     :confirm-loading="submitting || (step === 1 && testing)"
@@ -1572,7 +1578,9 @@ const drawerConfirmText = computed(() => {
 
     <!-- Step 2: Select resources -->
     <section v-if="step === 2" class="setting-drawer__section ds-resource-section">
+      <SourceModeFields v-if="['github','local_folder'].includes(form.type)" v-model="form.config.settings" />
       <GitHubSourceFields v-if="form.type === 'github'" v-model="form.config.settings" />
+      <LocalFolderSourceFields v-else-if="form.type === 'local_folder'" v-model="form.config.settings" />
       <template v-else-if="isGitLabConnector(form.type)">
         <h4 class="setting-drawer__section-title">{{ t('datasource.gitlab.projects') }}</h4>
         <p class="ds-resource-hint">{{ t('datasource.gitlab.projectsHint') }}</p>
@@ -1820,7 +1828,7 @@ const drawerConfirmText = computed(() => {
         </div>
 
         <div class="form-item form-item--flat">
-          <t-checkbox v-model="form.sync_deletions">{{ t('datasource.syncDeletions') }}</t-checkbox>
+          <t-checkbox v-if="form.config.settings.mode !== 'source'" v-model="form.sync_deletions">{{ t('datasource.syncDeletions') }}</t-checkbox>
         </div>
       </section>
     </template>

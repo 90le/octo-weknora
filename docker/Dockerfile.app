@@ -124,6 +124,9 @@ RUN if [ -n "$APK_MIRROR_ARG" ]; then \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# Read-only local-repository provenance uses git builtins (no hooks or filters).
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
 # Create data directories and set permissions
 RUN mkdir -p /data/files && \
     chown -R appuser:appuser /app /data/files

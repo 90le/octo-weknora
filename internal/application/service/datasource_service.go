@@ -538,8 +538,6 @@ func (s *DataSourceService) PauseDataSource(ctx context.Context, id string) erro
 		return err
 	}
 
-	// Remove only generated source snapshots, never the input folder.
-	removeSourceCache(existing)
 	// Remove cron schedule
 	s.scheduler.Remove(id)
 
