@@ -67,9 +67,10 @@ func (c *apiClient) request(ctx context.Context, method, path string, body any, 
 		return errors.New("empty Octo API response")
 	}
 	var envelope map[string]json.RawMessage
-	if json.Unmarshal(raw, &envelope) != nil {
+	if !json.Valid(raw) {
 		return errors.New("invalid Octo API JSON")
 	}
+	_ = json.Unmarshal(raw, &envelope) // Native member lists are raw arrays.
 	if success, ok := envelope["success"]; ok && string(success) != "true" {
 		return errors.New("Octo API rejected request")
 	}

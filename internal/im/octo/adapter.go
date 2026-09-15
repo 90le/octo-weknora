@@ -28,8 +28,16 @@ import (
 const Platform im.Platform = "octo"
 
 type Adapter struct {
-	api *apiClient
-	uid string
+	api    *apiClient
+	uid    string
+	policy func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error)
+}
+
+func (a *Adapter) AuthorizeExecution(ctx context.Context, channel *im.IMChannel, msg *im.IncomingMessage) (*im.ExecutionScope, error) {
+	if a.policy == nil {
+		return nil, im.ErrScopeDenied
+	}
+	return a.policy(ctx, channel, msg)
 }
 
 var _ im.Adapter = (*Adapter)(nil)

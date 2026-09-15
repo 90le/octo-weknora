@@ -1708,6 +1708,10 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 	if scopeErr != nil {
 		return scopeErr
 	}
+	msg.executionScope = scope
+	if channel.Platform == "octo" && channel.SessionMode == string(SessionModeThread) {
+		return fmt.Errorf("Octo requires per-user sessions within each group or subarea")
+	}
 	threadID := ""
 	if channel.SessionMode == string(SessionModeThread) {
 		threadID = msg.ThreadID
@@ -2312,12 +2316,26 @@ func imInitialSessionTitle(msg *IncomingMessage, identityTitle func(*IncomingMes
 // re-maps an existing session, that JOIN needs a one-row-per-session guard.
 func (s *Service) resolveUserSession(ctx context.Context, msg *IncomingMessage, tenantID uint64, agentID string, imChannelID string) (*ChannelSession, error) {
 	var cs ChannelSession
-	result := s.db.Where("platform = ? AND user_id = ? AND chat_id = ? AND tenant_id = ? AND agent_id = ? AND deleted_at IS NULL",
-		string(msg.Platform), msg.UserID, msg.ChatID, tenantID, agentID).
-		First(&cs)
+	lookup := func() *gorm.DB {
+		query := s.db.WithContext(ctx).Where("platform = ? AND user_id = ? AND chat_id = ? AND tenant_id = ? AND agent_id = ? AND deleted_at IS NULL",
+			string(msg.Platform), msg.UserID, msg.ChatID, tenantID, agentID)
+		if msg.Platform == "octo" {
+			query = query.Where("im_channel_id = ?", imChannelID)
+		}
+		return query
+	}
+	result := lookup().First(&cs)
 
 	if result.Error == nil {
-		return &cs, nil
+		if sessionScopeMatches(&cs, msg.executionScope) {
+			return &cs, nil
+		}
+		// Keep historical messages for audit, but never reattach a conversation
+		// whose knowledge access was narrowed or revoked and reconfigured.
+		if err := s.db.WithContext(ctx).Delete(&cs).Error; err != nil {
+			return nil, err
+		}
+		result.Error = gorm.ErrRecordNotFound
 	}
 
 	if result.Error != gorm.ErrRecordNotFound {
@@ -2350,16 +2368,18 @@ func (s *Service) resolveUserSession(ctx context.Context, msg *IncomingMessage, 
 		TenantID:    tenantID,
 		AgentID:     agentID,
 		IMChannelID: imChannelID,
+		Metadata:    sessionScopeMetadata(msg.executionScope),
 	}
 	if err := s.db.Create(&cs).Error; err != nil {
 		if delErr := s.db.Where("id = ?", createdSession.ID).Delete(createdSession).Error; delErr != nil {
 			logger.Warnf(ctx, "[IM] Failed to clean up orphaned session %s: %v", createdSession.ID, delErr)
 		}
 		var existing ChannelSession
-		if findErr := s.db.Where("platform = ? AND user_id = ? AND chat_id = ? AND tenant_id = ? AND agent_id = ? AND deleted_at IS NULL",
-			string(msg.Platform), msg.UserID, msg.ChatID, tenantID, agentID).
-			First(&existing).Error; findErr != nil {
+		if findErr := lookup().First(&existing).Error; findErr != nil {
 			return nil, fmt.Errorf("create channel session: %w (lookup fallback: %v)", err, findErr)
+		}
+		if !sessionScopeMatches(&existing, msg.executionScope) {
+			return nil, ErrScopeDenied
 		}
 		return &existing, nil
 	}

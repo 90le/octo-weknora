@@ -46,6 +46,8 @@ const (
 
 // IncomingMessage is the unified message parsed from an IM callback.
 type IncomingMessage struct {
+	// Set only by the native service after ExecutionAuthorizer succeeds.
+	executionScope *ExecutionScope
 	// Platform identifies which IM platform the message comes from.
 	Platform Platform
 	// MessageType is "text" (default) or "file".

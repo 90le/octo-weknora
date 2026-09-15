@@ -66,6 +66,25 @@ func scopeFingerprint(scope *ExecutionScope) string {
 	return hex.EncodeToString(hash[:])
 }
 
+func sessionScopeMetadata(scope *ExecutionScope) types.JSON {
+	if scope == nil {
+		return nil
+	}
+	data, _ := json.Marshal(map[string]string{"execution_scope": scopeFingerprint(scope)})
+	return types.JSON(data)
+}
+
+func sessionScopeMatches(session *ChannelSession, scope *ExecutionScope) bool {
+	if scope == nil {
+		return true
+	}
+	var metadata map[string]string
+	if json.Unmarshal(session.Metadata, &metadata) != nil {
+		return false
+	}
+	return metadata["execution_scope"] == scopeFingerprint(scope)
+}
+
 // scopeAgent uses a per-request deep copy. An IM user must not mutate the shared
 // Agent configuration or widen a selected knowledge collection through a tool.
 // Public scoped channels initially expose audited read-only knowledge tools.
