@@ -17,6 +17,14 @@ registered in the production IM factory catalog.
   network access and no credential forwarding or redirects.
 - Unsigned HTTP callbacks rejected. Structured events and self messages do not
   become Agent questions. No automatic file-to-KB publishing here.
+- Scoped GROUP.md / THREAD.md reads using official APIs, with explicit origin,
+  version and parent/subarea labels. No global files or cross-account caches;
+  deletion is visible on the next fetch, failed child reads do not silently use
+  only the parent as complete context. Call only after scope authorization.
+- Bundled `octo-bot-api` and `octo-card-message` instruction files, adapted for
+  WeKnora and parsed through its native SkillSource interface. They carry no
+  executable directory, credentials or automatic registration/greeting behavior.
+  They are not yet attached to live Agent turns or installed globally.
 
 ## Required before activation
 
@@ -54,8 +62,9 @@ No production switch, no real Bot registration or messaging was performed by the
 unit tests. Real protocol parity and deployment remain unverified. Outbound file
 upload, rich card/stream lifecycle and card callbacks are not yet implemented.
 Skills, CLI and MCP remain native Agent tool capabilities requiring their own
-authorization; the transport never grants them. GROUP.md/mention preferences and
-native member display-name hydration are separate platform metadata integrations.
+authorization; the transport never grants them. Attaching channel skills and scope
+documents to authorized native Agent turns remains part of runtime integration.
+Mention preferences and member display-name hydration are still pending.
 The initial host policy accepts only official `im.deepminer.com.cn` WSS and
 `cdn.deepminer.com.cn` attachments; enterprise/custom endpoints need explicit
 administrator policy rather than trusting a server-returned arbitrary URL.
@@ -68,6 +77,11 @@ especially `src/socket.ts`, `src/types.ts`, `src/api-fetch.ts`, `src/group-md.ts
 The Go implementation is local to this package; upstream protocol-derived
 constants and key derivation are kept for interoperability, not proposed as a
 new cryptographic design.
+
+The bundled instructions are locally authored adaptations of the upstream skill
+design, not verbatim copies of its OpenClaw installation/credential instructions.
+GROUP.md and THREAD.md are channel-authored context, not system policy. Thread
+guidance can refine group conversation conventions but never grant wider access.
 
 Run `go test ./internal/im/octo/wire` for transport fixtures and
 `go test ./internal/im/octo/...` for adapter contracts. Adapter tests require the

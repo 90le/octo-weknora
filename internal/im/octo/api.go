@@ -30,11 +30,19 @@ func newAPI(token string) (*apiClient, error) {
 }
 
 func (c *apiClient) post(ctx context.Context, path string, body any, out any) error {
-	b, err := json.Marshal(body)
-	if err != nil {
-		return err
+	return c.request(ctx, http.MethodPost, path, body, out)
+}
+
+func (c *apiClient) request(ctx context.Context, method, path string, body any, out any) error {
+	var reader io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, reader)
 	if err != nil {
 		return errors.New("invalid Octo API request")
 	}
