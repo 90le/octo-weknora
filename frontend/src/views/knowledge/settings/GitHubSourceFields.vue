@@ -20,7 +20,7 @@ const paths = computed({
 
 <template>
   <h4 class="setting-drawer__section-title">{{ t('datasource.github.repository') }}</h4>
-  <p class="github-source-hint">{{ t('datasource.github.hint') }}</p>
+  <p class="github-source-hint">{{ t(settings.mode === 'source' ? 'datasource.source.archiveHint' : 'datasource.github.hint') }}</p>
   <t-form label-align="top">
     <t-form-item :label="t('datasource.github.repository')" required>
       <t-input v-model="repository" placeholder="owner/repository" />

@@ -25,17 +25,17 @@ func (s *DataSourceService) ingestPreparedFile(ctx context.Context, ds *types.Da
 		if err := json.Unmarshal(old.Metadata, &oldMeta); err != nil {
 			return false, err
 		}
-		if oldMeta["github_blob_sha"] == item.Metadata["github_blob_sha"] && indexedForSync(old) {
+		if sourceItemVersion(oldMeta) == sourceItemVersion(item.Metadata) && indexedForSync(old) {
 			return false, types.NewDuplicateFileError(old)
 		}
 		if ds.ConflictStrategy == types.ConflictStrategySkip {
 			return false, types.NewDuplicateFileError(old)
 		}
 	}
-	if len(item.Content) == 0 || item.Metadata["github_blob_sha"] == "" {
+	if len(item.Content) == 0 || sourceItemVersion(item.Metadata) == "" {
 		return old != nil, fmt.Errorf("repository document has no content or version")
 	}
-	candidateID := item.ExternalID + ":pending:" + item.Metadata["github_blob_sha"]
+	candidateID := item.ExternalID + ":pending:" + sourceItemVersion(item.Metadata)
 	candidate, err := repo.FindByDataSourceExternalID(ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID, candidateID)
 	if err != nil {
 		return old != nil, err
@@ -139,4 +139,11 @@ func indexedForSync(k *types.Knowledge) bool {
 	// Enabled means searchable, not quiescent: the parser may still save its
 	// original metadata during processing/finalizing. Adopt only after it finishes.
 	return k != nil && k.EnableStatus == "enabled" && k.ProcessedAt != nil && k.ParseStatus == types.ParseStatusCompleted
+}
+
+func sourceItemVersion(meta map[string]string) string {
+	if value := meta["source_version"]; value != "" {
+		return value
+	}
+	return meta["github_blob_sha"]
 }

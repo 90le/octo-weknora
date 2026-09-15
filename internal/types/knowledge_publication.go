@@ -8,7 +8,7 @@ func IsPublishedKnowledgeForAnswer(k *Knowledge) bool {
 	if k == nil || k.EnableStatus != "enabled" {
 		return false
 	}
-	if k.Channel == ConnectorTypeGitHub {
+	if k.Channel == ConnectorTypeGitHub || k.Channel == "local_folder" {
 		var metadata map[string]string
 		if json.Unmarshal(k.Metadata, &metadata) != nil || metadata["sync_target_external_id"] != "" {
 			return false

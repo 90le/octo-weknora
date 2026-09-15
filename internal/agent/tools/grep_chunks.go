@@ -426,6 +426,18 @@ func (t *GrepChunksTool) searchChunks(
 		return nil, err
 	}
 
+	if types.HasIMKnowledgeScope(ctx) && len(results) > 0 {
+		ids := make([]string, 0, len(results))
+		for _, result := range results {
+			ids = append(ids, result.KnowledgeID)
+		}
+		var documents []*types.Knowledge
+		if err := t.db.WithContext(ctx).Where("id IN ?", ids).Find(&documents).Error; err != nil {
+			return nil, fmt.Errorf("check publication: %w", err)
+		}
+		results = publishedGrepChunks(results, documents)
+	}
+
 	if len(results) > 0 {
 		knowledgeIDSet := make(map[string]struct{})
 		for _, r := range results {
@@ -1018,4 +1030,21 @@ func (t *GrepChunksTool) tokenizeSimple(text string) map[string]struct{} {
 // jaccard calculates Jaccard similarity between two token sets
 func (t *GrepChunksTool) jaccard(a, b map[string]struct{}) float64 {
 	return searchutil.Jaccard(a, b)
+}
+
+// Filter before snippets and model citations; missing rows fail closed.
+func publishedGrepChunks(results []chunkWithTitle, documents []*types.Knowledge) []chunkWithTitle {
+	allowed := make(map[string]bool, len(documents))
+	for _, document := range documents {
+		if types.IsPublishedKnowledgeForAnswer(document) {
+			allowed[document.ID] = true
+		}
+	}
+	filtered := make([]chunkWithTitle, 0, len(results))
+	for _, result := range results {
+		if allowed[result.KnowledgeID] {
+			filtered = append(filtered, result)
+		}
+	}
+	return filtered
 }

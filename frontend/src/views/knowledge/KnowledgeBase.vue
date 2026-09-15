@@ -7,6 +7,7 @@ import { useRoute, useRouter } from 'vue-router';
 import EmptyKnowledge from '@/components/empty-knowledge.vue';
 import ContextualGuide from '@/components/ContextualGuide.vue';
 import OctoKBUses from '@/views/integrations/OctoKBUses.vue';
+import SourceBrowserDrawer from './settings/SourceBrowserDrawer.vue';
 import KBInfoPopover from '@/components/KBInfoPopover.vue';
 import KBSwitcherDropdown from '@/components/KBSwitcherDropdown.vue';
 import { getSessionsList, createSessions, generateSessionsTitle } from "@/api/chat/index";
@@ -82,6 +83,8 @@ const route = useRoute();
 const { t } = useI18n();
 const kbId = computed(() => (route.params as any).kbId as string || '');
 const kbInfo = ref<any>(null);
+const sourceBrowserVisible = ref(false);
+watch(()=>[kbId.value,route.query.source_id],()=>{if(kbId.value && route.query.source_id)sourceBrowserVisible.value=true},{immediate:true});
 const uploadSourceRef = ref<InstanceType<typeof KbUploadSourceDropdown> | null>(null);
 const uploading = ref(false);
 const kbLoading = ref(false);
@@ -2383,6 +2386,7 @@ async function createNewSession(value: string): Promise<void> {
             </h2>
             <!-- 标题行右侧的动作锚点：聚拢"信息"和"设置"两个圆形按钮。 -->
             <div class="kb-title-actions">
+              <t-button v-if="kbId" variant="text" size="small" @click="sourceBrowserVisible=true">{{ t('datasource.source.browse') }}</t-button>
               <OctoKBUses v-if="kbId && (authStore.hasRole('admin') || authStore.canAccessAllTenants)" :kb-id="kbId" />
               <KBInfoPopover v-if="kbInfo && !authStore.isLiteMode" :kb-info="kbInfo"
                 :supported-file-types="[...supportedFileTypes]" />
@@ -2764,6 +2768,9 @@ async function createNewSession(value: string): Promise<void> {
     :is-faq="isFAQ"
     @changed="onTagManageChanged"
   />
+  <SourceBrowserDrawer v-model:visible="sourceBrowserVisible" :kb-id="kbId"
+    :initial-source-id="String(route.query.source_id||'')" :initial-path="String(route.query.source_path||'')"
+    :initial-snapshot-id="String(route.query.snapshot_id||'')" :initial-line="Number(route.query.source_line||1)" />
 </template>
 <style>
 /* 下拉菜单容器样式已统一至 @/assets/dropdown-menu.less */

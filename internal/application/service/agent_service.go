@@ -903,6 +903,7 @@ func (s *agentService) registerTools(
 	if !hasKnowledge {
 		filteredTools := make([]string, 0)
 		kbTools := map[string]bool{
+			tools.ToolSourceBrowse:        true,
 			tools.ToolKnowledgeSearch:     true,
 			tools.ToolGrepChunks:          true,
 			tools.ToolListKnowledgeChunks: true,
@@ -1038,6 +1039,9 @@ func (s *agentService) registerTools(
 			toolToRegister = tools.NewSequentialThinkingTool()
 		case tools.ToolTodoWrite:
 			toolToRegister = tools.NewTodoWriteTool()
+		case tools.ToolSourceBrowse:
+			reader := &DataSourceService{dsRepo: repository.NewDataSourceRepository(s.db), kbService: s.knowledgeBaseService}
+			toolToRegister = tools.NewSourceBrowseTool(reader, s.knowledgeBaseService, config.SearchTargets)
 		case tools.ToolKnowledgeSearch:
 			toolToRegister = tools.NewKnowledgeSearchTool(
 				s.knowledgeBaseService,
