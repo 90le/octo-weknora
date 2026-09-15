@@ -1,94 +1,59 @@
-# Octo native IM adapter — implementation checkpoint
+# Octo 原生 IM 渠道
 
-This package targets WeKnora's `im.Adapter` / `im.FileDownloader` contracts. It
-does not embed OpenClaw or call a second conversational Agent. It is not yet
-registered in the production IM factory catalog.
+本模块扩展 WeKnora 原生 IM、Agent、知识检索与技能接口。消息直接进入 WeKnora；没有额外的对话代理进程。私聊、群与子区均保留 Octo 原生身份和消息 ID。
 
-## Implemented
+## 当前交付
 
-- WuKongIM v4 binary framing, per-connection X25519 handshake and AES-CBC payload
-  decoding; packet size limits, bounded decoding, full decimal message IDs.
-- WSS connection deadlines, heartbeat, cancellation and inbound acknowledgments.
-  An accept callback must acknowledge only deliberately ignored or accepted input.
-- Bot registration, reconnect backoff, identity consistency and server-kick stop.
-- Native DM, group and subarea mapping, UID mentions, quoted text/file metadata,
-  full reply with original quote snapshot, UTF-16 mention positions.
-- Native attachment download with size limits, approved CDN origin, guarded
-  network access and no credential forwarding or redirects.
-- Unsigned HTTP callbacks rejected. Structured events and self messages do not
-  become Agent questions. No automatic file-to-KB publishing here.
-- Scoped GROUP.md / THREAD.md reads using official APIs, with explicit origin,
-  version and parent/subarea labels. No global files or cross-account caches;
-  deletion is visible on the next fetch, failed child reads do not silently use
-  only the parent as complete context. Call only after scope authorization.
-- Bundled `octo-bot-api` and `octo-card-message` instruction files, adapted for
-  WeKnora and parsed through its native SkillSource interface. They carry no
-  executable directory, credentials or automatic registration/greeting behavior.
-  They are not yet attached to live Agent turns or installed globally.
+- 原生 IM 配置入口、WebSocket 渠道工厂，引用当前工作区已加密的 Octo 连接；不重复保存 Bot Token。
+- 注册身份校验、X25519 握手、AES-CBC 消息解码、心跳、取消与重连；消息 ID 保留完整整数精度。
+- 私聊按明确 UID 白名单放行；群／子区校验实际成员身份与当前绑定，未绑定不回退全库。
+- 普通 Bot 默认忽略；显式白名单仅允许参与问答。管理员 Bot 需要服务端提供可验证的 bot_admin 字段，不以姓名或普通成员角色猜测权限。
+- 请求排队前授权，执行前再次核对；改变知识范围后新建会话，保留旧会话供审计。不同 Bot 共用 Agent 时不会复用彼此对话。
+- 原生 @、引用原文、平台姓名、子区原频道回复；系统事件与流片段不作为用户提问，NO_REPLY 不发送到客户端。
+- 受控附件下载与文本附件问答；附件不会因渠道绑定而自动入库。
+- GROUP.md／THREAD.md 按当前 Bot、群和子区读取。带版本及来源标签；进入模型参考上下文，不污染检索关键词，不授予权限。
+- 两份内嵌只读渠道 skill 经原生 SkillSource 按需读取。只在当前回合挂载，不替换用户安装的技能，不提供可执行目录。同名冲突显式报错。
 
-## Required before activation
+## 配置入口
 
-The native IM execution path now has an `ExecutionAuthorizer` hook: Octo fails
-closed without it, authorizes before queue admission, rechecks the scope revision
-before QA/attachments, uses an isolated read-only Agent copy with explicit KBs,
-and does not auto-ingest channel attachments. The actual Octo membership/binding
-authorizer, session revocation/isolation and factory/UI wiring remain pending.
+1. 在「设置 → Octo 群与子区」中保存加密连接，核对真实群／子区并绑定知识库。
+2. 在原生 IM 集成中新增 Octo 渠道，选择 Agent 和已有连接，填写该连接对应的 Bot UID。
+3. 群使用各自的区域绑定；私聊另选可查询知识库并填写允许的原生用户 UID。留空拒绝私聊。
+4. 如需联调 Bot，可明确填写 Bot UID 白名单；它仍必须属于对应群／子区，不因此取得知识维护权限。
+5. 当前使用完整文本输出、群／子区内按用户隔离会话。启用前确认同一 Bot 没有同时连接另一接收服务。轮换连接后重新启用渠道。
 
-The existing IM service falls back to Agent-configured KBs when no explicit KBs
-are supplied. It also supports channel-level automatic attachment ingestion.
-Neither behavior is an authorization mechanism for public Octo groups.
+模型沿用原生 Agent 配置。普通 RAG 问答可以直接使用现有配置；智能体启用 knowledge_search 时，原生机制要求配置 rerank_model_id。无需重排的 grep_chunks 等工具可以独立使用。渠道不伪造重排模型，也不修改共享 Agent 的持久配置。
 
-1. Add a trusted execution scope hook to native IM. Resolve tenant + configured
-   Bot identity + parent group + subarea + verified native sender before executing
-   QA or downloading/ingesting attachments. Recheck at execution and tool access;
-   empty bindings must not select the Agent's entire knowledge collection.
-2. Wire `octo_scopes` through a dedicated runtime authorizer, not its admin HTTP
-   diagnostics. Include membership, Bot policy, inherited read bindings, removal
-   and stale identity handling. Keep public IM principals read-only by default.
-3. Namespace dedup by channel/Bot and maintain per-user sessions partitioned by
-   the full native group/subarea channel key. A subarea is not a quote thread.
-   Native `resolveUserSession` currently keys by platform/user/chat/tenant/agent
-   without IMChannelID in its lookup. Thus two Bots sharing an Agent can collide,
-   including DMs with empty ChatID. Add an explicit channel/session namespace;
-   do not change the real outgoing channel ID to disguise this missing dimension.
-   Revoke/reset stale session knowledge access when bindings change.
-4. Persist inbound acceptance and downstream failure state. The current runner
-   delegates durable queuing to its `accept` callback; it does not promise
-   exactly-once Agent execution or durable delivery on its own.
-5. Add native factory registration, credentials/identity handling, frontend IM
-   selection and readiness reporting only with the above enforcement. Never
-   present a socket upgrade as authenticated/usable before CONNACK.
-6. Live isolated Bot acceptance: mention and no-mention policy, interleaved
-   people, subarea isolation, proper user-card mentions, quote preview, file
-   download/delivery, reconnect and unchanged private OpenClaw Bot behavior.
+## 授权边界
 
-## Explicitly pending
+当前公共渠道采用只读知识能力。原生运行配置在每个授权回合收窄知识目标，禁止借默认值回退全库，并隔离浏览器、MCP、沙箱、跨会话记忆等未经本回合授权的能力。其他渠道和私人 Agent 的配置保持原样。后续知识维护、源码工具等须接入相应业务授权后再开放，不能仅靠修改 skill 放行。
 
-No production switch, no real Bot registration or messaging was performed by the
-unit tests. Real protocol parity and deployment remain unverified. Outbound file
-upload, rich card/stream lifecycle and card callbacks are not yet implemented.
-Skills, CLI and MCP remain native Agent tool capabilities requiring their own
-authorization; the transport never grants them. Attaching channel skills and scope
-documents to authorized native Agent turns remains part of runtime integration.
-Mention preferences and member display-name hydration are still pending.
-The initial host policy accepts only official `im.deepminer.com.cn` WSS and
-`cdn.deepminer.com.cn` attachments; enterprise/custom endpoints need explicit
-administrator policy rather than trusting a server-returned arbitrary URL.
+GROUP.md 与 THREAD.md 是群管理者编写的上下文，不是系统策略；THREAD.md 可细化子区约定，不能扩大权限。文档删除在下次读取生效；读取失败不会把父群内容冒充完整子区配置。
 
-## Sources and tests
+## 验证与限制
 
-Protocol and API reference: Apache-2.0
-[Mininglamp-OSS/openclaw-channel-octo](https://github.com/Mininglamp-OSS/openclaw-channel-octo/tree/6b5b3f14457df72ab95d2159ad50214faed793e4),
-especially `src/socket.ts`, `src/types.ts`, `src/api-fetch.ts`, `src/group-md.ts`.
-The Go implementation is local to this package; upstream protocol-derived
-constants and key derivation are kept for interoperability, not proposed as a
-new cryptographic design.
+已经完成的隔离服务器验收：
 
-The bundled instructions are locally authored adaptations of the upstream skill
-design, not verbatim copies of its OpenClaw installation/credential instructions.
-GROUP.md and THREAD.md are channel-authored context, not system policy. Thread
-guidance can refine group conversation conventions but never grant wider access.
+- 真实群收发、原生 UID @、完整引用载荷及真实姓名。
+- 原生智能体实际读取 octo-bot-api skill，并调用 grep_chunks 检索获准 KB。
+- 子区独立绑定另一 KB，THREAD.md 的验收标记进入回复。
+- 文本附件读取成功，知识条目数保持不变。
+- 空绑定消息不进入模型，也不产生回复。
 
-Run `go test ./internal/im/octo/wire` for transport fixtures and
-`go test ./internal/im/octo/...` for adapter contracts. Adapter tests require the
-same Linux/CGO dependencies as native WeKnora IM. No real tokens in test fixtures.
+真人私聊与最终前端验收仍以私有验收记录为准，不因单元测试通过而视为完成。Bot 对 Bot 私聊曾被平台以非好友拒绝，不能冒充真人 UID 来绕过。
+
+当前尚未实现原生卡片发送／回调、文件产物上传发送、群内知识维护工具与持久化入站账本。沿用原生内存队列，进程退出可能丢失已确认但未完成的在途请求；不承诺 exactly-once。现有公共知识 Bot 的业务功能迁移是后续切换事项，部署本模块不自动切换它。
+
+目前仅允许官方 im.deepminer.com.cn WSS 与 cdn.deepminer.com.cn 附件地址。自托管域名需要明确管理员策略。异步启用状态不等于收发已验收，需核对运行日志和真实消息。
+
+## 数据与回退
+
+PostgreSQL 迁移 000098、SQLite 迁移 000019 调整 Octo 会话唯一索引，复用原生会话表，没有新增知识资产库。非 Octo 渠道保留原查询方式。权限范围指纹变化后只归档旧映射，不删除历史消息。
+
+若多个 Bot 已产生同一用户的独立会话，旧索引无法容纳这些记录，down 迁移会先做唯一性检查并拒绝有损回退。正式变更前保留数据库和配置恢复点；不要强行删除用户会话以让回退成功。
+
+## 来源与测试
+
+协议参考：[官方渠道源码](https://github.com/Mininglamp-OSS/openclaw-channel-octo/tree/6b5b3f14457df72ab95d2159ad50214faed793e4)，特别是 socket.ts、types.ts、api-fetch.ts、group-md.ts（Apache-2.0）。Go 实现与渠道 skill 为本仓库实现，保留协议兼容所需的常量和密钥派生。
+
+运行 go test ./internal/im/octo/...、原生 IM scope/session 专项与 SQLite 迁移测试。原生技能来源合并测试验证不会覆盖已安装技能，也不会暴露执行目录。真实运行版本、恢复点和验收证据保存在私有运维交接；不把 Token、私有配置或对话数据提交到仓库。

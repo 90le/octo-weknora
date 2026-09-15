@@ -24,3 +24,4 @@ jobs:
           cache: true
       - run: go test -race ./internal/im/octo/... -count=1
       - run: go test -race ./internal/im -run 'TestOctoExecution|TestScopedAgent' -count=1
+      - run: go test ./internal/application/service -run 'TestInstallSkill(ReinstallsWhenTheLiveImageNoLongerCarriesTheSkill|RetriesAStaleInFlightInstallOfTheSameArchive)$' -count=20
