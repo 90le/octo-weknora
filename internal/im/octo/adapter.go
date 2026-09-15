@@ -93,7 +93,7 @@ func (a *Adapter) Normalize(raw *wire.Message) (*im.IncomingMessage, error) {
 			m.MessageType = im.MessageTypeImage
 		}
 		m.FileKey = p.URL
-		m.FileName = path.Base(p.Name)
+		m.FileName = path.Base(strings.ReplaceAll(p.Name, "\\", "/"))
 		m.FileSize = p.Size
 		if m.FileKey == "" {
 			return nil, errors.New("missing Octo attachment URL")

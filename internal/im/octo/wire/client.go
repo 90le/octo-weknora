@@ -36,6 +36,12 @@ func RunConnection(ctx context.Context, creds Credentials, dispatch func(context
 	if err != nil {
 		return errors.New("Octo WebSocket connection failed")
 	}
+	return runConnection(ctx, conn, creds, dispatch)
+}
+
+// runConnection owns an already-upgraded socket. Kept separate for local
+// protocol/lifecycle tests; public callers cannot override the approved WSS host.
+func runConnection(ctx context.Context, conn *websocket.Conn, creds Credentials, dispatch func(context.Context, *Message) error) error {
 	defer conn.Close()
 	conn.SetReadLimit(MaxPacket)
 	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
