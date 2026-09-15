@@ -144,3 +144,24 @@ func TestPreparedSyncDoesNotAdoptWhileParserCanStillWrite(t *testing.T) {
 		require.False(t, indexedForSync(&types.Knowledge{EnableStatus: "enabled", ProcessedAt: &now, ParseStatus: status}))
 	}
 }
+
+func TestPreparedSyncResumesReadyCandidateWithoutRecreating(t *testing.T) {
+	s, ks, ds, item := preparedFixture()
+	ks.pending = true
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := s.ingestItem(ctx, ds, item, nil)
+	require.Error(t, err)
+	ks.r.rows["new"].ParseStatus = types.ParseStatusCompleted
+	ks.r.rows["new"].EnableStatus = "enabled"
+	_, err = s.ingestItem(context.Background(), ds, item, nil)
+	require.NoError(t, err)
+	created := 0
+	for _, event := range ks.r.events {
+		if event == "create:new" {
+			created++
+		}
+	}
+	require.Equal(t, 1, created)
+	require.NotContains(t, ks.r.rows, "old")
+}
