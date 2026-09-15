@@ -893,6 +893,7 @@ func TestReinstallSkillRejectsAnUnknownSkill(t *testing.T) {
 
 func TestInstallSkillReinstallsWhenTheLiveImageNoLongerCarriesTheSkill(t *testing.T) {
 	fx := newInstallFixture(t)
+	pauseInstallForStatusAssertion(t, fx)
 	archive := zipBundle(t, map[string]string{
 		"SKILL.md":           validSkillMD,
 		"scripts/extract.py": "print('hi')\n",
@@ -970,6 +971,7 @@ func TestInstallSkillSkipsAnInstallThatIsSlowButStillBeating(t *testing.T) {
 
 func TestInstallSkillRetriesAStaleInFlightInstallOfTheSameArchive(t *testing.T) {
 	fx := newInstallFixture(t)
+	pauseInstallForStatusAssertion(t, fx)
 	archive := zipBundle(t, map[string]string{
 		"SKILL.md":           validSkillMD,
 		"scripts/extract.py": "print('hi')\n",
@@ -2017,6 +2019,22 @@ type installFixture struct {
 	// reference, so ListSkillFiles / ReadSkillFile can open a stored archive.
 	storedBundles map[string][]byte
 	getFileCalls  atomic.Int32
+}
+
+// InstallSkill returns while the fake installer can already finish on another
+// goroutine. Hold that worker while asserting the transient installing state,
+// then release it and verify completion; do not depend on scheduler timing.
+func pauseInstallForStatusAssertion(t *testing.T, fx *installFixture) {
+	t.Helper()
+	release := make(chan struct{})
+	fx.beforeExecute = func() { <-release }
+	t.Cleanup(func() {
+		close(release)
+		require.Eventually(t, func() bool {
+			skill, err := fx.skillRepo.GetSkill(context.Background(), 7, "cfg-1", "sk-1")
+			return err == nil && skill != nil && skill.Status == types.SkillStatusReady
+		}, 10*time.Second, 5*time.Millisecond, "the paused repair must complete")
+	})
 }
 
 func newInstallFixture(t *testing.T) *installFixture {
