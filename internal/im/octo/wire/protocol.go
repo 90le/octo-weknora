@@ -28,8 +28,11 @@ var ErrProtocol = errors.New("invalid Octo transport packet")
 // A server kick must stop the runner, not compete with another Bot connection.
 var ErrDisconnected = errors.New("Octo disconnected by server")
 
+var ErrAuthentication = errors.New("Octo transport authentication rejected")
+
 // Message identifiers stay decimal strings, including values beyond JS's 2^53.
 type Message struct {
+	Stream      bool
 	ID          string
 	Sequence    uint32
 	Sender      string
@@ -166,7 +169,10 @@ func (s *Session) Accept(header byte, body []byte) error {
 	if s.version >= 4 {
 		_ = d.u64()
 	}
-	if d.err != nil || reason != 1 || d.r.Len() != 0 || len(salt) < 16 {
+	if reason != 1 {
+		return ErrAuthentication
+	}
+	if d.err != nil || d.r.Len() != 0 || len(salt) < 16 {
 		return ErrProtocol
 	}
 	raw, err := base64.StdEncoding.DecodeString(serverKey)
@@ -194,12 +200,9 @@ func (s *Session) Receive(body []byte) (*Message, error) {
 	}
 	d := &decoder{r: bytes.NewReader(body)}
 	setting := d.u8()
-	// Streaming RECV packets have an additional layout. Do not interpret them as ordinary input.
-	if setting&2 != 0 {
-		return nil, ErrProtocol
-	}
 	_ = d.str() // message key
 	m := &Message{Sender: d.str(), Channel: d.str(), ChannelType: d.u8()}
+	m.Stream = setting&2 != 0
 	if s.version >= 3 {
 		_ = d.u32()
 	}
@@ -209,12 +212,12 @@ func (s *Session) Receive(body []byte) (*Message, error) {
 	if setting&8 != 0 {
 		_ = d.str()
 	}
-	if d.err != nil || m.Sender == "" || m.Channel == "" || m.ID == "0" {
-		return nil, ErrProtocol
+	if d.err != nil {
+		return nil, fmt.Errorf("%w: receive header", ErrProtocol)
 	}
 	encoded, err := io.ReadAll(d.r)
 	if err != nil {
-		return nil, ErrProtocol
+		return nil, fmt.Errorf("%w: receive payload", ErrProtocol)
 	}
 	encrypted, err := base64.StdEncoding.DecodeString(string(encoded))
 	if err != nil || len(encrypted) == 0 || len(encrypted)%aes.BlockSize != 0 {
@@ -245,7 +248,7 @@ func (s *Session) Receive(body []byte) (*Message, error) {
 
 func Acknowledge(m *Message) ([]byte, error) {
 	id, err := strconv.ParseUint(m.ID, 10, 64)
-	if err != nil || id == 0 {
+	if err != nil {
 		return nil, fmt.Errorf("%w: message id", ErrProtocol)
 	}
 	b := &bytes.Buffer{}

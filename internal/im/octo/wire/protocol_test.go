@@ -120,6 +120,15 @@ func TestHandshakeEncryptedReceiveAndAck(t *testing.T) {
 	if _, err = (&Session{}).Receive(recv.Bytes()); err == nil {
 		t.Fatal("unauthenticated receive accepted")
 	}
+	transient := append([]byte(nil), recv.Bytes()...)
+	transient[0] = 2
+	stream, err := s.Receive(transient)
+	if err != nil || !stream.Stream {
+		t.Fatal("stream signal stopped receive decoding")
+	}
+	if _, err = Acknowledge(&Message{ID: "0", Sequence: 0}); err != nil {
+		t.Fatal("transient ACK rejected")
+	}
 }
 
 func FuzzFrame(f *testing.F) {

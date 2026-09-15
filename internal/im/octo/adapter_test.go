@@ -14,6 +14,12 @@ import (
 
 func TestNormalizationPreservesScopeAndNativeIdentity(t *testing.T) {
 	a, _ := NewAdapter("bf_test", "knowledge_bot")
+	if m, err := a.Normalize(&wire.Message{ID: "0", Payload: json.RawMessage(`{"type":1000}`)}); err != nil || m != nil {
+		t.Fatal("system event stopped receiver")
+	}
+	if m, err := a.Normalize(&wire.Message{ID: "123", Sender: "peer_bot", Stream: true}); err != nil || m != nil {
+		t.Fatal("stream fragment became question")
+	}
 	raw := &wire.Message{ID: "2098355867442221056", Sender: "user", Channel: "group____2098355867442221056", ChannelType: 5, Payload: json.RawMessage(`{"type":1,"content":"@小丘 请问","mention":{"uids":["knowledge_bot"]},"reply":{"message_id":2098355867442221057,"from_uid":"knowledge_bot","payload":{"type":1,"content":"之前的问题"}}}`)}
 	m, err := a.Normalize(raw)
 	if err != nil {

@@ -120,6 +120,7 @@ func runtimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint64, acc
 		}
 		var members []struct {
 			UID      string          `json:"uid"`
+			Name     string          `json:"name"`
 			Robot    json.RawMessage `json:"robot"`
 			BotAdmin json.RawMessage `json:"bot_admin"`
 		}
@@ -145,10 +146,12 @@ func runtimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint64, acc
 			}
 		}
 		admitted := false
+		senderName := ""
 		for _, member := range members {
 			if member.UID != msg.UserID {
 				continue
 			}
+			senderName = strings.TrimSpace(strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(member.Name))
 			if string(member.Robot) == "0" || string(member.Robot) == "false" {
 				admitted = true
 			}
@@ -171,7 +174,7 @@ func runtimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint64, acc
 		if err != nil || len(bindings) == 0 {
 			return nil, im.ErrScopeDenied
 		}
-		out := &im.ExecutionScope{Revision: fmt.Sprint(channel.UpdatedAt, connection.UpdatedAt, stored.ID, stored.UpdatedAt)}
+		out := &im.ExecutionScope{Revision: fmt.Sprint(channel.UpdatedAt, connection.UpdatedAt, stored.ID, stored.UpdatedAt), SenderName: senderName}
 		for _, binding := range bindings {
 			out.KnowledgeBaseIDs = append(out.KnowledgeBaseIDs, binding.KnowledgeBaseID)
 		}

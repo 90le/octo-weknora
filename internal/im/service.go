@@ -1710,6 +1710,9 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 		return scopeErr
 	}
 	msg.executionScope = scope
+	if scope != nil && scope.SenderName != "" {
+		msg.UserName = scope.SenderName
+	}
 	if channel.Platform == "octo" && channel.SessionMode == string(SessionModeThread) {
 		return fmt.Errorf("Octo requires per-user sessions within each group or subarea")
 	}

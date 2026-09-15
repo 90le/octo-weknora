@@ -8,6 +8,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/im"
 	"github.com/Tencent/WeKnora/internal/im/octo/wire"
+	"github.com/Tencent/WeKnora/internal/logger"
 )
 
 // Run receives messages but never calls the native Agent automatically. accept
@@ -53,12 +54,13 @@ func (a *Adapter) Run(ctx context.Context, accept func(context.Context, *im.Inco
 			return accept(callCtx, msg)
 		})
 		cancel()
-		if errors.Is(err, wire.ErrProtocol) || errors.Is(err, wire.ErrDisconnected) {
+		if errors.Is(err, wire.ErrAuthentication) || errors.Is(err, wire.ErrDisconnected) {
 			return err
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		logger.Warnf(ctx, "[IM] Octo transport reconnecting: %v", err)
 		if time.Since(started) > time.Minute {
 			delay = time.Second
 		}
@@ -72,6 +74,9 @@ func (a *Adapter) Run(ctx context.Context, accept func(context.Context, *im.Inco
 		}
 		if delay < 30*time.Second {
 			delay *= 2
+			if delay > 30*time.Second {
+				delay = 30 * time.Second
+			}
 		}
 	}
 	return ctx.Err()

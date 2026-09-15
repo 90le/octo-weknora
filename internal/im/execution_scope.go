@@ -31,6 +31,7 @@ func addExecutionContext(ctx context.Context, request *types.QARequest) {
 type ExecutionScope struct {
 	KnowledgeBaseIDs []string
 	Revision         string
+	SenderName       string `json:"-"`
 }
 
 // ExecutionAuthorizer runs at admission and again when a queued request executes.
@@ -58,7 +59,7 @@ func authorizeExecution(ctx context.Context, adapter Adapter, channel *IMChannel
 	if scope == nil || len(scope.KnowledgeBaseIDs) == 0 || strings.TrimSpace(scope.Revision) == "" {
 		return nil, ErrScopeDenied
 	}
-	copyScope := &ExecutionScope{Revision: scope.Revision}
+	copyScope := &ExecutionScope{Revision: scope.Revision, SenderName: scope.SenderName}
 	seen := map[string]bool{}
 	for _, id := range scope.KnowledgeBaseIDs {
 		if strings.TrimSpace(id) == "" {

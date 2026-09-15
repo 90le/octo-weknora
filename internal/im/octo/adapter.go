@@ -67,8 +67,13 @@ func (a *Adapter) HandleURLVerification(*gin.Context) bool { return false }
 // Normalize does not authorize a user. Its result must pass a trusted scope and
 // sender policy before being submitted to im.Service.HandleMessage.
 func (a *Adapter) Normalize(raw *wire.Message) (*im.IncomingMessage, error) {
-	if raw == nil || !wire.DecimalID(raw.ID) || raw.Sender == "" {
+	if raw == nil {
 		return nil, errors.New("invalid Octo message")
+	}
+	// Transient/system packets and other Agents' stream fragments are not user
+	// questions. Acknowledge and ignore them instead of stopping the receiver.
+	if raw.Stream || !wire.DecimalID(raw.ID) || raw.Sender == "" {
+		return nil, nil
 	}
 	if raw.Sender == a.uid {
 		return nil, nil
