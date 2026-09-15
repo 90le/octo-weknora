@@ -74,3 +74,11 @@ func TestOctoScopeDocumentsDoNotPolluteRetrievalQuery(t *testing.T) {
 		t.Fatal("context lost")
 	}
 }
+
+func TestScopedAgentPreservesExplicitNativeSourceReader(t *testing.T) {
+	agent := &types.CustomAgent{Config: types.CustomAgentConfig{AllowedTools: []string{"source_browse", "shell_exec"}}}
+	out, err := scopeAgent(agent, &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r"})
+	if err != nil || len(out.Config.AllowedTools) != 1 || out.Config.AllowedTools[0] != "source_browse" {
+		t.Fatal("native source capability lost or execution widened")
+	}
+}
