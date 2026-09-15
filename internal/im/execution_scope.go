@@ -15,6 +15,17 @@ import (
 
 var ErrScopeDenied = errors.New("IM execution scope denied")
 
+type executionContextKey struct{}
+
+// Native QA keeps QuotedContext out of retrieval/rewrite input and appends it
+// only at the LLM prompt stage. Channel documents use that same context path.
+func addExecutionContext(ctx context.Context, request *types.QARequest) {
+	text, _ := ctx.Value(executionContextKey{}).(string)
+	if text != "" {
+		request.QuotedContext += "\n\n" + text
+	}
+}
+
 // ExecutionScope is produced by trusted adapter code, never decoded from message
 // text or a callback's self-reported roles. Empty KBs deny execution explicitly.
 type ExecutionScope struct {

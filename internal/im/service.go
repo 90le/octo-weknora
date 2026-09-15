@@ -1980,9 +1980,7 @@ func (s *Service) executeQARequest(req *qaRequest) {
 			}
 			ctx = skills.WithInstructionSource(ctx, source)
 			if contextText != "" {
-				copyMessage := *req.msg
-				copyMessage.Content = contextText + "\n\n当前用户提问：\n" + req.msg.Content
-				req.msg = &copyMessage
+				ctx = context.WithValue(ctx, executionContextKey{}, contextText)
 			}
 		}
 	}
@@ -2844,6 +2842,7 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 	go func() {
 		var err error
 		req := buildIMQARequest(session, msg.Content, assistantMsg.ID, userMsg.ID, customAgent, kbIDs, msg.Quote, attachments)
+		addExecutionContext(ctx, req)
 		req.ImageURLs = imageURLs
 		if req.QuotedContext != "" {
 			logger.Debugf(qaCtx, "[IM] QuotedContext set: length=%d", len(req.QuotedContext))
@@ -3105,6 +3104,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	go func() {
 		var err error
 		req := buildIMQARequest(session, query, assistantMsg.ID, userMsg.ID, customAgent, kbIDs, quote, attachments)
+		addExecutionContext(ctx, req)
 		req.ImageURLs = imageURLs
 		if req.QuotedContext != "" {
 			logger.Debugf(ctx, "[IM] QuotedContext set: length=%d", len(req.QuotedContext))

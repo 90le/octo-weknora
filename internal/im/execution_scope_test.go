@@ -62,3 +62,15 @@ func TestScopedAgentCannotFallBackToAllKnowledge(t *testing.T) {
 		t.Fatal("missing Agent fell back")
 	}
 }
+
+func TestOctoScopeDocumentsDoNotPolluteRetrievalQuery(t *testing.T) {
+	request := &types.QARequest{Query: "如何安装 CLI？", QuotedContext: "原生引用"}
+	ctx := context.WithValue(context.Background(), executionContextKey{}, "GROUP.md: 本群约定")
+	addExecutionContext(ctx, request)
+	if request.Query != "如何安装 CLI？" {
+		t.Fatal("channel documents became search query")
+	}
+	if request.QuotedContext != "原生引用\n\nGROUP.md: 本群约定" {
+		t.Fatal("context lost")
+	}
+}
