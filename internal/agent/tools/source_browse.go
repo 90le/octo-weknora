@@ -106,5 +106,5 @@ func (t *SourceBrowseTool) Execute(ctx context.Context, args json.RawMessage) (*
 	if err != nil {
 		return nil, err
 	}
-	return &types.ToolResult{Success: true, Output: string(b)}, nil
+	return &types.ToolResult{Success: true, Output: string(b), Data: map[string]interface{}{"display_type": "source_snapshot", "action": input.Action}}, nil
 }
