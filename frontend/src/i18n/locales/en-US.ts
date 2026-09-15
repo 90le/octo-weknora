@@ -585,6 +585,7 @@ export default {
     channelNotion: 'Notion',
     channelYuque: 'Yuque',
     channelGitLab: 'GitLab',
+    channelGitHub: 'GitHub',
     channelIma: 'Tencent IMA',
     channelUpload: 'Upload',
     channelManual: 'Manual',
@@ -6331,6 +6332,12 @@ export default {
     connectionFailed: 'Connection failed',
     isRequired: 'is required',
     credentialsLabel: 'credentials',
+    github: {
+      repository: 'GitHub repository', repositoryRequired: 'Enter a GitHub repository',
+      hint: 'Sync documents at a fixed commit and preserve folders. Code, hidden files and dependencies are excluded. Limits: 2000 documents, 64 MiB per sync, 16 MiB per file.',
+      tokenHint: 'Optional for public repositories. Private repositories require a read-only Contents token. Stored encrypted; never returned.',
+      pathsHint: 'One file or directory per line, for example README.md or docs. Empty includes all supported documents.',
+    },
     gitlab: {
       baseUrl: 'GitLab URL', accessToken: 'Personal access token', projects: 'GitLab projects',
       projectsHint: 'Enter a project ID or namespace path (for example group/project), with optional branch and directories.',
@@ -6408,6 +6415,7 @@ export default {
       yuque: 'Yuque',
       rss: 'RSS / Atom Feed',
       ima: 'Tencent IMA',
+      github: 'GitHub',
       gitlab: 'GitLab'
     },
     connectorDesc: {
@@ -6419,6 +6427,7 @@ export default {
       yuque: 'Sync documents from Yuque knowledge bases',
       rss: 'Sync articles from RSS / Atom feeds',
       ima: 'Sync documents, notes and files from Tencent IMA knowledge bases (AI sessions and video parses are not supported)',
+      github: 'Sync GitHub repository documents',
       gitlab: 'Sync files from GitLab projects'
     },
     drive: {

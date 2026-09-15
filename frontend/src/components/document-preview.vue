@@ -11,6 +11,7 @@ import { useI18n } from 'vue-i18n';
 import { sanitizeHTML, sanitizeMarkdownHTML } from '@/utils/security';
 import { preparePptxPreview, isCompletePptxRender } from '@/utils/pptxPreview';
 import { renderDocumentPreviewMarkdown } from '@/utils/documentPreviewMarkdown';
+import { resolveRepositoryHTMLLinks } from '@/utils/repositoryLinks';
 import { buildHtmlPreview } from '@/utils/htmlPreview';
 import { openMermaidFullscreen } from '@/utils/mermaidViewer';
 import { renderMermaidToSvg } from '@/utils/mermaidShared';
@@ -34,6 +35,7 @@ const { t } = useI18n();
 
 const props = defineProps<{
   sourceBlob?: Blob;
+  sourceUrl?: string;
   knowledgeId?: string;
   sessionId?: string;
   attachmentId?: string;
@@ -295,7 +297,7 @@ async function renderMarkdown(blob: Blob) {
     return;
   }
 
-  markdownHtml.value = renderDocumentPreviewMarkdown(text);
+  markdownHtml.value = resolveRepositoryHTMLLinks(renderDocumentPreviewMarkdown(text), props.sourceUrl);
 }
 
 function onImageLoad(e: Event) {

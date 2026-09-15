@@ -61,3 +61,20 @@ func TestDraftExcludedFromPrimaryAndEnrichmentResults(t *testing.T) {
 		}
 	}
 }
+
+func TestGitHubCandidateExcludedUntilAdopted(t *testing.T) {
+	s := &knowledgeBaseService{}
+	k := &types.Knowledge{ID: "new", Type: "file", Channel: types.ConnectorTypeGitHub, EnableStatus: "enabled", Metadata: types.JSON(`{"sync_target_external_id":"canonical","external_id":"pending"}`)}
+	c := &types.Chunk{ID: "chunk", KnowledgeID: k.ID, ChunkType: types.ChunkTypeText, Content: "candidate", IsEnabled: true}
+	input := []*types.IndexWithScore{{ChunkID: c.ID, KnowledgeID: k.ID, Score: 1}}
+	for _, primary := range []bool{true, false} {
+		got := s.assembleSearchResults(context.Background(), input, map[string]*types.Chunk{c.ID: c}, map[string]*types.Knowledge{k.ID: k}, s.buildChunkIndex(input), primary)
+		if len(got) != 0 {
+			t.Fatal("indexed candidate exposed before adoption")
+		}
+	}
+	k.Metadata = types.JSON(`{"external_id":"canonical"}`)
+	if !isPublishedSearchKnowledge(k) {
+		t.Fatal("adopted repository document hidden")
+	}
+}

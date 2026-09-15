@@ -358,6 +358,14 @@ func isPublishedSearchKnowledge(k *types.Knowledge) bool {
 	if k == nil || k.EnableStatus != "enabled" {
 		return false
 	}
+	if k.Channel == types.ConnectorTypeGitHub {
+		var metadata map[string]string
+		if json.Unmarshal(k.Metadata, &metadata) != nil || metadata["sync_target_external_id"] != "" {
+			// The native indexer enables chunks before repository synchronization
+			// adopts the candidate. Keep that preparation window out of answers.
+			return false
+		}
+	}
 	if k.IsManual() {
 		meta, err := k.ManualMetadata()
 		return err == nil && meta != nil && meta.Status == types.ManualKnowledgeStatusPublish

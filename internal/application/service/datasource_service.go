@@ -209,7 +209,7 @@ func (s *DataSourceService) UpdateDataSource(ctx context.Context, ds *types.Data
 		configActuallyChanged = !reflect.DeepEqual(*mergedCfg, *existingParsedCfg)
 	}
 	hasCreds := mergedCfg != nil && mergedCfg.HasConfiguredCredentials(ds.Type)
-	if hasCreds && (ds.Type != existing.Type || configActuallyChanged) {
+	if (hasCreds || ds.Type == types.ConnectorTypeGitHub) && (ds.Type != existing.Type || configActuallyChanged) {
 		if err := s.validateDataSourceConfig(ctx, ds); err != nil {
 			return nil, err
 		}
@@ -764,8 +764,9 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		return err
 	}
 
-	// Update cursor for next incremental sync
-	if nextCursor != nil {
+	// A repository manifest is only acknowledged after all selected documents
+	// are usable. Partial imports must be retried from the previous manifest.
+	if nextCursor != nil && (ds.Type != types.ConnectorTypeGitHub || result.Failed == 0) {
 		cursorJSON, _ := nextCursor.ToJSON()
 		ds.LastSyncCursor = cursorJSON
 	}
@@ -1241,6 +1242,9 @@ func (s *DataSourceService) validateDataSourceConfig(ctx context.Context, ds *ty
 //
 // Returns (isUpdate, error) — isUpdate is true when an existing item was replaced.
 func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource, item *types.FetchedItem, tagIDs []string) (bool, error) {
+	if ds.Type == types.ConnectorTypeGitHub {
+		return s.ingestPreparedFile(ctx, ds, item, tagIDs)
+	}
 	// Channel decides the knowledge "source" label shown in the UI. Prefer the
 	// connector-supplied metadata["channel"] (e.g. Feishu Drive sets it to
 	// "feishu" so Drive docs share the wiki's "飞书" label instead of showing

@@ -720,6 +720,12 @@ export default {
     connectionFailed: '连接失败',
     isRequired: '为必填项',
     credentialsLabel: '凭证',
+    github: {
+      repository: 'GitHub 仓库', repositoryRequired: '请填写 GitHub 仓库',
+      hint: '同步指定目录的文档，保留目录与固定提交来源。源码、隐藏文件及依赖目录不会作为文档入库。每次最多 2000 份文档、合计 64 MiB；单文件最多 16 MiB。',
+      tokenHint: '公开仓库可留空。私有仓库使用仅有 Contents 读取权限的令牌；令牌加密保存，不回显。',
+      pathsHint: '每行一个文件或目录，例如 README.md、docs。留空包含全仓库受支持文档。',
+    },
     gitlab: {
       baseUrl: 'GitLab 地址',
       accessToken: '个人访问令牌',
@@ -853,6 +859,7 @@ export default {
       yuque: '同步语雀知识库中的文档',
       ima: '同步腾讯 IMA 知识库中的文档、笔记与文件（暂不支持 AI 会话与视频解析）',
       rss: '同步 RSS / Atom 订阅源中的文章',
+      github: '同步 GitHub 仓库文档（不向量化源码）',
       gitlab: '同步 GitLab 项目中的文件'
     },
     connector: {
@@ -864,6 +871,7 @@ export default {
       yuque: '语雀',
       ima: '腾讯 IMA',
       rss: 'RSS / Atom 订阅',
+      github: 'GitHub',
       gitlab: 'GitLab'
     },
     logDetail: {
@@ -6554,6 +6562,7 @@ export default {
     channelNotion: 'Notion',
     channelYuque: '语雀',
     channelGitLab: 'GitLab',
+    channelGitHub: 'GitHub',
     channelIma: '腾讯 IMA',
     channelUpload: '上传',
     channelManual: '手动',
