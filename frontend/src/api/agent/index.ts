@@ -316,6 +316,7 @@ export interface IMChannel {
   session_mode?: 'user' | 'thread';
   knowledge_base_id?: string;
   credentials: Record<string, any>;
+  public_config?: Record<string, any>;
   created_at?: string;
   updated_at?: string;
 }

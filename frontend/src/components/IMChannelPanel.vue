@@ -1031,7 +1031,7 @@ async function editChannel(channel: IMChannel | IMChannelOverview) {
     output_mode: fullChannel.output_mode,
     session_mode: fullChannel.session_mode || 'user',
     knowledge_base_id: fullChannel.knowledge_base_id || '',
-    credentials: { ...fullChannel.credentials },
+    credentials: { ...(fullChannel.platform === 'octo' ? fullChannel.public_config : fullChannel.credentials) },
   };
   normalizeYunzhijiaCredentials();
   showCreateDialog.value = true;

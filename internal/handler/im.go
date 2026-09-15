@@ -149,7 +149,8 @@ func (h *IMHandler) ListIMChannels(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": im.SummarizeIMChannels(channels)})
+	role, _ := c.Request.Context().Value(types.TenantRoleContextKey).(types.TenantRole)
+	c.JSON(http.StatusOK, gin.H{"data": im.SummarizeIMChannelsForRole(channels, role)})
 }
 
 // ListAllIMChannels lists every IM channel in the current tenant, across
