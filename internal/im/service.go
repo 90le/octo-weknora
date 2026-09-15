@@ -1704,6 +1704,10 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 
 	// Resolve threadID for key building — only include in thread mode to avoid
 	// leaking thread scope into user-mode rate limit / inflight keys.
+	scope, scopeErr := authorizeExecution(ctx, adapter, channel, msg)
+	if scopeErr != nil {
+		return scopeErr
+	}
 	threadID := ""
 	if channel.SessionMode == string(SessionModeThread) {
 		threadID = msg.ThreadID
@@ -1785,6 +1789,10 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 
 	// ── Slash-command dispatch ──
 	// Commands are handled before the QA pipeline so they respond instantly.
+	customAgent, err = scopeAgent(customAgent, scope)
+	if err != nil {
+		return err
+	}
 	if cmd, args, ok := s.cmdRegistry.Parse(msg.Content); ok {
 		return s.handleCommand(sessionCtx, cmd, args, msg, adapter, channel, channelSession, customAgent)
 	}
@@ -1854,6 +1862,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 		adapter:   adapter,
 		channel:   channel,
 		channelID: channelID,
+		scope:     scope,
 		tenant:    tenant,
 		userKey:   userKey,
 	}
@@ -1943,8 +1952,17 @@ func (s *Service) executeQARequest(req *qaRequest) {
 	// runQA after the assistant message is created (that's when we have the
 	// sessionID + messageID needed to poll StreamManager).
 
-	// kbIDs is left empty so the QA pipeline resolves them from the agent config.
+	// Scoped channels revalidate queued work. An authorization change cancels this
+	// run before reading attachments or querying knowledge; it never falls back.
 	var kbIDs []string
+	if req.scope != nil {
+		current, scopeErr := authorizeExecution(ctx, req.adapter, req.channel, req.msg)
+		if scopeErr != nil || scopeFingerprint(current) != scopeFingerprint(req.scope) {
+			logger.Warnf(ctx, "[IM] scoped request canceled after authorization changed")
+			return
+		}
+		kbIDs = append([]string(nil), current.KnowledgeBaseIDs...)
+	}
 	attachments, imageURLs, downloaded, err := s.prepareIMAttachments(ctx, req.msg, req.adapter)
 	if err != nil {
 		logger.Warnf(ctx, "[IM] attachment preparation failed: %v", err)
@@ -1953,7 +1971,7 @@ func (s *Service) executeQARequest(req *qaRequest) {
 		}
 		return
 	}
-	if req.channel.KnowledgeBaseID != "" && downloaded != nil {
+	if req.scope == nil && req.channel.KnowledgeBaseID != "" && downloaded != nil {
 		go s.processDownloadedFileToKnowledgeBase(
 			context.WithoutCancel(ctx), req.channel, downloaded,
 		)

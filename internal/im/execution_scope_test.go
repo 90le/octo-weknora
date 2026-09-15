@@ -1,0 +1,64 @@
+package im
+
+import (
+	"context"
+	"testing"
+
+	"github.com/Tencent/WeKnora/internal/types"
+)
+
+type scopeTestAdapter struct {
+	Adapter
+	scope *ExecutionScope
+	err   error
+}
+
+func (a *scopeTestAdapter) AuthorizeExecution(context.Context, *IMChannel, *IncomingMessage) (*ExecutionScope, error) {
+	return a.scope, a.err
+}
+
+func TestOctoExecutionRequiresExplicitScope(t *testing.T) {
+	channel := &IMChannel{Platform: "octo"}
+	if _, err := authorizeExecution(context.Background(), nil, channel, nil); err == nil {
+		t.Fatal("missing authorizer accepted")
+	}
+	for _, scope := range []*ExecutionScope{nil, {Revision: "1"}, {KnowledgeBaseIDs: []string{"kb"}}, {KnowledgeBaseIDs: []string{""}, Revision: "1"}} {
+		if _, err := authorizeExecution(context.Background(), &scopeTestAdapter{scope: scope}, channel, nil); err == nil {
+			t.Fatal("empty/widening scope accepted")
+		}
+	}
+	a := &scopeTestAdapter{scope: &ExecutionScope{KnowledgeBaseIDs: []string{"b", "a", "a"}, Revision: "r1"}}
+	got, err := authorizeExecution(context.Background(), a, channel, nil)
+	if err != nil || len(got.KnowledgeBaseIDs) != 2 || got.KnowledgeBaseIDs[0] != "a" {
+		t.Fatal("scope normalization failed")
+	}
+	a.scope.KnowledgeBaseIDs[0] = "changed"
+	if got.KnowledgeBaseIDs[0] != "a" {
+		t.Fatal("shared slice exposed")
+	}
+	other := *got
+	other.Revision = "r2"
+	if scopeFingerprint(got) == scopeFingerprint(&other) {
+		t.Fatal("revision not bound")
+	}
+}
+
+func TestScopedAgentCannotFallBackToAllKnowledge(t *testing.T) {
+	original := &types.CustomAgent{Config: types.CustomAgentConfig{KBSelectionMode: "all", KnowledgeBases: []string{"private"}, MCPSelectionMode: "all", SandboxConfigID: "sandbox", SkillsSelectionMode: "all", WebSearchEnabled: true}}
+	copy, err := scopeAgent(original, &ExecutionScope{KnowledgeBaseIDs: []string{"public"}, Revision: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if copy.Config.KBSelectionMode != "selected" || len(copy.Config.KnowledgeBases) != 1 || copy.Config.KnowledgeBases[0] != "public" {
+		t.Fatal("scope not applied")
+	}
+	if copy.Config.MCPSelectionMode != "none" || copy.Config.SandboxConfigID != "" || copy.Config.WebSearchEnabled {
+		t.Fatal("unapproved external capability retained")
+	}
+	if original.Config.KBSelectionMode != "all" || original.Config.SandboxConfigID != "sandbox" {
+		t.Fatal("shared Agent modified")
+	}
+	if _, err = scopeAgent(nil, &ExecutionScope{KnowledgeBaseIDs: []string{"public"}}); err == nil {
+		t.Fatal("missing Agent fell back")
+	}
+}

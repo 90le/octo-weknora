@@ -28,6 +28,12 @@ registered in the production IM factory catalog.
 
 ## Required before activation
 
+The native IM execution path now has an `ExecutionAuthorizer` hook: Octo fails
+closed without it, authorizes before queue admission, rechecks the scope revision
+before QA/attachments, uses an isolated read-only Agent copy with explicit KBs,
+and does not auto-ingest channel attachments. The actual Octo membership/binding
+authorizer, session revocation/isolation and factory/UI wiring remain pending.
+
 The existing IM service falls back to Agent-configured KBs when no explicit KBs
 are supplied. It also supports channel-level automatic attachment ingestion.
 Neither behavior is an authorization mechanism for public Octo groups.
