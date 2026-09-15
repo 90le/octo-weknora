@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/datasource"
+	githubsource "github.com/Tencent/WeKnora/internal/datasource/connector/github"
 	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -329,7 +330,14 @@ func (c *Connector) BuildSnapshot(ctx context.Context, cfg *types.DataSourceConf
 		return err
 	}
 	git := inspectGit(ctx, root.Path)
-	b.SetRevision(git.Commit)
+	if git.Remote != "" {
+		git.Verified = githubsource.VerifyCommit(ctx, git.Remote, git.Commit, cfg.Credentials)
+	}
+	if git.Verified {
+		b.SetRevision(git.Commit)
+	} else if git.Commit != "" {
+		b.SetRevision("local:" + git.Commit)
+	}
 	return c.walk(ctx, cfg, func(p string, body []byte) error {
 		u, revision := git.reference(p, body)
 		return b.Add(ctx, p, body, u, revision)

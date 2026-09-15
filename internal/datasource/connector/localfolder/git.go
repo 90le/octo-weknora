@@ -17,6 +17,7 @@ import (
 type gitInfo struct {
 	Commit, Remote string
 	Files          map[string]string
+	Verified       bool
 }
 type limitedBuffer struct {
 	bytes.Buffer
@@ -94,7 +95,7 @@ func inspectGit(ctx context.Context, root string) gitInfo {
 	return g
 }
 func (g gitInfo) reference(p string, body []byte) (string, string) {
-	if g.Remote == "" || g.Files[p] == "" {
+	if !g.Verified || g.Remote == "" || g.Files[p] == "" {
 		return "", ""
 	}
 	h := sha1.New()

@@ -41,6 +41,18 @@ func NewConnector() *Connector {
 }
 func (*Connector) Type() string { return types.ConnectorTypeGitHub }
 
+// VerifyCommit is used by approved local mirrors before emitting a remote
+// citation. A local-only commit or inaccessible private repository gets no URL.
+func VerifyCommit(ctx context.Context, repository, commit string, credentials map[string]interface{}) bool {
+	cfg := &types.DataSourceConfig{Credentials: credentials, Settings: map[string]interface{}{"repository": repository, "ref": commit}}
+	s, err := parseSelection(cfg)
+	if err != nil {
+		return false
+	}
+	actual, _, err := NewConnector().head(ctx, cfg, s)
+	return err == nil && actual == commit
+}
+
 type selection struct {
 	Repository string   `json:"repository"`
 	Ref        string   `json:"ref"`

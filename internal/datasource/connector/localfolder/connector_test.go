@@ -89,6 +89,9 @@ func TestLocalGitCitationOnlyMatchesCommittedBytes(t *testing.T) {
 	run("commit", "-m", "fixture")
 	run("remote", "add", "origin", "git@github.com:test/source.git")
 	g := inspectGit(ctx, root)
+	unverified, _ := g.reference("main.py", body)
+	require.Empty(t, unverified, "local commits alone do not prove a remote citation exists")
+	g.Verified = true // Network availability is verified separately by the provider.
 	u, revision := g.reference("main.py", body)
 	require.Contains(t, u, "https://github.com/test/source/blob/")
 	require.Len(t, revision, 40)
