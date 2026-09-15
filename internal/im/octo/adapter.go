@@ -128,6 +128,9 @@ func (a *Adapter) Normalize(raw *wire.Message) (*im.IncomingMessage, error) {
 }
 
 func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *im.ReplyMessage) error {
+	if reply != nil && strings.TrimSpace(reply.Content) == "NO_REPLY" {
+		return nil
+	}
 	if in == nil || reply == nil || strings.TrimSpace(reply.Content) == "" {
 		return errors.New("empty Octo reply")
 	}

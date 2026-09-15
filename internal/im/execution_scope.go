@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/agent/skills"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -25,6 +26,10 @@ type ExecutionScope struct {
 // Adapter implementations must validate native sender identity and membership.
 type ExecutionAuthorizer interface {
 	AuthorizeExecution(context.Context, *IMChannel, *IncomingMessage) (*ExecutionScope, error)
+}
+
+type ExecutionContextProvider interface {
+	ExecutionContext(context.Context, *IncomingMessage) (string, skills.SkillSource, error)
 }
 
 func authorizeExecution(ctx context.Context, adapter Adapter, channel *IMChannel, msg *IncomingMessage) (*ExecutionScope, error) {
@@ -112,6 +117,10 @@ func scopeAgent(agent *types.CustomAgent, scope *ExecutionScope) (*types.CustomA
 	out.Config.SelectedSkills = nil
 	out.Config.SandboxConfigID = ""
 	out.Config.WebSearchEnabled = false
+	out.Config.WebFetchEnabled = false
+	out.Config.DataAnalysisEnabled = false
+	off := false
+	out.Config.MemoryEnabled = &off
 	readTools := []string{"knowledge_search", "get_document_info", "list_knowledge_chunks", "grep_chunks", "thinking", "todo_write"}
 	out.Config.AllowedTools = nil
 	for _, name := range readTools {

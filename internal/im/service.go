@@ -21,6 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Tencent/WeKnora/internal/agent/skills"
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/config"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
@@ -1773,6 +1774,9 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 	}
 	sessionCtx := context.WithValue(ctx, types.TenantInfoContextKey, tenant)
 	sessionCtx = withIMIdentity(sessionCtx, tenantID, channelID, msg)
+	if scope != nil {
+		sessionCtx = types.WithIMKnowledgeScope(sessionCtx, scope.KnowledgeBaseIDs)
+	}
 
 	// 2. Resolve or create a WeKnora session
 	channelSession, err := s.resolveSession(sessionCtx, msg, tenantID, agentID, channelID, channel.SessionMode)
@@ -1966,6 +1970,21 @@ func (s *Service) executeQARequest(req *qaRequest) {
 			return
 		}
 		kbIDs = append([]string(nil), current.KnowledgeBaseIDs...)
+	}
+	if req.scope != nil {
+		if provider, ok := req.adapter.(ExecutionContextProvider); ok {
+			contextText, source, contextErr := provider.ExecutionContext(ctx, req.msg)
+			if contextErr != nil {
+				logger.Warnf(ctx, "[IM] scoped context unavailable")
+				return
+			}
+			ctx = skills.WithInstructionSource(ctx, source)
+			if contextText != "" {
+				copyMessage := *req.msg
+				copyMessage.Content = contextText + "\n\n当前用户提问：\n" + req.msg.Content
+				req.msg = &copyMessage
+			}
+		}
 	}
 	attachments, imageURLs, downloaded, err := s.prepareIMAttachments(ctx, req.msg, req.adapter)
 	if err != nil {
