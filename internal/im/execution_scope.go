@@ -135,7 +135,7 @@ func scopeAgent(agent *types.CustomAgent, scope *ExecutionScope) (*types.CustomA
 	out.Config.MemoryEnabled = &off
 	// source_browse is supplied by the native source-reader work package. Keep
 	// its own full-KB grant validation; do not add a channel-specific file relay.
-	readTools := []string{"knowledge_search", "get_document_info", "list_knowledge_chunks", "grep_chunks", "source_browse", "thinking", "todo_write"}
+	readTools := []string{"knowledge_search", "get_document_info", "list_knowledge_chunks", "grep_chunks", "source_browse", "wiki_search", "wiki_read_page", "wiki_read_source_doc", "thinking", "todo_write"}
 	out.Config.AllowedTools = nil
 	for _, name := range readTools {
 		if len(agent.Config.AllowedTools) == 0 {

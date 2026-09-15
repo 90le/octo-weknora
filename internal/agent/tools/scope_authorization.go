@@ -79,6 +79,9 @@ func authorizeKnowledgeInSearchTargets(
 	if !searchTargets.ContainsKB(knowledge.KnowledgeBaseID) {
 		return nil, fmt.Errorf("knowledge base %s is not within the current Agent scope", knowledge.KnowledgeBaseID)
 	}
+	if types.HasIMKnowledgeScope(ctx) && !types.IsPublishedKnowledgeForAnswer(knowledge) {
+		return nil, fmt.Errorf("document is not available in the current answer scope")
+	}
 	allowed, err := searchTargetsAllowKnowledgeID(
 		ctx, searchTargets, knowledge.ID, knowledge.KnowledgeBaseID, knowledgeService,
 	)

@@ -4,6 +4,11 @@ import "context"
 
 type imKnowledgeScopeKey struct{}
 
+func HasIMKnowledgeScope(ctx context.Context) bool {
+	_, ok := ctx.Value(imKnowledgeScopeKey{}).([]string)
+	return ok
+}
+
 // WithIMKnowledgeScope is set by the native IM admission policy, never by a
 // model argument or HTTP identity header. A copy prevents later scope mutation.
 func WithIMKnowledgeScope(ctx context.Context, ids []string) context.Context {

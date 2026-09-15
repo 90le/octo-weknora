@@ -99,7 +99,7 @@ func runtimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint64, acc
 			if db.WithContext(ctx).Table("knowledge_bases").Where("tenant_id = ? AND id = ? AND deleted_at IS NULL", tenant, channel.KnowledgeBaseID).Count(&count).Error != nil || count != 1 {
 				return nil, im.ErrScopeDenied
 			}
-			result := &im.ExecutionScope{KnowledgeBaseIDs: []string{channel.KnowledgeBaseID}, Revision: channel.UpdatedAt.String() + connection.UpdatedAt.String()}
+			result := &im.ExecutionScope{KnowledgeBaseIDs: []string{channel.KnowledgeBaseID}, Revision: fmt.Sprint(channel.ID, channel.AgentID, connection.UpdatedAt)}
 			var profile struct {
 				UID  string `json:"uid"`
 				Name string `json:"name"`
@@ -183,7 +183,9 @@ func runtimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint64, acc
 		if err != nil || len(bindings) == 0 {
 			return nil, im.ErrScopeDenied
 		}
-		out := &im.ExecutionScope{Revision: fmt.Sprint(channel.UpdatedAt, connection.UpdatedAt, stored.ID, stored.UpdatedAt), SenderName: senderName}
+		// Names and metadata refresh timestamps are not permission changes.
+		// KB IDs participate in the native scope fingerprint separately.
+		out := &im.ExecutionScope{Revision: fmt.Sprint(channel.ID, channel.AgentID, connection.UpdatedAt, stored.ID), SenderName: senderName}
 		for _, binding := range bindings {
 			out.KnowledgeBaseIDs = append(out.KnowledgeBaseIDs, binding.KnowledgeBaseID)
 		}

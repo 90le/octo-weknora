@@ -62,6 +62,13 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 	if err != nil || len(got.KnowledgeBaseIDs) != 1 || got.KnowledgeBaseIDs[0] != "kb" {
 		t.Fatalf("valid scope: %v %v", got, err)
 	}
+	if err = db.Exec("UPDATE im_channels SET updated_at='2020-01-01'").Error; err != nil {
+		t.Fatal(err)
+	}
+	afterMetadata, err := a.AuthorizeExecution(context.Background(), nil, msg)
+	if err != nil || afterMetadata.Revision != got.Revision {
+		t.Fatal("metadata refresh invalidated conversation")
+	}
 	msg.UserID = "untrusted_bot"
 	if _, err = a.AuthorizeExecution(context.Background(), nil, msg); err == nil {
 		t.Fatal("ordinary Bot admitted")
