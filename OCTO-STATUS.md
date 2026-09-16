@@ -1,6 +1,6 @@
 # 项目进度
 
-更新：2026-09-15。唯一滚动状态；范围见 [需求地图](OCTO-REQUIREMENTS.md)，顺序见 [计划](OCTO-PLAN.md)。
+更新：2026-09-16。唯一滚动状态；范围见 [需求地图](OCTO-REQUIREMENTS.md)，顺序见 [计划](OCTO-PLAN.md)。
 
 ## 当前结论
 
@@ -24,6 +24,14 @@ Octo 管理首批功能已部署：工作区隔离的群／子区配置、KB 绑
 - 当前原生 IM 渠道为 0，未自动迁移或接管 Bot。原 OpenClaw 与 Loop daemon 正常运行；Milvus、只读来源挂载和私有快照缓存保留。
 - 验证边界：分支已完成真实群／子区／私聊和附件隔离验收；最终统一源码完成 CI、数据库副本迁移、隔离启动和正式发布回读。本轮没有重发真实 IM 消息，不把启动成功当作最终渠道全量验收。
 - [后端检查](https://github.com/90le/octo-weknora/actions/runs/34936366743)、[前端检查](https://github.com/90le/octo-weknora/actions/runs/34936366859)、[渠道并发检查](https://github.com/90le/octo-weknora/actions/runs/34936366834) 均通过。卡片及回调、产物发送、群内知识维护、持久入站账本尚未齐备，公共 Bot 切换需等业务迁入。
+
+## 知识图谱引擎已启用（2026-09-16）
+
+- 按 WeKnora 官方 `KnowledgeGraph.md` 接入持久化 Neo4j 2025.10.1，服务名 `weknora-pilot-neo4j-1`，仅在 Compose 内网提供 Bolt，不发布宿主机端口。数据目录为服务器 `knowledge-services/weknora/pilot/neo4j`，凭据只保存在服务器私有 `.env`。
+- `NEO4J_ENABLE=true`、`NEO4J_URI=bolt://neo4j:7687` 已注入 WeKnora 后端；重启后容器启动成功，Neo4j 认证和 WeKnora 系统页均显示 `Neo4j`。Milvus 向量与 PostgreSQL 业务数据不受影响。
+- 仅对有资料的 `Octo CLI 官方项目知识库` 开启实体／关系抽取作为小范围验证；未修改 IMA，也未对全部测试库批量重算。最小 README 重解析完成，在 Neo4j 中验证 12 个实体节点、7 条关系。
+- 图谱是按知识库的可选增强管道，不是向量模型或图片数据库。后续打开其他 KB 仍需配置抽取示例、确认模型成本并重新解析对应资料；不开启的 KB 继续使用 Milvus／关键词检索。
+- 私有操作备份、配置前后快照和验证记录在服务器 `/home/mlclaw/agent-data/operations/neo4j-enable-20260916`；未把密码、知识内容或运行配置提交到仓库。
 
 以下版本号是各阶段历史发布证据，当前在线版本以上述统一发布为准。
 
