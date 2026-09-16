@@ -30,6 +30,7 @@ Octo 管理首批功能已部署：工作区隔离的群／子区配置、KB 绑
 - 按 WeKnora 官方 `KnowledgeGraph.md` 接入持久化 Neo4j 2025.10.1，服务名 `weknora-pilot-neo4j-1`，仅在 Compose 内网提供 Bolt，不发布宿主机端口。数据目录为服务器 `knowledge-services/weknora/pilot/neo4j`，凭据只保存在服务器私有 `.env`。
 - `NEO4J_ENABLE=true`、`NEO4J_URI=bolt://neo4j:7687` 已注入 WeKnora 后端；重启后容器启动成功，Neo4j 认证和 WeKnora 系统页均显示 `Neo4j`。Milvus 向量与 PostgreSQL 业务数据不受影响。
 - 仅对有资料的 `Octo CLI 官方项目知识库` 开启实体／关系抽取作为小范围验证；未修改 IMA，也未对全部测试库批量重算。最小 README 重解析完成，在 Neo4j 中验证 12 个实体节点、7 条关系。
+- 查看入口：本机持久隧道提供 `http://127.0.0.1:17474/`，登录 Neo4j Browser 后执行 `MATCH (n) RETURN n LIMIT 50;` 或 `MATCH (a)-[r]->(b) RETURN a,r,b LIMIT 100;`。
 - 图谱是按知识库的可选增强管道，不是向量模型或图片数据库。后续打开其他 KB 仍需配置抽取示例、确认模型成本并重新解析对应资料；不开启的 KB 继续使用 Milvus／关键词检索。
 - 私有操作备份、配置前后快照和验证记录在服务器 `/home/mlclaw/agent-data/operations/neo4j-enable-20260916`；未把密码、知识内容或运行配置提交到仓库。
 
