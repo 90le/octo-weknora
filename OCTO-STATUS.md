@@ -1,6 +1,6 @@
 # 项目进度
 
-更新：2026-09-16。唯一滚动状态；范围见 [需求地图](OCTO-REQUIREMENTS.md)，顺序见 [计划](OCTO-PLAN.md)。
+更新：2026-09-17。唯一滚动状态；范围见 [需求地图](OCTO-REQUIREMENTS.md)，顺序见 [计划](OCTO-PLAN.md)。
 
 ## 当前结论
 
@@ -33,6 +33,14 @@ Octo 管理首批功能已部署：工作区隔离的群／子区配置、KB 绑
 - 查看入口：本机持久隧道提供 `http://127.0.0.1:17474/`，HTTP 200 已验证。浏览器登录及端到端查询尚未单独验收，不能由页面可达推断 Bolt 查询可用；Tailscale Serve 尚未启用。
 - 图谱是按知识库的可选增强管道，不是向量模型或图片数据库。后续打开其他 KB 仍需配置抽取示例、确认模型成本并重新解析对应资料；不开启的 KB 继续使用 Milvus／关键词检索。
 - 私有操作备份、配置前后快照和验证记录在服务器 `/home/mlclaw/agent-data/operations/neo4j-enable-20260916`；未把密码、知识内容或运行配置提交到仓库。
+
+## 腾讯会议知识库创建回滚（2026-09-17）
+
+- 用户确认本轮只需要创建和配置知识库，不需要代为上传资料；已删除误创建的 `腾讯会议蒸馏记录`（`4d8ec93b-f564-492c-93ac-69aff1ebd458`）及其 12 个数据源。
+- 服务器同步副本 `/home/mlclaw/agent-data/knowledge/inbox/tencent-meetings`、28 条文档、1066 个分块、266 个资源和全部生成文件均已清理；Windows 原始目录未修改，仍有 28 个 Markdown 文件。
+- Milvus 目标向量已核对为 0；现有 AIBP、Octo CLI、OpenClaw Octo 插件三个知识库重启后检索仍返回 200。应用调度器恢复为 0 条定时任务。
+- 本次没有为会议资料保留 Wiki／图谱配置；后续重新创建时采用单一 KB 配置，RAG＋关键词检索和多模态解析优先，Wiki／图谱按需要开启。
+- 私有清理计数记录：`/home/mlclaw/agent-data/operations/tencent-meeting-kb-20260917/cleanup-result.json`；没有创建备份。
 
 ## 已删除知识库残留清理（2026-09-17）
 
