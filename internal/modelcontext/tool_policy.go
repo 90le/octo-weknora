@@ -64,6 +64,10 @@ var toolHandlePolicies = map[string]toolHandlePolicy{
 	"discover_mcp_tools": {opaqueOutput: true, mcpRoutingKey: "server_id", mcpDirectoryOutput: true},
 	"call_mcp_tool":      {opaqueOutput: true, mcpRoutingKey: "tool_ref"},
 	"read_file":          {},
+	"octo_knowledge_operations": {
+		sourceIDKeys: map[string]struct{}{"knowledge_base_id": {}, "knowledge_id": {}},
+		sourceOutput: true,
+	},
 	"source_browse": {
 		sourceIDKeys: map[string]struct{}{"knowledge_base_id": {}},
 		sourceOutput: true,
