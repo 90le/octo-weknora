@@ -47,7 +47,7 @@ func (a *Adapter) accept(ctx context.Context, msg *im.IncomingMessage, handler f
 	if err != nil {
 		return err
 	}
-	row := Inbox{ChannelID: a.channelID, MessageID: msg.MessageID, TenantID: a.tenantID, Input: string(data), State: "queued", Authority: im.ExecutionScopeFingerprint(scope)}
+	row := Inbox{ChannelID: a.channelID, MessageID: msg.MessageID, TenantID: a.tenantID, Input: string(data), State: "queued", Authority: encodeAuthority(scope)}
 	result := a.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
 	if result.Error != nil {
 		return result.Error

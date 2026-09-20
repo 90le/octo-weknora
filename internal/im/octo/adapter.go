@@ -187,7 +187,7 @@ func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *
 		scope, scopeErr := a.AuthorizeExecution(ctx, nil, in)
 		var saved Inbox
 		savedErr := a.inboxQuery(ctx, in.MessageID).Select("authority").First(&saved).Error
-		if scopeErr != nil || savedErr != nil || saved.Authority == "" || saved.Authority != im.ExecutionScopeFingerprint(scope) {
+		if scopeErr != nil || savedErr != nil || !permitsReply(saved.Authority, scope) {
 			_ = a.inboxQuery(ctx, in.MessageID).Updates(map[string]any{"state": "ignored", "error_code": "authorization_changed"}).Error
 			return im.ErrScopeDenied
 		}
