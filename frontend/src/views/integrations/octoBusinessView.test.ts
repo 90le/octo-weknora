@@ -64,4 +64,3 @@ test('details from an earlier knowledge-base context are not displayed in the ne
   assert.equal(issueBelongsToContext({ knowledge_base_id: 'kb-b' }, 'kb-b'), true)
   assert.equal(issueBelongsToContext({ knowledge_base_id: 'kb-a' }), true)
 })
-
