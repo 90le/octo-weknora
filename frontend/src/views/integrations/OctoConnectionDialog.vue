@@ -1,5 +1,5 @@
 <template>
-  <t-dialog v-model:visible="visible" header="连接 Octo Bot" :z-index="2600" :confirm-loading="saving" :confirm-btn="{ content: identity ? '保存已核验的连接' : '核验 Bot 身份', disabled: !token.trim() || !account.trim() }" @confirm="confirm" @closed="reset">
+  <t-dialog v-model:visible="visible" header="连接 Octo Bot" attach="body" :z-index="2600" :confirm-loading="saving" :confirm-btn="{ content: identity ? '保存已核验的连接' : '核验 Bot 身份', disabled: !token.trim() || !account.trim() }" @confirm="confirm" @closed="reset">
     <p class="hint">使用 Bot Token 连接。身份由 Octo 返回，保存后可在 IM 渠道中选择，不需要填写 Bot UID。</p>
     <label>连接名称<t-input v-model="account" :maxlength="128" autocomplete="off" placeholder="例如 octo-xiaoqiu" :disabled="saving" /></label>
     <p class="hint">这是本工作区内的唯一标识。使用已有名称会更新该连接凭据。</p>
