@@ -8,6 +8,7 @@ type KnowledgeTarget struct {
 }
 
 type Configuration struct {
+	CanCreateKnowledgeBase   bool              `json:"can_create_knowledge_base"`
 	ScopeID                  string            `json:"scope_id"`
 	ScopeName                string            `json:"scope_name"`
 	GroupID                  string            `json:"group_id"`
@@ -42,5 +43,5 @@ func (s *Service) Configuration(ctx context.Context) (*Configuration, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Configuration{ScopeID: p.ScopeID, ScopeName: p.ScopeName, GroupID: p.GroupID, SubareaID: p.SubareaID, IsDirect: p.IsDirect, CanManageScope: p.CanManageScope, ReadableKnowledgeBases: readable, ManageableKnowledgeBases: manageable}, nil
+	return &Configuration{CanCreateKnowledgeBase: p.CanCreateKnowledgeBase, ScopeID: p.ScopeID, ScopeName: p.ScopeName, GroupID: p.GroupID, SubareaID: p.SubareaID, IsDirect: p.IsDirect, CanManageScope: p.CanManageScope, ReadableKnowledgeBases: readable, ManageableKnowledgeBases: manageable}, nil
 }

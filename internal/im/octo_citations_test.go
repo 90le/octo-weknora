@@ -107,3 +107,34 @@ func TestOctoCitationURLsDoNotExposeLocalPathsOrTokens(t *testing.T) {
 	}
 	require.Equal(t, "https://github.com/org/repo/blob/main/a.go#L1", safeOctoSourceURL("https://github.com/org/repo/blob/main/a.go#L1"))
 }
+
+func TestOctoActualSourceHeadingAndQuotedTitlesUseOnlyExactRetrievedWork(t *testing.T) {
+	knowledge := &octoCitationKnowledge{rows: map[string]*types.Knowledge{
+		"one":    {ID: "one", TenantID: 1, KnowledgeBaseID: "kb", Title: "Octo CLI README", EnableStatus: "enabled", Source: "https://example.org/readme"},
+		"unused": {ID: "unused", TenantID: 1, KnowledgeBaseID: "kb", Title: "Other retrieved guide", EnableStatus: "enabled", Source: "https://example.org/unused"},
+	}}
+	service := &Service{knowledgeService: knowledge}
+	refs := []*types.SearchResult{
+		{ID: "chunk-one", KnowledgeID: "one", KnowledgeBaseID: "kb", KnowledgeTitle: "Octo CLI README"},
+		{ID: "chunk-unused", KnowledgeID: "unused", KnowledgeBaseID: "kb", KnowledgeTitle: "Other retrieved guide"},
+	}
+	for _, answer := range []string{"命令。\n**实际来源:**\nOcto CLI README", "命令依据《Octo CLI README》的说明。"} {
+		result := service.appendOctoSources(octoCitationContext(), answer, refs)
+		require.Contains(t, result, "https://example.org/readme")
+		require.NotContains(t, result, "https://example.org/unused")
+	}
+	for _, answer := range []string{"依据《Octo CLI》的说明。", "依据《Unknown README》的说明。"} {
+		result := service.appendOctoSources(octoCitationContext(), answer, refs)
+		require.NotContains(t, result, "https://example.org/")
+	}
+	ambiguous := append(refs, &types.SearchResult{ID: "second-chunk", KnowledgeID: "second-doc", KnowledgeBaseID: "kb", KnowledgeTitle: "Octo CLI README"})
+	result := service.appendOctoSources(octoCitationContext(), "根据《Octo CLI README》。", ambiguous)
+	require.NotContains(t, result, "https://example.org/", "identical titles from different retrieved documents remain ambiguous")
+}
+
+func TestOctoSourceAcceptsNativeManualMetadataWithNumericVersion(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	url := "https://github.com/test/project/blob/" + commit + "/README.md"
+	metadata, _ := json.Marshal(map[string]any{"format": "markdown", "status": "publish", "version": 3, "content": "Original content", "github_url": url, "github_commit": commit})
+	require.Equal(t, url, persistedOctoSource(&types.Knowledge{Source: "manual", Metadata: metadata}))
+}

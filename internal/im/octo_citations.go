@@ -15,7 +15,8 @@ import (
 
 var octoSourceTagRE = regexp.MustCompile(`<(kb|web)\b([^>]*)/?>`)
 var octoSourceAttrRE = regexp.MustCompile(`([A-Za-z_]+)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
-var octoSourceHeadingRE = regexp.MustCompile(`(?im)^\s*(?:\*\*)?(?:来源|参考资料|参考|资料依据|sources?|references?)(?:\*\*)?\s*[:：]`)
+var octoSourceHeadingRE = regexp.MustCompile(`(?im)^\s*(?:\*\*)?(?:实际来源|来源|参考资料|参考|资料依据|sources?|references?)\s*(?:\*\*)?\s*[:：]\s*(?:\*\*)?`)
+var octoQuotedSourceTitleRE = regexp.MustCompile(`《([^《》\r\n]{1,400})》`)
 var octoGitCommitRE = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
 type octoCitedSource struct{ title, url string }
@@ -84,9 +85,16 @@ func safeOctoSourceURL(raw string) string {
 	return parsed.String()
 }
 func persistedOctoSource(k *types.Knowledge) string {
-	metadata := map[string]string{}
-	_ = json.Unmarshal(k.Metadata, &metadata)
-	candidate := metadata["github_url"]
+	// Native manual metadata also contains numeric version fields. Read only
+	// the provenance fields instead of requiring every metadata value to be text.
+	var metadata struct {
+		GitHubURL    string `json:"github_url"`
+		GitHubCommit string `json:"github_commit"`
+	}
+	if len(k.Metadata) > 0 && json.Unmarshal(k.Metadata, &metadata) != nil {
+		return ""
+	}
+	candidate := metadata.GitHubURL
 	if candidate == "" {
 		candidate = k.Source
 	}
@@ -94,7 +102,7 @@ func persistedOctoSource(k *types.Knowledge) string {
 	if candidate == "" {
 		return ""
 	}
-	if commit := metadata["github_commit"]; commit != "" {
+	if commit := metadata.GitHubCommit; commit != "" {
 		parsed, _ := url.Parse(candidate)
 		if !octoGitCommitRE.MatchString(commit) || !strings.EqualFold(parsed.Hostname(), "github.com") || !strings.Contains(parsed.Path, "/blob/"+commit+"/") {
 			return ""
@@ -109,7 +117,8 @@ func markdownSourceTitle(title string) string {
 
 // appendOctoSources is invoked before the ordinary IM citation-tag stripping.
 // It links only explicit citations, never all search hits. Titles alone are
-// resolved only in an explicit source section and only when unambiguous.
+// resolved only in an explicit source section or Chinese book-title marks,
+// against actual retrieved references and only when unambiguous.
 func (s *Service) appendOctoSources(ctx context.Context, answer string, refs []*types.SearchResult) string {
 	if _, ok := octobusiness.PrincipalFromContext(ctx); !ok {
 		return answer
@@ -160,6 +169,11 @@ func (s *Service) appendOctoSources(ctx context.Context, answer string, refs []*
 				addRef(uniqueCitedKnowledge(refs, "", "", title))
 			}
 		}
+	}
+	// An exact, explicitly named work may be cited inline rather than under a
+	// heading. Never look up guessed titles beyond this turn's retrieved refs.
+	for _, quoted := range octoQuotedSourceTitleRE.FindAllStringSubmatch(answer, -1) {
+		addRef(uniqueCitedKnowledge(refs, "", "", quoted[1]))
 	}
 	for _, id := range ordered {
 		ref := cited[id]

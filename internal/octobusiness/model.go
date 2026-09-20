@@ -26,6 +26,7 @@ type Attachment struct {
 // Principal is constructed by trusted IM admission code, never from tool or
 // HTTP input. Validate refreshes native roles/bindings at every invocation.
 type Principal struct {
+	CanCreateKnowledgeBase                                       bool
 	TenantID                                                     uint64
 	AccountID, ChannelID, ScopeID, ScopeName, GroupID, SubareaID string
 	UserID, UserName, MessageID, MessageText                     string

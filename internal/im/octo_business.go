@@ -31,7 +31,7 @@ func (s *Service) businessContext(ctx context.Context, req *qaRequest, scope *Ex
 				}
 			}
 		}
-		p := octobusiness.Principal{TenantID: req.channel.TenantID, AccountID: current.AccountID, ChannelID: req.channelID, ScopeID: current.ScopeID, ScopeName: current.ScopeName, GroupID: req.msg.Extra["octo_group_id"], SubareaID: req.msg.Extra["octo_subarea_id"], UserID: req.msg.UserID, UserName: current.SenderName, MessageID: req.msg.MessageID, MessageText: text, IsDirect: req.msg.ChatType == ChatTypeDirect, KnowledgeBaseIDs: current.KnowledgeBaseIDs, ManageKnowledgeBaseIDs: current.ManageKnowledgeBaseIDs, CanManageScope: current.CanManageScope, ReadIssueScopeIDs: current.ReadIssueScopeIDs, ReadIssueKnowledgeBaseIDs: current.ReadIssueKnowledgeBaseIDs}
+		p := octobusiness.Principal{CanCreateKnowledgeBase: current.AllowKnowledgeCreation, TenantID: req.channel.TenantID, AccountID: current.AccountID, ChannelID: req.channelID, ScopeID: current.ScopeID, ScopeName: current.ScopeName, GroupID: req.msg.Extra["octo_group_id"], SubareaID: req.msg.Extra["octo_subarea_id"], UserID: req.msg.UserID, UserName: current.SenderName, MessageID: req.msg.MessageID, MessageText: text, IsDirect: req.msg.ChatType == ChatTypeDirect, KnowledgeBaseIDs: current.KnowledgeBaseIDs, ManageKnowledgeBaseIDs: current.ManageKnowledgeBaseIDs, CanManageScope: current.CanManageScope, ReadIssueScopeIDs: current.ReadIssueScopeIDs, ReadIssueKnowledgeBaseIDs: current.ReadIssueKnowledgeBaseIDs}
 		if req.msg.FileKey != "" {
 			p.Attachments = []octobusiness.Attachment{{Name: req.msg.FileName, URL: req.msg.FileKey, Type: string(req.msg.MessageType)}}
 		}

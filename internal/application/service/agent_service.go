@@ -1041,7 +1041,10 @@ func (s *agentService) registerTools(
 		case tools.ToolTodoWrite:
 			toolToRegister = tools.NewTodoWriteTool()
 		case "octo_knowledge_operations":
-			toolToRegister = octobusiness.NewTool(newOctoBusiness(s.db, s.knowledgeBaseService, s.knowledgeService))
+			for _, businessTool := range octobusiness.NewTools(newOctoBusiness(s.db, s.knowledgeBaseService, s.knowledgeService)) {
+				registry.RegisterTool(businessTool)
+			}
+			continue
 		case tools.ToolSourceBrowse:
 			reader := &DataSourceService{dsRepo: repository.NewDataSourceRepository(s.db), kbService: s.knowledgeBaseService}
 			toolToRegister = tools.NewSourceBrowseTool(reader, s.knowledgeBaseService, config.SearchTargets)
