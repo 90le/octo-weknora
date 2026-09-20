@@ -85,9 +85,11 @@ func (c *apiClient) request(ctx context.Context, method, path string, body any, 
 }
 
 type registration struct {
-	UID   string `json:"robot_id"`
-	Token string `json:"im_token"`
-	WS    string `json:"ws_url"`
+	Name     string `json:"name"`
+	OwnerUID string `json:"owner_uid"`
+	UID      string `json:"robot_id"`
+	Token    string `json:"im_token"`
+	WS       string `json:"ws_url"`
 }
 
 func (c *apiClient) register(ctx context.Context) (registration, error) {

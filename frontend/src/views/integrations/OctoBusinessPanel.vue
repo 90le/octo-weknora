@@ -37,8 +37,8 @@
           :loading="loading" :empty="error ? '读取失败，不能视为没有问题' : '暂无符合条件的登记问题'">
           <template #title="{ row }">
             <t-button variant="text" class="issue-title" :title="row.title" @click="openIssue(row.id)">{{ row.title }}</t-button>
+            <div class="issue-type"><t-tag size="small" variant="light">{{ issueKindLabels[row.kind] || row.kind }}</t-tag></div>
           </template>
-          <template #kind="{ row }"><t-tag size="small" variant="light">{{ issueKindLabels[row.kind] || row.kind }}</t-tag></template>
           <template #scope="{ row }">
             <span class="wrap-text">{{ sourceLabel(row) }}</span>
             <small>{{ row.is_direct ? '私聊' : row.subarea_id ? '群聊子区' : '群聊主区' }}</small>
@@ -124,7 +124,7 @@
       </t-loading>
     </template>
 
-    <t-drawer v-model:visible="detailVisible" attach="body" header="问题详情" size="min(760px, 100vw)" :footer="false">
+    <t-drawer v-model:visible="detailVisible" attach="body" header="问题详情" size="min(760px, 100vw)" :footer="false" :close-btn="true" :close-on-esc-keydown="true">
       <t-loading :loading="detailLoading">
         <t-alert v-if="detailError" theme="error">{{ detailError }} <t-button v-if="detailID" variant="text" @click="openIssue(detailID)">重试</t-button></t-alert>
         <div v-if="selected" class="issue-detail">
@@ -168,7 +168,7 @@
             <h4>处理记录</h4>
             <t-empty v-if="!events.length" description="暂无后续处理记录，原始提问见上方来源" />
             <ol v-else class="history"><li v-for="(event, index) in events" :key="index">
-              <div class="row"><t-tag size="small" :theme="statusTheme(event.status)">{{ issueStatusLabels[event.status] || event.status }}</t-tag><strong>{{ displayPerson(event.actor_name, event.actor_uid) }}</strong><time>{{ time(event.created_at) }}</time></div>
+              <div class="row"><t-tag size="small" :theme="statusTheme(event.status)">{{ issueStatusLabels[event.status] || event.status }}</t-tag><strong :title="`原生 UID：${event.actor_uid}`">{{ eventActor(event) }}</strong><time>{{ time(event.created_at) }}</time></div>
               <p class="prewrap">{{ event.note || '更新了处理状态或负责人，未补充说明' }}</p>
             </li></ol>
           </section>
@@ -230,17 +230,19 @@ const kbName = (id: string) => kbs.value.find(kb => kb.id === id)?.name || (meta
 const sourceLabel = (issue: OctoIssue) => issueSourceLabel(issue, scopes.value)
 const time = (value: string) => value ? new Date(value).toLocaleString() : '—'
 const personName = (name?: string, uid?: string, empty = '未提供姓名') => name?.trim() || (uid ? '姓名待核对' : empty)
+const eventActor = (event: { actor_name?: string; actor_uid: string }) =>
+  event.actor_uid === auth.user?.id ? (auth.user.username || '当前用户')
+    : event.actor_name && event.actor_name !== event.actor_uid ? event.actor_name : '姓名待核对'
 const statusTheme = (status: string): 'success' | 'default' | 'warning' | 'primary' =>
   status === 'resolved' ? 'success' : status === 'closed' ? 'default' : status === 'inprogress' ? 'primary' : 'warning'
 const columns = [
-  { colKey: 'title', title: '问题标题', minWidth: 230 },
-  { colKey: 'kind', title: '类型', width: 105 },
+  { colKey: 'title', title: '问题／类型', minWidth: 230 },
   { colKey: 'scope', title: '来源群聊／子区', minWidth: 170 },
   { colKey: 'knowledge_base', title: '知识库', minWidth: 150 },
   { colKey: 'reporter', title: '提问人', minWidth: 100 },
   { colKey: 'owner', title: '负责人', minWidth: 100 },
-  { colKey: 'status', title: '状态', width: 100 },
-  { colKey: 'created_at', title: '登记时间', width: 170 },
+  { colKey: 'status', title: '状态', width: 85 },
+  { colKey: 'created_at', title: '登记时间', width: 160 },
 ]
 
 let listVersion = 0, metadataVersion = 0, detailVersion = 0, contactVersion = 0, reportVersion = 0, contextVersion = 0
@@ -486,7 +488,8 @@ onBeforeUnmount(invalidate)
 .list-footer { margin-top: 18px; }
 .list-footer .hint { margin: 0; }
 .issue-table-scroll { min-width: 0; width: 100%; max-width: 100%; overflow-x: auto; border: 1px solid var(--td-component-border); border-radius: var(--td-radius-large, 8px); }
-.issue-table { min-width: 1125px; }
+.issue-table { min-width: 995px; }
+.issue-type { margin-top:6px; }
 .issue-table :deep(.t-table__content) { overflow-x: auto; }
 .issue-table :deep(th) { font-weight: 500; color: var(--td-text-color-secondary); }
 .issue-table :deep(td) { vertical-align: top; }

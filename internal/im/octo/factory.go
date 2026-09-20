@@ -55,6 +55,11 @@ func NewFactory(db *gorm.DB) im.AdapterFactory {
 		if reg.UID != uid {
 			return nil, nil, errors.New("Octo connection Bot UID mismatch")
 		}
+		// Registration is a receiver lifecycle operation, never a page read.
+		// Persist its trusted result only for the credential we just verified.
+		if err = octointegration.NewStore(db).RecordVerifiedIdentity(ctx, channel.TenantID, account, connection.Token, octointegration.ConnectionIdentity{BotUID: reg.UID, Name: reg.Name, OwnerUID: reg.OwnerUID}); err != nil {
+			return nil, nil, err
+		}
 		adapter.policy = runtimePolicy(db, adapter, channel.ID, channel.TenantID, account, connection.Token)
 		adapter.receiptPolicy = scopedRuntimePolicy(db, adapter, channel.ID, channel.TenantID, account, connection.Token, true)
 		adapter.db, adapter.channelID, adapter.tenantID = db, channel.ID, channel.TenantID

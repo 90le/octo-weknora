@@ -1,5 +1,5 @@
 <template>
-  <t-drawer v-model:visible="visible" :header="`${channelName || 'Octo 渠道'} · 消息处理记录`" size="780px" :footer="false">
+  <t-drawer v-model:visible="visible" attach="body" :header="`${channelName || 'Octo 渠道'} · 消息处理记录`" size="min(780px, 100vw)" :footer="false" :close-btn="true" :close-on-esc-keydown="true">
     <p>最近 100 条有效消息的处理状态。这里只显示投递信息，不显示聊天正文或密钥。</p><t-button variant="outline" :loading="loading" @click="load">刷新状态</t-button>
     <t-alert v-if="error" theme="error">{{ error }}</t-alert>
     <t-table :data="rows" :columns="columns" :loading="loading" row-key="message_id" :empty="error?'无法读取状态，请重试':'尚无有效消息处理记录'">

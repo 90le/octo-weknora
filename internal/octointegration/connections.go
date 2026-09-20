@@ -2,7 +2,9 @@ package octointegration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/Tencent/WeKnora/internal/types"
 	"strings"
 	"time"
 
@@ -14,10 +16,11 @@ import (
 var ErrEncryption = errors.New("Octo credential encryption unavailable")
 
 type Connection struct {
-	TenantID  uint64    `json:"-" gorm:"primaryKey"`
-	AccountID string    `json:"account_id" gorm:"primaryKey"`
-	Token     string    `json:"-"`
-	UpdatedAt time.Time `json:"updated_at"`
+	VerifiedIdentity types.JSON `json:"-" gorm:"type:json"`
+	TenantID         uint64     `json:"-" gorm:"primaryKey"`
+	AccountID        string     `json:"account_id" gorm:"primaryKey"`
+	Token            string     `json:"-"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 func (Connection) TableName() string { return "octo_connections" }
@@ -32,6 +35,10 @@ func (s *Store) Connections(ctx context.Context, tenant uint64) ([]Connection, e
 }
 
 func (s *Store) PutConnection(ctx context.Context, tenant uint64, account, token string) error {
+	return s.putConnection(ctx, tenant, account, token, nil)
+}
+
+func (s *Store) putConnection(ctx context.Context, tenant uint64, account, token string, identity *ConnectionIdentity) error {
 	if tenant == 0 || !validID(account) || !strings.HasPrefix(token, "bf_") || len(token) > 512 || strings.ContainsAny(token, " \t\r\n") {
 		return ErrInvalid
 	}
@@ -45,8 +52,32 @@ func (s *Store) PutConnection(ctx context.Context, tenant uint64, account, token
 		return ErrEncryption
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		c := Connection{TenantID: tenant, AccountID: account, Token: encrypted, UpdatedAt: time.Now()}
-		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "tenant_id"}, {Name: "account_id"}}, DoUpdates: clause.AssignmentColumns([]string{"token", "updated_at"})}).Create(&c).Error; err != nil {
+		verified := types.JSON(`{}`)
+		if identity != nil {
+			if !validID(identity.BotUID) {
+				return ErrInvalid
+			}
+			b, _ := json.Marshal(identity)
+			verified = types.JSON(b)
+		}
+		var existing Connection
+		oldErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id = ? AND account_id = ?", tenant, account).First(&existing).Error
+		if oldErr == nil {
+			current, err := utils.DecryptStoredSecret(existing.Token)
+			if err != nil {
+				return ErrEncryption
+			}
+			if current == token {
+				if identity != nil {
+					return tx.Model(&Connection{}).Where("tenant_id = ? AND account_id = ?", tenant, account).UpdateColumn("verified_identity", verified).Error
+				}
+				return nil
+			}
+		} else if !errors.Is(oldErr, gorm.ErrRecordNotFound) {
+			return oldErr
+		}
+		c := Connection{TenantID: tenant, AccountID: account, Token: encrypted, VerifiedIdentity: verified, UpdatedAt: time.Now()}
+		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "tenant_id"}, {Name: "account_id"}}, DoUpdates: clause.AssignmentColumns([]string{"token", "verified_identity", "updated_at"})}).Create(&c).Error; err != nil {
 			return err
 		}
 		if err := tx.Model(&Scope{}).Where("tenant_id = ? AND account_id = ?", tenant, account).Updates(map[string]interface{}{"sync_status": "needs_refresh", "sync_error": ""}).Error; err != nil {

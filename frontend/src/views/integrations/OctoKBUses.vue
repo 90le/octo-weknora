@@ -1,6 +1,6 @@
 <template>
   <t-button variant="text" @click="open">Octo 使用范围</t-button>
-  <t-drawer v-model:visible="visible" header="Octo 使用范围" :footer="false" size="560px">
+  <t-drawer v-model:visible="visible" attach="body" header="Octo 使用范围" :footer="false" size="min(560px, 100vw)" :close-btn="true" :close-on-esc-keydown="true">
     <p>管理本知识库向哪些群／子区开放查询。解除查询绑定不会删除资料或撤销已有维护授权；维护授权在区域设置中单独管理。</p>
     <t-alert theme="info">下方列出直接绑定。子区可继承主群知识库，继承结果在区域设置查看。</t-alert>
     <t-loading :loading="loading">

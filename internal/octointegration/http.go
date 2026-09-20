@@ -1,6 +1,7 @@
 package octointegration
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -24,6 +25,8 @@ func tenant(c *gin.Context) uint64 { return c.GetUint64(types.TenantIDContextKey
 func respond(c *gin.Context, status int, data interface{}, err error) {
 	if err != nil {
 		switch {
+		case errors.Is(err, ErrIdentityUnverified):
+			c.JSON(http.StatusConflict, gin.H{"error": "Bot identity has not been verified for this credential. Explicitly verify the connection before use; opening this page never registers the Bot."})
 		case errors.Is(err, ErrEncryption):
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Octo credential encryption is unavailable; configure the native SYSTEM_AES_KEY"})
 		case errors.Is(err, ErrPlatform):
@@ -91,7 +94,7 @@ func (h *Handler) PutConnection(c *gin.Context) {
 		respond(c, 0, nil, ErrInvalid)
 		return
 	}
-	identity, err := h.platform.identity(c.Request.Context(), req.Token)
+	identity, err := h.probeIdentity(c.Request.Context(), tenant(c), req.Token)
 	if err != nil {
 		respond(c, 0, nil, err)
 		return
@@ -100,7 +103,7 @@ func (h *Handler) PutConnection(c *gin.Context) {
 		respond(c, 0, nil, ErrInvalid)
 		return
 	}
-	err = h.store.PutConnection(c.Request.Context(), tenant(c), c.Param("account_id"), req.Token)
+	err = h.store.putConnection(c.Request.Context(), tenant(c), c.Param("account_id"), req.Token, identity)
 	respond(c, http.StatusOK, identity, err)
 }
 
@@ -112,17 +115,17 @@ func (h *Handler) ProbeConnection(c *gin.Context) {
 		respond(c, 0, nil, ErrInvalid)
 		return
 	}
-	identity, err := h.platform.identity(c.Request.Context(), req.Token)
+	identity, err := h.probeIdentity(c.Request.Context(), tenant(c), req.Token)
 	respond(c, http.StatusOK, identity, err)
 }
 
 func (h *Handler) ConnectionIdentity(c *gin.Context) {
-	_, token, err := h.store.connection(c.Request.Context(), tenant(c), c.Param("account_id"))
+	connection, token, err := h.store.connection(c.Request.Context(), tenant(c), c.Param("account_id"))
 	if err != nil {
 		respond(c, 0, nil, err)
 		return
 	}
-	identity, err := h.platform.identity(c.Request.Context(), token)
+	identity, err := h.platform.readIdentity(c.Request.Context(), token, connection.trustedIdentity())
 	respond(c, http.StatusOK, identity, err)
 }
 
@@ -215,4 +218,17 @@ func (h *Handler) binding(c *gin.Context, enabled bool) {
 func (h *Handler) Uses(c *gin.Context) {
 	rows, err := h.store.Uses(c.Request.Context(), tenant(c), c.Param("id"))
 	respond(c, http.StatusOK, rows, err)
+}
+
+// Explicit credential verification may register a new credential. A previously
+// verified token uses only the read API, including when pasted into the probe UI.
+func (h *Handler) probeIdentity(ctx context.Context, tenantID uint64, token string) (*ConnectionIdentity, error) {
+	known, err := h.store.knownIdentity(ctx, tenantID, token)
+	if err != nil {
+		return nil, err
+	}
+	if known != nil {
+		return h.platform.readIdentity(ctx, token, known)
+	}
+	return h.platform.identity(ctx, token)
 }

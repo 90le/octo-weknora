@@ -6,7 +6,7 @@
     <label>Bot Token<t-input v-model="token" type="password" autocomplete="new-password" :disabled="saving" placeholder="bf_…" /></label>
     <t-alert v-if="identity" theme="success">已核验：{{ identity.name || 'Octo Bot' }} · {{ identity.bot_uid }}</t-alert>
     <t-alert v-if="error" theme="error">{{ error }}</t-alert>
-    <p class="hint">密钥加密保存，不回显；核验身份不会启动消息接收。启用渠道前，应停止此 Bot 的其他接收端。</p>
+    <p class="hint">密钥加密保存，不回显。首次核验新 Token 会向 Octo 注册身份，可能重置同一 Bot 的现有连接；请先停止旧接收端。更新连接后，保存对应 Bot 渠道以应用更改。读取已经核验的身份不会重复注册。</p>
   </t-dialog>
 </template>
 <script setup lang="ts">
