@@ -82,6 +82,9 @@ func (s *DataSourceService) processSourceSnapshot(ctx context.Context, ds *types
 		}
 	}
 	log.Status = types.SyncLogStatusSuccess
+	// A retry reuses its sync-log row. A successful attempt must clear the
+	// previous attempt's error without rewriting other historical runs.
+	log.ErrorMessage = ""
 	if err != nil {
 		log.Status = types.SyncLogStatusFailed
 		log.ErrorMessage = err.Error()
@@ -96,9 +99,10 @@ func (s *DataSourceService) processSourceSnapshot(ctx context.Context, ds *types
 	log.ItemsUpdated = result.Updated
 	log.ItemsDeleted = result.Deleted
 	log.ItemsSkipped = result.Skipped
+	log.ItemsFailed = result.Failed
 	log.Result, _ = result.ToJSON()
 	log.FinishedAt = timePtr(time.Now().UTC())
-	if e := s.syncLogRepo.Update(ctx, log); e != nil && err == nil {
+	if e := s.syncLogRepo.UpdateResult(ctx, log); e != nil && err == nil {
 		err = e
 	}
 	return err
@@ -166,7 +170,12 @@ func (s *DataSourceService) sourceSnapshot(ctx context.Context, kbID, sourceID, 
 		return nil, nil, nil, snapshot.ErrUnavailable
 	}
 	if ds.Type == localfolder.Type {
-		if _, e := localfolder.AuthorizedRoot(ds.TenantID, cfg); e != nil {
+		connector, lookupErr := s.connectorRegistry.Get(localfolder.Type)
+		local, ok := connector.(*localfolder.Connector)
+		if lookupErr != nil || !ok {
+			return nil, nil, nil, access.ErrForbidden
+		}
+		if _, e := local.AuthorizedRoot(ctx, ds.TenantID, cfg); e != nil {
 			return nil, nil, nil, access.ErrForbidden
 		}
 	}
@@ -362,4 +371,17 @@ func removeSourceCache(ds *types.DataSource) {
 	if store, err := snapshot.FromEnvironment(); err == nil {
 		_ = store.Delete(ds)
 	}
+}
+
+// LocalSourceRoots returns only the current workspace's database-backed grants.
+func (s *DataSourceService) LocalSourceRoots(ctx context.Context, tenant uint64) ([]localfolder.Root, error) {
+	connector, err := s.connectorRegistry.Get(localfolder.Type)
+	if err != nil {
+		return nil, err
+	}
+	local, ok := connector.(*localfolder.Connector)
+	if !ok {
+		return nil, errors.New("server folder registry unavailable")
+	}
+	return local.Roots(ctx, tenant)
 }

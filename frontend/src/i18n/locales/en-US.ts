@@ -1,4 +1,6 @@
+import { sourceRootMessages } from '../sourceRootMessages'
 export default {
+  sourceRoots: sourceRootMessages.en,
   localBrowser: {
     pipOpen: "Pop out preview",
     pipReturn: "Return to conversation",
@@ -5999,6 +6001,8 @@ export default {
       grepChunksDesc: 'Quickly locate documents and chunks containing specific keywords',
       knowledgeSearch: 'Semantic Search',
       knowledgeSearchDesc: 'Understand questions and find semantically relevant content',
+      octoKnowledgeOperations: 'Octo knowledge operations',
+      octoKnowledgeOperationsDesc: 'Record issues, retrieve contacts and reports, and confirm scoped knowledge changes in authorized Octo conversations. Unavailable in ordinary web chat.',
       listChunks: 'View Document Chunks',
       listChunksDesc: 'Get complete chunk content of a document',
       queryGraph: 'Query Knowledge Graph',

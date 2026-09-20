@@ -834,7 +834,18 @@ func (s *knowledgeBaseService) ProcessKBDelete(ctx context.Context, t *asynq.Tas
 
 	// Step 1: Get all knowledge entries in this knowledge base
 	logger.Infof(ctx, "Fetching all knowledge entries in knowledge base, ID: %s", kbID)
-	knowledgeList, err := s.kgRepo.ListKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID)
+	var knowledgeList []*types.Knowledge
+	var err error
+	var cleanupPlan *interfaces.KBDeletionPlan
+	cleanupRepo, nativeCleanup := s.repo.(interfaces.KnowledgeBaseCleanupRepository)
+	if nativeCleanup {
+		cleanupPlan, err = cleanupRepo.PrepareKnowledgeBaseCleanup(ctx, tenantID, kbID)
+		if err == nil {
+			knowledgeList = cleanupPlan.Knowledge
+		}
+	} else {
+		knowledgeList, err = s.kgRepo.ListKnowledgeByKnowledgeBaseID(ctx, tenantID, kbID)
+	}
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"knowledge_base_id": kbID,
@@ -896,13 +907,15 @@ func (s *knowledgeBaseService) ProcessKBDelete(ctx context.Context, t *asynq.Tas
 			}
 
 			for key, knowledgeGroup := range embeddingGroups {
-				embeddingModel, err := s.modelService.GetEmbeddingModel(ctx, key.EmbeddingModelID)
-				if err != nil {
-					logger.Warnf(ctx, "Failed to get embedding model %s: %v", key.EmbeddingModelID, err)
+				if key.EmbeddingModelID == "" {
 					continue
 				}
+				embeddingModel, err := s.modelService.GetEmbeddingModel(ctx, key.EmbeddingModelID)
+				if err != nil {
+					return fmt.Errorf("load embedding model for KB cleanup: %w", err)
+				}
 				if err := retrieveEngine.DeleteByKnowledgeIDList(ctx, knowledgeGroup, embeddingModel.GetDimensions(), key.Type); err != nil {
-					logger.Warnf(ctx, "Failed to delete embeddings for model %s: %v", key.EmbeddingModelID, err)
+					return fmt.Errorf("delete KB embeddings: %w", err)
 				}
 			}
 		}
@@ -910,7 +923,7 @@ func (s *knowledgeBaseService) ProcessKBDelete(ctx context.Context, t *asynq.Tas
 		// Collect image URLs before chunks are deleted
 		chunkImageInfos, imgErr := s.chunkRepo.ListImageInfoByKnowledgeIDs(ctx, tenantID, knowledgeIDs)
 		if imgErr != nil {
-			logger.Warnf(ctx, "Failed to collect image URLs for KB delete: %v", imgErr)
+			return fmt.Errorf("collect KB image cleanup evidence: %w", imgErr)
 		}
 		var imageInfoStrs []string
 		for _, ci := range chunkImageInfos {
@@ -918,29 +931,25 @@ func (s *knowledgeBaseService) ProcessKBDelete(ctx context.Context, t *asynq.Tas
 		}
 		imageURLs := collectImageURLs(ctx, imageInfoStrs)
 
-		// Delete all chunks
-		logger.Infof(ctx, "Deleting all chunks in knowledge base")
-		for _, knowledgeID := range knowledgeIDs {
-			if err := s.chunkRepo.DeleteChunksByKnowledgeID(ctx, tenantID, knowledgeID); err != nil {
-				logger.Warnf(ctx, "Failed to delete chunks for knowledge %s: %v", knowledgeID, err)
-			}
+		// Physical deletion runs first. Database rows and chunk image locations
+		// remain available if a provider fails or the worker is interrupted.
+		if err := s.deleteKnowledgeBaseFiles(ctx, knowledgeList, imageURLs, cleanupPlan); err != nil {
+			return err
 		}
-
-		// Delete physical files, extracted images, and adjust storage
-		logger.Infof(ctx, "Deleting physical files and extracted images")
-		storageAdjust := int64(0)
-		for _, knowledge := range knowledgeList {
-			if knowledge.FilePath != "" {
-				if err := s.fileSvc.DeleteFile(ctx, knowledge.FilePath); err != nil {
-					logger.Warnf(ctx, "Failed to delete file %s: %v", knowledge.FilePath, err)
+		if !nativeCleanup {
+			for _, knowledgeID := range knowledgeIDs {
+				if err := s.chunkRepo.DeleteChunksByKnowledgeID(ctx, tenantID, knowledgeID); err != nil {
+					return err
 				}
 			}
-			storageAdjust -= knowledge.StorageSize
-		}
-		deleteExtractedImages(ctx, s.fileSvc, knowledgeResourceOwners(s.resourceCatalog, knowledgeIDs...), imageURLs)
-		if storageAdjust != 0 {
-			if err := s.tenantRepo.AdjustStorageUsed(ctx, tenantID, storageAdjust); err != nil {
-				logger.Warnf(ctx, "Failed to adjust tenant storage: %v", err)
+			var storageAdjust int64
+			for _, knowledge := range knowledgeList {
+				storageAdjust -= knowledge.StorageSize
+			}
+			if storageAdjust != 0 {
+				if err := s.tenantRepo.AdjustStorageUsed(ctx, tenantID, storageAdjust); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -955,17 +964,24 @@ func (s *knowledgeBaseService) ProcessKBDelete(ctx context.Context, t *asynq.Tas
 		}
 		if s.graphEngine != nil && len(namespaces) > 0 {
 			if err := s.graphEngine.DelGraph(ctx, namespaces); err != nil {
-				logger.Warnf(ctx, "Failed to delete knowledge graph: %v", err)
+				return fmt.Errorf("delete KB graph: %w", err)
 			}
 		}
 
 		// Delete all knowledge entries from database
 		logger.Infof(ctx, "Deleting knowledge entries from database")
-		if err := s.kgRepo.DeleteKnowledgeList(ctx, tenantID, knowledgeIDs); err != nil {
-			logger.ErrorWithFields(ctx, err, map[string]interface{}{
-				"knowledge_base_id": kbID,
-			})
-			return err
+		if !nativeCleanup {
+			if err := s.kgRepo.DeleteKnowledgeList(ctx, tenantID, knowledgeIDs); err != nil {
+				logger.ErrorWithFields(ctx, err, map[string]interface{}{
+					"knowledge_base_id": kbID,
+				})
+				return err
+			}
+		}
+	}
+	if nativeCleanup {
+		if err := cleanupRepo.FinalizeKnowledgeBaseCleanup(ctx, tenantID, kbID); err != nil {
+			return fmt.Errorf("finalize KB cleanup: %w", err)
 		}
 	}
 

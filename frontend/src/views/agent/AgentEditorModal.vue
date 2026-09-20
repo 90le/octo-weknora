@@ -2384,6 +2384,7 @@ const allTools = computed(() => [
   { value: 'thinking', label: t('agentEditor.tools.thinking'), description: t('agentEditor.tools.thinkingDesc'), group: 'base' },
   { value: 'todo_write', label: t('agentEditor.tools.todoWrite'), description: t('agentEditor.tools.todoWriteDesc'), group: 'base' },
   { value: 'source_browse', label: t('datasource.source.browse'), description: t('datasource.source.sourceHint'), group: 'source' },
+  { value: 'octo_knowledge_operations', label: t('agentEditor.tools.octoKnowledgeOperations'), description: t('agentEditor.tools.octoKnowledgeOperationsDesc'), group: 'source' },
   // 知识库语义/关键词检索
   { value: 'grep_chunks', label: t('agentEditor.tools.grepChunks'), description: t('agentEditor.tools.grepChunksDesc'), group: 'rag' },
   { value: 'knowledge_search', label: t('agentEditor.tools.knowledgeSearch'), description: t('agentEditor.tools.knowledgeSearchDesc'), group: 'rag' },

@@ -29,6 +29,15 @@ func addExecutionContext(ctx context.Context, request *types.QARequest) {
 // ExecutionScope is produced by trusted adapter code, never decoded from message
 // text or a callback's self-reported roles. Empty KBs deny execution explicitly.
 type ExecutionScope struct {
+	ReadIssueKnowledgeBaseIDs []string
+	AccountID                 string
+	ScopeID                   string
+	ScopeName                 string `json:"-"`
+	ManageKnowledgeBaseIDs    []string
+	ReadIssueScopeIDs         []string
+	CanManageScope            bool
+	AllowKnowledgeCreation    bool
+
 	KnowledgeBaseIDs []string
 	Revision         string
 	SenderName       string `json:"-"`
@@ -56,10 +65,14 @@ func authorizeExecution(ctx context.Context, adapter Adapter, channel *IMChannel
 	if err != nil {
 		return nil, err
 	}
-	if scope == nil || len(scope.KnowledgeBaseIDs) == 0 || strings.TrimSpace(scope.Revision) == "" {
+	if scope == nil || (len(scope.KnowledgeBaseIDs) == 0 && !(scope.CanManageScope && len(scope.ManageKnowledgeBaseIDs) > 0)) || strings.TrimSpace(scope.Revision) == "" {
 		return nil, ErrScopeDenied
 	}
-	copyScope := &ExecutionScope{Revision: scope.Revision, SenderName: scope.SenderName}
+	copyScope := *scope
+	copyScope.KnowledgeBaseIDs = nil
+	copyScope.ManageKnowledgeBaseIDs = append([]string(nil), scope.ManageKnowledgeBaseIDs...)
+	copyScope.ReadIssueScopeIDs = append([]string(nil), scope.ReadIssueScopeIDs...)
+	copyScope.ReadIssueKnowledgeBaseIDs = append([]string(nil), scope.ReadIssueKnowledgeBaseIDs...)
 	seen := map[string]bool{}
 	for _, id := range scope.KnowledgeBaseIDs {
 		if strings.TrimSpace(id) == "" {
@@ -71,7 +84,7 @@ func authorizeExecution(ctx context.Context, adapter Adapter, channel *IMChannel
 		}
 	}
 	sort.Strings(copyScope.KnowledgeBaseIDs)
-	return copyScope, nil
+	return &copyScope, nil
 }
 
 func scopeFingerprint(scope *ExecutionScope) string {
@@ -110,7 +123,7 @@ func scopeAgent(agent *types.CustomAgent, scope *ExecutionScope) (*types.CustomA
 	if scope == nil {
 		return agent, nil
 	}
-	if agent == nil || len(scope.KnowledgeBaseIDs) == 0 {
+	if agent == nil || (len(scope.KnowledgeBaseIDs) == 0 && !(scope.CanManageScope && len(scope.ManageKnowledgeBaseIDs) > 0)) {
 		return nil, ErrScopeDenied
 	}
 	data, err := json.Marshal(agent)
@@ -135,7 +148,7 @@ func scopeAgent(agent *types.CustomAgent, scope *ExecutionScope) (*types.CustomA
 	out.Config.MemoryEnabled = &off
 	// source_browse is supplied by the native source-reader work package. Keep
 	// its own full-KB grant validation; do not add a channel-specific file relay.
-	readTools := []string{"knowledge_search", "get_document_info", "list_knowledge_chunks", "grep_chunks", "source_browse", "wiki_search", "wiki_read_page", "wiki_read_source_doc", "thinking", "todo_write"}
+	readTools := []string{"knowledge_search", "get_document_info", "list_knowledge_chunks", "grep_chunks", "source_browse", "wiki_search", "wiki_read_page", "wiki_read_source_doc", "thinking", "todo_write", "octo_knowledge_operations"}
 	out.Config.AllowedTools = nil
 	for _, name := range readTools {
 		if len(agent.Config.AllowedTools) == 0 {
@@ -155,3 +168,7 @@ func scopeAgent(agent *types.CustomAgent, scope *ExecutionScope) (*types.CustomA
 	}
 	return &out, nil
 }
+
+// ExecutionScopeFingerprint binds deferred output to the exact authorized input
+// scope. Display names are excluded by JSON tags; permission fields are retained.
+func ExecutionScopeFingerprint(scope *ExecutionScope) string { return scopeFingerprint(scope) }

@@ -1,4 +1,6 @@
+import { sourceRootMessages } from '../sourceRootMessages'
 export default {
+  sourceRoots: sourceRootMessages.zh,
   localBrowser: {
     pipOpen: "弹出悬浮窗",
     pipReturn: "返回对话小窗",
@@ -1219,6 +1221,8 @@ export default {
       grepChunksDesc: '快速定位包含特定关键词的文档和分块',
       knowledgeSearch: '语义搜索',
       knowledgeSearchDesc: '理解问题并查找语义相关内容',
+      octoKnowledgeOperations: 'Octo 知识业务',
+      octoKnowledgeOperationsDesc: '在已授权的 Octo 会话中登记问题、查询联系人和报告，并确认受限知识维护操作。普通网页对话不开放此工具。',
       listChunks: '查看文档分块',
       listChunksDesc: '获取文档完整分块内容',
       queryGraph: '查询知识图谱',

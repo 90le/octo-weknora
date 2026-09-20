@@ -52,9 +52,10 @@ type ToolRequirement struct {
 // tools shouldn't silently break).
 var ToolCapabilityRequirements = map[string]ToolRequirement{
 	// ---- base / reasoning (no KB dependency, no file consumption) ----
-	"thinking":      {},
-	"source_browse": {},
-	"todo_write":    {},
+	"thinking":                  {},
+	"octo_knowledge_operations": {},
+	"source_browse":             {},
+	"todo_write":                {},
 
 	// ---- RAG / chunk retrieval (need at least one chunk-indexed KB) ----
 	"knowledge_search":      {AnyOf: []KBCapability{CapVector, CapKeyword}, ConsumesFiles: true},

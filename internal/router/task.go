@@ -14,6 +14,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/common"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/middleware/asynqdl"
+	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -36,6 +37,7 @@ type AsynqTaskParams struct {
 	WikiServer           *asynq.Server `name:"wikiAsynqServer"`
 	KnowledgeService     interfaces.KnowledgeService
 	KnowledgeBaseService interfaces.KnowledgeBaseService
+	OctoBusiness         *octobusiness.Service
 	TagService           interfaces.KnowledgeTagService
 	DataSourceService    interfaces.DataSourceService
 	ChunkExtractor       interfaces.TaskHandler `name:"chunkExtractor"`
@@ -296,6 +298,7 @@ func RunAsynqServer(params AsynqTaskParams) *asynq.ServeMux {
 
 	// Register KB delete handler
 	mux.HandleFunc(types.TypeKBDelete, params.KnowledgeBaseService.ProcessKBDelete)
+	mux.HandleFunc(octobusiness.TypeReportSend, params.OctoBusiness.ProcessReportTask)
 
 	// Register image multimodal handler
 	mux.HandleFunc(types.TypeImageMultimodal, params.ImageMultimodal.Handle)

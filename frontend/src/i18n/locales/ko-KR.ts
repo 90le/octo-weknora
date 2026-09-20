@@ -1,4 +1,6 @@
+import { sourceRootMessages } from '../sourceRootMessages'
 export default {
+  sourceRoots: sourceRootMessages.en,
   localBrowser: {
     pipOpen: "미리보기 팝업 열기",
     pipReturn: "대화 내 미리보기로 돌아가기",
@@ -1218,6 +1220,8 @@ export default {
       grepChunksDesc: '특정 키워드를 포함하는 문서와 청크를 빠르게 찾기',
       knowledgeSearch: '의미 검색',
       knowledgeSearchDesc: '질문을 이해하고 의미적으로 관련된 콘텐츠 찾기',
+      octoKnowledgeOperations: 'Octo 지식 작업',
+      octoKnowledgeOperationsDesc: '승인된 Octo 대화에서 문제를 등록하고 연락처와 보고서를 조회하며 허용된 지식 변경을 확인합니다. 일반 웹 채팅에서는 사용할 수 없습니다.',
       listChunks: '문서 청크 보기',
       listChunksDesc: '문서의 전체 청크 내용 조회',
       queryGraph: '지식 그래프 쿼리',

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -10,7 +11,14 @@ import (
 )
 
 func (h *DataSourceHandler) SourceLocalRoots(c *gin.Context) {
-	roots, err := localfolder.Roots(h.getTenantID(c))
+	reader, ok := h.service.(interface {
+		LocalSourceRoots(context.Context, uint64) ([]localfolder.Root, error)
+	})
+	if !ok {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server folder registry unavailable"})
+		return
+	}
+	roots, err := reader.LocalSourceRoots(c.Request.Context(), h.getTenantID(c))
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return

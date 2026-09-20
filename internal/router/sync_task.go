@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/google/uuid"
@@ -119,6 +120,7 @@ type SyncTaskParams struct {
 	dig.In
 
 	Executor             *SyncTaskExecutor
+	OctoBusiness         *octobusiness.Service
 	KnowledgeService     interfaces.KnowledgeService
 	KnowledgeBaseService interfaces.KnowledgeBaseService
 	TagService           interfaces.KnowledgeTagService
@@ -136,6 +138,7 @@ type SyncTaskParams struct {
 // RegisterSyncHandlers registers all task handlers on the SyncTaskExecutor.
 // Used in Lite mode instead of RunAsynqServer.
 func RegisterSyncHandlers(params SyncTaskParams) {
+	params.Executor.RegisterHandler(octobusiness.TypeReportSend, params.OctoBusiness.ProcessReportTask)
 	params.Executor.RegisterHandler(types.TypeChunkExtract, params.ChunkExtractor.Handle)
 	params.Executor.RegisterHandler(types.TypeDataTableSummary, params.DataTableSummary.Handle)
 	params.Executor.RegisterHandler(types.TypeDocumentProcess, params.KnowledgeService.ProcessDocument)

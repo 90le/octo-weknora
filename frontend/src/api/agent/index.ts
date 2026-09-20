@@ -303,6 +303,12 @@ export function getAgentTypePresets() {
 
 // ===== IM渠道 =====
 
+export interface IMChannelRuntimeStatus {
+  state: string;
+  error_code?: string;
+  message?: string;
+  updated_at?: string;
+}
 export interface IMChannel {
   id: string;
   tenant_id?: number;
@@ -317,6 +323,7 @@ export interface IMChannel {
   knowledge_base_id?: string;
   credentials: Record<string, any>;
   public_config?: Record<string, any>;
+  runtime_status?: IMChannelRuntimeStatus;
   created_at?: string;
   updated_at?: string;
 }
@@ -339,6 +346,7 @@ export interface IMChannelOverview {
   output_mode: IMChannel['output_mode'];
   session_mode?: IMChannel['session_mode'];
   bot_identity: string;
+  runtime_status?: IMChannelRuntimeStatus;
   created_at: string;
   updated_at: string;
 }

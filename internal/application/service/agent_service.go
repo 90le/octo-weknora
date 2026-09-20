@@ -15,11 +15,13 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/browserskill"
 	"github.com/Tencent/WeKnora/internal/config"
+	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/mcp"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/models/rerank"
+	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -101,6 +103,7 @@ type agentService struct {
 	mcpManager           *mcp.MCPManager
 	eventBus             *event.EventBus
 	db                   *gorm.DB
+	connectorRegistry    *datasource.ConnectorRegistry
 	webSearchService     interfaces.WebSearchService
 	knowledgeBaseService interfaces.KnowledgeBaseService
 	knowledgeService     interfaces.KnowledgeService
@@ -145,6 +148,7 @@ func NewAgentService(
 	sandboxPolicy WorkspaceSandboxPolicy,
 	browserSkill *browserskill.Manager,
 	userRepo interfaces.UserRepository,
+	connectorRegistry *datasource.ConnectorRegistry,
 ) interfaces.AgentService {
 	return &agentService{
 		browserSkill:         browserSkill,
@@ -159,6 +163,7 @@ func NewAgentService(
 		mcpManager:           mcpManager,
 		eventBus:             eventBus,
 		db:                   db,
+		connectorRegistry:    connectorRegistry,
 		webSearchService:     webSearchService,
 		duckdb:               duckdb,
 		wikiPageService:      wikiPageService,
@@ -1039,8 +1044,13 @@ func (s *agentService) registerTools(
 			toolToRegister = tools.NewSequentialThinkingTool()
 		case tools.ToolTodoWrite:
 			toolToRegister = tools.NewTodoWriteTool()
+		case "octo_knowledge_operations":
+			for _, businessTool := range octobusiness.NewTools(newOctoBusiness(s.db, s.knowledgeBaseService, s.knowledgeService)) {
+				registry.RegisterTool(businessTool)
+			}
+			continue
 		case tools.ToolSourceBrowse:
-			reader := &DataSourceService{dsRepo: repository.NewDataSourceRepository(s.db), kbService: s.knowledgeBaseService}
+			reader := &DataSourceService{dsRepo: repository.NewDataSourceRepository(s.db), kbService: s.knowledgeBaseService, connectorRegistry: s.connectorRegistry}
 			toolToRegister = tools.NewSourceBrowseTool(reader, s.knowledgeBaseService, config.SearchTargets)
 		case tools.ToolKnowledgeSearch:
 			toolToRegister = tools.NewKnowledgeSearchTool(
@@ -1139,7 +1149,7 @@ func (s *agentService) registerTools(
 			if toolToRegister.Name() != toolName {
 				logger.Warnf(ctx, "Tool name mismatch: expected %s, got %s", toolName, toolToRegister.Name())
 			}
-			registry.RegisterTool(toolToRegister)
+			registry.RegisterTool(octobusiness.TrackRetrieval(toolToRegister))
 		}
 	}
 

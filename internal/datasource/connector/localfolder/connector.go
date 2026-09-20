@@ -21,51 +21,40 @@ import (
 
 const Type = "local_folder"
 
-type Root struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Path     string `json:"path"`
-	TenantID uint64 `json:"tenant_id"`
-}
 type settings struct {
 	RootID    string `json:"root_id"`
 	Directory string `json:"directory"`
 	Mode      string `json:"mode"`
 }
-type Connector struct{}
+type Connector struct{ registry *Registry }
 
-func NewConnector() *Connector  { return &Connector{} }
-func (*Connector) Type() string { return Type }
-func Roots(tenant uint64) ([]Root, error) {
-	var all []Root
-	if json.Unmarshal([]byte(os.Getenv("DATASOURCE_LOCAL_ROOTS")), &all) != nil {
-		return nil, errors.New("server folder roots are not configured")
+// A connector without an explicit registry fails closed. There is no environment
+// fallback: roots are read from the database on every access, including snapshots.
+func NewConnector(registry ...*Registry) *Connector {
+	c := &Connector{}
+	if len(registry) > 0 {
+		c.registry = registry[0]
 	}
-	out := []Root{}
-	seen := map[string]bool{}
-	for _, r := range all {
-		if r.ID == "" || seen[r.ID] || !filepath.IsAbs(r.Path) || r.TenantID == 0 {
-			return nil, errors.New("server folder root configuration is invalid")
-		}
-		seen[r.ID] = true
-		if r.TenantID == tenant {
-			out = append(out, r)
-		}
-	}
-	return out, nil
+	return c
 }
-func AuthorizedRoot(tenant uint64, cfg *types.DataSourceConfig) (Root, error) {
-	var c settings
-	b, _ := json.Marshal(cfg.Settings)
-	if json.Unmarshal(b, &c) != nil {
-		return Root{}, datasource.ErrInvalidConfig
+func (*Connector) Type() string { return Type }
+func (c *Connector) Roots(ctx context.Context, tenant uint64) ([]Root, error) {
+	if c.registry == nil {
+		return nil, errors.New("server folder registry unavailable")
 	}
-	roots, err := Roots(tenant)
+	return c.registry.Roots(ctx, tenant)
+}
+func (c *Connector) AuthorizedRoot(ctx context.Context, tenant uint64, cfg *types.DataSourceConfig) (Root, error) {
+	s, err := parse(cfg)
+	if err != nil {
+		return Root{}, err
+	}
+	roots, err := c.Roots(ctx, tenant)
 	if err != nil {
 		return Root{}, err
 	}
 	for _, r := range roots {
-		if r.ID == c.RootID {
+		if r.ID == s.RootID {
 			return r, nil
 		}
 	}
@@ -98,7 +87,7 @@ func (c *Connector) Validate(ctx context.Context, cfg *types.DataSourceConfig) e
 		return err
 	}
 	if s.RootID == "" {
-		roots, err := Roots(tenant)
+		roots, err := c.Roots(ctx, tenant)
 		if err != nil {
 			return err
 		}
@@ -107,7 +96,7 @@ func (c *Connector) Validate(ctx context.Context, cfg *types.DataSourceConfig) e
 		}
 		return nil
 	}
-	r, err := AuthorizedRoot(tenant, cfg)
+	r, err := c.AuthorizedRoot(ctx, tenant, cfg)
 	if err != nil {
 		return err
 	}
@@ -116,7 +105,7 @@ func (c *Connector) Validate(ctx context.Context, cfg *types.DataSourceConfig) e
 			return err
 		}
 	}
-	f, err := os.OpenRoot(r.Path)
+	f, err := openRegisteredRoot(r)
 	if err != nil {
 		return errors.New("server folder is unavailable")
 	}
@@ -170,7 +159,7 @@ func (c *Connector) ListResources(ctx context.Context, cfg *types.DataSourceConf
 		return nil, err
 	}
 	if s.RootID == "" {
-		roots, err := Roots(tenant)
+		roots, err := c.Roots(ctx, tenant)
 		if err != nil {
 			return nil, err
 		}
@@ -179,14 +168,14 @@ func (c *Connector) ListResources(ctx context.Context, cfg *types.DataSourceConf
 		}
 		return out, nil
 	}
-	r, err := AuthorizedRoot(tenant, cfg)
+	r, err := c.AuthorizedRoot(ctx, tenant, cfg)
 	if err != nil {
 		return nil, err
 	}
 	if parent != "" && !snapshot.SafePath(parent) {
 		return nil, datasource.ErrInvalidConfig
 	}
-	f, err := os.OpenRoot(r.Path)
+	f, err := openRegisteredRoot(r)
 	if err != nil {
 		return nil, errors.New("source folder unavailable")
 	}
@@ -219,7 +208,7 @@ func (*Connector) ResolveResourceAncestors(context.Context, *types.DataSourceCon
 
 func (c *Connector) walk(ctx context.Context, cfg *types.DataSourceConfig, visit func(string, []byte) error, skip func(string)) error {
 	tenant, _ := types.TenantIDFromContext(ctx)
-	r, err := AuthorizedRoot(tenant, cfg)
+	r, err := c.AuthorizedRoot(ctx, tenant, cfg)
 	if err != nil {
 		return err
 	}
@@ -234,7 +223,7 @@ func (c *Connector) walk(ctx context.Context, cfg *types.DataSourceConfig, visit
 			return errors.New("source storage must be outside approved input folders")
 		}
 	}
-	top, err := os.OpenRoot(r.Path)
+	top, err := openRegisteredRoot(r)
 	if err != nil {
 		return errors.New("source folder unavailable")
 	}
@@ -328,7 +317,7 @@ func (c *Connector) walk(ctx context.Context, cfg *types.DataSourceConfig, visit
 }
 func (c *Connector) BuildSnapshot(ctx context.Context, cfg *types.DataSourceConfig, b *snapshot.Builder) error {
 	tenant, _ := types.TenantIDFromContext(ctx)
-	root, err := AuthorizedRoot(tenant, cfg)
+	root, err := c.AuthorizedRoot(ctx, tenant, cfg)
 	if err != nil {
 		return err
 	}

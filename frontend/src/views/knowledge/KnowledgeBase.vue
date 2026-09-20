@@ -2388,6 +2388,7 @@ async function createNewSession(value: string): Promise<void> {
             <div class="kb-title-actions">
               <t-button v-if="kbId" variant="text" size="small" @click="sourceBrowserVisible=true">{{ t('datasource.source.browse') }}</t-button>
               <OctoKBUses v-if="kbId && (authStore.hasRole('admin') || authStore.canAccessAllTenants)" :kb-id="kbId" />
+              <t-button v-if="kbId && (authStore.hasRole('admin') || authStore.canAccessAllTenants)" variant="text" size="small" @click="router.push({name:'knowledgeContacts',params:{kbId}})">联系人</t-button>
               <KBInfoPopover v-if="kbInfo && !authStore.isLiteMode" :kb-info="kbInfo"
                 :supported-file-types="[...supportedFileTypes]" />
               <t-tooltip v-if="canManage" :content="$t('knowledgeBase.settings')" placement="top">

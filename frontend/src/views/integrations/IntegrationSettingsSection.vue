@@ -1,7 +1,10 @@
 <template>
   <div class="integrations-settings">
     <div class="integrations-settings__body" :class="{ 'integrations-settings__body--landing': isLandingSection }">
-      <OctoScopePanel v-if="tab === 'octo'" />
+      <t-tabs v-if="tab === 'octo'" v-model="octoTab">
+        <t-tab-panel value="scopes" label="群与知识库"><OctoScopePanel /></t-tab-panel>
+        <t-tab-panel value="business" label="问题与联系人"><OctoBusinessPanel /></t-tab-panel>
+      </t-tabs>
       <div v-if="tab === 'im'" class="section">
         <div class="section-header">
           <h2>{{ $t('agentEditor.im.title') }}</h2>
@@ -48,6 +51,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import OctoScopePanel from '@/views/integrations/OctoScopePanel.vue'
+import OctoBusinessPanel from '@/views/integrations/OctoBusinessPanel.vue'
 import IMChannelPanel from '@/components/IMChannelPanel.vue'
 import AgentEmbedChannelPanel from '@/components/AgentEmbedChannelPanel.vue'
 import ApiIntegrationSettings from '@/views/integrations/ApiIntegrationSettings.vue'
@@ -57,12 +61,16 @@ import CliIntegrationLanding from '@/views/integrations/CliIntegrationLanding.vu
 import type { IntegrationTab } from '@/config/integrations'
 
 const filterAgentId = ref('')
+const octoTab = ref('scopes')
 
 const props = defineProps<{
   tab: IntegrationTab
 }>()
 
 const route = useRoute()
+watch(() => route.query.view, (view) => {
+  octoTab.value = ['contacts', 'issues', 'schedule'].includes(String(view || '')) ? 'business' : 'scopes'
+}, { immediate: true })
 
 const isLandingSection = computed(
   () => props.tab === 'chrome' || props.tab === 'claw' || props.tab === 'cli',

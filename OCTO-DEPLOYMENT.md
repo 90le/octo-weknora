@@ -1,8 +1,8 @@
 # octo-weknora deployment contract
 
-Status: replacement authorized; release not deployed yet.
+This is the deployment contract, not a live release snapshot. The active revision, cutover result and acceptance evidence are maintained only in [OCTO-STATUS.md](OCTO-STATUS.md).
 
-The existing WeKnora installation will be replaced by app and frontend images built from this repository. This is a replacement of the application release, not a second management console or a second knowledge database.
+The deployment uses app and frontend images built from this repository. Releases update the existing WeKnora application; they do not introduce a second management console or a second knowledge database.
 
 ## Release identity
 
@@ -16,7 +16,7 @@ The existing WeKnora installation will be replaced by app and frontend images bu
 
 Update app and frontend image references in the existing deployment. Preserve existing volume mounts, network, secrets, embedding adapter, PostgreSQL and document parser settings unless a reviewed compatibility change requires otherwise. Do not use `docker compose down -v`.
 
-The retired standalone admin console stays retired. Existing OpenClaw/Octo services continue separately and call the same protected WeKnora interface. Their model configuration is not changed by this release.
+The retired standalone console stays retired. The public Octo knowledge Bot is received by native WeKnora IM only. Other Bot/runtime services are separate and unchanged. The knowledge service does not read their configuration, credentials or workspaces.
 
 ## Required checks before switching
 
@@ -35,7 +35,7 @@ The retired standalone admin console stays retired. Existing OpenClaw/Octo servi
 - A query outside the caller's scope is rejected.
 - A representative document format still parses through the configured engine.
 
-Do not equate HTTP 200 with full integration acceptance. The first fork deployment need not claim the future Octo management module is complete.
+Do not equate HTTP 200, a passing test suite or an isolated candidate with full integration acceptance. Record which native Bot flows, configuration operations, parsers and failure cases were actually exercised on the released revision. Keep untested combinations explicit in OCTO-STATUS.md.
 
 ## Recovery
 

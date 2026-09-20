@@ -15,7 +15,9 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+	"unicode"
 	"unicode/utf16"
 
 	"github.com/Tencent/WeKnora/internal/im"
@@ -23,14 +25,21 @@ import (
 	"github.com/Tencent/WeKnora/internal/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 const Platform im.Platform = "octo"
 
 type Adapter struct {
-	api    *apiClient
-	uid    string
-	policy func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error)
+	statusMu      sync.RWMutex
+	status        im.ChannelRuntimeStatus
+	db            *gorm.DB
+	channelID     string
+	tenantID      uint64
+	api           *apiClient
+	uid           string
+	policy        func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error)
+	receiptPolicy func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error)
 }
 
 func (a *Adapter) AuthorizeExecution(ctx context.Context, channel *im.IMChannel, msg *im.IncomingMessage) (*im.ExecutionScope, error) {
@@ -54,6 +63,11 @@ func NewAdapter(botToken, botUID string) (*Adapter, error) {
 	return &Adapter{api: api, uid: botUID}, nil
 }
 func (a *Adapter) Platform() im.Platform { return Platform }
+
+// DurableIntake tells the native dispatcher that the authenticated receiver has
+// already persisted and claimed this input; a volatile dedup cache must not
+// discard recovery after a process restart.
+func (a *Adapter) DurableIntake() bool { return a.db != nil }
 
 // Octo input is authenticated on the WebSocket. Never expose an unsigned HTTP fallback.
 func (a *Adapter) VerifyCallback(*gin.Context) error {
@@ -94,6 +108,9 @@ func (a *Adapter) Normalize(raw *wire.Message) (*im.IncomingMessage, error) {
 	}
 	if p.AddressedTo(a.uid) {
 		m.Extra["octo_addressed"] = "true"
+		if command, ok := leadingNativeCommandText(m.Content, p.Mention.Entities, a.uid); ok {
+			m.Extra["octo_command_text"] = command
+		}
 	}
 	switch p.Type {
 	case 1, 14:
@@ -132,8 +149,39 @@ func (a *Adapter) Normalize(raw *wire.Message) (*im.IncomingMessage, error) {
 	return m, nil
 }
 
+// Octo entity offsets are UTF-16 code units. A renamed local channel is not
+// evidence of the Bot's visible mention label, so normalize only the native
+// leading entity for this exact Bot UID and leave the retrieval text intact.
+func leadingNativeCommandText(text string, entities []wire.Entity, uid string) (string, bool) {
+	units := utf16.Encode([]rune(text))
+	for _, entity := range entities {
+		if entity.UID != uid || entity.Offset != 0 || entity.Length <= 0 || entity.Length > len(units) {
+			continue
+		}
+		end := entity.Length
+		if end < len(units) && units[end-1] >= 0xD800 && units[end-1] <= 0xDBFF && units[end] >= 0xDC00 && units[end] <= 0xDFFF {
+			continue
+		}
+		label := string(utf16.Decode(units[:end]))
+		if !strings.HasPrefix(label, "@") || strings.ContainsAny(label, "\r\n\t") {
+			continue
+		}
+		rest := []rune(string(utf16.Decode(units[end:])))
+		if len(rest) > 0 && !unicode.IsSpace(rest[0]) {
+			continue
+		}
+		return strings.TrimSpace(string(rest)), true
+	}
+	return "", false
+}
+
 func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *im.ReplyMessage) error {
+	receiptScope := a.deletionReceipt(ctx, in)
+	if receiptScope != nil {
+		reply = &im.ReplyMessage{Content: deletionReceiptText, IsFinal: true}
+	}
 	if reply != nil && strings.TrimSpace(reply.Content) == "NO_REPLY" {
+		a.ExecutionFinished(ctx, in)
 		return nil
 	}
 	if in == nil || reply == nil || strings.TrimSpace(reply.Content) == "" {
@@ -142,6 +190,25 @@ func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *
 	// No partial/thinking output: streaming capability is added separately.
 	if reply.IsStreaming && !reply.IsFinal {
 		return nil
+	}
+	if a.db != nil {
+		scope := receiptScope
+		var scopeErr error
+		if scope == nil {
+			scope, scopeErr = a.AuthorizeExecution(ctx, nil, in)
+		}
+		var saved Inbox
+		savedErr := a.inboxQuery(ctx, in.MessageID).Select("authority", "state").First(&saved).Error
+		if scopeErr != nil || savedErr != nil || (receiptScope == nil && !permitsReply(saved.Authority, scope)) {
+			_ = a.inboxQuery(ctx, in.MessageID).Where("state <> ?", "delivered").Updates(map[string]any{"state": "ignored", "error_code": "authorization_changed"}).Error
+			return im.ErrScopeDenied
+		}
+		if saved.State == "delivered" {
+			return nil
+		}
+		if err := a.inboxQuery(ctx, in.MessageID).Updates(map[string]any{"state": "reply_pending", "reply": reply.Content, "attempts": gorm.Expr("attempts + 1"), "updated_at": time.Now()}).Error; err != nil {
+			return err
+		}
 	}
 	kind, err := strconv.Atoi(in.Extra["octo_channel_type"])
 	if err != nil || (kind != 1 && kind != 2 && kind != 5) {
@@ -168,6 +235,9 @@ func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *
 		text = label + " " + text
 		payload["mention"] = map[string]any{"uids": []string{in.UserID}, "entities": []wire.Entity{{UID: in.UserID, Offset: 0, Length: len(utf16.Encode([]rune(label)))}}}
 	}
+	if receiptScope == nil {
+		a.contactEntities(ctx, in, text, payload)
+	}
 	payload["content"] = text
 	quote := map[string]any{"message_id": id, "from_uid": in.UserID, "from_name": in.UserName}
 	var original map[string]json.RawMessage
@@ -179,11 +249,20 @@ func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *
 	var result struct {
 		ID json.RawMessage `json:"message_id"`
 	}
-	if err = a.api.post(ctx, "/v1/bot/sendMessage", map[string]any{"channel_id": target, "channel_type": kind, "client_msg_no": uuid.NewString(), "payload": payload}, &result); err != nil {
+	if err = a.api.post(ctx, "/v1/bot/sendMessage", map[string]any{"channel_id": target, "channel_type": kind, "client_msg_no": uuid.NewSHA1(uuid.NameSpaceOID, []byte(in.MessageID+":reply")).String(), "payload": payload}, &result); err != nil {
+		if a.db != nil {
+			a.recordReplyFailure(ctx, in.MessageID, "send_failed")
+		}
 		return err
 	}
 	if wire.ReadID(result.ID) == "" {
+		if a.db != nil {
+			a.recordReplyFailure(ctx, in.MessageID, "delivery_not_acknowledged")
+		}
 		return errors.New("Octo delivery was not acknowledged")
+	}
+	if a.db != nil {
+		return a.inboxQuery(ctx, in.MessageID).Updates(map[string]any{"state": "delivered", "error_code": "", "updated_at": time.Now()}).Error
 	}
 	return nil
 }

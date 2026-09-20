@@ -14,6 +14,9 @@ import (
 // 000041 task queue, 000053 system settings, 000055 processing spans,
 // 000063 knowledge multi-tags, 000093 browser authorization.
 var versionedSQLiteTables = []string{
+	"local_source_spaces", "local_source_roots", "local_source_registry_state",
+	"octo_knowledge_issues", "octo_knowledge_issue_events", "octo_knowledge_contacts", "octo_knowledge_proposals",
+	"octo_message_inbox", "octo_scope_knowledge_grants", "octo_report_schedules", "octo_report_runs",
 	"octo_scopes",
 	"octo_connections",
 	"octo_scope_bindings",
@@ -31,6 +34,7 @@ var versionedSQLiteTables = []string{
 // versionedSQLiteColumns maps each existing table to the columns that the
 // versioned migrations add and the SQLite baseline was missing.
 var versionedSQLiteColumns = map[string][]string{
+	"octo_connections":   {"verified_identity"},              // 000104
 	"memory_subjects":    {"extraction_state"},               // 000094
 	"memory_items":       {"replaces_id"},                    // 000094
 	"tenants":            {"api_principal_config"},           // 000064
@@ -43,7 +47,7 @@ var versionedSQLiteColumns = map[string][]string{
 	"mcp_tool_approvals": {"enabled"},                        // 000091
 }
 
-const expectedSQLiteMigrationVersion = 19
+const expectedSQLiteMigrationVersion = 25
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

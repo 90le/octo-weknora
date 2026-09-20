@@ -1,6 +1,7 @@
 package octointegration
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,12 +28,25 @@ func newPlatformClient() *platformClient {
 
 // platformJSON never includes tokens or upstream response bodies in errors.
 func (p *platformClient) get(ctx context.Context, token, path string, out interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+path, nil)
+	return p.request(ctx, http.MethodGet, token, path, nil, out)
+}
+
+func (p *platformClient) request(ctx context.Context, method, token, path string, body interface{}, out interface{}) error {
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return ErrInvalid
+		}
+		reader = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, p.baseURL+path, reader)
 	if err != nil {
 		return ErrPlatform
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
 	r, err := p.client.Do(req)
 	if err != nil {
 		return ErrPlatform
@@ -64,6 +78,95 @@ func (p *platformClient) get(ctx context.Context, token, path string, out interf
 		return ErrPlatform
 	}
 	return nil
+}
+
+// ConnectionIdentity exposes only the platform-verified identity, never the
+// registration IM token or the credential supplied by the administrator.
+type ConnectionIdentity struct {
+	BotUID   string `json:"bot_uid"`
+	Name     string `json:"name"`
+	OwnerUID string `json:"owner_uid,omitempty"`
+}
+
+func (p *platformClient) identity(ctx context.Context, token string) (*ConnectionIdentity, error) {
+	if !strings.HasPrefix(token, "bf_") || len(token) <= 3 || len(token) > 512 || strings.ContainsAny(token, " \t\r\n") {
+		return nil, ErrInvalid
+	}
+	var registration struct {
+		UID       string `json:"robot_id"`
+		Name      string `json:"name"`
+		RobotName string `json:"robot_name"`
+		OwnerUID  string `json:"owner_uid"`
+	}
+	if err := p.request(ctx, http.MethodPost, token, "/v1/bot/register", map[string]string{"agent_platform": "weknora", "plugin_version": "0.1.0"}, &registration); err != nil {
+		return nil, err
+	}
+	if !validID(registration.UID) {
+		return nil, ErrPlatform
+	}
+	name := strings.TrimSpace(registration.Name)
+	if name == "" {
+		name = strings.TrimSpace(registration.RobotName)
+	}
+	if len(name) > 256 {
+		return nil, ErrPlatform
+	}
+	return &ConnectionIdentity{BotUID: registration.UID, Name: name, OwnerUID: registration.OwnerUID}, nil
+}
+
+type AvailableScope struct {
+	GroupID   string `json:"group_id"`
+	SubareaID string `json:"subarea_id"`
+	Name      string `json:"name"`
+}
+
+func (p *platformClient) availableScopes(ctx context.Context, token, groupID string, page int) ([]AvailableScope, error) {
+	path := "/v1/bot/groups"
+	if groupID != "" {
+		if _, err := p.scope(ctx, token, Scope{GroupID: groupID}); err != nil {
+			return nil, err
+		}
+		path += "/" + url.PathEscape(groupID) + "/threads?page_index=" + fmt.Sprint(page) + "&page_size=100"
+	}
+	var raw json.RawMessage
+	if err := p.get(ctx, token, path, &raw); err != nil {
+		return nil, err
+	}
+	var rows []platformScope
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		var envelope struct {
+			List    []platformScope `json:"list"`
+			Items   []platformScope `json:"items"`
+			Threads []platformScope `json:"threads"`
+		}
+		if json.Unmarshal(raw, &envelope) != nil {
+			return nil, ErrPlatform
+		}
+		switch {
+		case envelope.List != nil:
+			rows = envelope.List
+		case envelope.Items != nil:
+			rows = envelope.Items
+		case envelope.Threads != nil:
+			rows = envelope.Threads
+		default:
+			return nil, ErrPlatform
+		}
+	}
+	result := []AvailableScope{}
+	for _, row := range rows {
+		if groupID != "" {
+			if row.GroupID != "" && row.GroupID != groupID {
+				return nil, ErrPlatform
+			}
+			row.GroupID = groupID
+		}
+		if !validID(row.GroupID) || (groupID != "" && !validID(row.SubareaID)) || strings.TrimSpace(row.Name) == "" || len(row.Name) > 256 || (row.Status != nil && *row.Status != 1) {
+			continue
+		}
+		result = append(result, AvailableScope{GroupID: row.GroupID, SubareaID: row.SubareaID, Name: row.Name})
+	}
+	return result, nil
 }
 
 type platformScope struct {

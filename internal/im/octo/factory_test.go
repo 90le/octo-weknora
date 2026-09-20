@@ -22,7 +22,7 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 	}
 	sqlDB, _ := db.DB()
 	defer sqlDB.Close()
-	if err = db.AutoMigrate(&octointegration.Scope{}, &octointegration.Binding{}, &octointegration.Connection{}); err != nil {
+	if err = db.AutoMigrate(&octointegration.Scope{}, &octointegration.Binding{}, &octointegration.Connection{}, &octointegration.KnowledgeManagementGrant{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, sql := range []string{

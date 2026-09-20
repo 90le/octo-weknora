@@ -45,6 +45,17 @@ func NewIMHandler(imService *im.Service) *IMHandler {
 	}
 }
 
+// IMChannelEvents exposes delivery metadata only, not retained message bodies.
+func (h *IMHandler) IMChannelEvents(c *gin.Context) {
+	tenant := c.GetUint64(types.TenantIDContextKey.String())
+	rows, err := h.imService.OctoDeliveryEvents(c.Request.Context(), tenant, c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "channel not found in this workspace"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rows})
+}
+
 // ── Channel CRUD handlers ──
 
 // CreateIMChannel creates a new IM channel for an agent.

@@ -88,6 +88,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/models/limiter"
 	"github.com/Tencent/WeKnora/internal/models/utils/ollama"
+	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/octointegration"
 	"github.com/Tencent/WeKnora/internal/router"
 	"github.com/Tencent/WeKnora/internal/storageallowlist"
@@ -370,6 +371,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 
 	// Data source sync framework
 	logger.Debugf(ctx, "[Container] Registering data source sync framework...")
+	must(container.Provide(localFolderConnector.NewRegistry))
+	must(container.Provide(handler.NewLocalRootHandler))
 	must(container.Provide(initConnectorRegistry))
 	must(container.Provide(datasource.NewScheduler))
 	must(container.Provide(service.NewDataSourceService))
@@ -454,6 +457,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// Data source handler
 	must(container.Provide(handler.NewDataSourceHandler))
 	must(container.Provide(octointegration.NewHandler))
+	must(container.Provide(service.NewOctoBusiness))
+	must(container.Provide(octobusiness.NewHandler))
 	// Wiki page handler
 	must(container.Provide(handler.NewWikiPageHandler))
 	// IM integration
@@ -1653,7 +1658,7 @@ func registerWebSearchProviders(registry *infra_web_search.Registry) {
 // registerIMService registers adapter factories, loads enabled channels, and
 // wires the process-lifetime shutdown hook. Each platform's factory lives in
 // its own subpackage to keep this file focused on wiring.
-func registerIMService(imService *imPkg.Service, cleaner interfaces.ResourceCleaner, db *gorm.DB) {
+func registerIMService(imService *imPkg.Service, cleaner interfaces.ResourceCleaner, db *gorm.DB, business *octobusiness.Service, queue interfaces.TaskEnqueuer) {
 	imService.RegisterAdapterFactory("wecom", wecom.NewFactory())
 	imService.RegisterAdapterFactory("feishu", feishu.NewFactory(feishu.RegionFeishu))
 	// Lark is Feishu's international cloud: same adapter, different host/tenant.
@@ -1672,7 +1677,12 @@ func registerIMService(imService *imPkg.Service, cleaner interfaces.ResourceClea
 		logger.Warnf(context.Background(), "[IM] Failed to load channels from database: %v", err)
 	}
 
+	imService.ConfigureOctoReports(business)
+	if err := business.StartReports(context.Background(), queue); err != nil {
+		logger.Errorf(context.Background(), "Octo reports unavailable: %v", err)
+	}
 	cleaner.RegisterWithName("IMService", func() error {
+		business.StopReports()
 		imService.Stop()
 		return nil
 	})
@@ -1681,7 +1691,7 @@ func registerIMService(imService *imPkg.Service, cleaner interfaces.ResourceClea
 // initConnectorRegistry creates and populates the connector registry with all available connectors.
 // Aggregates registration errors via errors.Join so a misconfigured or duplicated connector fails
 // container initialization loudly instead of silently disabling the feature at runtime.
-func initConnectorRegistry() (*datasource.ConnectorRegistry, error) {
+func initConnectorRegistry(roots *localFolderConnector.Registry) (*datasource.ConnectorRegistry, error) {
 	registry := datasource.NewConnectorRegistry()
 
 	var errs error
@@ -1721,7 +1731,7 @@ func initConnectorRegistry() (*datasource.ConnectorRegistry, error) {
 		errs = errors.Join(errs, fmt.Errorf("register github connector: %w", err))
 	}
 
-	if err := registry.Register(localFolderConnector.NewConnector()); err != nil {
+	if err := registry.Register(localFolderConnector.NewConnector(roots)); err != nil {
 		errs = errors.Join(errs, err)
 	}
 	// Future connectors will be registered here:

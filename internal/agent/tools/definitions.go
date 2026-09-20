@@ -85,6 +85,7 @@ type AvailableTool struct {
 // Keep this in sync with registered tools in this package.
 func AvailableToolDefinitions() []AvailableTool {
 	return []AvailableTool{
+		{Name: "octo_knowledge_operations", Label: "Octo 知识业务", Description: "当前获授权会话的知识维护、问题、联系人与报告能力"},
 		{Name: ToolThinking, Label: "思考", Description: "动态和反思性的问题解决思考工具"},
 		{Name: ToolTodoWrite, Label: "制定计划", Description: "创建结构化的研究计划"},
 		{Name: ToolGrepChunks, Label: "关键词搜索", Description: "快速定位包含特定关键词的文档和分块"},

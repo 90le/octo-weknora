@@ -39,6 +39,8 @@
               <span class="breadcrumb-current">{{ $t('knowledgeEditor.faq.title') }}</span>
             </h2>
             <div class="kb-title-actions">
+              <OctoKBUses v-if="authStore.hasRole('admin') || authStore.canAccessAllTenants" :kb-id="props.kbId" />
+              <t-button v-if="authStore.hasRole('admin') || authStore.canAccessAllTenants" variant="text" size="small" @click="router.push({name:'knowledgeContacts',params:{kbId:props.kbId}})">联系人</t-button>
               <KBInfoPopover
                 v-if="kbInfo && !authStore.isLiteMode"
                 :kb-info="kbInfo"
@@ -868,6 +870,7 @@ import type { FormRules, FormInstanceFunctions } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import OctoKBUses from '@/views/integrations/OctoKBUses.vue'
 import { useOrganizationStore } from '@/stores/organization'
 import {
   listFAQEntries,
