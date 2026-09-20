@@ -21,7 +21,7 @@ type IMChannel struct {
 	AgentID         string         `json:"agent_id"    gorm:"type:varchar(36);not null;index:idx_im_channels_agent"`
 	Platform        string         `json:"platform"    gorm:"type:varchar(20);not null"`
 	Name            string         `json:"name"        gorm:"type:varchar(255);not null;default:''"`
-	Enabled         bool           `json:"enabled"     gorm:"not null;default:true"`
+	Enabled         bool           `json:"enabled"     gorm:"not null"`
 	Mode            string         `json:"mode"        gorm:"type:varchar(20);not null;default:'websocket'"`
 	OutputMode      string         `json:"output_mode"       gorm:"type:varchar(20);not null;default:'stream'"`
 	KnowledgeBaseID string         `json:"knowledge_base_id" gorm:"type:varchar(36);default:''"`
@@ -108,7 +108,7 @@ func SummarizeIMChannelsForRole(channels []IMChannel, role types.TenantRole) []I
 				public[key] = value
 			}
 		}
-		for _, key := range []string{"allowed_dm_uids", "allowed_bot_uids"} {
+		for _, key := range []string{"allowed_dm_uids", "allowed_bot_uids", "dm_knowledge_base_ids", "management_bot_uids"} {
 			values := []string{}
 			if items, ok := config[key].([]interface{}); ok {
 				for _, item := range items {
@@ -177,7 +177,7 @@ func (ch *IMChannel) validateSessionMode() error {
 		if err != nil || GetString(config, "account_id") == "" || GetString(config, "bot_uid") == "" {
 			return fmt.Errorf("Octo account_id and bot_uid required")
 		}
-		for _, key := range []string{"allowed_dm_uids", "allowed_bot_uids"} {
+		for _, key := range []string{"allowed_dm_uids", "allowed_bot_uids", "dm_knowledge_base_ids", "management_bot_uids"} {
 			if raw, exists := config[key]; exists {
 				values, ok := raw.([]interface{})
 				if !ok || len(values) > 100 {
@@ -188,6 +188,21 @@ func (ch *IMChannel) validateSessionMode() error {
 					if !ok || uid == "" || len(uid) > 128 || strings.ContainsAny(uid, " \r\n\t") {
 						return fmt.Errorf("invalid Octo UID")
 					}
+				}
+			}
+		}
+		if raw, ok := config["management_bot_uids"].([]interface{}); ok {
+			allowed := map[string]bool{}
+			if members, ok := config["allowed_bot_uids"].([]interface{}); ok {
+				for _, v := range members {
+					if id, ok := v.(string); ok {
+						allowed[id] = true
+					}
+				}
+			}
+			for _, v := range raw {
+				if !allowed[v.(string)] {
+					return fmt.Errorf("maintenance bots must also be admitted Bot UIDs")
 				}
 			}
 		}

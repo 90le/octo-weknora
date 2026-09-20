@@ -24,20 +24,23 @@ type Scope struct {
 	SubareaID   string `json:"subarea_id"`
 	DisplayName string `json:"display_name"`
 	// Names entered by an administrator are not claimed to be platform-verified.
-	NameSource    string     `json:"name_source"`
-	SyncStatus    string     `json:"sync_status"`
-	SyncError     string     `json:"sync_error"`
-	CheckedAt     *time.Time `json:"checked_at"`
-	VerifiedAt    *time.Time `json:"verified_at"`
-	InheritParent bool       `json:"inherit_parent"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	NameSource             string     `json:"name_source"`
+	SyncStatus             string     `json:"sync_status"`
+	SyncError              string     `json:"sync_error"`
+	CheckedAt              *time.Time `json:"checked_at"`
+	VerifiedAt             *time.Time `json:"verified_at"`
+	InheritParent          bool       `json:"inherit_parent"`
+	AllowKnowledgeCreation bool       `json:"allow_knowledge_creation"`
+	AggregateChildIssues   bool       `json:"aggregate_child_issues"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
 }
 
 func (Scope) TableName() string { return "octo_scopes" }
 
 // Binding grants query selection only. It cannot confer KB maintenance rights.
 type Binding struct {
+	CanManage       bool      `json:"can_manage" gorm:"-"`
 	TenantID        uint64    `json:"-" gorm:"primaryKey"`
 	ScopeID         string    `json:"scope_id" gorm:"primaryKey"`
 	KnowledgeBaseID string    `json:"knowledge_base_id" gorm:"primaryKey"`
@@ -46,7 +49,19 @@ type Binding struct {
 
 func (Binding) TableName() string { return "octo_scope_bindings" }
 
+// KnowledgeManagementGrant is independent of the query binding. Removing a
+// binding stops retrieval; revoking this explicit grant stops maintenance.
+type KnowledgeManagementGrant struct {
+	TenantID        uint64    `json:"-" gorm:"primaryKey"`
+	ScopeID         string    `json:"scope_id" gorm:"primaryKey"`
+	KnowledgeBaseID string    `json:"knowledge_base_id" gorm:"primaryKey"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+func (KnowledgeManagementGrant) TableName() string { return "octo_scope_knowledge_grants" }
+
 type EffectiveBinding struct {
+	CanManage       bool   `json:"can_manage"`
 	KnowledgeBaseID string `json:"knowledge_base_id"`
 	FromScopeID     string `json:"from_scope_id"`
 	Inherited       bool   `json:"inherited"`
@@ -133,7 +148,7 @@ func (s *Store) Update(ctx context.Context, tenant uint64, id, name string, inhe
 
 // SetBinding never deletes a KB. The caller must already pass native KB write
 // authorization. The database query additionally disallows cross-tenant assets.
-func (s *Store) SetBinding(ctx context.Context, tenant uint64, scopeID, kbID string, enabled bool) error {
+func (s *Store) SetBinding(ctx context.Context, tenant uint64, scopeID, kbID string, enabled bool, management ...bool) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if _, err := NewStore(tx).Get(ctx, tenant, scopeID); err != nil {
 			return err
@@ -154,6 +169,16 @@ func (s *Store) SetBinding(ctx context.Context, tenant uint64, scopeID, kbID str
 		b := Binding{TenantID: tenant, ScopeID: scopeID, KnowledgeBaseID: kbID}
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&b).Error; err != nil {
 			return err
+		}
+		if len(management) > 0 {
+			grant := KnowledgeManagementGrant{TenantID: tenant, ScopeID: scopeID, KnowledgeBaseID: kbID}
+			if management[0] {
+				if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&grant).Error; err != nil {
+					return err
+				}
+			} else if err := tx.Where("tenant_id = ? AND scope_id = ? AND knowledge_base_id = ?", tenant, scopeID, kbID).Delete(&KnowledgeManagementGrant{}).Error; err != nil {
+				return err
+			}
 		}
 		return audit(tx, ctx, tenant, scopeID, "octo.binding.added", map[string]interface{}{"knowledge_base_id": kbID})
 	})
@@ -192,8 +217,16 @@ func (s *Store) Effective(ctx context.Context, tenant uint64, id string) ([]Effe
 			return err
 		}
 		positions := make(map[string]int)
+		managed, err := NewStore(tx).ManagedKnowledgeBases(ctx, tenant, id)
+		if err != nil {
+			return err
+		}
+		management := map[string]bool{}
+		for _, kb := range managed {
+			management[kb] = true
+		}
 		for _, b := range bindings {
-			entry := EffectiveBinding{KnowledgeBaseID: b.KnowledgeBaseID, FromScopeID: b.ScopeID, Inherited: b.ScopeID != id}
+			entry := EffectiveBinding{KnowledgeBaseID: b.KnowledgeBaseID, FromScopeID: b.ScopeID, Inherited: b.ScopeID != id, CanManage: management[b.KnowledgeBaseID]}
 			if pos, exists := positions[b.KnowledgeBaseID]; exists {
 				if !entry.Inherited {
 					result[pos] = entry
@@ -206,6 +239,28 @@ func (s *Store) Effective(ctx context.Context, tenant uint64, id string) ([]Effe
 		return nil
 	})
 	return result, err
+}
+
+func (s *Store) ManagedKnowledgeBases(ctx context.Context, tenant uint64, scopeID string) ([]string, error) {
+	if _, err := s.Get(ctx, tenant, scopeID); err != nil {
+		return nil, err
+	}
+	ids := []string{}
+	err := s.db.WithContext(ctx).Table("octo_scope_knowledge_grants AS g").Joins("JOIN knowledge_bases AS k ON k.id = g.knowledge_base_id AND k.tenant_id = g.tenant_id AND k.deleted_at IS NULL").Where("g.tenant_id = ? AND g.scope_id = ?", tenant, scopeID).Order("g.knowledge_base_id").Pluck("g.knowledge_base_id", &ids).Error
+	return ids, err
+}
+
+// RevokeKnowledgeManagement leaves the ordinary read binding unchanged.
+func (s *Store) RevokeKnowledgeManagement(ctx context.Context, tenant uint64, scopeID, kbID string) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, err := NewStore(tx).Get(ctx, tenant, scopeID); err != nil {
+			return err
+		}
+		if err := tx.Where("tenant_id = ? AND scope_id = ? AND knowledge_base_id = ?", tenant, scopeID, kbID).Delete(&KnowledgeManagementGrant{}).Error; err != nil {
+			return err
+		}
+		return audit(tx, ctx, tenant, scopeID, "octo.management.revoked", map[string]any{"knowledge_base_id": kbID})
+	})
 }
 
 type ScopeUse struct {

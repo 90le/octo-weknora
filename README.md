@@ -1,3 +1,5 @@
+> Octo 知识助理二次开发： [需求地图](OCTO-REQUIREMENTS.md) · [架构](OCTO-INTEGRATION.md) · [配置指南](OCTO-SETUP.md) · [来源配置](OCTO-SOURCES.md) · [当前进度](OCTO-STATUS.md)
+
 <p align="center">
   <picture>
     <img src="./docs/images/logo.png" alt="WeKnora Logo" height="120"/>

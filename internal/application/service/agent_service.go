@@ -20,6 +20,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/mcp"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/models/rerank"
+	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -1039,6 +1040,8 @@ func (s *agentService) registerTools(
 			toolToRegister = tools.NewSequentialThinkingTool()
 		case tools.ToolTodoWrite:
 			toolToRegister = tools.NewTodoWriteTool()
+		case "octo_knowledge_operations":
+			toolToRegister = octobusiness.NewTool(newOctoBusiness(s.db, s.knowledgeBaseService, s.knowledgeService))
 		case tools.ToolSourceBrowse:
 			reader := &DataSourceService{dsRepo: repository.NewDataSourceRepository(s.db), kbService: s.knowledgeBaseService}
 			toolToRegister = tools.NewSourceBrowseTool(reader, s.knowledgeBaseService, config.SearchTargets)
@@ -1139,7 +1142,7 @@ func (s *agentService) registerTools(
 			if toolToRegister.Name() != toolName {
 				logger.Warnf(ctx, "Tool name mismatch: expected %s, got %s", toolName, toolToRegister.Name())
 			}
-			registry.RegisterTool(toolToRegister)
+			registry.RegisterTool(octobusiness.TrackRetrieval(toolToRegister))
 		}
 	}
 

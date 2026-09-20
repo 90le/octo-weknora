@@ -1,4 +1,6 @@
+import { sourceRootMessages } from '../sourceRootMessages'
 export default {
+  sourceRoots: sourceRootMessages.en,
   localBrowser: {
     pipOpen: "Открыть плавающее окно",
     pipReturn: "Вернуть предпросмотр в чат",
@@ -1218,6 +1220,8 @@ export default {
       grepChunksDesc: 'Быстрый поиск документов и фрагментов с определёнными ключевыми словами',
       knowledgeSearch: 'Семантический поиск',
       knowledgeSearchDesc: 'Понимание вопросов и поиск семантически связанного контента',
+      octoKnowledgeOperations: 'Операции со знаниями Octo',
+      octoKnowledgeOperationsDesc: 'Регистрация вопросов, поиск контактов и отчётов, подтверждение разрешённых изменений знаний в авторизованных беседах Octo. Недоступно в обычном веб-чате.',
       listChunks: 'Просмотр фрагментов документа',
       listChunksDesc: 'Получение полного содержимого фрагментов документа',
       queryGraph: 'Запрос графа знаний',

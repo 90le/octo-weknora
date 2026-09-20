@@ -13,17 +13,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func localFixture(t *testing.T) (context.Context, string, *types.DataSourceConfig) {
+func localFixture(t *testing.T) (context.Context, string, *types.DataSourceConfig, *Connector) {
 	t.Helper()
 	root := t.TempDir()
 	cache := t.TempDir()
-	b, _ := json.Marshal([]Root{{ID: "product", Name: "Product", Path: root, TenantID: 7}})
-	t.Setenv("DATASOURCE_LOCAL_ROOTS", string(b))
+	b, _ := json.Marshal([]map[string]any{{"id": "product", "name": "Product", "path": root, "tenant_id": 7}})
+	registry := &Registry{db: registryDB(t)}
+	require.NoError(t, registry.initialize("", string(b)))
 	t.Setenv("DATASOURCE_SNAPSHOT_DIR", cache)
-	return context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7)), root, &types.DataSourceConfig{Settings: map[string]interface{}{"root_id": "product", "mode": "source"}}
+	return context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7)), root, &types.DataSourceConfig{Settings: map[string]interface{}{"root_id": "product", "mode": "source"}}, NewConnector(registry)
 }
 func TestLocalFolderProtectsBoundariesAndKeepsCode(t *testing.T) {
-	ctx, root, cfg := localFixture(t)
+	ctx, root, cfg, c := localFixture(t)
 	for _, name := range []string{"a.js", "b.php", "c.py", ".env"} {
 		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte("hello\n"), 0o600))
 	}
@@ -32,7 +33,6 @@ func TestLocalFolderProtectsBoundariesAndKeepsCode(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "alias.py")); err != nil {
 		t.Skip("symlinks unavailable")
 	}
-	c := NewConnector()
 	require.NoError(t, c.Validate(ctx, cfg))
 	store, err := snapshot.FromEnvironment()
 	require.NoError(t, err)
@@ -50,12 +50,11 @@ func TestLocalFolderProtectsBoundariesAndKeepsCode(t *testing.T) {
 	require.Error(t, c.Validate(ctx, cfg))
 }
 func TestLocalDocumentsIncrementalChanges(t *testing.T) {
-	ctx, root, cfg := localFixture(t)
+	ctx, root, cfg, c := localFixture(t)
 	cfg.Settings["mode"] = "documents"
 	p := filepath.Join(root, "README.md")
 	require.NoError(t, os.WriteFile(p, []byte("first"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "main.py"), []byte("not a document"), 0o600))
-	c := NewConnector()
 	items, old, err := c.FetchIncremental(ctx, cfg, nil)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
@@ -71,7 +70,7 @@ func TestLocalDocumentsIncrementalChanges(t *testing.T) {
 	require.True(t, items[0].IsDeleted)
 }
 func TestLocalGitCitationOnlyMatchesCommittedBytes(t *testing.T) {
-	ctx, root, _ := localFixture(t)
+	ctx, root, _, _ := localFixture(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
 	}

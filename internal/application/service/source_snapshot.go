@@ -166,7 +166,12 @@ func (s *DataSourceService) sourceSnapshot(ctx context.Context, kbID, sourceID, 
 		return nil, nil, nil, snapshot.ErrUnavailable
 	}
 	if ds.Type == localfolder.Type {
-		if _, e := localfolder.AuthorizedRoot(ds.TenantID, cfg); e != nil {
+		connector, lookupErr := s.connectorRegistry.Get(localfolder.Type)
+		local, ok := connector.(*localfolder.Connector)
+		if lookupErr != nil || !ok {
+			return nil, nil, nil, access.ErrForbidden
+		}
+		if _, e := local.AuthorizedRoot(ctx, ds.TenantID, cfg); e != nil {
 			return nil, nil, nil, access.ErrForbidden
 		}
 	}
@@ -362,4 +367,17 @@ func removeSourceCache(ds *types.DataSource) {
 	if store, err := snapshot.FromEnvironment(); err == nil {
 		_ = store.Delete(ds)
 	}
+}
+
+// LocalSourceRoots returns only the current workspace's database-backed grants.
+func (s *DataSourceService) LocalSourceRoots(ctx context.Context, tenant uint64) ([]localfolder.Root, error) {
+	connector, err := s.connectorRegistry.Get(localfolder.Type)
+	if err != nil {
+		return nil, err
+	}
+	local, ok := connector.(*localfolder.Connector)
+	if !ok {
+		return nil, errors.New("server folder registry unavailable")
+	}
+	return local.Roots(ctx, tenant)
 }

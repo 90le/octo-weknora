@@ -1,4 +1,6 @@
+import { sourceRootMessages } from '../sourceRootMessages'
 export default {
+  sourceRoots: sourceRootMessages.en,
   localBrowser: {
     pipOpen: "プレビューを別ウィンドウで表示",
     pipReturn: "会話内のプレビューに戻す",
@@ -5999,6 +6001,8 @@ export default {
       grepChunksDesc: '特定のキーワードを含むドキュメントとチャンクを素早く特定します',
       knowledgeSearch: 'セマンティック検索',
       knowledgeSearchDesc: '質問を理解し、意味的に関連する内容を見つけます',
+      octoKnowledgeOperations: 'Octo ナレッジ操作',
+      octoKnowledgeOperationsDesc: '許可された Octo 会話で課題の登録、連絡先とレポートの取得、範囲内のナレッジ変更の確認を行います。通常のウェブチャットでは使用できません。',
       listChunks: 'ドキュメントのチャンクを表示',
       listChunksDesc: 'ドキュメントの全チャンク内容を取得します',
       queryGraph: 'ナレッジグラフを照会',

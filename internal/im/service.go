@@ -1670,14 +1670,6 @@ func (s *Service) isDuplicate(ctx context.Context, messageID string) bool {
 
 // HandleMessage processes an incoming IM message end-to-end using channel config.
 func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, channelID string) error {
-	// Dedup: skip if this message was already processed (IM platforms may retry)
-	if msg.MessageID != "" {
-		if s.isDuplicate(ctx, msg.MessageID) {
-			logger.Infof(ctx, "[IM] Skipping duplicate message: %s", msg.MessageID)
-			return nil
-		}
-	}
-
 	// Reject overly long messages to protect the QA pipeline
 	contentRunes := []rune(msg.Content)
 	if len(contentRunes) > maxContentLength {
@@ -1701,6 +1693,17 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 		if !ok {
 			return fmt.Errorf("channel adapter not available after start: %s", channelID)
 		}
+	}
+
+	// Durable receivers claim authenticated input before calling this dispatcher.
+	// Their recovery must not be discarded by an older Redis/process dedup key.
+	durableIntake := false
+	if receiver, ok := adapter.(interface{ DurableIntake() bool }); ok {
+		durableIntake = receiver.DurableIntake()
+	}
+	if !durableIntake && msg.MessageID != "" && s.isDuplicate(ctx, msg.MessageID) {
+		logger.Infof(ctx, "[IM] Skipping duplicate message: %s", msg.MessageID)
+		return nil
 	}
 
 	// Resolve threadID for key building — only include in thread mode to avoid
@@ -1889,7 +1892,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 		return nil
 	}
 
-	if pos > 0 {
+	if pos > 0 && channel.Platform != "octo" {
 		logger.Infof(ctx, "[IM] Enqueued: user=%s pos=%d depth=%d", msg.UserID, pos, s.qaQueue.Metrics().Depth)
 		// In multi-instance mode the local queue position does not reflect global
 		// depth, so use a generic "queued" hint instead of an exact number.
@@ -1947,6 +1950,11 @@ func (s *Service) persistIMLastRequestState(ctx context.Context, sessionID, agen
 func (s *Service) executeQARequest(req *qaRequest) {
 	ctx := req.ctx
 	defer req.cancel()
+	if lifecycle, ok := req.adapter.(interface {
+		ExecutionFinished(context.Context, *IncomingMessage)
+	}); ok {
+		defer lifecycle.ExecutionFinished(ctx, req.msg)
+	}
 
 	// Track in-flight request so /stop can cancel it.
 	entry := &inflightEntry{cancel: req.cancel}
@@ -1987,6 +1995,7 @@ func (s *Service) executeQARequest(req *qaRequest) {
 			}
 		}
 	}
+	ctx = s.businessContext(ctx, req, req.scope)
 	attachments, imageURLs, downloaded, err := s.prepareIMAttachments(ctx, req.msg, req.adapter)
 	if err != nil {
 		logger.Warnf(ctx, "[IM] attachment preparation failed: %v", err)
@@ -3168,7 +3177,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	}
 
 	// Return raw answer — callers apply cleanIMContent with the appropriate FileService.
-	return answer, nil
+	return s.appendOctoSources(ctx, answer, []*types.SearchResult(assistantMsg.KnowledgeReferences)), nil
 }
 
 // ── CRUD operations for IM channels ──

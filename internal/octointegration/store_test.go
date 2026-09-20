@@ -40,6 +40,13 @@ func testStore(t *testing.T) *Store {
 	if err := db.Exec(string(next)).Error; err != nil {
 		t.Fatal(err)
 	}
+	grants, err := os.ReadFile("../../migrations/sqlite/000023_octo_knowledge_grants.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Exec(string(grants)).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Exec("INSERT INTO knowledge_bases(id, tenant_id) VALUES ('kb-a', 1), ('kb-b', 2)").Error; err != nil {
 		t.Fatal(err)
 	}
