@@ -22,7 +22,7 @@ func focusedToolByName(t *testing.T, s *Service, name string) types.Tool {
 }
 func TestFocusedToolSchemasSeparateIssueAndKnowledgeInputs(t *testing.T) {
 	tools := NewTools(nil)
-	require.Len(t, tools, 6)
+	require.Len(t, tools, 7)
 	schemas := map[string]struct {
 		Properties map[string]json.RawMessage `json:"properties"`
 		Required   []string                   `json:"required"`
@@ -56,6 +56,9 @@ func TestFocusedToolSchemasSeparateIssueAndKnowledgeInputs(t *testing.T) {
 	require.Equal(t, []string{"proposal_id", "decision"}, schemas[ToolKnowledgeConfirm].Required)
 	require.Contains(t, schemas[ToolReport].Properties, "format")
 	require.NotContains(t, schemas[ToolReport].Properties, "report_format")
+	require.Equal(t, []string{"action"}, schemas[ToolKnowledgeDocuments].Required)
+	require.Contains(t, schemas[ToolKnowledgeDocuments].Properties, "knowledge_id")
+	require.NotContains(t, schemas[ToolKnowledgeDocuments].Properties, "content")
 }
 func TestFocusedToolsRejectUnknownArgumentsBeforeDispatch(t *testing.T) {
 	for _, tc := range []struct{ name, payload string }{
@@ -120,7 +123,9 @@ func TestFocusedPreviewAliasesProposalAndKeepsNativeConfirmation(t *testing.T) {
 	denied, err := confirm.Execute(principalContext(principal), payload)
 	require.NoError(t, err)
 	require.False(t, denied.Success)
-	require.Equal(t, ErrDenied.Error(), denied.Error)
+	require.Equal(t, "invalid_arguments", denied.Data["error_code"])
+	require.Contains(t, denied.Error, "确认 "+id)
+	require.Equal(t, []bool{true}, calls, "incomplete confirmation cannot execute the mutation")
 	principal.MessageID = "confirmation-message"
 	principal.MessageText = "确认 " + id
 	completed, err := confirm.Execute(principalContext(principal), payload)

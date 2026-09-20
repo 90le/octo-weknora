@@ -44,6 +44,18 @@ func durableAdapter(t *testing.T) (*Adapter, *im.IncomingMessage) {
 	return a, msg
 }
 
+// A process restart preserves persisted configuration, never a live mutex.
+func restartAdapterForTest(t *testing.T, a *Adapter) *Adapter {
+	t.Helper()
+	restarted, err := NewAdapter("bf_test", a.uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.db, restarted.channelID, restarted.tenantID = a.db, a.channelID, a.tenantID
+	restarted.api, restarted.policy, restarted.receiptPolicy = a.api, a.policy, a.receiptPolicy
+	return restarted
+}
+
 func inboxRow(t *testing.T, a *Adapter, id string) Inbox {
 	t.Helper()
 	var row Inbox
@@ -65,7 +77,7 @@ func TestInboxDeduplicatesAcrossAdapterRestart(t *testing.T) {
 	if err := a.accept(ctx, msg, handler); err != nil {
 		t.Fatal(err)
 	}
-	restarted := *a
+	restarted := restartAdapterForTest(t, a)
 	if err := restarted.accept(ctx, msg, handler); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +88,7 @@ func TestInboxDeduplicatesAcrossAdapterRestart(t *testing.T) {
 	if row := inboxRow(t, a, msg.MessageID); row.State != "finished" {
 		t.Fatalf("terminal state = %s", row.State)
 	}
-	otherChannel := *a
+	otherChannel := restartAdapterForTest(t, a)
 	otherChannel.channelID = "another-channel"
 	if err := otherChannel.accept(ctx, msg, func(context.Context, *im.IncomingMessage) error { calls++; return nil }); err != nil {
 		t.Fatal(err)
@@ -125,7 +137,7 @@ func TestInboxDeliveryRetryRestoresReplyWithoutRerunningHandler(t *testing.T) {
 	mu.Lock()
 	fail = false
 	mu.Unlock()
-	restarted := *a
+	restarted := restartAdapterForTest(t, a)
 	handlerCalls := 0
 	restarted.recoverInbox(ctx, func(context.Context, *im.IncomingMessage) error { handlerCalls++; return nil })
 	row = inboxRow(t, a, msg.MessageID)

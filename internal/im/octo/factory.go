@@ -56,6 +56,7 @@ func NewFactory(db *gorm.DB) im.AdapterFactory {
 			return nil, nil, errors.New("Octo connection Bot UID mismatch")
 		}
 		adapter.policy = runtimePolicy(db, adapter, channel.ID, channel.TenantID, account, connection.Token)
+		adapter.receiptPolicy = scopedRuntimePolicy(db, adapter, channel.ID, channel.TenantID, account, connection.Token, true)
 		adapter.db, adapter.channelID, adapter.tenantID = db, channel.ID, channel.TenantID
 		runCtx, cancel := context.WithCancel(context.Background())
 		go func() {
@@ -84,6 +85,11 @@ func NewFactory(db *gorm.DB) im.AdapterFactory {
 }
 
 func runtimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint64, account, ciphertext string) func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error) {
+	return scopedRuntimePolicy(db, a, channelID, tenant, account, ciphertext, false)
+}
+
+// allowEmptyKnowledge is only used after proof of a completed deletion, never for Agent admission.
+func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint64, account, ciphertext string, allowEmptyKnowledge bool) func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error) {
 	return func(ctx context.Context, _ *im.IMChannel, msg *im.IncomingMessage) (*im.ExecutionScope, error) {
 		if msg == nil || msg.Platform != Platform {
 			return nil, im.ErrScopeDenied
@@ -229,7 +235,7 @@ func runtimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint64, acc
 			}
 		}
 		bindings, err := octointegration.NewStore(db).Effective(ctx, tenant, stored.ID)
-		if err != nil || (len(bindings) == 0 && len(managed) == 0) {
+		if err != nil || (len(bindings) == 0 && len(managed) == 0 && !allowEmptyKnowledge) {
 			return nil, im.ErrScopeDenied
 		}
 		// Names and metadata refresh timestamps are not permission changes.

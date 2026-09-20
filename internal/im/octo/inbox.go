@@ -38,6 +38,11 @@ func (a *Adapter) accept(ctx context.Context, msg *im.IncomingMessage, handler f
 	// Admission happens before retention, attachment download, or model calls.
 	scope, err := a.AuthorizeExecution(ctx, nil, msg)
 	if err != nil {
+		if receipt := a.deletionReceipt(ctx, msg); receipt != nil {
+			scope, err = receipt, nil
+		}
+	}
+	if err != nil {
 		if errors.Is(err, im.ErrScopeDenied) {
 			return nil
 		}
@@ -63,6 +68,9 @@ func (a *Adapter) inboxQuery(ctx context.Context, id string) *gorm.DB {
 }
 
 func (a *Adapter) dispatch(ctx context.Context, msg *im.IncomingMessage, handler func(context.Context, *im.IncomingMessage) error) error {
+	if a.deletionReceipt(ctx, msg) != nil {
+		return a.SendReply(ctx, msg, &im.ReplyMessage{Content: deletionReceiptText, IsFinal: true})
+	}
 	if err := a.inboxQuery(ctx, msg.MessageID).Updates(map[string]any{"state": "processing", "updated_at": time.Now()}).Error; err != nil {
 		return err
 	}
@@ -82,6 +90,16 @@ func (a *Adapter) dispatch(ctx context.Context, msg *im.IncomingMessage, handler
 func (a *Adapter) ExecutionFinished(ctx context.Context, msg *im.IncomingMessage) {
 	if a.db == nil || msg == nil {
 		return
+	}
+	{
+		// A mutation can commit just before its Agent deadline expires. Preserve
+		// the proven fixed receipt with bounded fresh authorization, even then.
+		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		var row Inbox
+		if a.inboxQuery(finishCtx, msg.MessageID).Select("state").First(&row).Error == nil && row.State == "processing" && a.deletionReceipt(finishCtx, msg) != nil {
+			_ = a.SendReply(finishCtx, msg, &im.ReplyMessage{Content: deletionReceiptText, IsFinal: true})
+		}
 	}
 	state, code := "finished", ""
 	if ctx.Err() != nil {
@@ -137,6 +155,7 @@ func (a *Adapter) retryDeliveries(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			a.markExhaustedReplies(ctx)
 			var rows []Inbox
 			if a.db.WithContext(ctx).Where("tenant_id = ? AND channel_id = ? AND state = ? AND attempts < ? AND updated_at < ?", a.tenantID, a.channelID, "reply_pending", 3, time.Now().Add(-25*time.Second)).Limit(20).Find(&rows).Error != nil {
 				continue
@@ -149,4 +168,25 @@ func (a *Adapter) retryDeliveries(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// A send failure that exhausts the retry budget is terminal immediately, not
+// only after a later restart. A concurrent successful delivery is never reverted.
+func (a *Adapter) recordReplyFailure(ctx context.Context, id, code string) {
+	if a.db == nil {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_ = a.inboxQuery(writeCtx, id).Where("state = ?", "reply_pending").Updates(map[string]any{
+		"state":      gorm.Expr("CASE WHEN attempts >= ? THEN ? ELSE state END", 3, "failed"),
+		"error_code": gorm.Expr("CASE WHEN attempts >= ? THEN ? ELSE ? END", 3, "delivery_retry_exhausted", code),
+		"updated_at": time.Now(),
+	}).Error
+}
+func (a *Adapter) markExhaustedReplies(ctx context.Context) {
+	if a.db == nil {
+		return
+	}
+	_ = a.db.WithContext(ctx).Model(&Inbox{}).Where("tenant_id = ? AND channel_id = ? AND state = ? AND attempts >= ?", a.tenantID, a.channelID, "reply_pending", 3).Updates(map[string]any{"state": "failed", "error_code": "delivery_retry_exhausted", "updated_at": time.Now()}).Error
 }

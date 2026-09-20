@@ -10,8 +10,8 @@
     </t-loading>
     <label>增加使用区域<t-select v-model="selectedScope" :options="options" filterable clearable placeholder="选择群或子区" /></label>
     <t-button :loading="saving" :disabled="!selectedScope || loading" @click="add">绑定到所选区域</t-button>
-    <p><router-link :to="{ path: '/platform/settings', query: { section: 'integration-octo' } }">接入新的群／子区</router-link></p>
-    <p><router-link :to="{ path: '/platform/settings', query: { section: 'integration-octo', view: 'contacts', kbId } }">管理此知识库的联系人</router-link></p>
+    <p><router-link :to="{ name: 'octoGroups' }">接入新的群／子区</router-link></p>
+    <p><router-link :to="{ name: 'knowledgeContacts', params: { kbId } }">管理此知识库的联系人</router-link></p>
   </t-drawer>
 </template>
 <script setup lang="ts">

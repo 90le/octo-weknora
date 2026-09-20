@@ -20,7 +20,7 @@ type Credentials struct{ UID, Token, URL string }
 // registration refresh. Dispatch must durably accept/queue a message before it
 // returns nil. An error closes the connection without acknowledging that message.
 // This layer does not execute an Agent, decide KB access, or log message bodies.
-func RunConnection(ctx context.Context, creds Credentials, dispatch func(context.Context, *Message) error) error {
+func RunConnection(ctx context.Context, creds Credentials, dispatch func(context.Context, *Message) error, onReady ...func()) error {
 	if dispatch == nil || creds.UID == "" || creds.Token == "" {
 		return errors.New("Octo connection requires identity and dispatch")
 	}
@@ -36,12 +36,12 @@ func RunConnection(ctx context.Context, creds Credentials, dispatch func(context
 	if err != nil {
 		return errors.New("Octo WebSocket connection failed")
 	}
-	return runConnection(ctx, conn, creds, dispatch)
+	return runConnection(ctx, conn, creds, dispatch, onReady...)
 }
 
 // runConnection owns an already-upgraded socket. Kept separate for local
 // protocol/lifecycle tests; public callers cannot override the approved WSS host.
-func runConnection(ctx context.Context, conn *websocket.Conn, creds Credentials, dispatch func(context.Context, *Message) error) error {
+func runConnection(ctx context.Context, conn *websocket.Conn, creds Credentials, dispatch func(context.Context, *Message) error, onReady ...func()) error {
 	defer conn.Close()
 	conn.SetReadLimit(MaxPacket)
 	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
@@ -107,6 +107,11 @@ func runConnection(ctx context.Context, conn *websocket.Conn, creds Credentials,
 					return err
 				}
 				ready = true
+				for _, notify := range onReady {
+					if notify != nil {
+						notify()
+					}
+				}
 				_ = conn.SetReadDeadline(time.Now().Add(150 * time.Second))
 				go func() {
 					timer := time.NewTicker(60 * time.Second)
@@ -150,7 +155,7 @@ func runConnection(ctx context.Context, conn *websocket.Conn, creds Credentials,
 					return errors.New("Octo acknowledgment failed")
 				}
 			case 9:
-				return ErrDisconnected
+				return DecodeDisconnect(body)
 			default:
 				if !ready {
 					return ErrProtocol

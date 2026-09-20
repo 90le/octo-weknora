@@ -156,6 +156,10 @@ func (s *Service) Propose(ctx context.Context, in ManagementInput) (*Proposal, e
 		}
 		return audit(tx, p, "octo.knowledge.proposed", row.ID, map[string]string{"action": in.Action, "knowledge_base_id": in.KnowledgeBaseID})
 	})
+	if err == nil && row.Status == "pending" {
+		row.ConfirmationCommand = "确认 " + row.ID
+		row.CancellationCommand = "取消 " + row.ID
+	}
 	return &row, err
 }
 
@@ -176,16 +180,22 @@ func (s *Service) Confirm(ctx context.Context, id string, cancel bool) (*Proposa
 	if err != nil {
 		return nil, err
 	}
-	if !p.Console {
-		nativeID, nativeCancel, ok := Confirmation(p.MessageText)
-		if !ok || nativeID != id || nativeCancel != cancel {
-			return nil, ErrDenied
-		}
-	}
 	var row Proposal
 	q := s.db.WithContext(ctx).Where("tenant_id = ? AND account_id = ? AND channel_id = ? AND scope_id = ? AND user_id = ? AND id = ?", p.TenantID, p.AccountID, p.ChannelID, p.ScopeID, p.UserID, id)
 	if err = q.First(&row).Error; err != nil {
 		return nil, err
+	}
+	if !p.Console {
+		nativeID, nativeCancel, ok := Confirmation(p.MessageText)
+		if !ok || nativeID != id || nativeCancel != cancel {
+			// Resolve the owned proposal first: never disclose another user's
+			// pending operation or mistake incomplete confirmation for lost access.
+			command := "确认 " + row.ID
+			if cancel {
+				command = "取消 " + row.ID
+			}
+			return nil, argumentError("尚未执行。请由当前操作人在本会话原样发送：" + command + "。仅回复“确认创建”“确认保存”或“取消”不能执行此操作。")
+		}
 	}
 	if row.Status == "completed" || row.Status == "cancelled" {
 		return &row, nil

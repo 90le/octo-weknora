@@ -15,6 +15,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf16"
@@ -30,12 +31,15 @@ import (
 const Platform im.Platform = "octo"
 
 type Adapter struct {
-	db        *gorm.DB
-	channelID string
-	tenantID  uint64
-	api       *apiClient
-	uid       string
-	policy    func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error)
+	statusMu      sync.RWMutex
+	status        im.ChannelRuntimeStatus
+	db            *gorm.DB
+	channelID     string
+	tenantID      uint64
+	api           *apiClient
+	uid           string
+	policy        func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error)
+	receiptPolicy func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error)
 }
 
 func (a *Adapter) AuthorizeExecution(ctx context.Context, channel *im.IMChannel, msg *im.IncomingMessage) (*im.ExecutionScope, error) {
@@ -172,6 +176,10 @@ func leadingNativeCommandText(text string, entities []wire.Entity, uid string) (
 }
 
 func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *im.ReplyMessage) error {
+	receiptScope := a.deletionReceipt(ctx, in)
+	if receiptScope != nil {
+		reply = &im.ReplyMessage{Content: deletionReceiptText, IsFinal: true}
+	}
 	if reply != nil && strings.TrimSpace(reply.Content) == "NO_REPLY" {
 		a.ExecutionFinished(ctx, in)
 		return nil
@@ -184,12 +192,19 @@ func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *
 		return nil
 	}
 	if a.db != nil {
-		scope, scopeErr := a.AuthorizeExecution(ctx, nil, in)
+		scope := receiptScope
+		var scopeErr error
+		if scope == nil {
+			scope, scopeErr = a.AuthorizeExecution(ctx, nil, in)
+		}
 		var saved Inbox
-		savedErr := a.inboxQuery(ctx, in.MessageID).Select("authority").First(&saved).Error
-		if scopeErr != nil || savedErr != nil || !permitsReply(saved.Authority, scope) {
-			_ = a.inboxQuery(ctx, in.MessageID).Updates(map[string]any{"state": "ignored", "error_code": "authorization_changed"}).Error
+		savedErr := a.inboxQuery(ctx, in.MessageID).Select("authority", "state").First(&saved).Error
+		if scopeErr != nil || savedErr != nil || (receiptScope == nil && !permitsReply(saved.Authority, scope)) {
+			_ = a.inboxQuery(ctx, in.MessageID).Where("state <> ?", "delivered").Updates(map[string]any{"state": "ignored", "error_code": "authorization_changed"}).Error
 			return im.ErrScopeDenied
+		}
+		if saved.State == "delivered" {
+			return nil
 		}
 		if err := a.inboxQuery(ctx, in.MessageID).Updates(map[string]any{"state": "reply_pending", "reply": reply.Content, "attempts": gorm.Expr("attempts + 1"), "updated_at": time.Now()}).Error; err != nil {
 			return err
@@ -220,7 +235,9 @@ func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *
 		text = label + " " + text
 		payload["mention"] = map[string]any{"uids": []string{in.UserID}, "entities": []wire.Entity{{UID: in.UserID, Offset: 0, Length: len(utf16.Encode([]rune(label)))}}}
 	}
-	a.contactEntities(ctx, in, text, payload)
+	if receiptScope == nil {
+		a.contactEntities(ctx, in, text, payload)
+	}
 	payload["content"] = text
 	quote := map[string]any{"message_id": id, "from_uid": in.UserID, "from_name": in.UserName}
 	var original map[string]json.RawMessage
@@ -234,13 +251,13 @@ func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *
 	}
 	if err = a.api.post(ctx, "/v1/bot/sendMessage", map[string]any{"channel_id": target, "channel_type": kind, "client_msg_no": uuid.NewSHA1(uuid.NameSpaceOID, []byte(in.MessageID+":reply")).String(), "payload": payload}, &result); err != nil {
 		if a.db != nil {
-			_ = a.inboxQuery(ctx, in.MessageID).Update("error_code", "send_failed").Error
+			a.recordReplyFailure(ctx, in.MessageID, "send_failed")
 		}
 		return err
 	}
 	if wire.ReadID(result.ID) == "" {
 		if a.db != nil {
-			_ = a.inboxQuery(ctx, in.MessageID).Update("error_code", "delivery_not_acknowledged").Error
+			a.recordReplyFailure(ctx, in.MessageID, "delivery_not_acknowledged")
 		}
 		return errors.New("Octo delivery was not acknowledged")
 	}

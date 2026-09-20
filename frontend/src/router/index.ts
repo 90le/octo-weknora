@@ -7,6 +7,8 @@ import type { DeploymentCapabilityKey } from '@/config/deploymentCapabilities'
 import { MessagePlugin } from 'tdesign-vue-next'
 import i18n from '@/i18n'
 import { normalizeSettingsSection } from '@/config/settingsRoute'
+import { knowledgeOperationsTarget } from '@/config/knowledgeOperationsRoute'
+import { useUIStore } from '@/stores/ui'
 
 /** Lite /桌面 WebView 硬刷新时可能只打开 `/`，用 session 记住上次页面以便恢复 */
 const LITE_LAST_PATH_KEY = 'weknora_lite_last_path'
@@ -109,6 +111,36 @@ const router = createRouter({
           name: "settings",
           component: () => import("../views/settings/Settings.vue"),
           meta: { requiresInit: true, requiresAuth: true }
+        },
+        {
+          path: "channels",
+          name: "knowledgeChannels",
+          component: () => import("../views/integrations/OctoWorkspace.vue"),
+          meta: { requiresInit: true, requiresAuth: true, requiresWorkspaceAdmin: true, knowledgeOperations: true, requiredCapability: 'integrations.im' }
+        },
+        {
+          path: "channels/octo",
+          name: "octoGroups",
+          component: () => import("../views/integrations/OctoWorkspace.vue"),
+          meta: { requiresInit: true, requiresAuth: true, requiresWorkspaceAdmin: true, knowledgeOperations: true, requiredCapability: 'integrations.im' }
+        },
+        {
+          path: "issues",
+          name: "knowledgeIssues",
+          component: () => import("../views/integrations/OctoIssuesPage.vue"),
+          meta: { requiresInit: true, requiresAuth: true, requiresWorkspaceAdmin: true, knowledgeOperations: true }
+        },
+        {
+          path: "issues/reports",
+          name: "knowledgeReports",
+          component: () => import("../views/integrations/OctoIssuesPage.vue"),
+          meta: { requiresInit: true, requiresAuth: true, requiresWorkspaceAdmin: true, knowledgeOperations: true }
+        },
+        {
+          path: "knowledge-bases/:kbId/contacts",
+          name: "knowledgeContacts",
+          component: () => import("../views/integrations/KnowledgeContactsPage.vue"),
+          meta: { requiresInit: true, requiresAuth: true, requiresWorkspaceAdmin: true, knowledgeOperations: true }
         },
         {
           path: "knowledge-bases",
@@ -309,6 +341,11 @@ let liteDeepLinkRestoreDone = false
 router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
 
+  if (to.name === 'settings') {
+    const target = knowledgeOperationsTarget(to.query)
+    if (target) { useUIStore().closeSettings(); next(target); return }
+  }
+
   // OIDC 回跳登录结果依赖 App.vue 在挂载后消费 URL hash。
   // 如果这里先按“未登录”拦截到 /login，会导致回调结果没有机会落盘。
   if (hasPendingOIDCCallback()) {
@@ -413,6 +450,11 @@ router.beforeEach(async (to, from, next) => {
   // out gets redirected to /login first (consistent with how the rest
   // of the auth flow works), and only an authenticated non-admin sees
   // the bounce. This is UI-only; the server enforces the real check.
+  if (to.meta.requiresWorkspaceAdmin === true && !authStore.hasRole('admin') && !authStore.canAccessAllTenants) {
+    next('/platform/knowledge-bases')
+    return
+  }
+  if (to.meta.knowledgeOperations === true) useUIStore().closeSettings()
   if (to.meta.requiresSystemAdmin === true) {
     if (!authStore.isSystemAdmin) {
       next('/platform/knowledge-bases')

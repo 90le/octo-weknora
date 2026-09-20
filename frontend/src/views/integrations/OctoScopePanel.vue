@@ -1,65 +1,109 @@
 <template>
   <section class="octo-panel">
-    <header><h2>Octo 群与子区</h2><p>配置知识库的查询和维护范围。查询绑定默认只读，维护必须单独授权。</p></header>
-    <t-alert theme="info">先在 IM 集成启用 Bot 渠道，再为群／子区绑定知识库。子区默认独立；继承知识不会共享其他区域的对话或问题记录。</t-alert>
-    <p v-if="error" role="alert" class="error">{{ error }} <t-button variant="text" @click="load">重试</t-button></p>
-    <div class="toolbar">
-      <t-button :loading="loading" @click="load">刷新</t-button>
-      <t-button @click="showConnection = true">配置 Octo 连接</t-button>
-      <t-button :disabled="!connections.length" @click="showCreate = true">接入群／子区</t-button>
-      <router-link :to="{ path: '/platform/settings', query: { section: 'integration-im' } }">管理 Bot 渠道与私聊</router-link>
-      <span>已加载 {{ scopes.length }} 个区域</span>
-    </div>
+    <header class="page-heading">
+      <div><h2>群与知识库</h2><p>选择 Octo 群或子区，查看它能查询哪些知识库、哪些已开放维护。</p></div>
+      <div class="heading-actions">
+        <t-button variant="outline" :loading="loading" :disabled="saving" @click="load">刷新</t-button>
+        <t-button :disabled="!connections.length" @click="showCreate = true"><template #icon><t-icon name="add" /></template>接入群／子区</t-button>
+      </div>
+    </header>
+
+    <t-alert v-if="error" theme="error">{{ error }} <t-button variant="text" @click="load">重试</t-button></t-alert>
     <t-loading :loading="loading">
-      <t-empty v-if="!loading && !scopes.length && !error" :description="connections.length ? '还没有接入区域。接入主群后绑定知识库，即可开始群内问答。' : '先配置一个 Octo Bot 连接，再接入群和知识库。'" />
-      <div class="layout">
-        <nav aria-label="群与子区">
-          <t-input v-model="search" clearable placeholder="搜索群、子区或 Bot" aria-label="搜索群与子区" />
-          <div v-for="group in groups" :key="group.id" class="group">
-            <button :class="{ selected: selected?.id === group.id }" @click="select(group)">{{ group.display_name }} <small>主群</small></button>
-            <button v-for="child in children(group)" :key="child.id" class="child" :class="{ selected: selected?.id === child.id }" @click="select(child)">{{ child.display_name }} <small>子区</small></button>
+      <div v-if="!scopes.length && !error && !loading" class="empty-setup">
+        <t-empty :description="connections.length ? '先接入一个 Octo 群，再为它绑定知识库。' : '先连接 Octo Bot，再选择它所在的群。'" />
+        <t-button v-if="!connections.length" @click="showConnection = true">连接 Octo Bot</t-button>
+        <t-button v-else @click="showCreate = true">接入第一个群</t-button>
+        <router-link :to="imSettings">Bot 渠道与私聊设置</router-link>
+      </div>
+
+      <div v-else-if="scopes.length" class="scope-layout">
+        <aside class="scope-tree" aria-label="Octo 群与子区">
+          <div class="tree-heading"><strong>Octo 区域</strong><small>{{ groupCount }} 个群 · {{ childCount }} 个子区</small></div>
+          <t-input v-model="search" clearable placeholder="搜索群或子区" aria-label="搜索群或子区"><template #prefix-icon><t-icon name="search" /></template></t-input>
+          <nav aria-label="选择群或子区">
+            <div v-for="group in groups" :key="group.scope.id" class="tree-group">
+              <div class="group-node">
+                <button v-if="group.children.length" type="button" class="tree-toggle" :aria-label="`${expanded(group.scope.id) ? '收起' : '展开'} ${group.scope.display_name} 的子区`" :aria-expanded="expanded(group.scope.id)" @click="toggleGroup(group.scope.id)"><t-icon :name="expanded(group.scope.id) ? 'chevron-down' : 'chevron-right'" /></button>
+                <span v-else class="tree-toggle-placeholder" />
+                <button type="button" class="tree-node" :class="{selected:selected?.id===group.scope.id}" :aria-current="selected?.id===group.scope.id ? 'page' : undefined" @click="select(group.scope)"><t-icon name="chat-message" /><span>{{ group.scope.display_name }}</span><small>群</small></button>
+              </div>
+              <div v-if="expanded(group.scope.id)" class="children">
+                <button v-for="child in group.children" :key="child.id" type="button" class="tree-node child-node" :class="{selected:selected?.id===child.id}" :aria-current="selected?.id===child.id ? 'page' : undefined" @click="select(child)"><span class="child-connector" /><span>{{ child.display_name }}</span><small>子区</small></button>
+              </div>
+            </div>
+            <p v-if="!groups.length" class="tree-empty">没有匹配的群或子区。</p>
+          </nav>
+          <router-link class="tree-footer" :to="imSettings"><t-icon name="setting" /> Bot 接入与私聊</router-link>
+        </aside>
+
+        <main v-if="selected" class="scope-detail">
+          <div class="selected-heading">
+            <div>
+              <p v-if="parentScope" class="breadcrumb"><button type="button" @click="select(parentScope)">{{ parentScope.display_name }}</button><span>／ 子区</span></p>
+              <h3>{{ selected.display_name }} <t-tag size="small" variant="light">{{ selected.subarea_id ? '子区' : '主群' }}</t-tag></h3>
+              <p class="scope-subtitle">{{ selected.subarea_id ? '此处设置只作用于当前子区。' : '此处设置作用于主群，子区可以独立配置。' }}</p>
+            </div>
+            <t-tag v-if="selected.sync_status!=='verified'" size="small" theme="warning">{{ statusLabel(selected.sync_status) }}</t-tag>
           </div>
-        </nav>
-        <div v-if="selected" class="detail">
-          <h3>{{ selected.display_name }}</h3>
-          <dl><dt>Bot 账号</dt><dd>{{ selected.account_id }}</dd><dt>群 ID</dt><dd>{{ selected.group_id }}</dd><dt v-if="selected.subarea_id">子区 ID</dt><dd v-if="selected.subarea_id">{{ selected.subarea_id }}</dd></dl>
-          <p>名称来源：{{ selected.name_source === 'octo' ? 'Octo 平台' : '旧人工配置' }} · {{ statusLabel(selected.sync_status) }}</p>
-          <p v-if="selected.verified_at">上次验证：{{ new Date(selected.verified_at).toLocaleString() }}</p>
-          <t-button :loading="saving" @click="refreshName">同步平台名称</t-button>
-          <p v-if="selected.name_source === 'octo'">名称来自 Octo，改名后点击“同步平台名称”更新。</p>
-          <label v-else>显示名称<t-input v-model="editName" :maxlength="256" /></label>
-          <label v-if="selected.subarea_id" class="inherit"><t-switch v-model="editInherit" />继承主群知识库（不继承问题记录或维护权）</label>
-          <label v-if="!selected.subarea_id" class="inherit"><t-switch v-model="editAggregate" />允许主群汇总该群子区的问题记录</label>
-          <label class="inherit"><t-switch v-model="editCreation" />允许本区已验证的群管理员创建知识库</label>
-          <p>建库授权仅限当前区域；不会获得工作区其他知识库权限。汇总问题与继承知识独立配置。</p>
-          <t-button :loading="saving" :disabled="!editName.trim()" @click="saveScope">保存区域设置</t-button>
-          <h3>最终生效的知识库</h3>
-          <p v-if="bindingError" role="alert" class="error">{{ bindingError }}</p>
-          <t-loading :loading="bindingLoading">
-            <p v-if="!bindingLoading && !bindings.length && !bindingError">没有绑定知识库；不会回退查询其他库。</p>
-            <ul><li v-for="b in bindings" :key="`${b.from_scope_id}:${b.knowledge_base_id}`">
-              <router-link :to="{ name: 'knowledgeBaseDetail', params: { kbId: b.knowledge_base_id } }">{{ kbName(b.knowledge_base_id) }}</router-link>
-              <t-tag size="small" :theme="b.inherited ? 'default' : 'primary'">{{ b.inherited ? '继承主群' : '本区绑定' }}</t-tag>
-              <label v-if="!b.inherited" class="inherit"><t-switch :value="b.can_manage" :disabled="saving" @change="setMaintenance(b, $event)" size="small" />允许群管理员维护</label>
-              <t-tag v-else size="small">仅查询</t-tag>
-              <t-popconfirm v-if="!b.inherited" content="只停止本区直接查询，资料与已有管理授权保留；管理授权需要单独撤销。" @confirm="removeBinding(b.from_scope_id, b.knowledge_base_id)"><t-button variant="text" theme="danger" :disabled="saving">解除查询绑定</t-button></t-popconfirm>
-              <t-button v-else variant="text" @click="openParent(b.from_scope_id)">前往主群管理</t-button>
-            </li></ul>
-          </t-loading>
-          <div class="toolbar"><t-select v-model="kbToBind" placeholder="选择知识库" filterable clearable :options="kbOptions" /><t-button :disabled="!kbToBind || saving || bindingLoading" @click="addBinding">绑定知识库</t-button></div>
-          <p>维护权只授予本区经 Octo 核验的管理员，不授予普通成员。也可直接在知识库页面维护资料。</p>
-          <h3>已授权管理的知识库</h3>
-          <p>管理授权与查询绑定独立。解除查询不会让已委托维护的资料失去管理员；如需收回维护权，请明确撤销。</p>
-          <p v-if="!bindingLoading && !managed.length && !bindingError">本区尚未获授知识库维护权限。</p>
-          <ul><li v-for="id in managed" :key="id"><router-link :to="{name:'knowledgeBaseDetail',params:{kbId:id}}">{{ kbName(id) }}</router-link><t-tag v-if="!bindings.some(b=>!b.inherited&&b.knowledge_base_id===id)" size="small" theme="warning">未直接绑定查询</t-tag><t-button v-if="!bindings.some(b=>!b.inherited&&b.knowledge_base_id===id)" variant="text" :disabled="saving" @click="rebindManaged(id)">绑定查询</t-button><t-popconfirm content="撤销本区管理员对此知识库的维护权；已有查询绑定和知识资料不变。" @confirm="revokeManagement(id)"><t-button variant="text" theme="danger" :disabled="saving">撤销管理授权</t-button></t-popconfirm></li></ul>
-          <h3>核对群成员角色</h3>
-          <p>仅检查指定 UID，不列出成员名单；群管理身份不等于知识库维护权限。</p>
-          <div class="toolbar"><t-input v-model="roleUID" placeholder="输入原生 UID" /><t-button :disabled="!roleUID.trim()" :loading="roleLoading" @click="checkRole">核对角色</t-button></div>
-          <p v-if="roleResult" role="status">{{ roleResult }}</p>
-        </div>
-        <p v-else-if="scopes.length">选择左侧主群或子区查看绑定。</p>
+
+          <div class="scope-summary" aria-label="当前区域配置摘要">
+            <div><strong>{{ bindingLoading || bindingError ? '—' : queryCount }}</strong><span>可查询知识库</span></div>
+            <div><strong>{{ bindingLoading || bindingError ? '—' : managementCount }}</strong><span>已授权维护</span></div>
+            <div><strong>{{ selected.subarea_id && selected.inherit_parent ? '继承 + 本区' : '本区独立' }}</strong><span>知识范围</span></div>
+          </div>
+
+          <section class="knowledge-section">
+            <div class="section-heading"><div><h4>知识库与权限</h4><p>查询和维护分别授权；解除查询绑定不会删除资料或撤销维护权。</p></div><t-button :disabled="bindingLoading || Boolean(bindingError)" @click="showBind = true"><template #icon><t-icon name="add" /></template>绑定知识库</t-button></div>
+            <t-alert v-if="bindingError" theme="error">{{ bindingError }} <t-button variant="text" @click="select(selected)">重新读取</t-button></t-alert>
+            <t-loading :loading="bindingLoading">
+              <t-empty v-if="!bindingLoading && !bindingError && !knowledgeRows.length" description="本区域尚未绑定知识库，也没有单独的维护授权。" />
+              <div v-if="!bindingError" class="knowledge-list">
+                <article v-for="row in knowledgeRows" :key="row.knowledgeBaseId" class="knowledge-row">
+                  <div class="knowledge-name"><span class="knowledge-icon"><t-icon name="folder" /></span><div><router-link :to="{name:'knowledgeBaseDetail',params:{kbId:row.knowledgeBaseId}}">{{ row.name }}</router-link><small>知识库</small></div></div>
+                  <div class="permission-state"><small>本区查询</small><span :class="{muted:row.query==='none'}">{{ row.query==='direct' ? '已开放' : row.query==='inherited' ? '继承主群' : '未开放' }}</span><button v-if="row.query==='inherited'" type="button" class="inline-link" @click="openParent(row.sourceScopeId)">查看主群设置</button></div>
+                  <div class="permission-state"><small>维护授权</small><t-tag :theme="row.managed ? 'success' : 'default'" variant="light" size="small">{{ row.managed ? '已授权本区管理者' : '未授权' }}</t-tag></div>
+                  <div class="knowledge-actions">
+                    <t-popconfirm v-if="row.query==='direct'" :content="`停止「${selected.display_name}」直接查询此库；资料和已有维护授权保留。若子区同时继承主群，继承关系仍可能提供查询。`" @confirm="removeBinding(row.knowledgeBaseId)"><t-button variant="text" :disabled="saving">解除查询</t-button></t-popconfirm>
+                    <t-button v-else variant="text" :disabled="saving" @click="bindQuery(row.knowledgeBaseId)">{{ row.query==='inherited' ? '独立绑定' : '开放查询' }}</t-button>
+                    <t-popconfirm v-if="row.managed" content="仅撤销本区域的维护授权，查询绑定和知识资料保持不变。" @confirm="revokeManagement(row.knowledgeBaseId)"><t-button variant="text" theme="danger" :disabled="saving">撤销维护</t-button></t-popconfirm>
+                    <t-popconfirm v-else :content="grantDescription(row)" @confirm="grantManagement(row.knowledgeBaseId)"><t-button variant="text" :disabled="saving">授权维护</t-button></t-popconfirm>
+                  </div>
+                </article>
+              </div>
+            </t-loading>
+            <p class="permission-note"><t-icon name="secured" /> 本区管理者指可访问本区域的群主／群管理员，以及渠道单独允许维护的 Bot；实际操作时仍会核验身份与权限。</p>
+          </section>
+
+          <section class="policy-section">
+            <div class="section-heading"><div><h4>区域规则</h4><p>知识继承、问题汇总和群内建库是独立的选项。</p></div><t-button variant="outline" :disabled="!policiesChanged || saving" :loading="saving" @click="saveScope">保存规则</t-button></div>
+            <div v-if="selected.subarea_id" class="policy-row"><div><strong>继承主群知识库</strong><p>增加可查询范围，不继承维护授权、对话或问题记录。</p></div><t-switch v-model="editInherit" aria-label="继承主群知识库" /></div>
+            <div v-else class="policy-row"><div><strong>汇总子区问题</strong><p>允许主群查询该群子区的问题记录，不增加子区知识或维护权限。</p></div><t-switch v-model="editAggregate" aria-label="汇总子区问题" /></div>
+            <div class="policy-row"><div><strong>允许管理者在群内建库</strong><p>只作用于当前区域；管理者仍需通过原生身份核验，其他工作区资产不会因此开放。</p></div><t-switch v-model="editCreation" aria-label="允许管理者在群内建库" /></div>
+          </section>
+
+          <details class="diagnostics" :open="detailsOpen" @toggle="detailsOpen = ($event.target as HTMLDetailsElement).open">
+            <summary><t-icon name="tools" /> 连接详情与排查</summary>
+            <div class="diagnostics-body">
+              <dl><dt>Bot 连接</dt><dd>{{ selected.account_id }}</dd><dt>群 ID</dt><dd>{{ selected.group_id }}</dd><template v-if="selected.subarea_id"><dt>子区 ID</dt><dd>{{ selected.subarea_id }}</dd></template><dt>名称来源</dt><dd>{{ selected.name_source==='octo' ? 'Octo 平台' : '待平台核验' }} · {{ statusLabel(selected.sync_status) }}</dd><dt>上次验证</dt><dd>{{ selected.verified_at ? new Date(selected.verified_at).toLocaleString() : '尚未验证' }}</dd></dl>
+              <div class="diagnostic-actions"><t-button variant="outline" :loading="saving" @click="refreshName">同步平台名称</t-button><t-button variant="text" @click="showConnection = true">更新 Bot 连接</t-button></div>
+              <p>群和子区名称来自 Octo。请在 Octo 修改名称后同步；连接异常时保留上次名称，不把缓存当成最新验证。</p>
+              <h5>核对指定成员的原生角色</h5><p>只检查指定 UID，不展开群成员表。Octo 群角色与知识库管理授权仍是两项检查。</p>
+              <div class="role-query"><t-input v-model="roleUID" placeholder="输入要核对的原生 UID" aria-label="原生用户 UID" /><t-button variant="outline" :disabled="!roleUID.trim()" :loading="roleLoading" @click="checkRole">核对角色</t-button></div>
+              <p v-if="roleResult" role="status">{{ roleResult }}</p>
+            </div>
+          </details>
+        </main>
       </div>
     </t-loading>
+
+    <t-dialog v-model:visible="showBind" attach="body" :header="`绑定知识库到 ${selected?.display_name || '当前区域'}`" :confirm-loading="saving" :confirm-btn="{content:'绑定知识库',disabled:!kbToBind}" @confirm="addBinding">
+      <p class="dialog-description">仅为当前{{ selected?.subarea_id ? '子区' : '主群' }}开放查询，不影响其他区域，也不移动或复制资料。</p>
+      <t-select v-model="kbToBind" :options="kbOptions" filterable clearable placeholder="选择当前工作区的知识库" />
+      <t-empty v-if="!kbOptions.length" description="没有可新增的知识库。可先到知识库页面创建。" />
+      <div class="bind-management"><t-checkbox v-model="grantOnBind">同时允许本区域管理者维护</t-checkbox><p>默认只增加查询绑定；未勾选不会撤销该库原有的维护授权。</p></div>
+      <router-link :to="{name:'knowledgeBaseList'}">前往知识库</router-link>
+    </t-dialog>
     <OctoScopeCreateDialog v-model:visible="showCreate" :connections="connections" :scopes="scopes" @saved="onScopeCreated" />
     <OctoConnectionDialog v-model:visible="showConnection" @saved="load" />
   </section>
@@ -68,114 +112,138 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
+import { useRoute } from 'vue-router'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import { useAuthStore } from '@/stores/auth'
-import { useRoute } from 'vue-router'
 import OctoConnectionDialog from './OctoConnectionDialog.vue'
 import OctoScopeCreateDialog from './OctoScopeCreateDialog.vue'
+import { groupScopes, scopeKnowledgeRows, type ScopeKnowledgeRow } from './octoScopeDisplay'
 import { listScopes, updateScope, effectiveBindings, managedKBs, revokeKBManagement, bindKB, unbindKB, listConnections, syncScopeName, inspectMemberRole, type OctoScope, type EffectiveBinding } from '@/api/octo'
 
 const scopes = ref<OctoScope[]>([]), selected = ref<OctoScope | null>(null)
-const kbs = ref<Array<{ id: string; name: string }>>([]), bindings = ref<EffectiveBinding[]>([])
-const managed=ref<string[]>([])
-const loading = ref(false), saving = ref(false), bindingLoading = ref(false), showCreate = ref(false)
-const error = ref(''), bindingError = ref(''), editName = ref(''), editInherit = ref(false), kbToBind = ref('')
-const editCreation=ref(false),editAggregate=ref(false)
-const search = ref(''), route = useRoute()
-const connections = ref<Array<{ account_id: string; updated_at: string }>>([])
-const showConnection = ref(false)
+const kbs = ref<Array<{id:string;name:string}>>([]), bindings = ref<EffectiveBinding[]>([]), managed = ref<string[]>([])
+const loading = ref(false), saving = ref(false), bindingLoading = ref(false)
+const error = ref(''), bindingError = ref(''), search = ref('')
+const showCreate = ref(false), showBind = ref(false), showConnection = ref(false), detailsOpen = ref(false)
+const kbToBind = ref(''), grantOnBind = ref(false)
+const editInherit = ref(false), editCreation = ref(false), editAggregate = ref(false)
 const roleUID = ref(''), roleResult = ref(''), roleLoading = ref(false)
-const statusLabel = (status: string) => ({ verified: '已验证', error: '同步失败，显示上次名称', needs_refresh: '连接已变更，待重新验证', unverified: '未验证' }[status] || '未验证')
-const auth = useAuthStore()
+const connections = ref<Array<{account_id:string;updated_at:string}>>([])
+const collapsedGroups = ref(new Set<string>())
+const auth = useAuthStore(), route = useRoute()
+const imSettings = {name:'knowledgeChannels'}
 let selectionVersion = 0, loadVersion = 0
-const matches = (s: OctoScope) => `${s.display_name} ${s.account_id} ${s.group_id} ${s.subarea_id}`.toLowerCase().includes(search.value.trim().toLowerCase())
-const groups = computed(() => scopes.value.filter(s => !s.subarea_id && (matches(s) || children(s).some(matches))))
-const children = (g: OctoScope) => scopes.value.filter(s => s.subarea_id && s.account_id === g.account_id && s.group_id === g.group_id)
-const kbName = (id: string) => kbs.value.find(k => k.id === id)?.name || id
-const kbOptions = computed(() => kbs.value.filter(k => !bindings.value.some(b => b.knowledge_base_id === k.id && !b.inherited)).map(k => ({ label: k.name, value: k.id })))
+
+const groups = computed(() => groupScopes(scopes.value, search.value))
+const groupCount = computed(() => scopes.value.filter(scope => !scope.subarea_id).length)
+const childCount = computed(() => scopes.value.length - groupCount.value)
+const knowledgeRows = computed(() => scopeKnowledgeRows(bindings.value, managed.value, kbs.value))
+const queryCount = computed(() => knowledgeRows.value.filter(row => row.query !== 'none').length)
+const managementCount = computed(() => knowledgeRows.value.filter(row => row.managed).length)
+const parentScope = computed(() => selected.value?.subarea_id ? scopes.value.find(scope => !scope.subarea_id && scope.account_id===selected.value?.account_id && scope.group_id===selected.value?.group_id) : undefined)
+const kbOptions = computed(() => kbs.value.filter(kb => !bindings.value.some(binding => !binding.inherited && binding.knowledge_base_id===kb.id)).map(kb => ({label:kb.name,value:kb.id})))
+const policiesChanged = computed(() => Boolean(selected.value) && (editInherit.value!==Boolean(selected.value?.inherit_parent) || editCreation.value!==Boolean(selected.value?.allow_knowledge_creation) || editAggregate.value!==Boolean(selected.value?.aggregate_child_issues)))
+const statusLabel = (status:string) => ({verified:'已验证',error:'同步失败',needs_refresh:'待重新验证',unverified:'未验证'}[status] || '未验证')
+const expanded = (id:string) => Boolean(search.value.trim()) || !collapsedGroups.value.has(id)
+function toggleGroup(id:string) { const next=new Set(collapsedGroups.value); next.has(id) ? next.delete(id) : next.add(id); collapsedGroups.value=next }
 
 async function load() {
-  const version = ++loadVersion
-  loading.value = true; error.value = ''
+  const version=++loadVersion
+  loading.value=true; error.value=''
   try {
-    const [s, k, c] = await Promise.all([listScopes(), listKnowledgeBases(), listConnections()])
-    if (version !== loadVersion) return
-    const all = [...s.data]
-    let count = s.data.length
-    while (count === 100) {
-      const next = await listScopes(all.length)
-      if (version !== loadVersion) return
-      all.push(...next.data); count = next.data.length
+    const [result,libraries,accounts]=await Promise.all([listScopes(),listKnowledgeBases(),listConnections()])
+    if(version!==loadVersion) return
+    const all=[...result.data]
+    let count=result.data.length
+    while(count===100) {
+      const next=await listScopes(all.length)
+      if(version!==loadVersion) return
+      all.push(...next.data); count=next.data.length
     }
-    scopes.value = all; kbs.value = k.data || []
-    connections.value = c.data
-    const fresh = scopes.value.find(s => s.id === (selected.value?.id || route.query.scope)) || scopes.value[0]
-    if (fresh) await select(fresh)
-    else { selected.value = null; bindings.value = []; selectionVersion++ }
-  } catch { if (version === loadVersion) { error.value = '无法加载区域配置，请确认当前工作区管理员权限和服务状态。'; scopes.value = []; selected.value = null; bindings.value = []; kbs.value = []; selectionVersion++ } }
-  finally { if (version === loadVersion) loading.value = false }
+    scopes.value=all; kbs.value=libraries.data || []; connections.value=accounts.data
+    const wanted=selected.value?.id || (typeof route.query.scope==='string' ? route.query.scope : undefined)
+    const fresh=all.find(scope => scope.id===wanted) || all.find(scope=>scope.id===selected.value?.id) || all[0]
+    if(fresh) await select(fresh)
+    else {selected.value=null;bindings.value=[];managed.value=[];selectionVersion++}
+  } catch {
+    if(version===loadVersion) {error.value='无法读取当前工作区的群与知识库配置，请检查权限和服务状态。';scopes.value=[];selected.value=null;bindings.value=[];managed.value=[];kbs.value=[];selectionVersion++}
+  } finally {if(version===loadVersion) loading.value=false}
 }
-async function select(scope: OctoScope) {
-  const version = ++selectionVersion
-  selected.value = scope; editName.value = scope.display_name; editInherit.value = scope.inherit_parent
-  editCreation.value=Boolean(scope.allow_knowledge_creation);editAggregate.value=Boolean(scope.aggregate_child_issues)
-  roleResult.value = ''; roleUID.value = ''; roleLoading.value = false
-  bindings.value = []; managed.value=[]; bindingError.value = ''; kbToBind.value = ''; bindingLoading.value = true
-  try { const [r,m] = await Promise.all([effectiveBindings(scope.id),managedKBs(scope.id)]); if (version === selectionVersion) {bindings.value = r.data;managed.value=m.data} }
-  catch { if (version === selectionVersion) bindingError.value = '绑定读取失败，不能据此判断该区域没有知识库。' }
-  finally { if (version === selectionVersion) bindingLoading.value = false }
-}
-async function mutate(operation: () => Promise<unknown>) {
-  if (saving.value) return
-  saving.value = true
-  try { await operation(); await MessagePlugin.success('已保存'); await load() }
-  catch (e) {
-    const message = (e as { response?: { data?: { error?: string } } }).response?.data?.error || ''
-    await MessagePlugin.error(message.includes('SYSTEM_AES_KEY') ? '服务器尚未配置 WeKnora 原生加密主密钥，连接未保存。' : '未能完成操作，请检查连接、群 ID、权限和服务状态。')
-  }
-  finally { saving.value = false }
-}
-function saveScope() { const s = selected.value; if (s) return mutate(() => updateScope(s.id, editName.value.trim(), editInherit.value,editCreation.value,editAggregate.value)) }
-function setMaintenance(b:EffectiveBinding,value:unknown){if(!b.inherited)return mutate(()=>bindKB(b.from_scope_id,b.knowledge_base_id,Boolean(value)))}
-function addBinding() { const id = selected.value?.id, kb = kbToBind.value; if (id && kb) return mutate(() => bindKB(id, kb)) }
-function rebindManaged(kb:string){const id=selected.value?.id;if(id)return mutate(()=>bindKB(id,kb))}
-function revokeManagement(kb:string){const id=selected.value?.id;if(id)return mutate(()=>revokeKBManagement(id,kb))}
-function removeBinding(scope: string, kb: string) { return mutate(() => unbindKB(scope, kb)) }
-function openParent(id: string) { const s = scopes.value.find(s => s.id === id); if (s) void select(s) }
-function refreshName() { const id = selected.value?.id; if (id) return mutate(async () => { try { await syncScopeName(id) } catch (e) { await load(); throw e } }) }
-async function checkRole() {
-  const s = selected.value, version = selectionVersion, uid = roleUID.value.trim()
-  if (!s || !uid) return
-  roleLoading.value = true; roleResult.value = ''
+
+async function select(scope:OctoScope) {
+  const version=++selectionVersion
+  selected.value=scope;editInherit.value=Boolean(scope.inherit_parent);editCreation.value=Boolean(scope.allow_knowledge_creation);editAggregate.value=Boolean(scope.aggregate_child_issues)
+  roleUID.value='';roleResult.value='';roleLoading.value=false;detailsOpen.value=false;showBind.value=false
+  bindings.value=[];managed.value=[];bindingError.value='';kbToBind.value='';bindingLoading.value=true
   try {
-    const r = await inspectMemberRole(s.id, uid)
-    if (version !== selectionVersion) return
-    const names: Record<string, string> = { owner: '群主', admin: '群管理员', member: '普通成员', unknown: '未能确认身份' }
-    roleResult.value = r.data.reason === 'bot_admin_not_proven'
-      ? `${r.data.uid}：Bot 管理身份待验证。平台未提供可验证的 Bot 管理字段，不能据此授权。`
-      : `${r.data.uid}：${names[r.data.role] || '未知角色'}。此结果仅核对群角色，不授予知识库权限。`
-  } catch { if (version === selectionVersion) roleResult.value = '角色核对失败，未作授权判断。' }
-  finally { if (version === selectionVersion) roleLoading.value = false }
+    const [queries,grants]=await Promise.all([effectiveBindings(scope.id),managedKBs(scope.id)])
+    if(!Array.isArray(queries.data)||!Array.isArray(grants.data)) throw new Error('invalid scope response')
+    if(version===selectionVersion) {bindings.value=queries.data;managed.value=grants.data}
+  } catch {if(version===selectionVersion) bindingError.value='权限读取失败，当前结果不能当成零绑定或未授权。请重新读取。'}
+  finally {if(version===selectionVersion) bindingLoading.value=false}
 }
-async function onScopeCreated(scope: OctoScope) { selected.value=scope; await load(); await select(scope); await MessagePlugin.success('区域已接入，请绑定知识库') }
+
+async function mutate(operation:()=>Promise<unknown>,success='配置已更新') {
+  if(saving.value) return
+  const tenant=auth.currentTenantId
+  saving.value=true
+  try {await operation();if(tenant!==auth.currentTenantId)return;await load();await MessagePlugin.success(success)}
+  catch {if(tenant===auth.currentTenantId) await MessagePlugin.error('操作未完成，请检查当前权限、连接与服务状态。')}
+  finally {saving.value=false}
+}
+function saveScope() {const scope=selected.value;if(scope)return mutate(()=>updateScope(scope.id,scope.display_name,editInherit.value,editCreation.value,editAggregate.value),'区域规则已保存')}
+function bindQuery(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>bindKB(id,kb),'查询绑定已更新')}
+function removeBinding(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>unbindKB(id,kb),'查询绑定已解除；独立维护授权保持不变')}
+function grantManagement(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>bindKB(id,kb,true),'本区域维护授权已更新')}
+function revokeManagement(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>revokeKBManagement(id,kb),'维护授权已撤销；查询绑定保持不变')}
+function grantDescription(row:ScopeKnowledgeRow) {return row.query==='direct' ? '允许当前区域经核验的管理者维护此知识库；普通成员不会因此获得维护权。' : '将在本区建立独立查询绑定，并允许本区经核验的管理者维护该库。主群与其他子区保持不变。'}
+function addBinding() {const id=selected.value?.id,kb=kbToBind.value,grant=grantOnBind.value;if(id&&kb)return mutate(async()=>{await bindKB(id,kb,grant ? true : undefined);showBind.value=false},'知识库已绑定')}
+function openParent(id:string) {const scope=scopes.value.find(scope=>scope.id===id);if(scope)void select(scope)}
+function refreshName() {const id=selected.value?.id;if(id)return mutate(async()=>{try{await syncScopeName(id)}catch(e){await load();throw e}},'平台名称已同步')}
+async function checkRole() {
+  const scope=selected.value,version=selectionVersion,uid=roleUID.value.trim()
+  if(!scope||!uid) return
+  roleLoading.value=true;roleResult.value=''
+  try {
+    const result=await inspectMemberRole(scope.id,uid)
+    if(version!==selectionVersion)return
+    const names:Record<string,string>={owner:'群主',admin:'群管理员',member:'普通成员',unknown:'未能确认身份'}
+    roleResult.value=result.data.reason==='bot_admin_not_proven' ? '平台未提供可验证的 Bot 管理字段。测试 Bot 的维护权限须结合渠道明确许可和本区知识授权核对。' : `${result.data.uid}：${names[result.data.role] || '未知角色'}。这里只核对原生群角色，不授予知识库权限。`
+  } catch {if(version===selectionVersion)roleResult.value='角色核对失败，未作授权判断。'}
+  finally {if(version===selectionVersion)roleLoading.value=false}
+}
+async function onScopeCreated(scope:OctoScope) {selected.value=scope;await load();await select(scope);await MessagePlugin.success('区域已接入，请绑定知识库')}
+watch(showBind,open=>{if(open){kbToBind.value='';grantOnBind.value=false}})
+watch(()=>route.query.scope,id=>{if(typeof id==='string'&&id!==selected.value?.id){const scope=scopes.value.find(scope=>scope.id===id);if(scope)void select(scope)}})
+watch(()=>auth.currentTenantId,()=>{selectionVersion++;loadVersion++;scopes.value=[];selected.value=null;bindings.value=[];managed.value=[];kbs.value=[];connections.value=[];showCreate.value=false;showBind.value=false;showConnection.value=false;roleResult.value='';collapsedGroups.value=new Set();void load()})
 onMounted(load)
-watch(() => auth.currentTenantId, () => {
-  selectionVersion++; loadVersion++; scopes.value = []; selected.value = null; bindings.value = []; managed.value=[]; kbs.value = []; connections.value = []; showCreate.value = false; showConnection.value = false; roleResult.value = ''
-  void load()
-})
-onBeforeUnmount(() => { selectionVersion++; loadVersion++ })
+onBeforeUnmount(()=>{selectionVersion++;loadVersion++})
 </script>
 
 <style scoped>
-.octo-panel { max-width: 1160px; } header p, .detail p { color: var(--td-text-color-secondary); line-height: 1.6; }
-.toolbar { display: flex; align-items: center; gap: 12px; margin: 20px 0; flex-wrap: wrap; }
-.layout { display: grid; grid-template-columns: minmax(200px, 30%) 1fr; gap: 24px; }
-nav { border-right: 1px solid var(--td-component-border); padding-right: 16px; }
-nav button { display: block; width: 100%; text-align: left; padding: 12px; border: 0; border-radius: 6px; background: transparent; color: var(--td-text-color-primary); cursor: pointer; overflow-wrap: anywhere; }
-nav button:hover, nav button.selected { background: var(--td-brand-color-light); } nav button.child { padding-left: 30px; } small { color: var(--td-text-color-secondary); margin-left: 8px; }
-.detail { min-width: 0; } dl { display: grid; grid-template-columns: 90px 1fr; gap: 8px; } dd { margin: 0; overflow-wrap: anywhere; }
-label { display: grid; gap: 8px; margin: 16px 0; } .inherit { display: flex; align-items: center; }
-ul { padding: 0; } li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--td-component-border); }
-.error { color: var(--td-error-color); } .toolbar .t-select__wrap { min-width: 220px; flex: 1; }
-@media(max-width: 760px) { .layout { grid-template-columns: 1fr; } nav { border-right: 0; border-bottom: 1px solid var(--td-component-border); padding-bottom: 12px; } }
+.octo-panel { width:100%;min-width:0;color:var(--td-text-color-primary); }
+.page-heading,.selected-heading,.section-heading { display:flex;align-items:flex-start;justify-content:space-between;gap:20px; }
+.page-heading { margin-bottom:24px; }.page-heading h2 { margin:0 0 8px;font-size:22px;font-weight:600; }.page-heading p,.section-heading p { margin:0;color:var(--td-text-color-secondary);font-size:13px;line-height:1.6; }
+.heading-actions { display:flex;align-items:center;gap:12px;flex-shrink:0; }.empty-setup { min-height:280px;display:flex;align-items:center;justify-content:center;gap:18px;flex-direction:column; }
+.scope-layout { display:grid;grid-template-columns:250px minmax(0,1fr);gap:28px;align-items:start; }.scope-tree { min-width:0;border:1px solid var(--td-component-border);border-radius:8px;background:var(--td-bg-color-container);padding:16px; }
+.tree-heading { display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:14px;font-size:14px; }.tree-heading small,.tree-node small,.tree-empty { color:var(--td-text-color-secondary);font-size:12px; }
+.scope-tree nav { margin-top:16px;max-height:calc(100vh - 270px);overflow:auto; }.tree-group + .tree-group { margin-top:12px;padding-top:12px;border-top:1px solid var(--td-component-border); }.group-node { display:flex;align-items:center;gap:3px; }
+.tree-toggle,.tree-toggle-placeholder { width:20px;min-width:20px; }.tree-toggle { padding:0;display:flex;align-items:center;justify-content:center;height:28px;border:0;background:transparent;color:var(--td-text-color-secondary);cursor:pointer; }
+.tree-node { min-width:0;flex:1;width:100%;display:flex;align-items:flex-start;gap:8px;padding:10px 8px;text-align:left;border:0;border-radius:6px;color:var(--td-text-color-primary);background:transparent;cursor:pointer;font:inherit;font-size:13px;line-height:1.5; }
+.tree-node > span:not(.child-connector) { flex:1;min-width:0;overflow-wrap:anywhere; }.tree-node .t-icon { margin-top:3px;flex-shrink:0;color:var(--td-text-color-secondary); }.tree-node small { flex-shrink:0;line-height:21px; }
+.tree-node:hover,.tree-node.selected { background:var(--td-brand-color-light); }.tree-node.selected { color:var(--td-brand-color);font-weight:500; }.children { margin:4px 0 0 31px;padding-left:8px;border-left:1px solid var(--td-component-border); }.child-node { position:relative; }.child-connector { position:absolute;left:-8px;top:20px;width:7px;border-top:1px solid var(--td-component-border); }
+.tree-footer { display:flex;align-items:center;gap:8px;margin-top:22px;padding-top:14px;border-top:1px solid var(--td-component-border);color:var(--td-text-color-secondary);font-size:13px;text-decoration:none; }.tree-footer:hover { color:var(--td-brand-color); }
+.scope-detail { min-width:0;container-type:inline-size; }.selected-heading { margin-bottom:18px; }.selected-heading h3 { margin:0;font-size:20px;line-height:1.5;display:flex;align-items:center;gap:10px;flex-wrap:wrap; }.scope-subtitle { margin:7px 0 0;font-size:13px;color:var(--td-text-color-secondary);line-height:1.6; }
+.breadcrumb { display:flex;align-items:center;gap:4px;margin:0 0 8px;color:var(--td-text-color-secondary);font-size:12px; }.breadcrumb button,.inline-link { border:0;background:transparent;padding:0;color:var(--td-brand-color);cursor:pointer;font:inherit; }
+.scope-summary { display:flex;gap:32px;padding:16px 0 20px;margin-bottom:16px;border-bottom:1px solid var(--td-component-border); }.scope-summary > div { display:flex;flex-direction:column;gap:5px; }.scope-summary strong { font-size:21px;font-weight:600; }.scope-summary span { color:var(--td-text-color-secondary);font-size:12px; }
+.section-heading { align-items:center;margin-bottom:16px; }.section-heading h4 { margin:0 0 6px;font-size:16px;font-weight:600; }.section-heading > .t-button { flex-shrink:0; }.knowledge-list { display:flex;flex-direction:column;gap:12px; }
+.knowledge-row { display:grid;grid-template-columns:minmax(170px,1.5fr) minmax(95px,.7fr) minmax(120px,.8fr) auto;gap:14px;align-items:center;padding:16px;border:1px solid var(--td-component-border);border-radius:8px;background:var(--td-bg-color-container); }
+.knowledge-name { display:flex;align-items:flex-start;gap:10px;min-width:0; }.knowledge-icon { display:flex;align-items:center;justify-content:center;width:32px;height:32px;background:var(--td-brand-color-light);color:var(--td-brand-color);border-radius:6px;flex-shrink:0; }.knowledge-name a { color:var(--td-text-color-primary);font-weight:500;line-height:1.5;text-decoration:none;overflow-wrap:anywhere; }.knowledge-name a:hover { color:var(--td-brand-color); }.knowledge-name small,.permission-state small { display:block;color:var(--td-text-color-secondary);font-size:12px;margin-top:4px; }.permission-state { display:flex;flex-direction:column;align-items:flex-start;gap:7px;font-size:13px;min-width:0; }.permission-state small { margin-top:0; }.muted { color:var(--td-text-color-secondary); }.inline-link { font-size:12px; }.knowledge-actions { display:flex;gap:2px;align-items:center;justify-content:flex-end;flex-wrap:wrap;max-width:168px; }
+.permission-note { display:flex;align-items:flex-start;gap:6px;margin:14px 0 0;color:var(--td-text-color-secondary);font-size:12px;line-height:1.7; }.permission-note .t-icon { margin-top:3px;flex-shrink:0; }
+.policy-section { margin-top:28px;padding-top:24px;border-top:1px solid var(--td-component-border); }.policy-row { display:flex;align-items:center;justify-content:space-between;gap:24px;padding:14px 0; }.policy-row strong { font-size:14px;font-weight:500; }.policy-row p { color:var(--td-text-color-secondary);font-size:12px;line-height:1.6;margin:6px 0 0; }.policy-row .t-switch { flex-shrink:0; }
+.diagnostics { margin-top:26px;border-top:1px solid var(--td-component-border); }.diagnostics summary { padding:18px 0;cursor:pointer;color:var(--td-text-color-secondary);font-size:13px; }.diagnostics summary .t-icon { margin-right:6px; }.diagnostics-body { padding-bottom:16px;font-size:13px; }.diagnostics dl { display:grid;grid-template-columns:85px minmax(0,1fr);gap:10px;margin:0 0 14px; }.diagnostics dt { color:var(--td-text-color-secondary); }.diagnostics dd { margin:0;overflow-wrap:anywhere; }.diagnostics p { color:var(--td-text-color-secondary);font-size:12px;line-height:1.65; }.diagnostics h5 { font-size:13px;margin:22px 0 0; }.diagnostic-actions,.role-query { display:flex;align-items:center;gap:10px; }.role-query .t-input__wrap { flex:1;min-width:0; }.role-query { max-width:580px; }.role-query .t-button { flex-shrink:0; }
+.dialog-description,.bind-management p { font-size:13px;line-height:1.65;color:var(--td-text-color-secondary); }.bind-management { margin:18px 0; }
+@container (max-width:720px) { .knowledge-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }.knowledge-name { grid-column:1/-1; }.knowledge-actions { grid-column:1/-1;justify-content:flex-start;max-width:none; } }
+@media (max-width:1050px) { .scope-layout { grid-template-columns:220px minmax(0,1fr);gap:20px; }.scope-tree { padding:12px; }.tree-heading { flex-direction:column;align-items:flex-start;gap:4px; } }
+@media (max-width:760px) { .page-heading { flex-direction:column;gap:14px; }.scope-layout { grid-template-columns:minmax(0,1fr); }.scope-tree nav { max-height:240px;overflow:auto; }.tree-heading { flex-direction:row;align-items:center; }.scope-summary { gap:22px; }.scope-summary strong { font-size:18px; }.section-heading { align-items:flex-start;gap:12px; }.diagnostic-actions { flex-wrap:wrap; } }
 </style>

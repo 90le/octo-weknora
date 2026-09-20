@@ -11,12 +11,13 @@ import (
 )
 
 const (
-	ToolConfiguration    = "octo_configuration"
-	ToolContacts         = "octo_contacts"
-	ToolIssues           = "octo_issues"
-	ToolKnowledgePreview = "octo_knowledge_preview"
-	ToolKnowledgeConfirm = "octo_knowledge_confirm"
-	ToolReport           = "octo_report"
+	ToolConfiguration      = "octo_configuration"
+	ToolContacts           = "octo_contacts"
+	ToolIssues             = "octo_issues"
+	ToolKnowledgePreview   = "octo_knowledge_preview"
+	ToolKnowledgeConfirm   = "octo_knowledge_confirm"
+	ToolKnowledgeDocuments = "octo_knowledge_documents"
+	ToolReport             = "octo_report"
 )
 
 // NewTools exposes focused model-facing signatures while reusing the same
@@ -51,16 +52,17 @@ func NewTools(service *Service) []types.Tool {
 		return &focusedTool{name: name, description: description, parameters: params, fields: props, required: required, legacy: legacy}
 	}
 	return []types.Tool{
+		newKnowledgeDocumentsTool(service),
 		makeTool(ToolConfiguration, "Read the current verified Octo scope, readable/manageable knowledge bases and creation capability. Takes no arguments. Use the returned IDs to resolve the user's target; never ask users for backend IDs. An empty manageable list alone does not decide creation permission.", nil, []string{}, nil),
 		makeTool(ToolContacts, "Find responsible contacts for the currently authorized knowledge bases. Optional knowledge_base_id narrows the result. Display returned native contacts; do not notify or message them.", []string{"knowledge_base_id"}, []string{}, nil),
 		makeTool(ToolIssues, "Collect and manage registered knowledge gaps, bugs and suggestions in this conversation. Select action=create/list/get/update. For create, describe verified user facts in description (not content). input_clarifications_needed lists only ambiguities in the user's request/report, never the answer missing from the knowledge base. Clarify those ambiguities first. A clear unanswered question needs an empty list; record a knowledge gap only after successful retrieval returned no answer. Lookup issue IDs with list, do not ask users for internal IDs. Creating a record does not update or publish knowledge.", []string{"knowledge_base_id", "issue_id", "kind", "title", "description", "expected", "steps", "retrieval_status", "status", "note", "keyword", "from", "to", "page", "page_size"}, []string{"action"}, map[string]any{
 			"action":                      map[string]any{"type": "string", "enum": []string{"create", "list", "get", "update"}, "description": "Required. create: kind+title+description and an authorized knowledge_base_id (defaults only with one readable KB); bug also needs steps+expected. get/update: issue_id; update also needs status. list supports optional filters."},
 			"input_clarifications_needed": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Only facts unclear in the user's own input, e.g. which product or reproduction steps. NOT the unknown answer. A clear question such as asking the price has no input ambiguity even when no price exists in the knowledge base; use [] and record the missing answer as kind=missing after verified retrieval."},
 		}),
-		makeTool(ToolKnowledgePreview, "Preview a knowledge change; action is required. To create a library use action=create_kb and name. An optional creation template needs read permission, not management permission; the server's preview decides current creation authorization. Do not infer denial from an empty manageable list. rename/save_draft may default the KB only when exactly one is manageable. Resolve multiple targets with octo_configuration. Return the exact preview and proposal_id; no change is executed until the same user explicitly confirms. Never publish automatically.", []string{"action", "knowledge_base_id", "knowledge_id", "name", "content", "scope_id"}, []string{"action"}, map[string]any{
+		makeTool(ToolKnowledgePreview, "Preview a knowledge change; action is required. To create a library use action=create_kb and name. An optional creation template needs read permission, not management permission; the server's preview decides current creation authorization. Do not infer denial from an empty manageable list. rename/save_draft may default the KB only when exactly one is manageable. Resolve library targets with octo_configuration; use octo_knowledge_documents list/get to find saved drafts and retrieve their exact title/body before publish or revision. Drafts are intentionally absent from public RAG, not missing knowledge. Return the exact preview and proposal_id, and reproduce confirmation_command and cancellation_command verbatim in the reply. Never shorten these commands to 确认创建 or 确认保存; the server requires their OP-ID. No change is executed until the same user sends the exact command. Never publish automatically.", []string{"action", "knowledge_base_id", "knowledge_id", "name", "content", "scope_id"}, []string{"action"}, map[string]any{
 			"action": map[string]any{"type": "string", "enum": []string{"create_kb", "rename", "save_draft", "publish", "delete_document", "bind", "unbind", "delete_kb"}, "description": "Required. create_kb: name (template KB optional/readable); rename: name; save_draft: name+content; publish: knowledge_id+name+content; delete_document: knowledge_id. All except create_kb need an authorized target KB; rename/save_draft can default only the sole manageable KB. bind/unbind/delete_kb need an explicit resolved knowledge_base_id."},
 		}),
-		makeTool(ToolKnowledgeConfirm, "Confirm or cancel a previously returned knowledge preview. Use its proposal_id and decision=confirm/cancel only after the same user's actual confirmation/cancellation in this conversation. Never confirm on behalf of the user; the existing server authorization and replay guards remain authoritative.", []string{"proposal_id"}, []string{"proposal_id", "decision"}, map[string]any{
+		makeTool(ToolKnowledgeConfirm, "Confirm or cancel a previously returned knowledge preview only after the same user sends the exact confirmation_command or cancellation_command returned by the server in this conversation. The command includes its OP-ID. A bare confirmation such as 确认创建 is incomplete, not a permission denial: show the exact server command. Never confirm on behalf of the user; the existing server authorization and replay guards remain authoritative.", []string{"proposal_id"}, []string{"proposal_id", "decision"}, map[string]any{
 			"decision": map[string]any{"type": "string", "enum": []string{"confirm", "cancel"}, "description": "The same user's explicit decision for this proposal."},
 		}),
 		makeTool(ToolReport, "Summarize registered issues in the currently authorized scope and requested period. Optional format is text, markdown, html or csv; choose a file format only when requested. Preserve scope, period, truncation and counting limitations. A report counts recorded issues, not every question or overall answer rate. Only claim file delivery when the tool confirms it.", []string{"knowledge_base_id", "kind", "status", "keyword", "from", "to", "page", "page_size"}, []string{}, map[string]any{

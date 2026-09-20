@@ -25,7 +25,7 @@ func TestOctoBusinessRestoresNativeKnowledgeHandles(t *testing.T) {
 }
 
 func TestFocusedOctoToolsPreserveSourceMappingAndOpaqueProposalIDs(t *testing.T) {
-	for _, name := range []string{"octo_configuration", "octo_contacts", "octo_issues", "octo_knowledge_preview", "octo_knowledge_confirm", "octo_report"} {
+	for _, name := range []string{"octo_configuration", "octo_contacts", "octo_issues", "octo_knowledge_preview", "octo_knowledge_confirm", "octo_report", "octo_knowledge_documents"} {
 		t.Run(name, func(t *testing.T) {
 			require.True(t, HasToolPolicy(name))
 			r := NewRegistry(true)
@@ -42,7 +42,7 @@ func TestFocusedOctoToolsPreserveSourceMappingAndOpaqueProposalIDs(t *testing.T)
 			var args map[string]string
 			require.NoError(t, json.Unmarshal([]byte(calls[0].Function.Arguments), &args))
 			require.Equal(t, "actual-kb-uuid", args["knowledge_base_id"])
-			if name == "octo_knowledge_preview" {
+			if name == "octo_knowledge_preview" || name == "octo_knowledge_documents" {
 				require.Equal(t, "actual-doc-uuid", args["knowledge_id"])
 			} else {
 				require.Equal(t, "d1", args["knowledge_id"], "undeclared document arguments must not gain a source decoding policy")

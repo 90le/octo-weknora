@@ -1,8 +1,8 @@
 # octo-weknora deployment contract
 
-Status: fork release deployed; current revision and acceptance evidence are maintained in OCTO-STATUS.md.
+This is the deployment contract, not a live release snapshot. The active revision, cutover result and acceptance evidence are maintained only in [OCTO-STATUS.md](OCTO-STATUS.md).
 
-The existing WeKnora installation will be replaced by app and frontend images built from this repository. This is a replacement of the application release, not a second management console or a second knowledge database.
+The deployment uses app and frontend images built from this repository. Releases update the existing WeKnora application; they do not introduce a second management console or a second knowledge database.
 
 ## Release identity
 
@@ -35,7 +35,7 @@ The retired standalone console stays retired. The public Octo knowledge Bot is r
 - A query outside the caller's scope is rejected.
 - A representative document format still parses through the configured engine.
 
-Do not equate HTTP 200 with full integration acceptance. The first fork deployment need not claim the future Octo management module is complete.
+Do not equate HTTP 200, a passing test suite or an isolated candidate with full integration acceptance. Record which native Bot flows, configuration operations, parsers and failure cases were actually exercised on the released revision. Keep untested combinations explicit in OCTO-STATUS.md.
 
 ## Recovery
 

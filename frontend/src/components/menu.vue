@@ -79,12 +79,13 @@
             <div class="menu_box" :class="{ 'menu_box--sticky': item.children && !uiStore.sidebarCollapsed }"
                 v-for="(item, index) in topMenuItems" :key="index">
                 <t-tooltip :content="item.title" placement="right" :disabled="!uiStore.sidebarCollapsed">
-                    <div @click="handleMenuClick(item.path)" @mouseenter="mouseenteMenu(item.path)"
+                    <div role="button" tabindex="0" @keydown.enter="handleMenuClick(item.path)" @keydown.space.prevent="handleMenuClick(item.path)" @click="handleMenuClick(item.path)" @mouseenter="mouseenteMenu(item.path)"
                         @mouseleave="mouseleaveMenu(item.path)" :data-guide="`nav-${item.path}`"
                         :class="['menu_item', item.childrenPath && item.childrenPath == currentpath ? 'menu_item_c_active' : isMenuItemActive(item.path) ? 'menu_item_active' : '']">
                         <div class="menu_item-box">
                             <div class="menu_icon">
-                                <img class="icon"
+                                <t-icon v-if="item.icon === 'channels' || item.icon === 'issues'" :name="item.icon === 'channels' ? 'chat-message' : 'task'" size="20px" />
+                                <img v-else class="icon"
                                     :src="getImgSrc(item.icon == 'zhishiku' ? knowledgeIcon : item.icon == 'agent' ? agentIcon : item.icon == 'organization' ? organizationIcon : item.icon == 'logout' ? logoutIcon : item.icon == 'setting' ? settingIcon : prefixIcon)"
                                     alt="">
                             </div>
@@ -407,7 +408,12 @@ const isMenuItemActive = (itemPath: string): boolean => {
         case 'knowledge-bases':
             return currentRoute === 'knowledgeBaseList' ||
                 currentRoute === 'knowledgeBaseDetail' ||
+                currentRoute === 'knowledgeContacts' ||
                 currentRoute === 'knowledgeBaseSettings';
+        case 'channels':
+            return currentRoute === 'knowledgeChannels' || currentRoute === 'octoGroups';
+        case 'issues':
+            return currentRoute === 'knowledgeIssues' || currentRoute === 'knowledgeReports';
         case 'agents':
             return currentRoute === 'agentList';
         case 'organizations':
@@ -440,13 +446,13 @@ const getIconActiveState = (itemPath: string) => {
 // 分离上下两部分菜单（使用 visibleMenuArr 以便 lite 模式过滤 logout）
 const topMenuItems = computed<MenuItem[]>(() => {
     return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) =>
-        item.path === 'knowledge-bases' || item.path === 'agents' || item.path === 'organizations' || item.path === 'creatChat'
+        ['knowledge-bases', 'agents', 'organizations', 'creatChat', 'channels', 'issues'].includes(item.path)
     );
 });
 
 const bottomMenuItems = computed<MenuItem[]>(() => {
     return (visibleMenuArr.value as unknown as MenuItem[]).filter((item: MenuItem) => {
-        if (item.path === 'knowledge-bases' || item.path === 'agents' || item.path === 'organizations' || item.path === 'creatChat') {
+        if (['knowledge-bases', 'agents', 'organizations', 'creatChat', 'channels', 'issues'].includes(item.path)) {
             return false;
         }
         return true;
@@ -1080,6 +1086,9 @@ const handleMenuClick = async (path: string) => {
         } else {
             router.push('/platform/knowledge-bases')
         }
+    } else if (path === 'channels' || path === 'issues') {
+        uiStore.closeSettings()
+        router.push(`/platform/${path}`)
     } else if (path === 'agents') {
         router.push('/platform/agents')
     } else if (path === 'organizations') {

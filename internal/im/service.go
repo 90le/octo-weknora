@@ -3189,6 +3189,9 @@ func (s *Service) ListChannelsByAgent(agentID string, tenantID uint64) ([]IMChan
 		Order("created_at DESC").Find(&channels).Error; err != nil {
 		return nil, err
 	}
+	for i := range channels {
+		channels[i].RuntimeStatus = s.channelRuntimeStatus(channels[i].ID, channels[i].Enabled)
+	}
 	return channels, nil
 }
 
@@ -3197,19 +3200,20 @@ func (s *Service) ListChannelsByAgent(agentID string, tenantID uint64) ([]IMChan
 // tenant-scoped list endpoint; callers that need credentials must use the
 // per-agent endpoint which enforces the same tenant scope anyway.
 type ChannelWithAgent struct {
-	ID          string    `json:"id"`
-	TenantID    uint64    `json:"tenant_id"`
-	AgentID     string    `json:"agent_id"`
-	AgentName   string    `json:"agent_name"`
-	Platform    string    `json:"platform"`
-	Name        string    `json:"name"`
-	Enabled     bool      `json:"enabled"`
-	Mode        string    `json:"mode"`
-	OutputMode  string    `json:"output_mode"`
-	SessionMode string    `json:"session_mode"`
-	BotIdentity string    `json:"bot_identity"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	RuntimeStatus *ChannelRuntimeStatus `json:"runtime_status,omitempty" gorm:"-"`
+	ID            string                `json:"id"`
+	TenantID      uint64                `json:"tenant_id"`
+	AgentID       string                `json:"agent_id"`
+	AgentName     string                `json:"agent_name"`
+	Platform      string                `json:"platform"`
+	Name          string                `json:"name"`
+	Enabled       bool                  `json:"enabled"`
+	Mode          string                `json:"mode"`
+	OutputMode    string                `json:"output_mode"`
+	SessionMode   string                `json:"session_mode"`
+	BotIdentity   string                `json:"bot_identity"`
+	CreatedAt     time.Time             `json:"created_at"`
+	UpdatedAt     time.Time             `json:"updated_at"`
 }
 
 // ListChannelsByTenant returns all non-deleted IM channels in the given tenant,
@@ -3238,6 +3242,9 @@ func (s *Service) ListChannelsByTenant(ctx context.Context, tenantID uint64) ([]
 		return nil, err
 	}
 	relocalizeBuiltinChannelAgentNames(ctx, rows)
+	for i := range rows {
+		rows[i].RuntimeStatus = s.channelRuntimeStatus(rows[i].ID, rows[i].Enabled)
+	}
 	return rows, nil
 }
 

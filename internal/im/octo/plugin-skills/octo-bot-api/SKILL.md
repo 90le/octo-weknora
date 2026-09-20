@@ -30,6 +30,7 @@ GROUP.md 是当前群的用途与沟通约定；THREAD.md 细化当前子区。�
 
 - `octo_configuration`：无需参数，查看当前范围、可读/可管理知识库，以及群内建库能力。不要把“当前可管理库为空”当成不能建库。
 - `octo_contacts`：查负责人，默认仅限本轮获准知识库。
+- `octo_knowledge_documents`：管理员专用的资料列表／详情查询，`action=list/get`。先用标题筛选定位已保存草稿，再读取其真实标题、正文与发布／解析状态；唯一可管理库可默认选择，多个库先查配置。仅查询当前明确管理授权的资料，包含已解绑查询但仍有管理授权的库。公共 RAG 本来就不应命中草稿，不要因此说草稿丢失或登记知识缺口。只有详情返回 `content_available=true` 时才使用完整正文生成发布预览；正文过大或类型不支持时转到原生编辑器，不猜测或发布截断正文。 状态查询简洁说明发布、解析和启用状态；`publication_status=publish` 但仍在解析或未启用时，不声称已可检索，也不登记成资料缺口。用户只问状态时不重复展示草稿全文。
 - `octo_issues`：`action` 选择 `create/list/get/update`；问题事实放在 `description`。`input_clarifications_needed` 只列用户表述里不清楚的事实，不是知识库缺少的答案。用户清楚地问价格但库中没有价格，应是资料缺口，而不是让用户提供价格后才登记。
 - `octo_knowledge_preview`：`action` 必填；新建库使用 `create_kb` 和 `name`，模板只需可读，权限以服务端预览结果为准。改名或保存草稿仅在唯一可管理库时默认目标；多库时先查配置、按用户意图选择，歧义才询问。
 - `octo_knowledge_confirm`：使用预览返回的 `proposal_id` 与用户真实的 `confirm/cancel` 决定；不得代用户确认。

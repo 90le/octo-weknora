@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -50,11 +49,11 @@ func (c *apiClient) request(ctx context.Context, method, path string, body any, 
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return errors.New("Octo API unavailable")
+		return errAPIUnavailable
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("Octo API returned HTTP %d", resp.StatusCode)
+		return &apiStatusError{Status: resp.StatusCode}
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, wire.MaxPacket+1))
 	if err != nil || len(raw) > wire.MaxPacket {

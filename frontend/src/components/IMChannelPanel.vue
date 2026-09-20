@@ -5,7 +5,9 @@
         <span class="channels-title">{{ $t('agentEditor.im.channelsTitle') }}</span>
         <IntegrationsAgentFilter v-model="filterAgentId" :agents="agents" />
         <span class="channels-count">{{ channels.length }}</span>
+        <t-button variant="text" :loading="loading" @click="loadChannels()">刷新状态</t-button>
       </div>
+      <t-alert v-if="loadError" theme="error" class="channel-runtime-notice">{{ loadError }} <t-button variant="text" @click="loadChannels()">重试</t-button></t-alert>
 
       <t-loading :loading="loading" size="small" class="channels-loading-wrap">
         <div v-if="!loading && channels.length === 0 && !authStore.hasRole('admin')" class="channels-empty">
@@ -23,13 +25,12 @@
             <div class="channel-card__body">
               <div class="channel-card__header">
                 <h3 class="channel-card__title">{{ channel.name || $t('agentEditor.im.unnamed') }}</h3>
-                <t-tag v-if="!channel.enabled" size="small" variant="light" theme="warning">
-                  {{ $t('agentEditor.im.disabled') }}
-                </t-tag>
+                <t-tag size="small" variant="light" :theme="imRuntimeDisplay(channel.enabled,channel.runtime_status).theme">{{ imRuntimeDisplay(channel.enabled,channel.runtime_status).label }}</t-tag>
               </div>
               <span v-if="agentDisplayName(channel)" class="channel-card__agent-name">
                 {{ agentDisplayName(channel) }}
               </span>
+              <p v-if="channel.enabled && ['stopped','unavailable','reconnecting'].includes(channel.runtime_status?.state || '')" class="channel-runtime-message">{{ channel.runtime_status?.message || '请打开详情核对连接。' }}</p>
             </div>
             <div v-if="authStore.hasRole('admin')" class="channel-card__actions" @click.stop>
               <t-dropdown trigger="click" placement="bottom-right" attach="body" :options="channelMenuOptions(channel)"
@@ -95,6 +96,7 @@
           <span class="im-step-title">{{ title }}</span>
         </div>
       </div>
+      <t-alert v-if="editingChannel?.runtime_status && ['stopped','unavailable','reconnecting'].includes(editingChannel.runtime_status.state)" theme="warning" class="channel-runtime-notice">{{ editingChannel.runtime_status.message || '当前连接未就绪。' }} 配置启用不表示已经连接；修复后重新启用，再核对连接状态。</t-alert>
 
       <!-- Step 1: Basic -->
       <div v-if="wizardStep === 0" class="im-step-body">
@@ -625,6 +627,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, watch, onUnmounted, computed } from 'vue';
+import { imRuntimeDisplay } from './imRuntimeDisplay';
 import { useI18n } from 'vue-i18n';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { copyWithToast } from '@/utils/clipboard';
@@ -687,6 +690,8 @@ const channels = computed(() => {
   return allChannels.value.filter((channel) => channel.agent_id === filter);
 });
 const loading = ref(false);
+const loadError = ref('');
+let runtimeRefreshTimer: ReturnType<typeof setInterval> | undefined;
 let channelLoadVersion = 0;
 let channelEditVersion = 0;
 const saving = ref(false);
@@ -1008,9 +1013,10 @@ function stopWeChatPolling() {
   }
 }
 
-async function loadChannels() {
+async function loadChannels(quiet = false) {
+  if (quiet && loading.value) return;
   const requestVersion = ++channelLoadVersion;
-  loading.value = true;
+  if (!quiet) loading.value = true;
   try {
     const chatResources = useChatResourcesStore();
     const [channelRes, agentRes] = await Promise.all([
@@ -1019,11 +1025,12 @@ async function loadChannels() {
       chatResources.ensureKnowledgeBases(),
     ]);
     if (requestVersion !== channelLoadVersion) return;
+    loadError.value = '';
     allChannels.value = channelRes.data || [];
     agents.value = agentRes?.data || [];
     knowledgeBases.value = chatResources.rawKnowledgeBases.map((kb: any) => ({ id: kb.id, name: kb.name }));
   } catch {
-    if (requestVersion === channelLoadVersion) allChannels.value = [];
+    if (requestVersion === channelLoadVersion) loadError.value = allChannels.value.length ? '状态刷新失败，当前保留上次读取的结果。请重试。' : '渠道读取失败，请重试；这不表示没有配置 Bot。';
   } finally {
     if (requestVersion === channelLoadVersion) loading.value = false;
   }
@@ -1210,6 +1217,9 @@ async function handleDelete(id: string) {
 
 onMounted(() => {
   loadChannels();
+  runtimeRefreshTimer = setInterval(() => {
+    if (document.visibilityState === 'visible' && !showCreateDialog.value) void loadChannels(true);
+  }, 20000);
 });
 
 watch(() => authStore.currentTenantId, () => {
@@ -1225,6 +1235,7 @@ watch(filterAgentId, (id) => {
 });
 
 onUnmounted(() => {
+  if (runtimeRefreshTimer) clearInterval(runtimeRefreshTimer);
   channelEditVersion++;
   channelLoadVersion++;
   octoIdentityVersion++;
@@ -1239,6 +1250,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
 }
+.channel-runtime-notice{margin-bottom:16px}
+.channel-runtime-message{font-size:12px;color:var(--td-text-color-secondary);line-height:1.5;margin:6px 0 0;overflow-wrap:anywhere}
 
 .drawer-platform-icon {
   width: 16px;

@@ -139,22 +139,24 @@ type Contact struct {
 func (Contact) TableName() string { return "octo_knowledge_contacts" }
 
 type Proposal struct {
-	ID              string     `json:"id" gorm:"primaryKey"`
-	TenantID        uint64     `json:"-"`
-	AccountID       string     `json:"-"`
-	ChannelID       string     `json:"-"`
-	ScopeID         string     `json:"-"`
-	UserID          string     `json:"-"`
-	Action          string     `json:"action"`
-	KnowledgeBaseID string     `json:"knowledge_base_id"`
-	Payload         types.JSON `json:"payload" gorm:"type:json"`
-	Status          string     `json:"status"`
-	Result          types.JSON `json:"result,omitempty" gorm:"type:json"`
-	SourceMessageID string     `json:"-"`
-	IdempotencyKey  string     `json:"-" gorm:"uniqueIndex"`
-	ExpiresAt       time.Time  `json:"expires_at"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID                  string     `json:"id" gorm:"primaryKey"`
+	TenantID            uint64     `json:"-"`
+	AccountID           string     `json:"-"`
+	ChannelID           string     `json:"-"`
+	ScopeID             string     `json:"-"`
+	UserID              string     `json:"-"`
+	Action              string     `json:"action"`
+	KnowledgeBaseID     string     `json:"knowledge_base_id"`
+	Payload             types.JSON `json:"payload" gorm:"type:json"`
+	Status              string     `json:"status"`
+	Result              types.JSON `json:"result,omitempty" gorm:"type:json"`
+	SourceMessageID     string     `json:"-"`
+	IdempotencyKey      string     `json:"-" gorm:"uniqueIndex"`
+	ExpiresAt           time.Time  `json:"expires_at"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	ConfirmationCommand string     `json:"confirmation_command,omitempty" gorm:"-"`
+	CancellationCommand string     `json:"cancellation_command,omitempty" gorm:"-"`
 }
 
 func (Proposal) TableName() string { return "octo_knowledge_proposals" }

@@ -20,6 +20,10 @@ import (
 )
 
 const TypeReportSend = "octo:report_send"
+const reportTaskTimeout = 2 * time.Minute
+const reportRecoveryGrace = time.Minute
+
+var errReportScheduleChanged = errors.New("report schedule changed or disabled")
 
 type ReportSchedule struct {
 	ID            string     `json:"id" gorm:"primaryKey"`
@@ -203,6 +207,9 @@ func (s *Service) StopReports() {
 	}
 }
 func (s *Service) EnqueueDueReports(ctx context.Context, queue interfaces.TaskEnqueuer, now time.Time) error {
+	if err := s.recoverInterruptedReports(ctx, now); err != nil {
+		return err
+	}
 	var schedules []ReportSchedule
 	if err := s.db.WithContext(ctx).Where("enabled = ? AND next_run_at <= ?", true, now).Order("next_run_at, id").Limit(100).Find(&schedules).Error; err != nil {
 		return err
@@ -213,7 +220,7 @@ func (s *Service) EnqueueDueReports(ctx context.Context, queue interfaces.TaskEn
 			return err
 		}
 		key := "octoreport:" + schedule.ID + ":" + schedule.NextRunAt.UTC().Format("200601021504")
-		_, err = queue.Enqueue(asynq.NewTask(TypeReportSend, payload), asynq.TaskID(key), asynq.Queue(types.QueueSync), asynq.MaxRetry(0), asynq.Timeout(2*time.Minute))
+		_, err = queue.Enqueue(asynq.NewTask(TypeReportSend, payload), asynq.TaskID(key), asynq.Queue(types.QueueSync), asynq.MaxRetry(0), asynq.Timeout(reportTaskTimeout))
 		if err != nil && !errors.Is(err, asynq.ErrTaskIDConflict) {
 			_ = s.db.WithContext(ctx).Model(&ReportSchedule{}).Where("id = ? AND updated_at = ?", schedule.ID, schedule.UpdatedAt).UpdateColumns(map[string]any{"last_status": "queue_failed", "last_error": "Unable to enqueue report; the scheduler will retry"}).Error
 			continue
@@ -229,6 +236,11 @@ func (s *Service) EnqueueDueReports(ctx context.Context, queue interfaces.TaskEn
 	return nil
 }
 func (s *Service) ProcessReportTask(ctx context.Context, task *asynq.Task) error {
+	// The native in-process queue does not apply asynq timeout options.
+	// Bound the handler itself so interrupted-run recovery has the same deadline
+	// in Redis and non-Redis deployments.
+	ctx, cancel := context.WithTimeout(ctx, reportTaskTimeout)
+	defer cancel()
 	var input reportTask
 	if json.Unmarshal(task.Payload(), &input) != nil || input.TenantID == 0 || input.ScheduleID == "" {
 		return ErrInvalid
@@ -264,6 +276,10 @@ func (s *Service) ProcessReportTask(ctx context.Context, task *asynq.Task) error
 		if e != nil {
 			return ErrDenied
 		}
+		reportCtx, e = s.guardReportSchedule(reportCtx, schedule)
+		if e != nil {
+			return e
+		}
 		originalPrincipal, e := currentPrincipal(reportCtx)
 		if e != nil {
 			return ErrDenied
@@ -294,6 +310,9 @@ func (s *Service) ProcessReportTask(ctx context.Context, task *asynq.Task) error
 		if e != nil || reportAuthority(originalPrincipal) != reportAuthority(freshPrincipal) {
 			return ErrDenied
 		}
+		if e = s.ensureReportScheduleCurrent(ctx, schedule); e != nil {
+			return e
+		}
 		return s.ReportDelivery(WithReportAuthority(reportCtx, originalPrincipal), schedule, report, file)
 	}()
 	status := "sent"
@@ -301,6 +320,9 @@ func (s *Service) ProcessReportTask(ctx context.Context, task *asynq.Task) error
 	if sendErr != nil {
 		status = "failed"
 		message = "Report was not confirmed delivered. Check the channel, scope and recipient before sending again."
+		if errors.Is(sendErr, errReportScheduleChanged) {
+			message = "Report cancelled before delivery because its schedule was changed or disabled."
+		}
 	}
 	if err = s.db.WithContext(ctx).Model(&ReportRun{}).Where("id = ?", key).Updates(map[string]any{"status": status, "updated_at": time.Now()}).Error; err != nil {
 		return err
@@ -321,4 +343,75 @@ func reportAuthority(p Principal) string {
 	scopes := append([]string(nil), p.ReadIssueScopeIDs...)
 	sort.Strings(scopes)
 	return digest(fmtTenant(p.TenantID), p.AccountID, p.ChannelID, p.ScopeID, p.UserID, fmt.Sprint(p.IsDirect), strings.Join(ids, ","), strings.Join(scopes, ","))
+}
+
+// Recheck the exact persisted schedule as well as channel/knowledge permissions.
+// Do not silently deliver a report prepared for an older recipient or settings.
+func (s *Service) ensureReportScheduleCurrent(ctx context.Context, schedule ReportSchedule) error {
+	var count int64
+	if err := s.db.WithContext(ctx).Model(&ReportSchedule{}).Where("id = ? AND tenant_id = ? AND enabled = ? AND updated_at = ?", schedule.ID, schedule.TenantID, true, schedule.UpdatedAt).Count(&count).Error; err != nil {
+		return err
+	}
+	if count != 1 {
+		return errReportScheduleChanged
+	}
+	return nil
+}
+
+// Attach the revision check to the same principal used by report-authority
+// validation, so file sinks repeat it after upload and before the send request.
+func (s *Service) guardReportSchedule(ctx context.Context, schedule ReportSchedule) (context.Context, error) {
+	if err := s.ensureReportScheduleCurrent(ctx, schedule); err != nil {
+		return nil, err
+	}
+	principal, ok := PrincipalFromContext(ctx)
+	if !ok {
+		return nil, ErrDenied
+	}
+	originalValidation := principal.Validate
+	original := principal
+	principal.Validate = func(callCtx context.Context) (Principal, error) {
+		if err := s.ensureReportScheduleCurrent(callCtx, schedule); err != nil {
+			return Principal{}, err
+		}
+		if originalValidation != nil {
+			return originalValidation(callCtx)
+		}
+		return original, nil
+	}
+	return WithPrincipal(ctx, principal), nil
+}
+
+// A worker may stop after reserving a send but before recording its outcome.
+// Keep its idempotency claim, never resend automatically, and surface uncertainty
+// after the task deadline plus a grace period. This is safe across replicas.
+func (s *Service) recoverInterruptedReports(ctx context.Context, now time.Time) error {
+	cutoff := now.Add(-reportTaskTimeout - reportRecoveryGrace)
+	var runs []ReportRun
+	if err := s.db.WithContext(ctx).Where("status = ? AND updated_at < ?", "sending", cutoff).Order("updated_at, id").Limit(100).Find(&runs).Error; err != nil {
+		return err
+	}
+	for _, run := range runs {
+		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			claimed := tx.Model(&ReportRun{}).Where("id = ? AND tenant_id = ? AND status = ? AND updated_at < ?", run.ID, run.TenantID, "sending", cutoff).Updates(map[string]any{"status": "uncertain", "updated_at": now})
+			if claimed.Error != nil {
+				return claimed.Error
+			}
+			if claimed.RowsAffected == 0 {
+				return nil
+			}
+			var latest ReportRun
+			if err := tx.Where("tenant_id = ? AND schedule_id = ?", run.TenantID, run.ScheduleID).Order("due_at DESC, created_at DESC, id DESC").First(&latest).Error; err != nil {
+				return err
+			}
+			if latest.ID != run.ID {
+				return nil
+			}
+			return tx.Model(&ReportSchedule{}).Where("id = ? AND tenant_id = ?", run.ScheduleID, run.TenantID).UpdateColumns(map[string]any{"last_status": "failed", "last_error": "上次报告发送被中断，是否送达尚不确定；系统不会自动重发。请先核对目标会话，再决定是否手动发送。"}).Error
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

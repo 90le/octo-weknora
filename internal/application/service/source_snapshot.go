@@ -82,6 +82,9 @@ func (s *DataSourceService) processSourceSnapshot(ctx context.Context, ds *types
 		}
 	}
 	log.Status = types.SyncLogStatusSuccess
+	// A retry reuses its sync-log row. A successful attempt must clear the
+	// previous attempt's error without rewriting other historical runs.
+	log.ErrorMessage = ""
 	if err != nil {
 		log.Status = types.SyncLogStatusFailed
 		log.ErrorMessage = err.Error()
@@ -96,9 +99,10 @@ func (s *DataSourceService) processSourceSnapshot(ctx context.Context, ds *types
 	log.ItemsUpdated = result.Updated
 	log.ItemsDeleted = result.Deleted
 	log.ItemsSkipped = result.Skipped
+	log.ItemsFailed = result.Failed
 	log.Result, _ = result.ToJSON()
 	log.FinishedAt = timePtr(time.Now().UTC())
-	if e := s.syncLogRepo.Update(ctx, log); e != nil && err == nil {
+	if e := s.syncLogRepo.UpdateResult(ctx, log); e != nil && err == nil {
 		err = e
 	}
 	return err

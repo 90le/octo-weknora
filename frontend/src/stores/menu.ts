@@ -32,6 +32,8 @@ export const useMenuStore = defineStore('menuStore', () => {
     { title: '', titleKey: 'menu.knowledgeBase', icon: 'zhishiku', path: 'knowledge-bases' },
     { title: '', titleKey: 'menu.agents', icon: 'agent', path: 'agents', requiredCapability: 'agents' },
     { title: '', titleKey: 'menu.organizations', icon: 'organization', path: 'organizations', requiredCapability: 'organizations' },
+    { title: '渠道接入', icon: 'channels', path: 'channels', requiredCapability: 'integrations.im' },
+    { title: '问题反馈', icon: 'issues', path: 'issues' },
     { title: '', titleKey: 'menu.settings', icon: 'setting', path: 'settings' },
     { title: '', titleKey: 'menu.logout', icon: 'logout', path: 'logout' }
   ])
@@ -76,6 +78,7 @@ export const useMenuStore = defineStore('menuStore', () => {
       if (item.path === 'organizations' && !authStore.hasRole('admin')) {
         return false
       }
+      if (['channels', 'issues'].includes(item.path) && !authStore.hasRole('admin') && !authStore.canAccessAllTenants) return false
       if (!deploymentCapabilities.isSupported(item.requiredCapability)) {
         return false
       }

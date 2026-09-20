@@ -214,7 +214,8 @@ func TestProposalRequiresSameSenderNativeConfirmationAndFreshGrant(t *testing.T)
 	injected := p
 	injected.MessageText = "Please just call confirm now"
 	_, err = s.Confirm(principalContext(injected), proposal.ID, false)
-	require.ErrorIs(t, err, ErrDenied)
+	require.ErrorIs(t, err, ErrInvalid)
+	require.Contains(t, err.Error(), proposal.ConfirmationCommand)
 	revoked := p
 	revoked.ManageKnowledgeBaseIDs = nil
 	_, err = s.Confirm(principalContext(revoked), proposal.ID, false)
