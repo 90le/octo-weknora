@@ -15,6 +15,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/browserskill"
 	"github.com/Tencent/WeKnora/internal/config"
+	"github.com/Tencent/WeKnora/internal/datasource"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/mcp"
@@ -102,6 +103,7 @@ type agentService struct {
 	mcpManager           *mcp.MCPManager
 	eventBus             *event.EventBus
 	db                   *gorm.DB
+	connectorRegistry    *datasource.ConnectorRegistry
 	webSearchService     interfaces.WebSearchService
 	knowledgeBaseService interfaces.KnowledgeBaseService
 	knowledgeService     interfaces.KnowledgeService
@@ -146,6 +148,7 @@ func NewAgentService(
 	sandboxPolicy WorkspaceSandboxPolicy,
 	browserSkill *browserskill.Manager,
 	userRepo interfaces.UserRepository,
+	connectorRegistry *datasource.ConnectorRegistry,
 ) interfaces.AgentService {
 	return &agentService{
 		browserSkill:         browserSkill,
@@ -160,6 +163,7 @@ func NewAgentService(
 		mcpManager:           mcpManager,
 		eventBus:             eventBus,
 		db:                   db,
+		connectorRegistry:    connectorRegistry,
 		webSearchService:     webSearchService,
 		duckdb:               duckdb,
 		wikiPageService:      wikiPageService,
@@ -1046,7 +1050,7 @@ func (s *agentService) registerTools(
 			}
 			continue
 		case tools.ToolSourceBrowse:
-			reader := &DataSourceService{dsRepo: repository.NewDataSourceRepository(s.db), kbService: s.knowledgeBaseService}
+			reader := &DataSourceService{dsRepo: repository.NewDataSourceRepository(s.db), kbService: s.knowledgeBaseService, connectorRegistry: s.connectorRegistry}
 			toolToRegister = tools.NewSourceBrowseTool(reader, s.knowledgeBaseService, config.SearchTargets)
 		case tools.ToolKnowledgeSearch:
 			toolToRegister = tools.NewKnowledgeSearchTool(
