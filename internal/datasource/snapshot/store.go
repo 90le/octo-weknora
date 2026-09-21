@@ -21,6 +21,8 @@ import (
 )
 
 var hashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
+var privateDirectoryPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+var gitBlobPattern = regexp.MustCompile(`^[a-f0-9]{40,64}$`)
 var ErrUnavailable = errors.New("source snapshot unavailable; run a successful sync first")
 
 type Store struct{ Base string }
@@ -44,6 +46,21 @@ type Builder struct {
 	size     int64
 }
 
+// PrivateDirectory returns a generated-cache directory scoped to exactly one
+// data source. Connectors may use it for transport caches, but never for input
+// files supplied by a user. Store.Delete removes this namespace together with
+// the snapshot objects when the data source is deleted.
+func (b *Builder) PrivateDirectory(name string) (string, error) {
+	if b == nil || b.store == nil || b.ds == nil || !privateDirectoryPattern.MatchString(name) {
+		return "", ErrUnavailable
+	}
+	dir := filepath.Join(b.store.scope(b.ds), "private", name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", errors.New("cannot prepare private source cache")
+	}
+	return dir, nil
+}
+
 func (s *Store) Begin(ds *types.DataSource, cfg *types.DataSourceConfig) (*Builder, error) {
 	if ds == nil || ds.TenantID == 0 || ds.ID == "" || ds.KnowledgeBaseID == "" {
 		return nil, ErrUnavailable
@@ -56,6 +73,20 @@ func (s *Store) Begin(ds *types.DataSource, cfg *types.DataSourceConfig) (*Build
 func (b *Builder) SetRevision(revision string) { b.manifest.Revision = revision }
 func (b *Builder) Skip(reason string)          { b.manifest.Skipped[reason]++ }
 func (b *Builder) Add(ctx context.Context, p string, body []byte, sourceURL, revision string) error {
+	return b.add(ctx, p, body, sourceURL, revision, "")
+}
+
+// AddGit records the upstream Git blob ID alongside the content-addressed
+// source object. The blob ID is an integrity hint for incremental transport;
+// the source object hash remains the authority for content reads.
+func (b *Builder) AddGit(ctx context.Context, p string, body []byte, sourceURL, revision, gitBlob string) error {
+	if gitBlob != "" && !gitBlobPattern.MatchString(gitBlob) {
+		return ErrUnavailable
+	}
+	return b.add(ctx, p, body, sourceURL, revision, gitBlob)
+}
+
+func (b *Builder) add(ctx context.Context, p string, body []byte, sourceURL, revision, gitBlob string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -104,8 +135,28 @@ func (b *Builder) Add(ctx context.Context, p string, body []byte, sourceURL, rev
 	} else if body[len(body)-1] == '\n' {
 		lines--
 	}
-	b.manifest.Files = append(b.manifest.Files, types.SourceFile{Path: p, Object: object, Size: int64(len(body)), Lines: lines, SourceURL: sourceURL, Revision: revision})
+	b.manifest.Files = append(b.manifest.Files, types.SourceFile{Path: p, Object: object, GitBlob: gitBlob, Size: int64(len(body)), Lines: lines, SourceURL: sourceURL, Revision: revision})
 	b.size += int64(len(body))
+	return nil
+}
+
+// Reuse adds an already verified content-addressed object to the next immutable
+// snapshot. It is used only after a connector has independently proven that its
+// upstream object ID is unchanged. Reuse never accepts a caller-supplied path
+// or object outside this data source's private object namespace.
+func (b *Builder) Reuse(file types.SourceFile) error {
+	if b == nil || !SafePath(file.Path) || !hashPattern.MatchString(file.Object) || file.Size < 0 || file.Size > MaxFileBytes || file.Lines < 0 {
+		return ErrUnavailable
+	}
+	if len(b.manifest.Files) >= MaxFiles || b.size+file.Size > MaxTotalBytes {
+		return errors.New("source snapshot limit exceeded; narrow the selected paths")
+	}
+	info, err := os.Stat(filepath.Join(b.store.scope(b.ds), "objects", file.Object))
+	if err != nil || !info.Mode().IsRegular() || info.Size() != file.Size {
+		return ErrUnavailable
+	}
+	b.manifest.Files = append(b.manifest.Files, file)
+	b.size += file.Size
 	return nil
 }
 func (b *Builder) Finish() (*types.SourceSnapshot, error) {
@@ -198,4 +249,15 @@ func (s *Store) Delete(ds *types.DataSource) error {
 		return ErrUnavailable
 	}
 	return os.RemoveAll(s.scope(ds))
+}
+
+// ClearPrivateDirectory removes a connector transport cache while preserving
+// published snapshots and their content-addressed files. It is used after a
+// credential rotation so a new credential never inherits the previous
+// credential's Git object cache.
+func (s *Store) ClearPrivateDirectory(ds *types.DataSource, name string) error {
+	if s == nil || ds == nil || ds.TenantID == 0 || ds.ID == "" || ds.KnowledgeBaseID == "" || !privateDirectoryPattern.MatchString(name) {
+		return ErrUnavailable
+	}
+	return os.RemoveAll(filepath.Join(s.scope(ds), "private", name))
 }

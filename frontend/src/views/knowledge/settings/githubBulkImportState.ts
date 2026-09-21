@@ -16,9 +16,15 @@ export function uniqueGitHubRepositories(repositories: GitHubRepository[]): GitH
 }
 
 export function defaultGitHubBulkSelection(repositories: GitHubRepository[]): string[] {
-  return uniqueGitHubRepositories(repositories)
-    .filter((repository) => !repository.archived)
-    .map((repository) => repository.repository)
+  // Discovery is deliberately non-mutating. Requiring an explicit selection
+  // avoids silently creating many data sources when an organization has a large
+  // repository list.
+  void repositories
+  return []
+}
+
+export function selectableGitHubRepository(repository: GitHubRepository): boolean {
+  return !repository.archived && !repository.disabled && !repository.fork
 }
 
 export function filterGitHubRepositories(
@@ -28,7 +34,7 @@ export function filterGitHubRepositories(
 ): GitHubRepository[] {
   const needle = query.trim().toLowerCase()
   return uniqueGitHubRepositories(repositories).filter((repository) => {
-    if (!includeArchived && repository.archived) return false
+    if (!includeArchived && (repository.archived || repository.disabled || repository.fork)) return false
     if (!needle) return true
     return [repository.repository, repository.description, repository.default_branch]
       .filter(Boolean)

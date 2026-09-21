@@ -17,6 +17,7 @@ import {
   defaultGitHubBulkSelection,
   filterGitHubRepositories,
   parseGitHubPaths,
+  selectableGitHubRepository,
   summarizeGitHubBulkResults,
   uniqueGitHubRepositories,
 } from './githubBulkImportState'
@@ -43,6 +44,9 @@ const discovering = ref(false)
 const submitting = ref(false)
 const errorMessage = ref('')
 const results = ref<GitHubBatchResultItem[]>([])
+const nextCursor = ref('')
+const loadingMore = ref(false)
+const batchLimit = 20
 
 const stepTitles = computed(() => [
   t('datasource.githubBulk.steps.discover'),
@@ -68,6 +72,7 @@ const selectedRepositories = computed(() => repositories.value.filter(
   (repository) => selectedRepositorySet.value.has(repository.repository),
 ))
 const selectedCount = computed(() => selectedRepositories.value.length)
+const selectionLimitExceeded = computed(() => selectedCount.value > batchLimit)
 const resultSummary = computed(() => summarizeGitHubBulkResults(results.value))
 
 const drawerDescription = computed(() => {
@@ -84,7 +89,7 @@ const drawerConfirmText = computed(() => {
 
 const confirmDisabled = computed(() => {
   if (step.value === 0) return !normalizeOwner(owner.value)
-  if (step.value === 1) return selectedCount.value === 0
+  if (step.value === 1) return selectedCount.value === 0 || selectionLimitExceeded.value
   return false
 })
 
@@ -128,6 +133,8 @@ function reset() {
   submitting.value = false
   errorMessage.value = ''
   results.value = []
+  nextCursor.value = ''
+  loadingMore.value = false
 }
 
 watch(visible, (opened) => {
@@ -148,6 +155,7 @@ async function discover() {
     selectedRepositoryNames.value = defaultGitHubBulkSelection(repositories.value)
     search.value = ''
     includeArchived.value = false
+    nextCursor.value = response.next_cursor || ''
     step.value = 1
     if (repositories.value.length === 0) {
       MessagePlugin.info(t('datasource.githubBulk.emptyDiscovery'))
@@ -160,10 +168,12 @@ async function discover() {
 }
 
 function selectVisible() {
-  selectedRepositoryNames.value = Array.from(new Set([
-    ...selectedRepositoryNames.value,
-    ...filteredRepositories.value.map((repository) => repository.repository),
-  ]))
+  const selected = new Set(selectedRepositoryNames.value)
+  for (const repository of filteredRepositories.value) {
+    if (selected.size >= batchLimit) break
+    if (selectableGitHubRepository(repository)) selected.add(repository.repository)
+  }
+  selectedRepositoryNames.value = Array.from(selected)
 }
 
 function clearSelection() {
@@ -173,6 +183,23 @@ function clearSelection() {
 function backToDiscovery() {
   step.value = 0
   errorMessage.value = ''
+}
+
+async function loadMore() {
+  if (!nextCursor.value || loadingMore.value) return
+  loadingMore.value = true
+  errorMessage.value = ''
+  try {
+    const response = unwrapResponse<GitHubDiscoveryResponse>(
+      await discoverGitHubRepositories(owner.value, credentials(), nextCursor.value),
+    )
+    repositories.value = uniqueGitHubRepositories([...repositories.value, ...(response.repositories || [])])
+    nextCursor.value = response.next_cursor || ''
+  } catch (error) {
+    errorMessage.value = readError(error)
+  } finally {
+    loadingMore.value = false
+  }
 }
 
 async function createBatch() {
@@ -333,20 +360,32 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
         </t-button>
       </div>
 
+      <t-alert
+        v-if="selectionLimitExceeded"
+        theme="warning"
+        :message="t('datasource.githubBulk.batchLimit', { count: batchLimit })"
+      />
+
       <div v-if="filteredRepositories.length" class="github-bulk-repository-list">
         <t-checkbox-group v-model="selectedRepositoryNames" class="github-bulk-repository-group">
           <label
             v-for="repository in filteredRepositories"
             :key="repository.repository"
             class="github-bulk-repository-row"
-            :class="{ 'is-selected': selectedRepositorySet.has(repository.repository), archived: repository.archived }"
+            :class="{ 'is-selected': selectedRepositorySet.has(repository.repository), archived: repository.archived || repository.disabled || repository.fork }"
           >
-            <t-checkbox :value="repository.repository" />
+            <t-checkbox :value="repository.repository" :disabled="!selectableGitHubRepository(repository)" />
             <span class="github-bulk-repository-row__body">
               <span class="github-bulk-repository-row__title">
                 <strong>{{ repository.repository }}</strong>
                 <t-tag v-if="repository.archived" size="small" theme="warning" variant="light">
                   {{ t('datasource.githubBulk.archived') }}
+                </t-tag>
+                <t-tag v-else-if="repository.disabled" size="small" theme="danger" variant="light">
+                  {{ t('datasource.githubBulk.disabled') }}
+                </t-tag>
+                <t-tag v-else-if="repository.fork" size="small" theme="default" variant="light">
+                  {{ t('datasource.githubBulk.fork') }}
                 </t-tag>
               </span>
               <span v-if="repository.description" class="github-bulk-repository-row__description">
@@ -360,6 +399,11 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
         </t-checkbox-group>
       </div>
       <t-empty v-else :description="t('datasource.githubBulk.noMatches')" />
+      <div v-if="nextCursor" class="github-bulk-load-more">
+        <t-button variant="outline" :loading="loadingMore" @click="loadMore">
+          {{ t('datasource.githubBulk.loadMore') }}
+        </t-button>
+      </div>
     </section>
 
     <section v-else class="setting-drawer__section">
@@ -493,6 +537,8 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
   overflow: auto;
   padding: 6px;
 }
+
+.github-bulk-load-more { display: flex; justify-content: center; margin-top: 12px; }
 
 .github-bulk-repository-group { display: flex; flex-direction: column; gap: 2px; }
 

@@ -5,6 +5,7 @@ import {
   defaultGitHubBulkSelection,
   filterGitHubRepositories,
   parseGitHubPaths,
+  selectableGitHubRepository,
   summarizeGitHubBulkResults,
 } from './githubBulkImportState'
 
@@ -14,8 +15,10 @@ const repositories = [
   { repository: 'Mininglamp-OSS/OCTO-CLI', default_branch: 'main', archived: false, description: 'Duplicate' },
 ]
 
-test('GitHub bulk selection excludes archived and duplicate repositories by default', () => {
-  assert.deepEqual(defaultGitHubBulkSelection(repositories), ['Mininglamp-OSS/octo-cli'])
+test('GitHub bulk discovery starts with an explicit empty selection', () => {
+  assert.deepEqual(defaultGitHubBulkSelection(repositories), [])
+  assert.equal(selectableGitHubRepository(repositories[0]), true)
+  assert.equal(selectableGitHubRepository(repositories[1]), false)
 })
 
 test('GitHub bulk filters search across repository metadata without selecting archived by surprise', () => {

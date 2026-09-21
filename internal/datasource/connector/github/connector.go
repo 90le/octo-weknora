@@ -12,9 +12,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,16 +32,46 @@ const maxBatchBytes = 64 << 20
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$`)
 var shaPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)
 
-type Connector struct{ http *http.Client }
+type Connector struct {
+	http        *http.Client
+	apiBase     string
+	syncGate    chan struct{}
+	useGitCache bool
+}
 
 func NewConnector() *Connector {
 	c := datasource.NewConnectorHTTPClient(30 * time.Second)
 	// Credentials are scoped to api.github.com. Do not follow redirects, even
 	// public-to-public redirects accepted by the generic SSRF client.
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Connector{http: c}
+	return &Connector{http: c, apiBase: apiBase, syncGate: make(chan struct{}, githubSyncConcurrency()), useGitCache: true}
 }
 func (*Connector) Type() string { return types.ConnectorTypeGitHub }
+
+func githubSyncConcurrency() int {
+	const defaultConcurrency = 2
+	v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("DATASOURCE_GITHUB_MAX_CONCURRENT")))
+	if err != nil || v < 1 {
+		return defaultConcurrency
+	}
+	if v > 8 {
+		return 8
+	}
+	return v
+}
+
+func (c *Connector) withSyncGate(ctx context.Context, fn func() error) error {
+	if c == nil || c.syncGate == nil {
+		return fn()
+	}
+	select {
+	case c.syncGate <- struct{}{}:
+		defer func() { <-c.syncGate }()
+		return fn()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 // VerifyCommit is used by approved local mirrors before emitting a remote
 // citation. A local-only commit or inaccessible private repository gets no URL.
@@ -120,9 +152,18 @@ func token(cfg *types.DataSourceConfig) string {
 	return strings.TrimSpace(s)
 }
 func (c *Connector) get(ctx context.Context, cfg *types.DataSourceConfig, endpoint string, out interface{}, limit int64) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+endpoint, nil)
+	_, err := c.getWithHeaders(ctx, cfg, endpoint, out, limit)
+	return err
+}
+
+func (c *Connector) getWithHeaders(ctx context.Context, cfg *types.DataSourceConfig, endpoint string, out interface{}, limit int64) (http.Header, error) {
+	base := apiBase
+	if c != nil && c.apiBase != "" {
+		base = c.apiBase
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+endpoint, nil)
 	if err != nil {
-		return fmt.Errorf("GitHub request is invalid")
+		return nil, &Error{Code: "github_request", Message: "GitHub request is invalid"}
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
@@ -132,20 +173,20 @@ func (c *Connector) get(ctx context.Context, cfg *types.DataSourceConfig, endpoi
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("GitHub connection failed")
+		return nil, &Error{Code: "github_connection", Message: "GitHub connection failed"}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GitHub API returned HTTP %d; check repository access and rate limits", resp.StatusCode)
+		return resp.Header, githubHTTPError(resp)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil || int64(len(b)) > limit {
-		return fmt.Errorf("GitHub response is incomplete or exceeds the sync limit")
+		return resp.Header, &Error{Code: "github_response_limit", Message: "GitHub response is incomplete or exceeds the sync limit"}
 	}
 	if err := json.Unmarshal(b, out); err != nil {
-		return fmt.Errorf("GitHub response is invalid")
+		return resp.Header, &Error{Code: "github_response_invalid", Message: "GitHub response is invalid"}
 	}
-	return nil
+	return resp.Header, nil
 }
 func (c *Connector) Validate(ctx context.Context, cfg *types.DataSourceConfig) error {
 	if err := snapshot.ValidateSettings(cfg); err != nil {
@@ -223,11 +264,11 @@ func (c *Connector) entries(ctx context.Context, cfg *types.DataSourceConfig, re
 	// A partial tree must never drive deletion detection. Fail explicitly;
 	// very large repositories can be split or get a paged-tree implementation later.
 	if t.Truncated {
-		return nil, fmt.Errorf("GitHub tree is truncated; sync stopped without advancing its cursor")
+		return nil, &Error{Code: "github_tree_truncated", Message: "GitHub repository tree is truncated; sync stopped without advancing its cursor"}
 	}
 	for _, e := range t.Tree {
 		if !safePath(e.Path) || !shaPattern.MatchString(e.SHA) {
-			return nil, fmt.Errorf("GitHub tree contains an invalid path or object ID")
+			return nil, &Error{Code: "github_tree_invalid", Message: "GitHub repository tree contains an invalid path or object ID"}
 		}
 	}
 	return t.Tree, nil
@@ -294,6 +335,17 @@ func selected(p string, roots []string) bool {
 	return false
 }
 func (c *Connector) FetchIncremental(ctx context.Context, cfg *types.DataSourceConfig, old *types.SyncCursor) ([]types.FetchedItem, *types.SyncCursor, error) {
+	var items []types.FetchedItem
+	var next *types.SyncCursor
+	err := c.withSyncGate(ctx, func() error {
+		var err error
+		items, next, err = c.fetchIncremental(ctx, cfg, old)
+		return err
+	})
+	return items, next, err
+}
+
+func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceConfig, old *types.SyncCursor) ([]types.FetchedItem, *types.SyncCursor, error) {
 	s, err := parseSelection(cfg)
 	if err != nil {
 		return nil, nil, err
@@ -327,12 +379,12 @@ func (c *Connector) FetchIncremental(ctx context.Context, cfg *types.DataSourceC
 	for _, root := range s.Paths {
 		if root != "" {
 			if _, ok := all[root]; !ok {
-				return nil, nil, fmt.Errorf("Selected GitHub path no longer exists; review source selection")
+				return nil, nil, &Error{Code: "github_selected_path_missing", Message: "Selected GitHub path no longer exists; review source selection"}
 			}
 		}
 	}
 	if len(files) > 2000 {
-		return nil, nil, fmt.Errorf("GitHub source exceeds 2000 documents; select a smaller directory")
+		return nil, nil, &Error{Code: "github_documents_limit", Message: "GitHub document source exceeds 2000 files; narrow the selected paths or use read-only source mode"}
 	}
 	next := cursor{Selection: key, Commit: commit, Files: files}
 	paths := make([]string, 0, len(files))
@@ -348,7 +400,7 @@ func (c *Connector) FetchIncremental(ctx context.Context, cfg *types.DataSourceC
 			continue
 		}
 		if e.Size < 0 || e.Size > maxFileBytes {
-			return nil, nil, fmt.Errorf("GitHub document exceeds 16 MiB file limit: %s", p)
+			return nil, nil, &Error{Code: "github_document_file_limit", Message: "A GitHub document exceeds the 16 MiB file limit; narrow the selected paths"}
 		}
 		var blob struct {
 			Encoding string `json:"encoding"`
@@ -363,11 +415,11 @@ func (c *Connector) FetchIncremental(ctx context.Context, cfg *types.DataSourceC
 		}
 		body, err := base64.StdEncoding.DecodeString(blob.Content)
 		if err != nil || len(body) > maxFileBytes {
-			return nil, nil, fmt.Errorf("GitHub document content is invalid")
+			return nil, nil, &Error{Code: "github_document_invalid", Message: "GitHub document content is invalid or incomplete"}
 		}
 		bytesRead += len(body)
 		if bytesRead > maxBatchBytes {
-			return nil, nil, fmt.Errorf("GitHub sync exceeds 64 MiB; select a smaller directory")
+			return nil, nil, &Error{Code: "github_documents_batch_limit", Message: "GitHub document sync exceeds the 64 MiB batch limit; narrow the selected paths"}
 		}
 		parts := strings.Split(p, "/")
 		for i := range parts {

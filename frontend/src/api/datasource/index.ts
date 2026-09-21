@@ -90,6 +90,9 @@ export interface GitHubRepository {
   repository: string
   default_branch: string
   archived: boolean
+  disabled?: boolean
+  fork?: boolean
+  size_kib?: number
   description: string
 }
 
@@ -157,8 +160,9 @@ export function validateCredentials(type: string, credentials: Record<string, an
 export function discoverGitHubRepositories(
   owner: string,
   credentials?: Record<string, unknown>,
+  cursor?: string,
 ) {
-  return post('/api/v1/datasource/github/discover', { owner, credentials })
+  return post('/api/v1/datasource/github/discover', { owner, credentials, cursor })
 }
 
 /**

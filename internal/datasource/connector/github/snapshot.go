@@ -7,17 +7,40 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-// Source mode uses one pinned archive rather than a request for every code
-// file. The authenticated API redirect is consumed only for codeload.github.com;
-// the token is never forwarded to the redirected request or written to logs.
+// BuildSnapshot preserves the SnapshotConnector contract for direct callers.
+// The service invokes BuildSnapshotIncremental when a trusted prior manifest is
+// available.
 func (c *Connector) BuildSnapshot(ctx context.Context, cfg *types.DataSourceConfig, b *snapshot.Builder) error {
+	return c.BuildSnapshotIncremental(ctx, cfg, b, nil)
+}
+
+// BuildSnapshotIncremental uses a private, partial Git cache when it is
+// available. That avoids downloading the complete GitHub archive for every
+// source update and lets unchanged blobs reuse the previous source object.
+// The archive implementation remains a compatibility fallback only when the
+// container does not have Git installed.
+func (c *Connector) BuildSnapshotIncremental(ctx context.Context, cfg *types.DataSourceConfig, b *snapshot.Builder, previous *types.SourceSnapshot) error {
+	return c.withSyncGate(ctx, func() error {
+		if c.useGitCache {
+			err := c.buildGitSnapshot(ctx, cfg, b, previous)
+			if !errors.Is(err, errGitUnavailable) {
+				return err
+			}
+		}
+		return c.buildArchiveSnapshot(ctx, cfg, b)
+	})
+}
+
+// buildArchiveSnapshot is retained for images without the Git executable. The
+// authenticated API redirect is consumed only for codeload.github.com; the
+// token is never forwarded to the redirected request or written to logs.
+func (c *Connector) buildArchiveSnapshot(ctx context.Context, cfg *types.DataSourceConfig, b *snapshot.Builder) error {
 	s, err := parseSelection(cfg)
 	if err != nil {
 		return err
@@ -38,7 +61,7 @@ func (c *Connector) BuildSnapshot(ctx context.Context, cfg *types.DataSourceConf
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, archiveURL, nil)
 	if err != nil {
-		return errors.New("invalid repository archive request")
+		return &Error{Code: "github_archive_request", Message: "GitHub archive request is invalid"}
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "octo-weknora")
@@ -47,32 +70,32 @@ func (c *Connector) BuildSnapshot(ctx context.Context, cfg *types.DataSourceConf
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return errors.New("GitHub archive request failed")
+		return &Error{Code: "github_archive_connection", Message: "GitHub archive request failed"}
 	}
 	if resp.StatusCode == http.StatusFound {
 		location, locationErr := resp.Location()
 		resp.Body.Close()
 		if locationErr != nil || location.Scheme != "https" || location.Host != "codeload.github.com" || location.User != nil {
-			return errors.New("GitHub archive redirect was not authorized")
+			return &Error{Code: "github_archive_redirect", Message: "GitHub archive redirect was not authorized"}
 		}
 		req, err = http.NewRequestWithContext(ctx, http.MethodGet, location.String(), nil)
 		if err != nil {
-			return errors.New("invalid archive location")
+			return &Error{Code: "github_archive_request", Message: "GitHub archive location is invalid"}
 		}
 		req.Header.Set("User-Agent", "octo-weknora")
 		resp, err = c.http.Do(req)
 		if err != nil {
-			return errors.New("GitHub archive download failed")
+			return &Error{Code: "github_archive_connection", Message: "GitHub archive download failed"}
 		}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return errors.New("GitHub archive unavailable; check access or rate limits")
+		return githubHTTPError(resp)
 	}
 	compressed := &io.LimitedReader{R: resp.Body, N: (256 << 20) + 1}
 	gz, err := gzip.NewReader(compressed)
 	if err != nil {
-		return errors.New("invalid GitHub archive")
+		return &Error{Code: "github_archive_invalid", Message: "GitHub archive is invalid"}
 	}
 	defer gz.Close()
 	expanded := &io.LimitedReader{R: gz, N: (1 << 30) + 1}
@@ -88,7 +111,7 @@ func (c *Connector) BuildSnapshot(ctx context.Context, cfg *types.DataSourceConf
 			break
 		}
 		if err != nil {
-			return errors.New("GitHub archive is incomplete or exceeds its size limit")
+			return &Error{Code: "github_archive_incomplete", Message: "GitHub archive ended before it was complete; previous snapshot remains available"}
 		}
 		// GitHub emits a global PAX header carrying the commit comment before
 		// the repository directory. It is metadata, not the archive root.
@@ -97,14 +120,14 @@ func (c *Connector) BuildSnapshot(ctx context.Context, cfg *types.DataSourceConf
 		}
 		name := strings.TrimSuffix(header.Name, "/")
 		if !snapshot.SafePath(name) {
-			return errors.New("invalid path in GitHub archive")
+			return &Error{Code: "github_archive_invalid_path", Message: "GitHub archive contains an invalid path"}
 		}
 		parts := strings.SplitN(name, "/", 2)
 		if prefix == "" {
 			prefix = parts[0]
 		}
 		if parts[0] != prefix {
-			return errors.New("inconsistent GitHub archive root")
+			return &Error{Code: "github_archive_invalid", Message: "GitHub archive has inconsistent repository roots"}
 		}
 		if len(parts) == 1 {
 			continue
@@ -135,24 +158,20 @@ func (c *Connector) BuildSnapshot(ctx context.Context, cfg *types.DataSourceConf
 		}
 		body, err := io.ReadAll(io.LimitReader(tr, snapshot.MaxFileBytes+1))
 		if err != nil || int64(len(body)) != header.Size {
-			return errors.New("incomplete repository file")
+			return &Error{Code: "github_archive_file_incomplete", Message: "GitHub archive file could not be read completely; previous snapshot remains available"}
 		}
-		segments := strings.Split(p, "/")
-		for i := range segments {
-			segments[i] = url.PathEscape(segments[i])
-		}
-		u := "https://github.com/" + s.Repository + "/blob/" + commit + "/" + strings.Join(segments, "/")
+		u := githubBlobURL(s.Repository, commit, p)
 		if err = b.Add(ctx, p, body, u, commit); err != nil {
 			return err
 		}
 	}
 	for _, root := range s.Paths {
 		if root != "" && !found[root] {
-			return errors.New("selected repository path is missing")
+			return &Error{Code: "github_selected_path_missing", Message: "Selected GitHub path no longer exists; review source selection"}
 		}
 	}
 	if compressed.N <= 1 || expanded.N <= 1 {
-		return errors.New("repository archive exceeds its size limit")
+		return &Error{Code: "github_archive_limit", Message: "GitHub archive exceeds its transfer size limit; use Git cache source sync or narrow the repository selection"}
 	}
 	return nil
 }

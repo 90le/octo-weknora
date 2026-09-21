@@ -51,3 +51,52 @@ func TestSnapshotPolicyDoesNotWhitelistLanguages(t *testing.T) {
 	require.False(t, Excluded("vendor/owned-library/main.php", []string{}))
 	require.True(t, Excluded("secrets/x.py", []string{}))
 }
+
+func TestSnapshotReuseKeepsObjectScopedAndUpdatesGitMetadata(t *testing.T) {
+	s := &Store{Base: t.TempDir()}
+	ds := &types.DataSource{ID: "source", TenantID: 7, KnowledgeBaseID: "kb"}
+	cfg := &types.DataSourceConfig{Settings: map[string]interface{}{"mode": "source"}}
+	first, err := s.Begin(ds, cfg)
+	require.NoError(t, err)
+	require.NoError(t, first.AddGit(context.Background(), "src/app.go", []byte("package main\n"), "https://example.invalid/old", "old", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+	old, err := first.Finish()
+	require.NoError(t, err)
+
+	next, err := s.Begin(ds, cfg)
+	require.NoError(t, err)
+	file := old.Files[0]
+	file.SourceURL = "https://example.invalid/new"
+	file.Revision = "new"
+	require.NoError(t, next.Reuse(file))
+	current, err := next.Finish()
+	require.NoError(t, err)
+	require.Equal(t, old.Files[0].Object, current.Files[0].Object)
+	require.Equal(t, "new", current.Files[0].Revision)
+
+	other := *ds
+	other.TenantID = 8
+	foreign, err := s.Begin(&other, cfg)
+	require.NoError(t, err)
+	require.Error(t, foreign.Reuse(file), "objects cannot cross a data-source scope")
+}
+
+func TestClearPrivateDirectoryDoesNotRemovePublishedSnapshot(t *testing.T) {
+	s := &Store{Base: t.TempDir()}
+	ds := &types.DataSource{ID: "source", TenantID: 7, KnowledgeBaseID: "kb"}
+	cfg := &types.DataSourceConfig{Settings: map[string]interface{}{"mode": "source"}}
+	b, err := s.Begin(ds, cfg)
+	require.NoError(t, err)
+	require.NoError(t, b.Add(context.Background(), "README.md", []byte("hello\n"), "", ""))
+	manifest, err := b.Finish()
+	require.NoError(t, err)
+	private, err := b.PrivateDirectory("git")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(private, "cache"), []byte("temporary"), 0o600))
+
+	require.NoError(t, s.ClearPrivateDirectory(ds, "git"))
+	_, err = os.Stat(private)
+	require.True(t, os.IsNotExist(err))
+	loaded, err := s.Load(ds, cfg, manifest.ID)
+	require.NoError(t, err)
+	require.Len(t, loaded.Files, 1)
+}
