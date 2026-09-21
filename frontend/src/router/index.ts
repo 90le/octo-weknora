@@ -143,6 +143,12 @@ const router = createRouter({
           meta: { requiresInit: true, requiresAuth: true, requiresWorkspaceAdmin: true, knowledgeOperations: true }
         },
         {
+          path: "storage-spaces",
+          name: "storageSpaces",
+          component: () => import("../views/storage-spaces/StorageSpacesPage.vue"),
+          meta: { requiresInit: true, requiresAuth: true, requiresSystemAdmin: true, knowledgeOperations: true }
+        },
+        {
           path: "knowledge-bases",
           name: "knowledgeBaseList",
           component: () => import("../views/knowledge/KnowledgeBaseList.vue"),

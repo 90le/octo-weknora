@@ -18,6 +18,8 @@ func TestLocalRootManagementNeverGrantsWorkspaceAdminsHostAccess(t *testing.T) {
 		{"spaces", (*LocalRootHandler).Spaces}, {"list", (*LocalRootHandler).List},
 		{"probe", (*LocalRootHandler).Probe}, {"create", (*LocalRootHandler).Create},
 		{"update", (*LocalRootHandler).Update}, {"delete", (*LocalRootHandler).Delete},
+		{"discover", (*LocalRootHandler).DiscoverSpaces}, {"register-space", (*LocalRootHandler).RegisterSpace},
+		{"browse-space", (*LocalRootHandler).BrowseSpace}, {"browse-system-root", (*LocalRootHandler).BrowseRoot},
 	} {
 		t.Run(action.name, func(t *testing.T) {
 			for _, role := range []types.TenantRole{types.TenantRoleViewer, types.TenantRoleAdmin, types.TenantRoleOwner} {

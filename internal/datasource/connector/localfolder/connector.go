@@ -134,6 +134,9 @@ func descend(root *os.Root, dir string) (*os.Root, error) {
 		info, err := current.Lstat(name)
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			current.Close()
+			if err == nil && info.Mode()&os.ModeSymlink != 0 {
+				return nil, ErrRootUnsafe
+			}
 			return nil, errors.New("source directory must not be a symlink")
 		}
 		next, err := current.OpenRoot(name)
@@ -145,7 +148,7 @@ func descend(root *os.Root, dir string) (*os.Root, error) {
 		current.Close()
 		if err != nil || !os.SameFile(info, actual) {
 			next.Close()
-			return nil, errors.New("source directory changed during scan")
+			return nil, ErrRootUnsafe
 		}
 		current = next
 	}

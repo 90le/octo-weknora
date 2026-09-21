@@ -1,5 +1,7 @@
+import { storageSpaceMessages } from '../storageSpaceMessages'
 import { sourceRootMessages } from '../sourceRootMessages'
 export default {
+  storageSpaces: storageSpaceMessages.en,
   sourceRoots: sourceRootMessages.en,
   localBrowser: {
     pipOpen: "미리보기 팝업 열기",

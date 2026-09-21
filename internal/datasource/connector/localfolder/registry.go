@@ -26,10 +26,12 @@ var (
 	ErrRootUnavailable = errors.New("folder is unavailable or contains a symlink; check the server mount and read permission")
 	ErrRootInUse       = errors.New("folder is still used by a data source; remove the data source first")
 	ErrRootExists      = errors.New("folder is already registered in this workspace")
+	ErrRootUnsafe      = errors.New("folder contains an unsafe path or symbolic link")
 )
 
-// Space is the infrastructure boundary, provisioned only by the deployment.
-// Browser users can select it but cannot supply or modify its absolute path.
+// Space is a deployment-provided boundary. System administrators may also
+// register a discovered direct directory of /source-roots, but never supply or
+// modify an arbitrary absolute path through the API.
 type Space struct {
 	ID        string    `json:"id" gorm:"primaryKey"`
 	Name      string    `json:"name"`
@@ -62,7 +64,11 @@ type registryState struct {
 
 func (registryState) TableName() string { return "local_source_registry_state" }
 
-type Registry struct{ db *gorm.DB }
+type Registry struct {
+	db *gorm.DB
+	// Test seam only. Production always discovers the fixed container boundary.
+	discoveryPath string
+}
 
 // NewRegistry consumes the old root list once. After initialization, changing
 // DATASOURCE_LOCAL_ROOTS cannot resurrect revoked grants or alter source paths.
@@ -151,7 +157,7 @@ func validSpacePath(path string) bool {
 	return filepath.IsAbs(path) && filepath.Clean(path) != filepath.VolumeName(path)+string(os.PathSeparator)
 }
 func validDirectory(dir string) bool {
-	return dir == "" || (snapshot.SafePath(dir) && !strings.Contains(dir, "\\") && filepath.Clean(dir) != ".")
+	return dir == "" || (len(dir) <= 2048 && utf8.ValidString(dir) && snapshot.SafePath(dir) && !filepath.IsAbs(dir) && !strings.ContainsAny(dir, "\\:\t") && filepath.Clean(dir) != ".")
 }
 
 func (r *Registry) Spaces(ctx context.Context) ([]Space, error) {
@@ -300,7 +306,7 @@ func (r *Registry) Delete(ctx context.Context, tenant uint64, id string) error {
 // symlink nor a replaced parent directory may redirect a request outside its space.
 func openRegisteredRoot(root Root) (*os.Root, error) {
 	if !validSpacePath(root.SpacePath) || !validDirectory(root.Directory) {
-		return nil, ErrRootUnavailable
+		return nil, ErrRootUnsafe
 	}
 	clean := filepath.Clean(root.SpacePath)
 	volume := filepath.VolumeName(clean) + string(os.PathSeparator)
@@ -315,6 +321,9 @@ func openRegisteredRoot(root Root) (*os.Root, error) {
 	}
 	space, err := descend(base, filepath.ToSlash(rel))
 	if err != nil {
+		if errors.Is(err, ErrRootUnsafe) {
+			return nil, ErrRootUnsafe
+		}
 		return nil, ErrRootUnavailable
 	}
 	defer space.Close()

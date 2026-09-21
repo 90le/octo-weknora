@@ -1,5 +1,7 @@
+import { storageSpaceMessages } from '../storageSpaceMessages'
 import { sourceRootMessages } from '../sourceRootMessages'
 export default {
+  storageSpaces: storageSpaceMessages.en,
   sourceRoots: sourceRootMessages.en,
   localBrowser: {
     pipOpen: "Pop out preview",
@@ -6302,7 +6304,7 @@ export default {
     empty: 'No data sources configured',
     edit: 'Edit',
     delete: 'Delete',
-    deleteConfirm: 'Delete this data source? Synced knowledge will not be removed.',
+    deleteConfirm: 'Remove this data source and stop future syncs? Imported documents remain, but generated source snapshots are removed. Original folders and repository files are never deleted.',
     deleteSuccess: 'Data source deleted',
     deleteFailed: 'Failed to delete',
     syncNow: 'Sync Now',
