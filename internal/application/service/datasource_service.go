@@ -622,6 +622,9 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		logger.Errorf(ctx, "failed to get sync log: %v", err)
 		return nil
 	}
+	if syncLog.Status == types.SyncLogStatusCanceled {
+		return nil
+	}
 
 	kb, kbErr := s.kbService.GetKnowledgeBaseByID(ctx, ds.KnowledgeBaseID)
 	if kbErr != nil {
@@ -674,6 +677,10 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	// Surface the KB's multimodal/VLM state to the connector so it only extracts
 	// embedded images for OCR when the KB can actually ingest them (never persisted).
 	config.MultimodalEnabled = kb.IsMultimodalEnabled()
+	guard := &syncAccessGuard{svc: s, ds: ds, config: config, allowPaused: wasPaused && payload.Trigger == "manual"}
+	if err := guard.check(ctx); err != nil {
+		return s.stopSyncAfterAccessChange(ctx, syncLog, nil, err)
+	}
 	if snapshot.IsSource(config) {
 		return s.processSourceSnapshot(ctx, ds, config, connector, syncLog, wasPaused)
 	}
@@ -699,6 +706,9 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		cursor, _ := ds.ParseSyncCursor()
 		items, nextCursor, fetchErr = connector.FetchIncremental(ctx, config, cursor)
 		logger.Infof(ctx, "incremental sync fetched %d items", len(items))
+	}
+	if err := guard.check(ctx); err != nil {
+		return s.stopSyncAfterAccessChange(ctx, syncLog, nil, err)
 	}
 
 	var fetchWarnings []string
@@ -759,9 +769,15 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	// Auto-tag: find or create a tag for this data source so synced items are easily identifiable
 	autoTagIDs := s.resolveAutoTagIDs(ctx, ds)
 
-	for _, item := range items {
+	for index, item := range items {
+		if err := guard.beforeItem(ctx, index); err != nil {
+			return s.stopSyncAfterAccessChange(ctx, syncLog, result, err)
+		}
 		item := item
 		s.applyFetchedItem(withKBActivitySuppressed(ctx), ds, &item, autoTagIDs, result)
+	}
+	if err := guard.check(ctx); err != nil {
+		return s.stopSyncAfterAccessChange(ctx, syncLog, result, err)
 	}
 
 	resultJSON, _ := result.ToJSON()
@@ -1002,6 +1018,7 @@ type streamSyncHandler struct {
 	tagIDs  []string
 	result  *types.SyncResult
 	syncLog *types.SyncLog
+	guard   *syncAccessGuard
 }
 
 // Emit ingests one streamed item. A canceled context aborts the stream so the
@@ -1011,6 +1028,11 @@ type streamSyncHandler struct {
 func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if h.guard != nil {
+		if err := h.guard.beforeItem(ctx, h.result.Total); err != nil {
+			return err
+		}
 	}
 	h.result.Total++
 	h.svc.applyFetchedItem(withKBActivitySuppressed(ctx), h.ds, &item, h.tagIDs, h.result)
@@ -1023,6 +1045,11 @@ func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) er
 func (h *streamSyncHandler) Checkpoint(ctx context.Context, cursor *types.SyncCursor) error {
 	if cursor == nil {
 		return nil
+	}
+	if h.guard != nil {
+		if err := h.guard.check(ctx); err != nil {
+			return err
+		}
 	}
 	cursorJSON, err := cursor.ToJSON()
 	if err != nil {
@@ -1079,9 +1106,16 @@ func (s *DataSourceService) processSyncStreaming(
 	}
 
 	result := &types.SyncResult{}
-	handler := &streamSyncHandler{svc: s, ds: ds, tagIDs: autoTagIDs, result: result, syncLog: syncLog}
+	guard := &syncAccessGuard{svc: s, ds: ds, config: config, allowPaused: wasPaused && payload.Trigger == "manual"}
+	handler := &streamSyncHandler{svc: s, ds: ds, tagIDs: autoTagIDs, result: result, syncLog: syncLog, guard: guard}
 
 	nextCursor, fetchErr := sc.FetchStream(ctx, config, startCursor, handler)
+	if err := guard.check(ctx); err != nil {
+		return s.stopSyncAfterAccessChange(ctx, syncLog, result, err)
+	}
+	if errors.Is(fetchErr, errSyncAccessChanged) {
+		return s.stopSyncAfterAccessChange(ctx, syncLog, result, fetchErr)
+	}
 	if fetchErr != nil {
 		// Progress so far is already checkpointed onto ds.LastSyncCursor; leave
 		// it in place so the Asynq retry resumes from there. Persist counts.

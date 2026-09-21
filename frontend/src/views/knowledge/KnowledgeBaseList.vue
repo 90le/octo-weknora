@@ -14,6 +14,9 @@
                 <template #icon><t-icon name="folder-add" size="16px" /></template>
               </t-button>
             </t-tooltip>
+            <t-button v-if="authStore.isSystemAdmin" variant="text" size="small" style="--wails-draggable: no-drag" @click="router.push({name:'storageSpaces'})">
+              <template #icon><t-icon name="folder-open" size="16px" /></template>{{ $t('storageSpaces.title') }}
+            </t-button>
           </div>
           <p class="header-subtitle" style="--wails-draggable: drag">{{ $t('knowledgeList.subtitle') }}</p>
         </div>

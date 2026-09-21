@@ -19,7 +19,7 @@ export const sourceRootMessages = {
     removed: 'Folder grant removed; source files are unchanged', failed: 'Could not update server folder settings',
     required: 'Enter a name and choose a mounted source space.', pathInvalid: 'Use a relative folder without .. or backslashes.',
     immutable: 'The mounted space and directory cannot be changed after registration. Register a new folder to change the source.',
-    disableTitle: 'Disable this folder?', disableBody: 'Data sources and source lookups using "{name}" will stop until you enable it again. Existing indexed documents remain in their knowledge bases.',
+    disableTitle: 'Disable this folder?', disableBody: 'Further sync batches and source lookups using "{name}" will stop. Already imported documents remain in their knowledge bases; disabling access does not unpublish or delete them. Original files are unchanged.',
   },
   zh: {
     title: '服务器资料目录',
@@ -41,6 +41,6 @@ export const sourceRootMessages = {
     removed: '目录授权已移除，原始文件保持不变', failed: '服务器目录设置未完成',
     required: '请填写名称并选择已挂载资料空间。', pathInvalid: '请填写相对目录，不能包含 .. 或反斜杠。',
     immutable: '登记后不能修改资料空间与目录。需要更换来源时，请登记一个新目录。',
-    disableTitle: '停用这个目录？', disableBody: '使用“{name}”的数据源同步与源码查询将暂停，重新启用后恢复。已经入库的索引文档仍保留在知识库中。',
+    disableTitle: '停用这个目录？', disableBody: '使用“{name}”的后续同步批次与源码查询将停止。已入库的文档仍保留，不会因此下架或删除；原始文件保持不变。',
   },
 }

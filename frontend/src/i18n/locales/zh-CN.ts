@@ -1,5 +1,7 @@
+import { storageSpaceMessages } from '../storageSpaceMessages'
 import { sourceRootMessages } from '../sourceRootMessages'
 export default {
+  storageSpaces: storageSpaceMessages.zh,
   sourceRoots: sourceRootMessages.zh,
   localBrowser: {
     pipOpen: "弹出悬浮窗",
@@ -697,7 +699,7 @@ export default {
     empty: '暂无数据源',
     edit: '编辑',
     delete: '删除',
-    deleteConfirm: '确定删除该数据源？同步的知识不会被删除。',
+    deleteConfirm: '确定移除该数据源并停止后续同步？已入库的文档会保留，生成的源码快照将删除。原始目录与仓库文件不会删除。',
     deleteSuccess: '数据源已删除',
     deleteFailed: '删除失败',
     syncNow: '立即同步',

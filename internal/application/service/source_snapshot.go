@@ -19,6 +19,10 @@ import (
 )
 
 func (s *DataSourceService) processSourceSnapshot(ctx context.Context, ds *types.DataSource, cfg *types.DataSourceConfig, connector datasource.Connector, log *types.SyncLog, paused bool) error {
+	guard := &syncAccessGuard{svc: s, ds: ds, config: cfg, allowPaused: paused}
+	if err := guard.check(ctx); err != nil {
+		return s.stopSyncAfterAccessChange(ctx, log, nil, err)
+	}
 	store, err := snapshot.FromEnvironment()
 	var current *types.SourceSnapshot
 	if err == nil {
@@ -31,21 +35,21 @@ func (s *DataSourceService) processSourceSnapshot(ctx context.Context, ds *types
 				err = errors.New("connector does not support source snapshots")
 			}
 			if err == nil {
+				if accessErr := guard.check(ctx); accessErr != nil {
+					if errors.Is(accessErr, errSyncSourceRemoved) {
+						_ = store.Delete(ds)
+					}
+					return s.stopSyncAfterAccessChange(ctx, log, nil, accessErr)
+				}
 				current, err = builder.Finish()
 			}
 		}
 	}
-	if err == nil {
-		latest, loadErr := s.dsRepo.FindByID(ctx, ds.ID)
-		if loadErr != nil {
+	if accessErr := guard.check(ctx); accessErr != nil {
+		if store != nil && errors.Is(accessErr, errSyncSourceRemoved) {
 			_ = store.Delete(ds)
-			err = errors.New("source removed during sync")
-		} else {
-			latestCfg, parseErr := latest.ParseConfig()
-			if parseErr != nil || latestCfg == nil || snapshot.Selection(latestCfg) != snapshot.Selection(cfg) {
-				err = errors.New("source settings changed during sync; run sync again")
-			}
 		}
+		return s.stopSyncAfterAccessChange(ctx, log, nil, accessErr)
 	}
 	result := &types.SyncResult{}
 	if err == nil {

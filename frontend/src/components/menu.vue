@@ -409,6 +409,7 @@ const isMenuItemActive = (itemPath: string): boolean => {
             return currentRoute === 'knowledgeBaseList' ||
                 currentRoute === 'knowledgeBaseDetail' ||
                 currentRoute === 'knowledgeContacts' ||
+                currentRoute === 'storageSpaces' ||
                 currentRoute === 'knowledgeBaseSettings';
         case 'channels':
             return currentRoute === 'knowledgeChannels' || currentRoute === 'octoGroups';
