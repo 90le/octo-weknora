@@ -18,6 +18,12 @@ Update app and frontend image references in the existing deployment. Preserve ex
 
 The retired standalone console stays retired. The public Octo knowledge Bot is received by native WeKnora IM only. Other Bot/runtime services are separate and unchanged. The knowledge service does not read their configuration, credentials or workspaces.
 
+## Persistent storage boundary
+
+Keep application data, source snapshots, generated Git caches, parsing temporary files, build caches and private rollout evidence on a persistent data volume. The app's temporary directory must resolve inside its persistent application-data mount before a release is accepted.
+
+Do not migrate a container runtime merely because a larger disk is available. Its target filesystem must support the runtime's overlay storage requirements. If it does not, keep the runtime on its verified filesystem, control root-disk growth with bounded logs and caches, and wait for a compatible replacement volume. Never reformat an active data volume as part of a release.
+
 ## Required checks before switching
 
 1. Focused draft visibility tests plus upstream required checks complete successfully.
