@@ -159,12 +159,20 @@ func (g *gitCache) fetchCommit(ctx context.Context, commit string) error {
 	if !shaPattern.MatchString(commit) {
 		return &Error{Code: "github_ref_invalid", Message: "GitHub resolved an invalid commit"}
 	}
-	if err := os.MkdirAll(g.dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(g.dir), 0o700); err != nil {
 		return &Error{Code: "github_cache_unavailable", Message: "GitHub source cache cannot be prepared"}
 	}
-	if _, err := os.Stat(filepath.Join(g.dir, "HEAD")); errors.Is(err, os.ErrNotExist) {
-		if _, err = g.run(ctx, "init", "--bare", "."); err != nil {
-			return &Error{Code: "github_cache_unavailable", Message: "GitHub source cache cannot be initialized"}
+	_, err := os.Stat(filepath.Join(g.dir, "HEAD"))
+	if errors.Is(err, os.ErrNotExist) {
+		// git clone configures a promisor remote correctly. Building a bare
+		// repository by hand and then setting remote.*.promisor left some Git
+		// versions lazily fetching tree objects during ls-tree, which can hang
+		// a source sync behind a proxy.
+		if removeErr := os.RemoveAll(g.dir); removeErr != nil {
+			return &Error{Code: "github_cache_unavailable", Message: "GitHub source cache cannot be reset"}
+		}
+		if err = g.clonePartial(ctx); err != nil {
+			return err
 		}
 	} else if err != nil {
 		return &Error{Code: "github_cache_unavailable", Message: "GitHub source cache cannot be opened"}
@@ -177,23 +185,29 @@ func (g *gitCache) fetchCommit(ctx context.Context, commit string) error {
 	} else if strings.TrimSpace(string(current)) != g.remote {
 		return &Error{Code: "github_cache_identity", Message: "GitHub source cache identity does not match this repository"}
 	}
-	if _, err = g.run(ctx, "config", "--local", "remote.origin.promisor", "true"); err != nil {
-		return &Error{Code: "github_cache_unavailable", Message: "GitHub source cache cannot enable partial fetch"}
-	}
-	if _, err = g.run(ctx, "config", "--local", "remote.origin.partialclonefilter", "blob:none"); err != nil {
-		return &Error{Code: "github_cache_unavailable", Message: "GitHub source cache cannot configure partial fetch"}
-	}
 	if _, err = g.run(ctx, "cat-file", "-e", commit+"^{commit}"); err == nil {
 		return nil
 	}
-	if _, err = g.run(ctx, "fetch", "--no-tags", "--depth=1", "--filter=blob:none", "origin", commit); err != nil {
+	if _, err = g.run(ctx, "fetch", "--no-tags", "--depth=1", "--filter=blob:none", "origin", "+"+commit+":refs/weknora/"+commit); err != nil {
 		return &Error{Code: "github_git_fetch", Message: "GitHub Git cache could not fetch this commit; retry later or narrow the source"}
-	}
-	if _, err = g.run(ctx, "update-ref", "refs/weknora/"+commit, commit); err != nil {
-		return &Error{Code: "github_git_fetch", Message: "GitHub Git cache could not retain the fetched commit"}
 	}
 	if _, err = g.run(ctx, "cat-file", "-e", commit+"^{commit}"); err != nil {
 		return &Error{Code: "github_git_fetch", Message: "GitHub Git cache did not receive the requested commit"}
+	}
+	return nil
+}
+
+func (g *gitCache) clonePartial(ctx context.Context) error {
+	cmd, cleanup, err := g.commandIn(ctx, "", "clone", "--bare", "--filter=blob:none", "--depth=1", "--no-tags", "--", g.remote, g.dir)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	var out cacheOutput
+	out.max = 16 << 20
+	cmd.Stdout = &out
+	if err = cmd.Run(); err != nil {
+		return &Error{Code: "github_git_clone", Message: "GitHub source cache could not create a partial clone; retry later or narrow the source"}
 	}
 	return nil
 }
@@ -313,7 +327,14 @@ func (g *gitCache) run(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func (g *gitCache) command(ctx context.Context, args ...string) (*exec.Cmd, func(), error) {
-	base := []string{"--no-pager", "--no-optional-locks", "-c", "core.hooksPath=" + os.DevNull, "-c", "credential.helper=", "-c", "protocol.file.allow=never", "-C", g.dir}
+	return g.commandIn(ctx, g.dir, args...)
+}
+
+func (g *gitCache) commandIn(ctx context.Context, directory string, args ...string) (*exec.Cmd, func(), error) {
+	base := []string{"--no-pager", "--no-optional-locks", "-c", "core.hooksPath=" + os.DevNull, "-c", "credential.helper=", "-c", "protocol.file.allow=never"}
+	if directory != "" {
+		base = append(base, "-C", directory)
+	}
 	cmd := exec.CommandContext(ctx, "git", append(base, args...)...)
 	for _, value := range os.Environ() {
 		if !strings.HasPrefix(value, "GIT_") && !strings.HasPrefix(value, "WEKNORA_GITHUB_TOKEN=") {
