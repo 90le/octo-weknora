@@ -805,6 +805,30 @@ func (r *knowledgeRepository) FindByDataSourceExternalID(
 	return &knowledge, nil
 }
 
+// ListByDataSourceID returns only active knowledge entries that are owned by
+// the exact source ID in their persisted metadata. The tenant and KB scopes are
+// intentionally mandatory: source cleanup must never treat a same-named or
+// malformed metadata value in another knowledge base as eligible content.
+func (r *knowledgeRepository) ListByDataSourceID(
+	ctx context.Context,
+	tenantID uint64,
+	kbID, dataSourceID string,
+) ([]*types.Knowledge, error) {
+	if tenantID == 0 || kbID == "" || dataSourceID == "" {
+		return nil, errors.New("data source knowledge lookup requires tenant, knowledge base, and data source")
+	}
+	var items []*types.Knowledge
+	err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL", tenantID, kbID).
+		Where("metadata->>'datasource_id' = ?", dataSourceID).
+		Order("id ASC").
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 // HardDeleteKnowledge physically removes a knowledge row. Call it AFTER
 // DeleteKnowledge's soft-delete cascade so sync-internal deletions never
 // become tombstones that block a later re-sync of the same external item.

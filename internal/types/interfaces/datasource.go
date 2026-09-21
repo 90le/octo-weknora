@@ -41,6 +41,20 @@ type DataSourceService interface {
 	// DeleteDataSource deletes a data source (soft delete)
 	DeleteDataSource(ctx context.Context, id string) error
 
+	// PreviewDataSourceDelete reports generated knowledge and issues the
+	// short-lived confirmation token needed by a purge request. It does not
+	// change the source or knowledge base.
+	PreviewDataSourceDelete(ctx context.Context, id string) (*types.DataSourceDeletePreview, error)
+
+	// DeleteDataSourceWithMode explicitly selects detach (the legacy behavior)
+	// or purge_generated. The latter is allowed only with a valid preview token
+	// bound to the exact current source contents.
+	DeleteDataSourceWithMode(
+		ctx context.Context,
+		id string,
+		req *types.DataSourceDeleteRequest,
+	) (*types.DataSourceDeleteResult, error)
+
 	// UpdateDataSourceCredentials replaces the connector credential map.
 	// DataSource credentials are per-connector atomic — there is no
 	// individual-field PUT, the whole map gets replaced. Returns the updated
