@@ -318,6 +318,10 @@ func RegisterDataSourceRoutes(
 		// CRUD operations
 		ds.POST("", g.Admin(), handler.CreateDataSource)
 		ds.GET("", g.Viewer(), handler.ListDataSources)
+		// A destructive source+content removal is intentionally a two-step
+		// operation. Keep DELETE /:id below as the established detach-only API.
+		ds.POST("/:id/delete-preview", g.Admin(), handler.PreviewDataSourceDelete)
+		ds.POST("/:id/delete", g.Admin(), handler.DeleteDataSourceWithMode)
 		ds.GET("/:id", g.Viewer(), handler.GetDataSource)
 		ds.PUT("/:id", g.Admin(), handler.UpdateDataSource)
 		ds.DELETE("/:id", g.Admin(), handler.DeleteDataSource)

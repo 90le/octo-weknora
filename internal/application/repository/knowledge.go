@@ -805,6 +805,32 @@ func (r *knowledgeRepository) FindByDataSourceExternalID(
 	return &knowledge, nil
 }
 
+// ListByDataSourceIDIncludingDeleted returns entries owned by the exact source
+// ID in their persisted metadata, including soft-deleted rows. A source purge
+// may need to retry its final hard-delete after the normal knowledge cleanup
+// succeeded but a transient database write failed. The tenant and KB scopes
+// are intentionally mandatory: cleanup must never treat a same-named or
+// malformed metadata value in another knowledge base as eligible content.
+func (r *knowledgeRepository) ListByDataSourceIDIncludingDeleted(
+	ctx context.Context,
+	tenantID uint64,
+	kbID, dataSourceID string,
+) ([]*types.Knowledge, error) {
+	if tenantID == 0 || kbID == "" || dataSourceID == "" {
+		return nil, errors.New("data source knowledge lookup requires tenant, knowledge base, and data source")
+	}
+	var items []*types.Knowledge
+	err := r.db.Unscoped().WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, kbID).
+		Where("metadata->>'datasource_id' = ?", dataSourceID).
+		Order("id ASC").
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 // HardDeleteKnowledge physically removes a knowledge row. Call it AFTER
 // DeleteKnowledge's soft-delete cascade so sync-internal deletions never
 // become tombstones that block a later re-sync of the same external item.

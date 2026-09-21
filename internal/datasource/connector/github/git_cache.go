@@ -48,9 +48,6 @@ func (b *cacheOutput) Write(p []byte) (int, error) {
 }
 
 func (c *Connector) buildGitSnapshot(ctx context.Context, cfg *types.DataSourceConfig, b *snapshot.Builder, previous *types.SourceSnapshot) error {
-	if _, err := exec.LookPath("git"); err != nil {
-		return errGitUnavailable
-	}
 	s, err := parseSelection(cfg)
 	if err != nil {
 		return err
@@ -63,6 +60,20 @@ func (c *Connector) buildGitSnapshot(ctx context.Context, cfg *types.DataSourceC
 	}
 	if err != nil {
 		return err
+	}
+	b.SetRevision(commit)
+	// Always resolve the remote ref first. A matching revision can then reuse a
+	// complete local manifest without cloning, fetching, walking the tree, or
+	// rereading Git blobs. ReuseSnapshot validates every object in this exact
+	// data-source namespace; a missing or damaged object deliberately falls
+	// through to a normal rebuild below.
+	if previous != nil && previous.Selection == snapshot.Selection(cfg) && previous.Revision == commit {
+		if err := b.ReuseSnapshot(previous); err == nil {
+			return nil
+		}
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		return errGitUnavailable
 	}
 	cacheRoot, err := b.PrivateDirectory("git")
 	if err != nil {
@@ -86,7 +97,6 @@ func (c *Connector) buildGitSnapshot(ctx context.Context, cfg *types.DataSourceC
 	if err != nil {
 		return err
 	}
-	b.SetRevision(commit)
 	previousByPath := map[string]types.SourceFile{}
 	if previous != nil && previous.Selection == snapshot.Selection(cfg) {
 		for _, f := range previous.Files {

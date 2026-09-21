@@ -119,6 +119,36 @@ func deleteExtractedImages(
 	}
 }
 
+// deleteKnowledgeSourceFile applies the same reference-counting rule to a
+// document's primary FilePath that extracted images already use. A saved
+// response or cloned document can legitimately share a catalog resource with a
+// second knowledge entry; deleting the first entry must release its binding but
+// leave the bytes until the last owner is gone.
+//
+// Raw provider paths predate the resource catalog and retain the historic
+// behaviour. They have no durable ownership evidence, so this helper cannot
+// safely infer sharing for them; callers that need conservative cleanup must
+// decide that policy before entering the normal knowledge deletion pipeline.
+func deleteKnowledgeSourceFile(
+	ctx context.Context,
+	fileSvc interfaces.FileService,
+	catalog interfaces.ResourceCatalog,
+	knowledge *types.Knowledge,
+) {
+	if knowledge == nil || knowledge.FilePath == "" || fileSvc == nil {
+		return
+	}
+	if _, isCatalogReference := types.ParseResourcePath(knowledge.FilePath); isCatalogReference && catalog != nil {
+		if !knowledgeResourceOwners(catalog, knowledge.ID).deletable(ctx, knowledge.FilePath) {
+			logger.Infof(ctx, "Keeping source file %s: another owner may still reference it", knowledge.FilePath)
+			return
+		}
+	}
+	if err := fileSvc.DeleteFile(ctx, knowledge.FilePath); err != nil {
+		logger.GetLogger(ctx).WithField("error", err).Errorf("DeleteKnowledge delete file failed")
+	}
+}
+
 // DeleteKnowledge deletes a knowledge entry and all related resources
 func (s *knowledgeService) DeleteKnowledge(ctx context.Context, id string) error {
 	plan, err := s.planKnowledgeDelete(ctx, []string{id})
@@ -570,12 +600,7 @@ func (s *knowledgeService) executeKnowledgeDelete(plan *knowledgeDeletePlan, sin
 
 	storageAdjust := int64(0)
 	for _, knowledge := range knowledgeList {
-		if knowledge.FilePath != "" {
-			fSvc := kbFileServices[knowledge.KnowledgeBaseID]
-			if err := fSvc.DeleteFile(ctx, knowledge.FilePath); err != nil {
-				logger.GetLogger(ctx).WithField("error", err).Errorf("DeleteKnowledge delete file failed")
-			}
-		}
+		deleteKnowledgeSourceFile(ctx, kbFileServices[knowledge.KnowledgeBaseID], s.resourceCatalog, knowledge)
 		storageAdjust -= knowledge.StorageSize
 	}
 	// Delete extracted images per KB

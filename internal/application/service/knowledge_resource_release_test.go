@@ -104,3 +104,38 @@ func TestDeleteExtractedImagesWithoutCatalogDeletesEverything(t *testing.T) {
 		t.Fatalf("deleted %v, want %v", files.deleted, urls)
 	}
 }
+
+func TestDeleteKnowledgeSourceFileReleasesCatalogBindingBeforeDeleting(t *testing.T) {
+	shared := handleRef("f")
+	exclusive := handleRef("g")
+	files := &deleteRecorder{}
+	catalog := &fakeCatalog{releaseRemaining: map[string]int64{shared: 1, exclusive: 0}}
+
+	deleteKnowledgeSourceFile(context.Background(), files, catalog, &types.Knowledge{ID: "kn-shared", FilePath: shared})
+	deleteKnowledgeSourceFile(context.Background(), files, catalog, &types.Knowledge{ID: "kn-exclusive", FilePath: exclusive})
+
+	if len(files.deleted) != 1 || files.deleted[0] != exclusive {
+		t.Fatalf("deleted %v, want only %q", files.deleted, exclusive)
+	}
+	if got, want := catalog.releases, []string{
+		shared + "|" + types.ResourceOwnerKnowledge + "|kn-shared",
+		exclusive + "|" + types.ResourceOwnerKnowledge + "|kn-exclusive",
+	}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("release calls = %v, want %v", got, want)
+	}
+}
+
+func TestDeleteKnowledgeSourceFileKeepsLegacyPathBehavior(t *testing.T) {
+	legacy := "local://7/legacy/source.pdf"
+	files := &deleteRecorder{}
+	catalog := &fakeCatalog{}
+
+	deleteKnowledgeSourceFile(context.Background(), files, catalog, &types.Knowledge{ID: "kn-legacy", FilePath: legacy})
+
+	if len(files.deleted) != 1 || files.deleted[0] != legacy {
+		t.Fatalf("deleted %v, want legacy source path %q", files.deleted, legacy)
+	}
+	if len(catalog.releases) != 0 {
+		t.Fatalf("legacy path must not fabricate a catalog release: %v", catalog.releases)
+	}
+}

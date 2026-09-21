@@ -62,6 +62,63 @@ func TestFindByDataSourceExternalID_DeletedRowsExcluded(t *testing.T) {
 	assert.Nil(t, found)
 }
 
+func TestListByDataSourceIDIncludingDeletedKeepsKnowledgeBaseAndDataSourceIsolation(t *testing.T) {
+	db := setupKnowledgeTestDB(t)
+	repo := NewKnowledgeRepository(db).(*knowledgeRepository)
+	ctx := context.Background()
+
+	const tenantID uint64 = 61
+	kbA := uuid.New().String()
+	kbB := uuid.New().String()
+	dsA := uuid.New().String()
+	dsB := uuid.New().String()
+
+	insert := func(kbID, dsID, title string) string {
+		id := uuid.New().String()
+		metadata := fmt.Sprintf(`{"datasource_id":%q,"external_id":%q}`, dsID, title)
+		require.NoError(t, db.Exec(`
+			INSERT INTO knowledges
+			  (id, tenant_id, knowledge_base_id, type, title, source, parse_status, metadata)
+			VALUES (?, ?, ?, 'document', ?, 'github', 'completed', ?)
+		`, id, tenantID, kbID, title, metadata).Error)
+		return id
+	}
+
+	wantA := insert(kbA, dsA, "owned-by-a")
+	_ = insert(kbA, dsB, "same-kb-other-source")
+	_ = insert(kbB, dsA, "other-kb-same-source-id")
+	_ = insert(kbB, dsB, "other-kb-other-source")
+
+	items, err := repo.ListByDataSourceIDIncludingDeleted(ctx, tenantID, kbA, dsA)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, wantA, items[0].ID)
+	assert.Equal(t, kbA, items[0].KnowledgeBaseID)
+	assert.Equal(t, dsA, items[0].GetMetadata()["datasource_id"])
+}
+
+func TestListByDataSourceIDIncludingDeletedReturnsTombstonesForPurgeRetry(t *testing.T) {
+	db := setupKnowledgeTestDB(t)
+	repo := NewKnowledgeRepository(db).(*knowledgeRepository)
+	ctx := context.Background()
+
+	const tenantID uint64 = 62
+	kbID := uuid.New().String()
+	dsID := uuid.New().String()
+	id := uuid.New().String()
+	metadata := fmt.Sprintf(`{"datasource_id":%q,"external_id":"retry"}`, dsID)
+	require.NoError(t, db.Exec(`
+		INSERT INTO knowledges
+		  (id, tenant_id, knowledge_base_id, type, title, source, parse_status, metadata, deleted_at)
+		VALUES (?, ?, ?, 'document', 'retry', 'github', 'completed', ?, '2026-01-01 00:00:00')
+	`, id, tenantID, kbID, metadata).Error)
+
+	items, err := repo.ListByDataSourceIDIncludingDeleted(ctx, tenantID, kbID, dsID)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, id, items[0].ID)
+}
+
 func TestHardDeleteKnowledge(t *testing.T) {
 	db := setupKnowledgeTestDB(t)
 	repo := NewKnowledgeRepository(db).(*knowledgeRepository)

@@ -1,6 +1,7 @@
 import { storageSpaceMessages } from '../storageSpaceMessages'
 import { sourceRootMessages } from '../sourceRootMessages'
 import { githubBulkMessages } from '../githubBulkMessages'
+import { datasourceDeleteMessages } from '../datasourceDeleteMessages'
 export default {
   storageSpaces: storageSpaceMessages.zh,
   sourceRoots: sourceRootMessages.zh,
@@ -763,6 +764,7 @@ export default {
       pathsHint: '每行一个文件或目录，例如 README.md、docs。留空包含全仓库受支持文档。',
     },
     githubBulk: githubBulkMessages.zh,
+    deleteFlow: datasourceDeleteMessages.zh,
     gitlab: {
       baseUrl: 'GitLab 地址',
       accessToken: '个人访问令牌',

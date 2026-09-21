@@ -4,7 +4,6 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import {
   listDataSources,
-  deleteDataSource,
   triggerSync,
   pauseDataSource,
   resumeDataSource,
@@ -16,6 +15,7 @@ import GitHubBulkImportDialog from './GitHubBulkImportDialog.vue'
 import DataSourceSyncLogs from './DataSourceSyncLogs.vue'
 import DataSourceTypeIcon from './DataSourceTypeIcon.vue'
 import SourceBrowserDrawer from './SourceBrowserDrawer.vue'
+import DataSourceDeleteDialog from './DataSourceDeleteDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{ kbId: string }>()
@@ -38,6 +38,8 @@ const sourceVisible = ref(false)
 const sourceId = ref('')
 const logsDsId = ref('')
 const logsDsName = ref('')
+const deletingDs = ref<DataSource | null>(null)
+const deleteVisible = ref(false)
 const pollTimer = ref<number | null>(null)
 
 function stopPolling() {
@@ -94,14 +96,18 @@ function openLogs(ds: DataSource) {
   logsVisible.value = true
 }
 
-async function removeDataSource(ds: DataSource) {
-  try {
-    await deleteDataSource(ds.id)
-    MessagePlugin.success(t('datasource.deleteSuccess'))
-    await loadList()
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || e?.error || t('datasource.deleteFailed'))
-  }
+function openDeleteDialog(ds: DataSource) {
+  deletingDs.value = ds
+  deleteVisible.value = true
+}
+
+function onDeleteDialogVisibleChange(visible: boolean) {
+  deleteVisible.value = visible
+  if (!visible) deletingDs.value = null
+}
+
+async function onDataSourceDeleted() {
+  await loadList()
 }
 
 async function handleSync(ds: DataSource) {
@@ -268,20 +274,10 @@ onBeforeUnmount(stopPolling)
                         v-if="canManageDataSource"
                         theme="error"
                         class="ds-dropdown-delete-item"
+                        @click="openDeleteDialog(ds)"
                       >
-                        <t-popconfirm
-                          :content="t('datasource.deleteConfirm')"
-                          :confirm-btn="{ content: t('datasource.delete'), theme: 'danger' }"
-                          :cancel-btn="{ content: t('common.cancel') }"
-                          placement="left"
-                          attach="body"
-                          @confirm="removeDataSource(ds)"
-                        >
-                          <span class="ds-dropdown-delete-trigger" @click.stop>
-                            <t-icon name="delete" />
-                            <span>{{ t('datasource.delete') }}</span>
-                          </span>
-                        </t-popconfirm>
+                        <t-icon name="delete" />
+                        <span>{{ t('datasource.delete') }}</span>
                       </t-dropdown-item>
                     </t-dropdown-menu>
                   </template>
@@ -371,6 +367,12 @@ onBeforeUnmount(stopPolling)
     />
   </div>
   <SourceBrowserDrawer v-model:visible="sourceVisible" :kb-id="kbId" :initial-source-id="sourceId" />
+  <DataSourceDeleteDialog
+    :visible="deleteVisible"
+    :data-source="deletingDs"
+    @update:visible="onDeleteDialogVisibleChange"
+    @completed="onDataSourceDeleted"
+  />
 </template>
 
 <style scoped lang="less">
@@ -684,19 +686,5 @@ onBeforeUnmount(stopPolling)
   border-top: 1px solid var(--td-component-stroke);
   margin-top: 4px;
   padding-top: 4px;
-
-  .t-popup__reference {
-    display: block;
-    width: 100%;
-  }
-}
-
-.ds-dropdown-delete-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  cursor: pointer;
-  line-height: 22px;
 }
 </style>

@@ -117,6 +117,33 @@ export interface GitHubBatchResponse {
   results: GitHubBatchResultItem[]
 }
 
+/**
+ * `detach` only stops the source and preserves documents already indexed by
+ * it. `purge_generated` additionally removes content which the server can
+ * prove belongs exclusively to this data source.
+ */
+export type DataSourceDeleteMode = 'detach' | 'purge_generated'
+
+/**
+ * Server-side deletion preview. The token is intentionally opaque: the UI
+ * must send it back unchanged so the server can reject stale destructive
+ * operations instead of acting on a preview that no longer matches.
+ */
+export interface DataSourceDeletePreview {
+  datasource_id: string
+  generated_knowledge_count: number
+  generated_storage_bytes: number
+  shared_or_unverifiable_resources_count: number
+  legacy_unverifiable_resources_count: number
+  preview_token: string
+  expires_at: string
+}
+
+export interface DeleteDataSourceWithModeRequest {
+  mode: DataSourceDeleteMode
+  preview_token: string
+}
+
 // --- API calls ---
 
 export function getConnectorTypes() {
@@ -141,6 +168,23 @@ export function updateDataSource(id: string, data: Partial<DataSource>) {
 
 export function deleteDataSource(id: string) {
   return del(`/api/v1/datasource/${id}`)
+}
+
+/**
+ * Reads a bounded impact preview before the user removes a source. This is a
+ * separate endpoint from the legacy DELETE request above so editor cleanup
+ * paths can retain their established detach-only behaviour.
+ */
+export function previewDataSourceDeletion(id: string) {
+  return post<DataSourceDeletePreview>(`/api/v1/datasource/${id}/delete-preview`, {})
+}
+
+/**
+ * Removes a source using the preview token issued by previewDataSourceDeletion.
+ * The server owns authorization, shared-resource checks, and token expiry.
+ */
+export function deleteDataSourceWithMode(id: string, data: DeleteDataSourceWithModeRequest) {
+  return post(`/api/v1/datasource/${id}/delete`, data)
 }
 
 export function validateConnection(id: string) {

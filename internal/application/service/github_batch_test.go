@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -21,4 +23,48 @@ func TestGitHubBatchExistingPairsAreModeScoped(t *testing.T) {
 	require.Equal(t, "documents", pairs["example/repo\x00documents"])
 	require.True(t, belongsToOwner("Example/Repo", "example"))
 	require.False(t, belongsToOwner("other/repo", "example"))
+}
+
+func TestGitHubBatchSettingsOmitEmptyExclusions(t *testing.T) {
+	for _, excludes := range [][]string{nil, {}} {
+		settings := githubBatchSettings("Mininglamp-OSS/octo-cli", "main", "source", nil, excludes)
+		require.NotContains(t, settings, "exclude")
+
+		blob, err := (&types.DataSourceConfig{
+			Type:     types.ConnectorTypeGitHub,
+			Settings: settings,
+		}).ToJSON()
+		require.NoError(t, err)
+		var encoded struct {
+			Settings map[string]json.RawMessage `json:"settings"`
+		}
+		require.NoError(t, json.Unmarshal(blob, &encoded))
+		_, exists := encoded.Settings["exclude"]
+		require.False(t, exists, "empty exclusions must use source defaults rather than JSON null")
+	}
+}
+
+func TestGitHubBatchSettingsKeepExplicitExclusions(t *testing.T) {
+	settings := githubBatchSettings(
+		"Mininglamp-OSS/octo-cli", "main", "source", []string{"docs"}, []string{"generated", "dist"},
+	)
+	require.Equal(t, []string{"docs"}, settings["paths"])
+	require.Equal(t, []string{"generated", "dist"}, settings["exclude"])
+}
+
+func TestCreateGitHubBatchRejectsTooManyExclusionsBeforeCreating(t *testing.T) {
+	service := &DataSourceService{}
+	response, err := service.CreateGitHubBatch(context.Background(), &types.GitHubBatchRequest{
+		TenantID:        1,
+		KnowledgeBaseID: "kb",
+		Owner:           "Mininglamp-OSS",
+		Repositories: []types.GitHubRepositoryCandidate{{
+			Repository:    "Mininglamp-OSS/octo-cli",
+			DefaultBranch: "main",
+		}},
+		Mode:    "source",
+		Exclude: make([]string, maxGitHubBatchExclusions+1),
+	})
+	require.Nil(t, response)
+	require.EqualError(t, err, "GitHub batch exclusions must contain at most 100 paths")
 }
