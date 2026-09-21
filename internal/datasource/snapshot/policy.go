@@ -32,10 +32,10 @@ func ValidateSettings(config *types.DataSourceConfig) error {
 			return errors.New("source mode must be documents or source")
 		}
 	}
-	if value, exists := config.Settings["exclude"]; exists {
+	if value, exists := config.Settings["exclude"]; exists && !isJSONNull(value) {
 		var rules []string
 		b, err := json.Marshal(value)
-		if err != nil || value == nil || json.Unmarshal(b, &rules) != nil || len(rules) > 100 {
+		if err != nil || json.Unmarshal(b, &rules) != nil || len(rules) > 100 {
 			return errors.New("exclusions must be a list of at most 100 paths")
 		}
 		for _, rule := range rules {
@@ -80,13 +80,30 @@ func Excluded(p string, excludes []string) bool {
 	return false
 }
 func Excludes(config *types.DataSourceConfig) []string {
-	if _, ok := config.Settings["exclude"]; !ok {
+	if config == nil || config.Settings == nil {
 		return append([]string(nil), DefaultExcludes...)
 	}
-	b, _ := json.Marshal(config.Settings["exclude"])
+	value, ok := config.Settings["exclude"]
+	if !ok || isJSONNull(value) {
+		return append([]string(nil), DefaultExcludes...)
+	}
+	b, _ := json.Marshal(value)
 	var rules []string
-	_ = json.Unmarshal(b, &rules)
+	if json.Unmarshal(b, &rules) != nil {
+		return append([]string(nil), DefaultExcludes...)
+	}
 	return rules
+}
+
+// isJSONNull treats both a decoded JSON null and a typed nil slice/map as an
+// absent optional setting. Legacy batch rows stored exclude:null, so they need
+// the same default exclusion policy as rows where the setting was omitted.
+func isJSONNull(value interface{}) bool {
+	if value == nil {
+		return true
+	}
+	b, err := json.Marshal(value)
+	return err == nil && string(b) == "null"
 }
 func DocumentPath(p string) bool {
 	switch strings.ToLower(path.Ext(p)) {

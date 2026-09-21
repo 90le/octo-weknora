@@ -92,13 +92,7 @@ func (s *DataSourceService) CreateGitHubBatch(ctx context.Context, req *types.Gi
 			continue
 		}
 		ref := strings.TrimSpace(candidate.DefaultBranch)
-		settings := map[string]interface{}{
-			"repository": repository,
-			"ref":        ref,
-			"paths":      append([]string(nil), req.Paths...),
-			"mode":       mode,
-			"exclude":    append([]string(nil), req.Exclude...),
-		}
+		settings := githubBatchSettings(repository, ref, mode, req.Paths, req.Exclude)
 		config := &types.DataSourceConfig{Type: types.ConnectorTypeGitHub, Credentials: req.Credentials, Settings: settings}
 		config.StripNonSecretCredentials(types.ConnectorTypeGitHub)
 		blob, configErr := config.ToJSON()
@@ -135,6 +129,23 @@ func (s *DataSourceService) CreateGitHubBatch(ctx context.Context, req *types.Gi
 		response.Results = append(response.Results, result)
 	}
 	return response, nil
+}
+
+// githubBatchSettings writes only explicit selection overrides. In particular,
+// an empty exclusion list means "use the source defaults", so it must be
+// omitted instead of serialized as JSON null. The latter was rejected by
+// source-policy validation and made every repository in a batch fail.
+func githubBatchSettings(repository, ref, mode string, paths, excludes []string) map[string]interface{} {
+	settings := map[string]interface{}{
+		"repository": repository,
+		"ref":        ref,
+		"paths":      append([]string(nil), paths...),
+		"mode":       mode,
+	}
+	if len(excludes) > 0 {
+		settings["exclude"] = append([]string(nil), excludes...)
+	}
+	return settings
 }
 
 func belongsToOwner(repository, owner string) bool {
