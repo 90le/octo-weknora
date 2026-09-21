@@ -17,7 +17,15 @@ export function formatGeneratedStorageBytes(bytes: number, locale = 'en-US'): st
   return `${new Intl.NumberFormat(locale, { maximumFractionDigits }).format(value)} ${units[unitIndex]}`
 }
 
-/** Shared and unverifiable resources are always retained by the server. */
+/** A non-zero count means the server will apply reference-safe cleanup. */
 export function hasRetainedDeleteResources(count: number): boolean {
+  return Number.isFinite(count) && count > 0
+}
+
+/**
+ * Legacy raw file paths have no reference binding. The destructive mode must
+ * stay unavailable until they have been handled through an audited cleanup.
+ */
+export function hasLegacyUnverifiableResources(count: number): boolean {
   return Number.isFinite(count) && count > 0
 }

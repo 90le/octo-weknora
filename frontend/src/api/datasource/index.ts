@@ -134,6 +134,7 @@ export interface DataSourceDeletePreview {
   generated_knowledge_count: number
   generated_storage_bytes: number
   shared_or_unverifiable_resources_count: number
+  legacy_unverifiable_resources_count: number
   preview_token: string
   expires_at: string
 }

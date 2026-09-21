@@ -12,6 +12,7 @@ import {
 import {
   DEFAULT_DATASOURCE_DELETE_MODE,
   formatGeneratedStorageBytes,
+  hasLegacyUnverifiableResources,
   hasRetainedDeleteResources,
 } from './datasourceDeleteState'
 
@@ -64,7 +65,10 @@ const confirmButton = computed(() => ({
     : 'datasource.deleteFlow.confirmDetach'),
   theme: selectedMode.value === 'purge_generated' ? 'danger' : 'primary',
   loading: submitting.value,
-  disabled: !preview.value || loadingPreview.value,
+  disabled: !preview.value || loadingPreview.value || (
+    selectedMode.value === 'purge_generated' &&
+    hasLegacyUnverifiableResources(preview.value.legacy_unverifiable_resources_count)
+  ),
 }))
 
 async function loadPreview() {
@@ -206,6 +210,12 @@ async function confirmDeletion() {
                 ? t('datasource.deleteFlow.retainedResourcesHint')
                 : t('datasource.deleteFlow.noRetainedResources') }}</span>
             </p>
+            <t-alert
+              v-if="hasLegacyUnverifiableResources(preview.legacy_unverifiable_resources_count)"
+              class="data-source-delete-dialog__legacy-warning"
+              theme="warning"
+              :message="t('datasource.deleteFlow.legacyBlocked', { count: preview.legacy_unverifiable_resources_count })"
+            />
           </section>
 
           <t-radio-group v-model="selectedMode" class="data-source-delete-dialog__modes">
@@ -215,7 +225,11 @@ async function confirmDeletion() {
                 <small>{{ t('datasource.deleteFlow.detachDescription') }}</small>
               </span>
             </t-radio>
-            <t-radio value="purge_generated" class="data-source-delete-dialog__mode data-source-delete-dialog__mode--danger">
+            <t-radio
+              value="purge_generated"
+              :disabled="hasLegacyUnverifiableResources(preview.legacy_unverifiable_resources_count)"
+              class="data-source-delete-dialog__mode data-source-delete-dialog__mode--danger"
+            >
               <span class="data-source-delete-dialog__mode-copy">
                 <strong>{{ t('datasource.deleteFlow.purgeTitle') }}</strong>
                 <small>{{ t('datasource.deleteFlow.purgeDescription') }}</small>
@@ -318,6 +332,8 @@ async function confirmDeletion() {
     .t-icon { flex: none; margin-top: 2px; color: var(--td-success-color); }
     &.is-warning .t-icon { color: var(--td-warning-color); }
   }
+
+  &__legacy-warning { margin-top: 12px; }
 
   &__modes {
     display: flex;

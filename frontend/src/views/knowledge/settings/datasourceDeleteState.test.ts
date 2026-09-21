@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   DEFAULT_DATASOURCE_DELETE_MODE,
   formatGeneratedStorageBytes,
+  hasLegacyUnverifiableResources,
   hasRetainedDeleteResources,
 } from './datasourceDeleteState'
 
@@ -20,4 +21,11 @@ test('only a positive shared-or-unverifiable count is presented as retained', ()
   assert.equal(hasRetainedDeleteResources(-1), false)
   assert.equal(hasRetainedDeleteResources(2), true)
   assert.equal(hasRetainedDeleteResources(Number.NaN), false)
+})
+
+test('only a positive legacy count blocks generated-content cleanup', () => {
+  assert.equal(hasLegacyUnverifiableResources(0), false)
+  assert.equal(hasLegacyUnverifiableResources(-1), false)
+  assert.equal(hasLegacyUnverifiableResources(1), true)
+  assert.equal(hasLegacyUnverifiableResources(Number.NaN), false)
 })
