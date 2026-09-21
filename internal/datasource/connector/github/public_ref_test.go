@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
@@ -18,4 +19,9 @@ func TestPublicRefResolutionPinsHeadBranchesAndPeeledTags(t *testing.T) {
 	require.Error(t, err)
 	_, err = selectPublicRef(raw, "missing")
 	require.Error(t, err)
+}
+
+func TestPublicRefCommandDoesNotRequireTMPDIRWorkingDirectory(t *testing.T) {
+	cmd := publicRefCommand(context.Background(), "ls-remote", "https://github.com/example/repository.git")
+	require.Empty(t, cmd.Dir)
 }
