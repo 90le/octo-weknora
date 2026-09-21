@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -49,4 +50,21 @@ func TestGitHubBatchSettingsKeepExplicitExclusions(t *testing.T) {
 	)
 	require.Equal(t, []string{"docs"}, settings["paths"])
 	require.Equal(t, []string{"generated", "dist"}, settings["exclude"])
+}
+
+func TestCreateGitHubBatchRejectsTooManyExclusionsBeforeCreating(t *testing.T) {
+	service := &DataSourceService{}
+	response, err := service.CreateGitHubBatch(context.Background(), &types.GitHubBatchRequest{
+		TenantID:        1,
+		KnowledgeBaseID: "kb",
+		Owner:           "Mininglamp-OSS",
+		Repositories: []types.GitHubRepositoryCandidate{{
+			Repository:    "Mininglamp-OSS/octo-cli",
+			DefaultBranch: "main",
+		}},
+		Mode:    "source",
+		Exclude: make([]string, maxGitHubBatchExclusions+1),
+	})
+	require.Nil(t, response)
+	require.EqualError(t, err, "GitHub batch exclusions must contain at most 100 paths")
 }

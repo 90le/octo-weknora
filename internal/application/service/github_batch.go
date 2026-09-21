@@ -11,6 +11,7 @@ import (
 )
 
 const maxGitHubBatchRepositories = 20
+const maxGitHubBatchExclusions = 100
 const defaultGitHubBatchSchedule = "0 0 */6 * * *"
 
 // DiscoverGitHubRepositories intentionally performs only discovery. Credentials
@@ -54,6 +55,9 @@ func (s *DataSourceService) CreateGitHubBatch(ctx context.Context, req *types.Gi
 	mode := strings.TrimSpace(req.Mode)
 	if mode != "source" && mode != "documents" {
 		return nil, errors.New("GitHub batch mode must be source or documents")
+	}
+	if len(req.Exclude) > maxGitHubBatchExclusions {
+		return nil, fmt.Errorf("GitHub batch exclusions must contain at most %d paths", maxGitHubBatchExclusions)
 	}
 	kb, err := s.kbService.GetKnowledgeBaseByID(ctx, req.KnowledgeBaseID)
 	if err != nil || kb == nil || kb.TenantID != req.TenantID {
