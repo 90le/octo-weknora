@@ -1,5 +1,6 @@
 import { storageSpaceMessages } from '../storageSpaceMessages'
 import { sourceRootMessages } from '../sourceRootMessages'
+import { githubBulkMessages } from '../githubBulkMessages'
 export default {
   storageSpaces: storageSpaceMessages.en,
   sourceRoots: sourceRootMessages.en,
@@ -762,6 +763,7 @@ export default {
       tokenHint: 'Optional for public repositories. Private repositories require a read-only Contents token. Stored encrypted; never returned.',
       pathsHint: 'One file or directory per line, for example README.md or docs. Empty includes all supported documents.',
     },
+    githubBulk: githubBulkMessages.en,
     gitlab: {
       baseUrl: 'GitLab URL', accessToken: '개인 액세스 토큰', projects: 'GitLab 프로젝트',
       projectsHint: '프로젝트 ID 또는 네임스페이스 경로(예: group/project)를 입력하고, 필요에 따라 브랜치와 디렉터리를 지정하세요.',

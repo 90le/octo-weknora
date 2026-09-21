@@ -1,5 +1,6 @@
 import { storageSpaceMessages } from '../storageSpaceMessages'
 import { sourceRootMessages } from '../sourceRootMessages'
+import { githubBulkMessages } from '../githubBulkMessages'
 export default {
   storageSpaces: storageSpaceMessages.en,
   sourceRoots: sourceRootMessages.en,
@@ -6376,6 +6377,7 @@ export default {
       tokenHint: 'Optional for public repositories. Private repositories require a read-only Contents token. Stored encrypted; never returned.',
       pathsHint: 'One file or directory per line, for example README.md or docs. Empty includes all supported documents.',
     },
+    githubBulk: githubBulkMessages.en,
     gitlab: {
       baseUrl: 'GitLab URL', accessToken: 'パーソナルアクセストークン', projects: 'GitLabプロジェクト',
       projectsHint: 'プロジェクトIDまたはネームスペースのパス（例: group/project）を入力します。ブランチとディレクトリは任意です。',

@@ -84,6 +84,36 @@ export interface Resource {
   has_children?: boolean
 }
 
+/** One repository returned by the native GitHub organization/user discovery API. */
+export interface GitHubRepository {
+  /** Canonical GitHub owner/repository name. */
+  repository: string
+  default_branch: string
+  archived: boolean
+  description: string
+}
+
+export interface GitHubDiscoveryResponse {
+  owner: string
+  repositories: GitHubRepository[]
+  next_cursor?: string
+}
+
+export type GitHubBulkMode = 'source' | 'documents'
+
+export interface GitHubBatchResultItem {
+  repository: string
+  /** A source was created, already existed, failed validation, or was skipped. */
+  status: 'created' | 'existing' | 'failed' | 'skipped'
+  data_source_id?: string
+  message?: string
+}
+
+export interface GitHubBatchResponse {
+  owner: string
+  results: GitHubBatchResultItem[]
+}
+
 // --- API calls ---
 
 export function getConnectorTypes() {
@@ -117,6 +147,36 @@ export function validateConnection(id: string) {
 // Validate credentials without persisting (for "Test Connection" during creation)
 export function validateCredentials(type: string, credentials: Record<string, any>) {
   return post('/api/v1/datasource/validate-credentials', { type, credentials })
+}
+
+/**
+ * Lists repositories belonging to one GitHub organization or user without
+ * persisting a data source. Credentials are sent only in the request body and
+ * never stored in browser state beyond the active bulk-import drawer.
+ */
+export function discoverGitHubRepositories(
+  owner: string,
+  credentials?: Record<string, unknown>,
+) {
+  return post('/api/v1/datasource/github/discover', { owner, credentials })
+}
+
+/**
+ * Creates one normal GitHub data source per selected repository. Keeping rows
+ * separate preserves existing per-repository sync logs, source snapshots and
+ * failure handling in the standard data-source UI.
+ */
+export function createGitHubDataSourceBatch(data: {
+  knowledge_base_id: string
+  owner: string
+  repositories: GitHubRepository[]
+  credentials?: Record<string, unknown>
+  mode: GitHubBulkMode
+  paths?: string[]
+  sync_schedule?: string
+  start_sync?: boolean
+}) {
+  return post('/api/v1/datasource/github/batch', data)
 }
 
 // listResources lists selectable resources for a data source. Pass parentId to
