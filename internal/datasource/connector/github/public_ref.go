@@ -41,8 +41,7 @@ func (c *Connector) publicHead(ctx context.Context, s selection) (string, error)
 		}
 	}
 	args := append([]string{"-c", "credential.helper=", "-c", "core.askPass=", "ls-remote", "--symref", "--", "https://github.com/" + s.Repository + ".git"}, patterns...)
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = os.TempDir()
+	cmd := publicRefCommand(ctx, args...)
 	for _, v := range os.Environ() {
 		if !strings.HasPrefix(v, "GIT_") {
 			cmd.Env = append(cmd.Env, v)
@@ -55,6 +54,12 @@ func (c *Connector) publicHead(ctx context.Context, s selection) (string, error)
 		return "", errors.New("public GitHub refs unavailable; check network or repository access")
 	}
 	return selectPublicRef(out.String(), s.Ref)
+}
+
+// publicRefCommand deliberately has no working directory: ls-remote is a
+// network-only read and must still work before an optional TMPDIR exists.
+func publicRefCommand(ctx context.Context, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, "git", args...)
 }
 func selectPublicRef(raw, ref string) (string, error) {
 	refs := map[string]string{}
