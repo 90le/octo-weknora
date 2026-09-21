@@ -21,6 +21,7 @@ type dataSourcePurgeKnowledgeRepo struct {
 	listSource     string
 	hardDeletedIDs []string
 	hardDeleteErr  error
+	softDeleted    map[string]bool
 }
 
 func (r *dataSourcePurgeKnowledgeRepo) HardDeleteKnowledgeList(_ context.Context, _ uint64, ids []string) error {
@@ -31,7 +32,7 @@ func (r *dataSourcePurgeKnowledgeRepo) HardDeleteKnowledgeList(_ context.Context
 	return nil
 }
 
-func (r *dataSourcePurgeKnowledgeRepo) ListByDataSourceID(
+func (r *dataSourcePurgeKnowledgeRepo) ListByDataSourceIDIncludingDeleted(
 	_ context.Context, tenantID uint64, kbID, dataSourceID string,
 ) ([]*types.Knowledge, error) {
 	r.listTenant, r.listKB, r.listSource = tenantID, kbID, dataSourceID
@@ -44,7 +45,7 @@ func (r *dataSourcePurgeKnowledgeRepo) GetKnowledgeBatch(
 	items := make([]*types.Knowledge, 0, len(ids))
 	for _, id := range ids {
 		item := r.byID[id]
-		if item == nil || item.TenantID != tenantID {
+		if item == nil || item.TenantID != tenantID || r.softDeleted[id] {
 			continue
 		}
 		copyOfItem := *item
@@ -55,8 +56,9 @@ func (r *dataSourcePurgeKnowledgeRepo) GetKnowledgeBatch(
 
 type dataSourcePurgeKnowledgeService struct {
 	interfaces.KnowledgeService
-	repo       interfaces.KnowledgeRepository
-	deletedIDs []string
+	repo           interfaces.KnowledgeRepository
+	deletedIDs     []string
+	markSoftDelete func([]string)
 }
 
 func (s *dataSourcePurgeKnowledgeService) GetRepository() interfaces.KnowledgeRepository {
@@ -65,6 +67,9 @@ func (s *dataSourcePurgeKnowledgeService) GetRepository() interfaces.KnowledgeRe
 
 func (s *dataSourcePurgeKnowledgeService) DeleteKnowledgeList(_ context.Context, ids []string) error {
 	s.deletedIDs = append(s.deletedIDs, ids...)
+	if s.markSoftDelete != nil {
+		s.markSoftDelete(ids)
+	}
 	return nil
 }
 
@@ -87,10 +92,15 @@ func newDataSourcePurgeService(t *testing.T) (*DataSourceService, *dataSourcePur
 		Metadata: types.JSON(`{"datasource_id":"source-a"}`),
 	}
 	repo := &dataSourcePurgeKnowledgeRepo{
-		items: []*types.Knowledge{matchedA, matchedB},
-		byID:  map[string]*types.Knowledge{matchedA.ID: matchedA, matchedB.ID: matchedB},
+		items:       []*types.Knowledge{matchedA, matchedB},
+		byID:        map[string]*types.Knowledge{matchedA.ID: matchedA, matchedB.ID: matchedB},
+		softDeleted: map[string]bool{},
 	}
-	knowledgeSvc := &dataSourcePurgeKnowledgeService{repo: repo}
+	knowledgeSvc := &dataSourcePurgeKnowledgeService{repo: repo, markSoftDelete: func(ids []string) {
+		for _, id := range ids {
+			repo.softDeleted[id] = true
+		}
+	}}
 	dsRepo := newKBDeleteDSRepo(ds.KnowledgeBaseID, ds)
 	syncLogs := &kbDeleteSyncLogRepo{}
 	scheduler := datasource.NewScheduler(dsRepo, syncLogs, kbDeleteTaskEnqueuer{})
@@ -188,6 +198,23 @@ func TestDataSourceDeletePurgeBindsPreviewToRequestingActor(t *testing.T) {
 	assert.Empty(t, dsRepo.deleteIDs)
 }
 
+func TestDataSourceDeletePurgeBindsPreviewToExactAPIKey(t *testing.T) {
+	svc, repo, knowledgeSvc, dsRepo := newDataSourcePurgeService(t)
+	firstKey := types.WithTenantAPIKeyScope(ctxWithTenant(7), types.TenantAPIKeyScope{KeyID: 41, FullAccess: true})
+	preview, err := svc.PreviewDataSourceDelete(firstKey, "source-a")
+	require.NoError(t, err)
+	secondKey := types.WithTenantAPIKeyScope(ctxWithTenant(7), types.TenantAPIKeyScope{KeyID: 42, FullAccess: true})
+
+	_, err = svc.DeleteDataSourceWithMode(secondKey, "source-a", &types.DataSourceDeleteRequest{
+		Mode: types.DataSourceDeleteModePurgeGenerated, PreviewToken: preview.PreviewToken,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "data source content changed")
+	assert.Empty(t, knowledgeSvc.deletedIDs)
+	assert.Empty(t, repo.hardDeletedIDs)
+	assert.Empty(t, dsRepo.deleteIDs)
+}
+
 func TestDataSourceDeletePreviewRejectsRowsOutsideExactDataSourceOwnership(t *testing.T) {
 	// This guard is deliberately duplicated at the service boundary: the
 	// repository test verifies SQL scoping, while this test proves a forged row
@@ -226,6 +253,35 @@ func TestDataSourceDeletePurgeDoesNotDetachWhenHardCleanupFails(t *testing.T) {
 	assert.Equal(t, []string{"matched-a", "matched-b"}, knowledgeSvc.deletedIDs)
 	assert.Empty(t, repo.hardDeletedIDs)
 	assert.Empty(t, dsRepo.deleteIDs)
+}
+
+func TestDataSourceDeletePurgeRetriesHardDeletionAfterTransientFailure(t *testing.T) {
+	svc, repo, knowledgeSvc, dsRepo := newDataSourcePurgeService(t)
+	ctx := ctxWithTenant(7)
+	preview, err := svc.PreviewDataSourceDelete(ctx, "source-a")
+	require.NoError(t, err)
+	repo.hardDeleteErr = assert.AnError
+
+	_, err = svc.DeleteDataSourceWithMode(ctx, "source-a", &types.DataSourceDeleteRequest{
+		Mode: types.DataSourceDeleteModePurgeGenerated, PreviewToken: preview.PreviewToken,
+	})
+	require.ErrorIs(t, err, assert.AnError)
+	assert.Empty(t, dsRepo.deleteIDs)
+	assert.True(t, repo.softDeleted["matched-a"])
+	assert.True(t, repo.softDeleted["matched-b"])
+
+	// The source rows are now soft-deleted and no longer visible to the normal
+	// knowledge lookup, but the datasource-owned tombstone list must still let
+	// the same confirmed purge finish its hard-delete before detaching the source.
+	repo.hardDeleteErr = nil
+	result, err := svc.DeleteDataSourceWithMode(ctx, "source-a", &types.DataSourceDeleteRequest{
+		Mode: types.DataSourceDeleteModePurgeGenerated, PreviewToken: preview.PreviewToken,
+	})
+	require.NoError(t, err)
+	assert.True(t, result.DataSourceDeleted)
+	assert.Equal(t, []string{"matched-a", "matched-b"}, repo.hardDeletedIDs)
+	assert.Equal(t, []string{"source-a"}, dsRepo.deleteIDs)
+	assert.Equal(t, []string{"matched-a", "matched-b"}, knowledgeSvc.deletedIDs)
 }
 
 func TestDataSourceDeletePurgeBlocksLegacyUnverifiableFiles(t *testing.T) {

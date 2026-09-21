@@ -805,11 +805,13 @@ func (r *knowledgeRepository) FindByDataSourceExternalID(
 	return &knowledge, nil
 }
 
-// ListByDataSourceID returns only active knowledge entries that are owned by
-// the exact source ID in their persisted metadata. The tenant and KB scopes are
-// intentionally mandatory: source cleanup must never treat a same-named or
+// ListByDataSourceIDIncludingDeleted returns entries owned by the exact source
+// ID in their persisted metadata, including soft-deleted rows. A source purge
+// may need to retry its final hard-delete after the normal knowledge cleanup
+// succeeded but a transient database write failed. The tenant and KB scopes
+// are intentionally mandatory: cleanup must never treat a same-named or
 // malformed metadata value in another knowledge base as eligible content.
-func (r *knowledgeRepository) ListByDataSourceID(
+func (r *knowledgeRepository) ListByDataSourceIDIncludingDeleted(
 	ctx context.Context,
 	tenantID uint64,
 	kbID, dataSourceID string,
@@ -818,8 +820,8 @@ func (r *knowledgeRepository) ListByDataSourceID(
 		return nil, errors.New("data source knowledge lookup requires tenant, knowledge base, and data source")
 	}
 	var items []*types.Knowledge
-	err := r.db.WithContext(ctx).
-		Where("tenant_id = ? AND knowledge_base_id = ? AND deleted_at IS NULL", tenantID, kbID).
+	err := r.db.Unscoped().WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, kbID).
 		Where("metadata->>'datasource_id' = ?", dataSourceID).
 		Order("id ASC").
 		Find(&items).Error

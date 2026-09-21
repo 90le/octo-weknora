@@ -28,13 +28,13 @@ const (
 // one knowledge base, one authenticated actor, and the exact persisted
 // candidate set shown in the preview.
 type dataSourceDeletePreviewToken struct {
-	Version         int    `json:"v"`
-	DataSourceID    string `json:"d"`
-	TenantID        uint64 `json:"t"`
-	KnowledgeBaseID string `json:"k"`
-	ActorID         string `json:"a"`
-	CandidateDigest string `json:"h"`
-	ExpiresAtUnix   int64  `json:"e"`
+	Version          int    `json:"v"`
+	DataSourceID     string `json:"d"`
+	TenantID         uint64 `json:"t"`
+	KnowledgeBaseID  string `json:"k"`
+	PrincipalSubject string `json:"a"`
+	CandidateDigest  string `json:"h"`
+	ExpiresAtUnix    int64  `json:"e"`
 }
 
 type dataSourceDeleteSummary struct {
@@ -51,7 +51,7 @@ type dataSourceDeleteSummary struct {
 // forcing every existing test or third-party repository implementation to grow
 // a method it cannot safely implement.
 type dataSourceKnowledgeLister interface {
-	ListByDataSourceID(
+	ListByDataSourceIDIncludingDeleted(
 		ctx context.Context, tenantID uint64, kbID, dataSourceID string,
 	) ([]*types.Knowledge, error)
 }
@@ -70,13 +70,13 @@ func (s *DataSourceService) PreviewDataSourceDelete(
 	}
 	expiresAt := time.Now().UTC().Add(dataSourceDeletePreviewTokenTTL)
 	token, err := signDataSourceDeletePreview(dataSourceDeletePreviewToken{
-		Version:         dataSourceDeletePreviewVersion,
-		DataSourceID:    ds.ID,
-		TenantID:        ds.TenantID,
-		KnowledgeBaseID: ds.KnowledgeBaseID,
-		ActorID:         types.CallerFromContext(ctx).UserID,
-		CandidateDigest: dataSourceDeleteCandidateDigest(ds, items),
-		ExpiresAtUnix:   expiresAt.Unix(),
+		Version:          dataSourceDeletePreviewVersion,
+		DataSourceID:     ds.ID,
+		TenantID:         ds.TenantID,
+		KnowledgeBaseID:  ds.KnowledgeBaseID,
+		PrincipalSubject: dataSourceDeletePrincipalSubject(ctx),
+		CandidateDigest:  dataSourceDeleteCandidateDigest(ds, items),
+		ExpiresAtUnix:    expiresAt.Unix(),
 	})
 	if err != nil {
 		return nil, err
@@ -143,7 +143,7 @@ func (s *DataSourceService) purgeDataSourceGeneratedContent(
 	if token.Version != dataSourceDeletePreviewVersion ||
 		token.DataSourceID != ds.ID || token.TenantID != ds.TenantID ||
 		token.KnowledgeBaseID != ds.KnowledgeBaseID ||
-		token.ActorID != types.CallerFromContext(ctx).UserID ||
+		token.PrincipalSubject != dataSourceDeletePrincipalSubject(ctx) ||
 		token.CandidateDigest != dataSourceDeleteCandidateDigest(ds, items) {
 		return nil, apperrors.NewConflictError("data source content changed; request a new delete preview")
 	}
@@ -208,7 +208,7 @@ func (s *DataSourceService) dataSourceGeneratedContent(
 	if !ok {
 		return nil, nil, dataSourceDeleteSummary{}, apperrors.NewServiceUnavailableError("data source content cleanup is unavailable")
 	}
-	items, err := lister.ListByDataSourceID(
+	items, err := lister.ListByDataSourceIDIncludingDeleted(
 		ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID,
 	)
 	if err != nil {
@@ -220,6 +220,25 @@ func (s *DataSourceService) dataSourceGeneratedContent(
 	// the persisted datasource_id ownership contract.
 	items = exactDataSourceKnowledge(ds, items)
 	return ds, items, summarizeDataSourceDelete(items), nil
+}
+
+// dataSourceDeletePrincipalSubject binds a destructive preview to the actual
+// authenticated subject. API keys must use their KeyID rather than the tenant's
+// synthetic user, otherwise two keys in the same tenant could consume each
+// other's preview token. Human and other principals use their stable principal
+// identity, with Caller as the legacy-service fallback.
+func dataSourceDeletePrincipalSubject(ctx context.Context) string {
+	if scope, ok := types.TenantAPIKeyScopeFromContext(ctx); ok && scope.KeyID > 0 {
+		tenantID, _ := types.TenantIDFromContext(ctx)
+		return fmt.Sprintf("api_key:%d:%d", tenantID, scope.KeyID)
+	}
+	if principal, ok := types.PrincipalFromContext(ctx); ok && principal.StorageID() != "" {
+		return "principal:" + principal.StorageID()
+	}
+	if caller := types.CallerFromContext(ctx); strings.TrimSpace(caller.UserID) != "" {
+		return "user:" + strings.TrimSpace(caller.UserID)
+	}
+	return ""
 }
 
 func exactDataSourceKnowledge(ds *types.DataSource, items []*types.Knowledge) []*types.Knowledge {
