@@ -20,7 +20,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-const defaultGitCacheLimit = int64(512 << 20)
+const defaultGitCacheLimit = int64(2 << 30)
 
 type gitTreeEntry struct {
 	Path string
@@ -164,14 +164,14 @@ func (g *gitCache) fetchCommit(ctx context.Context, commit string) error {
 	}
 	_, err := os.Stat(filepath.Join(g.dir, "HEAD"))
 	if errors.Is(err, os.ErrNotExist) {
-		// git clone configures a promisor remote correctly. Building a bare
-		// repository by hand and then setting remote.*.promisor left some Git
-		// versions lazily fetching tree objects during ls-tree, which can hang
-		// a source sync behind a proxy.
+		// A shallow clone has the complete current tree locally, so directory
+		// enumeration never starts a second, hidden network fetch. Partial clones
+		// were smaller on paper but some proxy paths repeatedly fetched tree
+		// objects during ls-tree and left the sync running indefinitely.
 		if removeErr := os.RemoveAll(g.dir); removeErr != nil {
 			return &Error{Code: "github_cache_unavailable", Message: "GitHub source cache cannot be reset"}
 		}
-		if err = g.clonePartial(ctx); err != nil {
+		if err = g.cloneShallow(ctx); err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -188,7 +188,7 @@ func (g *gitCache) fetchCommit(ctx context.Context, commit string) error {
 	if _, err = g.run(ctx, "cat-file", "-e", commit+"^{commit}"); err == nil {
 		return nil
 	}
-	if _, err = g.run(ctx, "fetch", "--no-tags", "--depth=1", "--filter=blob:none", "origin", "+"+commit+":refs/weknora/"+commit); err != nil {
+	if _, err = g.run(ctx, "fetch", "--no-tags", "--depth=1", "origin", "+"+commit+":refs/weknora/"+commit); err != nil {
 		return &Error{Code: "github_git_fetch", Message: "GitHub Git cache could not fetch this commit; retry later or narrow the source"}
 	}
 	if _, err = g.run(ctx, "cat-file", "-e", commit+"^{commit}"); err != nil {
@@ -197,8 +197,8 @@ func (g *gitCache) fetchCommit(ctx context.Context, commit string) error {
 	return nil
 }
 
-func (g *gitCache) clonePartial(ctx context.Context) error {
-	cmd, cleanup, err := g.commandIn(ctx, "", "clone", "--bare", "--filter=blob:none", "--depth=1", "--no-tags", "--", g.remote, g.dir)
+func (g *gitCache) cloneShallow(ctx context.Context) error {
+	cmd, cleanup, err := g.commandIn(ctx, "", "clone", "--bare", "--depth=1", "--no-tags", "--", g.remote, g.dir)
 	if err != nil {
 		return err
 	}
@@ -207,7 +207,7 @@ func (g *gitCache) clonePartial(ctx context.Context) error {
 	out.max = 16 << 20
 	cmd.Stdout = &out
 	if err = cmd.Run(); err != nil {
-		return &Error{Code: "github_git_clone", Message: "GitHub source cache could not create a partial clone; retry later or narrow the source"}
+		return &Error{Code: "github_git_clone", Message: "GitHub source cache could not create a shallow clone; retry later or narrow the source"}
 	}
 	return nil
 }
