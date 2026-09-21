@@ -129,12 +129,7 @@ func (b *Builder) add(ctx context.Context, p string, body []byte, sourceURL, rev
 			return errors.New("source object publish failed")
 		}
 	}
-	lines := bytes.Count(body, []byte{'\n'}) + 1
-	if len(body) == 0 {
-		lines = 0
-	} else if body[len(body)-1] == '\n' {
-		lines--
-	}
+	lines := sourceLines(body)
 	b.manifest.Files = append(b.manifest.Files, types.SourceFile{Path: p, Object: object, GitBlob: gitBlob, Size: int64(len(body)), Lines: lines, SourceURL: sourceURL, Revision: revision})
 	b.size += int64(len(body))
 	return nil
@@ -159,6 +154,80 @@ func (b *Builder) Reuse(file types.SourceFile) error {
 	b.size += file.Size
 	return nil
 }
+
+// ReuseSnapshot copies a previously published manifest only after validating
+// every object inside this builder's exact data-source scope. It is deliberately
+// stronger than Reuse: callers use it when an upstream revision has not
+// changed, so a missing or corrupted local object must make the connector do a
+// normal rebuild rather than publish a broken unchanged snapshot.
+//
+// The prior manifest's tenant, knowledge-base, data-source, selection, and
+// revision must all match the current builder. No objects or metadata are ever
+// read from another source's namespace.
+func (b *Builder) ReuseSnapshot(previous *types.SourceSnapshot) error {
+	if b == nil || b.store == nil || b.ds == nil || previous == nil ||
+		previous.TenantID != b.ds.TenantID ||
+		previous.KnowledgeBaseID != b.ds.KnowledgeBaseID ||
+		previous.DataSourceID != b.ds.ID ||
+		previous.Selection != b.manifest.Selection ||
+		previous.Revision == "" || previous.Revision != b.manifest.Revision ||
+		len(previous.Files) > MaxFiles {
+		return ErrUnavailable
+	}
+
+	// Validate before changing the builder so a caller can safely fall back to a
+	// fresh connector read after any failure.
+	seen := make(map[string]struct{}, len(previous.Files))
+	var total int64
+	for _, file := range previous.Files {
+		if !SafePath(file.Path) || !hashPattern.MatchString(file.Object) || file.Size < 0 || file.Size > MaxFileBytes || file.Lines < 0 {
+			return ErrUnavailable
+		}
+		if _, ok := seen[file.Path]; ok {
+			return ErrUnavailable
+		}
+		seen[file.Path] = struct{}{}
+		if total+file.Size > MaxTotalBytes {
+			return ErrUnavailable
+		}
+		body, err := b.store.Content(b.ds, file)
+		if err != nil || int64(len(body)) != file.Size || sourceLines(body) != file.Lines {
+			return ErrUnavailable
+		}
+		total += file.Size
+	}
+
+	var skipped map[string]int
+	if previous.Skipped != nil {
+		skipped = make(map[string]int, len(previous.Skipped))
+		for reason, count := range previous.Skipped {
+			if reason == "" || count < 0 {
+				return ErrUnavailable
+			}
+			skipped[reason] = count
+		}
+	}
+	var files []types.SourceFile
+	if previous.Files != nil {
+		files = append(make([]types.SourceFile, 0, len(previous.Files)), previous.Files...)
+	}
+	b.manifest.Files = files
+	b.manifest.Skipped = skipped
+	b.size = total
+	return nil
+}
+
+func sourceLines(body []byte) int {
+	if len(body) == 0 {
+		return 0
+	}
+	lines := bytes.Count(body, []byte{'\n'}) + 1
+	if body[len(body)-1] == '\n' {
+		lines--
+	}
+	return lines
+}
+
 func (b *Builder) Finish() (*types.SourceSnapshot, error) {
 	sort.Slice(b.manifest.Files, func(i, j int) bool { return b.manifest.Files[i].Path < b.manifest.Files[j].Path })
 	for i := 1; i < len(b.manifest.Files); i++ {
