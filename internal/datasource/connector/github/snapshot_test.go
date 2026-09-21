@@ -29,6 +29,7 @@ func TestArchiveSnapshotUsesAllTextLanguagesWithoutForwardingToken(t *testing.T)
 	require.NoError(t, tw.Close())
 	require.NoError(t, gz.Close())
 	c, cfg, _ := fixture(t, nil, false)
+	c.useGitCache = false // archive fixture isolates redirect/token behavior
 	cfg.Settings["mode"] = "source"
 	cfg.Credentials = map[string]interface{}{"access_token": "private-token"}
 	base := c.http.Transport

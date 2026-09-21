@@ -5,8 +5,12 @@ import "time"
 // SourceFile is a text file in an immutable source snapshot. Object is a content
 // hash, never a caller-supplied filesystem path.
 type SourceFile struct {
-	Path      string `json:"path"`
-	Object    string `json:"object"`
+	Path   string `json:"path"`
+	Object string `json:"object"`
+	// GitBlob is the immutable Git blob object ID when this file came from a
+	// Git source. It lets a later source snapshot reuse an already verified
+	// content-addressed object without rereading an unchanged blob.
+	GitBlob   string `json:"git_blob,omitempty"`
 	Size      int64  `json:"size"`
 	Lines     int    `json:"lines"`
 	SourceURL string `json:"source_url,omitempty"`

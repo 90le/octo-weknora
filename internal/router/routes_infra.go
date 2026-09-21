@@ -310,6 +310,11 @@ func RegisterDataSourceRoutes(
 		// Validate credentials without persistence (for "Test Connection" button) — Admin+
 		ds.POST("/validate-credentials", g.Admin(), handler.ValidateCredentials)
 
+		// GitHub discovery and explicit batch creation. These routes are before
+		// /:id so "github" is never interpreted as a data-source identifier.
+		ds.POST("/github/discover", g.Admin(), handler.DiscoverGitHubRepositories)
+		ds.POST("/github/batch", g.Admin(), handler.CreateGitHubBatch)
+
 		// CRUD operations
 		ds.POST("", g.Admin(), handler.CreateDataSource)
 		ds.GET("", g.Viewer(), handler.ListDataSources)

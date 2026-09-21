@@ -25,12 +25,22 @@ func (s *DataSourceService) processSourceSnapshot(ctx context.Context, ds *types
 	}
 	store, err := snapshot.FromEnvironment()
 	var current *types.SourceSnapshot
+	var previousSnapshot *types.SourceSnapshot
 	if err == nil {
+		if cursor, _ := ds.ParseSyncCursor(); cursor != nil {
+			if id, ok := cursor.ConnectorCursor["snapshot_id"].(string); ok && id != "" {
+				previousSnapshot, _ = store.Load(ds, cfg, id)
+			}
+		}
 		var builder *snapshot.Builder
 		builder, err = store.Begin(ds, cfg)
 		if err == nil {
 			if provider, ok := connector.(datasource.SnapshotConnector); ok {
-				err = provider.BuildSnapshot(ctx, cfg, builder)
+				if incremental, ok := provider.(datasource.IncrementalSnapshotConnector); ok {
+					err = incremental.BuildSnapshotIncremental(ctx, cfg, builder, previousSnapshot)
+				} else {
+					err = provider.BuildSnapshot(ctx, cfg, builder)
+				}
 			} else {
 				err = errors.New("connector does not support source snapshots")
 			}
@@ -54,13 +64,9 @@ func (s *DataSourceService) processSourceSnapshot(ctx context.Context, ds *types
 	result := &types.SyncResult{}
 	if err == nil {
 		previous := map[string]string{}
-		if c, _ := ds.ParseSyncCursor(); c != nil {
-			if id, ok := c.ConnectorCursor["snapshot_id"].(string); ok {
-				if old, e := store.Load(ds, cfg, id); e == nil {
-					for _, f := range old.Files {
-						previous[f.Path] = f.Object
-					}
-				}
+		if previousSnapshot != nil {
+			for _, f := range previousSnapshot.Files {
+				previous[f.Path] = f.Object
 			}
 		}
 		for _, f := range current.Files {

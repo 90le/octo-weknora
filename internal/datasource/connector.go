@@ -58,6 +58,14 @@ type SnapshotConnector interface {
 	BuildSnapshot(context.Context, *types.DataSourceConfig, *snapshot.Builder) error
 }
 
+// IncrementalSnapshotConnector can reuse files from the last successfully
+// published snapshot. The service supplies nil when no trusted prior snapshot
+// exists. A failed build must leave that prior snapshot readable.
+type IncrementalSnapshotConnector interface {
+	SnapshotConnector
+	BuildSnapshotIncremental(context.Context, *types.DataSourceConfig, *snapshot.Builder, *types.SourceSnapshot) error
+}
+
 // StreamHandler receives items and progress checkpoints emitted during a
 // streaming fetch. The service implements it to ingest each item as it arrives
 // (bounding memory to one item instead of the whole wiki) and to persist the

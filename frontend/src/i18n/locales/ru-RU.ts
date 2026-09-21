@@ -1,5 +1,6 @@
 import { storageSpaceMessages } from '../storageSpaceMessages'
 import { sourceRootMessages } from '../sourceRootMessages'
+import { githubBulkMessages } from '../githubBulkMessages'
 export default {
   storageSpaces: storageSpaceMessages.en,
   sourceRoots: sourceRootMessages.en,
@@ -762,6 +763,7 @@ export default {
       tokenHint: 'Optional for public repositories. Private repositories require a read-only Contents token. Stored encrypted; never returned.',
       pathsHint: 'One file or directory per line, for example README.md or docs. Empty includes all supported documents.',
     },
+    githubBulk: githubBulkMessages.en,
     gitlab: {
       baseUrl: 'URL GitLab', accessToken: 'Персональный токен доступа', projects: 'Проекты GitLab',
       projectsHint: 'Укажите ID проекта или путь в пространстве имён (например group/project), а также при необходимости ветку и каталоги.',

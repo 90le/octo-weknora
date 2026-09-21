@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
@@ -37,6 +38,7 @@ type DataSourceService struct {
 	tenantRepo        interfaces.TenantRepository
 	tagService        interfaces.KnowledgeTagService
 	audit             interfaces.AuditLogService
+	manualSyncMu      sync.Mutex
 }
 
 // NewDataSourceService creates a new data source service
@@ -273,6 +275,13 @@ func (s *DataSourceService) UpdateDataSourceCredentials(
 	if err := s.dsRepo.Update(ctx, existing); err != nil {
 		return nil, err
 	}
+	if existing.Type == types.ConnectorTypeGitHub && snapshot.IsSource(parsed) {
+		if store, storeErr := snapshot.FromEnvironment(); storeErr == nil {
+			if clearErr := store.ClearPrivateDirectory(existing, "git"); clearErr != nil {
+				logger.Warnf(ctx, "failed to clear GitHub transport cache after credential update: %v", clearErr)
+			}
+		}
+	}
 	logger.Infof(ctx, "DataSource credentials updated: id=%s", secutils.SanitizeForLog(id))
 	recordKBActivity(ctx, s.audit, existing.TenantID, existing.KnowledgeBaseID, types.AuditActionDataSourceUpdated,
 		"data_source", existing.ID, types.AuditOutcomeSuccess,
@@ -458,6 +467,11 @@ func (s *DataSourceService) ResolveResourceAncestors(
 
 // ManualSync triggers an immediate sync for a data source
 func (s *DataSourceService) ManualSync(ctx context.Context, dsID string) (*types.SyncLog, error) {
+	// Creation of the log and its queue task is a short critical section. Once
+	// the first caller has enqueued a sync, later clicks observe the running log
+	// instead of creating duplicate GitHub fetches for the same source.
+	s.manualSyncMu.Lock()
+	defer s.manualSyncMu.Unlock()
 	ds, err := s.GetDataSource(ctx, dsID)
 	if err != nil {
 		return nil, err
@@ -467,6 +481,9 @@ func (s *DataSourceService) ManualSync(ctx context.Context, dsID string) (*types
 		ds.Status != types.DataSourceStatusError &&
 		ds.Status != types.DataSourceStatusPaused {
 		return nil, datasource.ErrDataSourceNotActive
+	}
+	if running, err := s.syncLogRepo.HasRunningSync(ctx, dsID); err == nil && running {
+		return nil, datasource.ErrSyncAlreadyRunning
 	}
 
 	// Create sync log

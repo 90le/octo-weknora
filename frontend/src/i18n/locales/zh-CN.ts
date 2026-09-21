@@ -1,5 +1,6 @@
 import { storageSpaceMessages } from '../storageSpaceMessages'
 import { sourceRootMessages } from '../sourceRootMessages'
+import { githubBulkMessages } from '../githubBulkMessages'
 export default {
   storageSpaces: storageSpaceMessages.zh,
   sourceRoots: sourceRootMessages.zh,
@@ -761,6 +762,7 @@ export default {
       tokenHint: '公开仓库可留空。私有仓库使用仅有 Contents 读取权限的令牌；令牌加密保存，不回显。',
       pathsHint: '每行一个文件或目录，例如 README.md、docs。留空包含全仓库受支持文档。',
     },
+    githubBulk: githubBulkMessages.zh,
     gitlab: {
       baseUrl: 'GitLab 地址',
       accessToken: '个人访问令牌',

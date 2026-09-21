@@ -12,6 +12,7 @@ import {
 } from '@/api/datasource'
 import { humanizeCron, relativeTime } from '@/utils/cronHumanize'
 import DataSourceEditorDialog from './DataSourceEditorDialog.vue'
+import GitHubBulkImportDialog from './GitHubBulkImportDialog.vue'
 import DataSourceSyncLogs from './DataSourceSyncLogs.vue'
 import DataSourceTypeIcon from './DataSourceTypeIcon.vue'
 import SourceBrowserDrawer from './SourceBrowserDrawer.vue'
@@ -30,6 +31,7 @@ const canManageDataSource = computed(() => authStore.hasRole('admin'))
 const dataSources = ref<DataSource[]>([])
 const loading = ref(false)
 const editorVisible = ref(false)
+const githubBulkVisible = ref(false)
 const editingDs = ref<DataSource | null>(null)
 const logsVisible = ref(false)
 const sourceVisible = ref(false)
@@ -75,6 +77,10 @@ async function loadList(silent = false) {
 function openCreate() {
   editingDs.value = null
   editorVisible.value = true
+}
+
+function openGitHubBulk() {
+  githubBulkVisible.value = true
 }
 
 function openEdit(ds: DataSource) {
@@ -177,6 +183,10 @@ function isSyncRunning(ds: DataSource) {
 
 function onEditorSaved() {
   editorVisible.value = false
+  loadList()
+}
+
+function onGitHubBulkSaved() {
   loadList()
 }
 
@@ -325,6 +335,19 @@ onBeforeUnmount(stopPolling)
           </span>
           <span class="ds-card--add__label">{{ t('datasource.add') }}</span>
         </button>
+
+        <button
+          v-if="canManageDataSource"
+          type="button"
+          class="ds-card ds-card--add ds-card--github-bulk"
+          @click="openGitHubBulk"
+        >
+          <span class="ds-card--add__icon ds-card--github-bulk__icon" aria-hidden="true">
+            <DataSourceTypeIcon type="github" :size="18" />
+          </span>
+          <span class="ds-card--add__label">{{ t('datasource.githubBulk.add') }}</span>
+          <span class="ds-card--add__hint">{{ t('datasource.githubBulk.addHint') }}</span>
+        </button>
       </div>
     </t-loading>
 
@@ -333,6 +356,12 @@ onBeforeUnmount(stopPolling)
       :kb-id="kbId"
       :data-source="editingDs"
       @saved="onEditorSaved"
+    />
+
+    <GitHubBulkImportDialog
+      v-model:visible="githubBulkVisible"
+      :kb-id="kbId"
+      @saved="onGitHubBulkSaved"
     />
 
     <DataSourceSyncLogs
@@ -446,6 +475,23 @@ onBeforeUnmount(stopPolling)
       font-size: 13px;
       font-weight: 500;
       line-height: 1.4;
+    }
+
+    &__hint {
+      color: var(--td-text-color-placeholder);
+      font-size: 11px;
+      line-height: 1.45;
+      text-align: center;
+    }
+  }
+
+  &--github-bulk {
+    color: var(--td-text-color-primary);
+
+    &__icon {
+      background: var(--td-bg-color-container);
+      box-shadow: inset 0 0 0 1px var(--td-component-stroke);
+      color: var(--td-text-color-primary);
     }
   }
 

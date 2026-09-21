@@ -18,6 +18,14 @@ type SourceSnapshotReader interface {
 
 // DataSourceService defines the interface for data source management operations
 type DataSourceService interface {
+	// DiscoverGitHubRepositories returns one safe, paginated page of candidate
+	// repositories. It does not persist credentials, sources, or sync tasks.
+	DiscoverGitHubRepositories(ctx context.Context, req *types.GitHubDiscoveryRequest) (*types.GitHubDiscoveryResponse, error)
+
+	// CreateGitHubBatch creates a bounded set of ordinary GitHub data sources.
+	// Each repository keeps its own authorization, status, log and snapshot.
+	CreateGitHubBatch(ctx context.Context, req *types.GitHubBatchRequest) (*types.GitHubBatchResponse, error)
+
 	// CreateDataSource creates a new data source configuration
 	CreateDataSource(ctx context.Context, ds *types.DataSource) (*types.DataSource, error)
 
