@@ -58,7 +58,7 @@ func (r *sourceToolReader) ReadSourceFile(_ context.Context, kbID, sourceID, sna
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.readCalls = append(r.readCalls, sourceToolCall{KnowledgeBaseID: kbID, SourceID: sourceID, SnapshotID: snapshotID})
-	return &types.SourceRead{DataSourceID: sourceID, SnapshotID: snapshotID, Path: p, Revision: "commit-1", StartLine: start, EndLine: end, TotalLines: 12, Content: "source body", PreviewURL: "/platform/knowledge-bases/" + kbID + "?source_id=" + sourceID + "&snapshot_id=" + snapshotID}, nil
+	return &types.SourceRead{DataSourceID: sourceID, SnapshotID: snapshotID, Path: p, Revision: "commit-1", StartLine: start, EndLine: end, TotalLines: 12, Content: "source body", SourceURL: "https://github.com/example/repo/blob/commit-1/" + p, PreviewURL: "/platform/knowledge-bases/" + kbID + "?source_id=" + sourceID + "&snapshot_id=" + snapshotID}, nil
 }
 
 func (r *sourceToolReader) SearchSourceFiles(ctx context.Context, kbID, sourceID, snapshotID, _ string, _ string) (*types.SourceSearch, error) {
@@ -138,6 +138,12 @@ func TestSourceBrowseCatalogBindsOpaqueRefAndRedactsInternalIDs(t *testing.T) {
 	require.NotContains(t, read.Output, "kb-uuid")
 	require.NotContains(t, read.Output, "source-uuid")
 	require.NotContains(t, read.Output, "snapshot-uuid")
+	citation, ok := read.Data[types.SourceBrowseCitationDataKey].(types.SourceBrowseCitation)
+	require.True(t, ok, "read provenance stays in private live ToolResult.Data")
+	require.Equal(t, types.SourceBrowseCitation{KnowledgeBaseID: "kb-uuid", URL: "https://github.com/example/repo/blob/commit-1/src/main.go", Path: "src/main.go", Revision: "commit-1"}, citation)
+	serialized, err := json.Marshal(read)
+	require.NoError(t, err)
+	require.NotContains(t, string(serialized), "kb-uuid", "private provenance must not serialize with a live ToolResult")
 }
 
 func TestSourceBrowseRejectsMalformedRefsAndSafelyCorrectsLegacyArguments(t *testing.T) {

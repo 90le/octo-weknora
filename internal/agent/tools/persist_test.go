@@ -106,6 +106,31 @@ func TestSanitizeToolResultForClient_omitsOutput(t *testing.T) {
 	}
 }
 
+func TestSourceBrowseCitationProvenanceNeverLeavesLiveToolResult(t *testing.T) {
+	data := map[string]interface{}{
+		"display_type": "source_snapshot",
+		"action":       "read",
+		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{
+			KnowledgeBaseID: "private-kb",
+			URL:             "https://github.com/example/repo/blob/commit/main.go#L1-L2",
+			Path:            "main.go",
+			Revision:        "commit",
+		},
+	}
+	persisted := SanitizeToolDataForPersist(ToolSourceBrowse, data)
+	if _, ok := persisted[types.SourceBrowseCitationDataKey]; ok {
+		t.Fatal("private source provenance must not enter persisted agent data")
+	}
+	client := SanitizeToolResultForClient(ToolSourceBrowse, &types.ToolResult{Success: true, Data: data})
+	if _, ok := client[types.SourceBrowseCitationDataKey]; ok {
+		t.Fatal("private source provenance must not enter client event data")
+	}
+	stored := SanitizeAgentStepsForStorage([]types.AgentStep{{ToolCalls: []types.ToolCall{{Name: ToolSourceBrowse, Result: &types.ToolResult{Success: true, Data: data}}}}})
+	if _, ok := stored[0].ToolCalls[0].Result.Data[types.SourceBrowseCitationDataKey]; ok {
+		t.Fatal("private source provenance must not enter persisted agent steps")
+	}
+}
+
 func TestSandboxToolPersistenceStripsDuplicatePayloadsAndCompactsHistory(t *testing.T) {
 	rawOutput := strings.Repeat("shell output ", 1000)
 	steps := []types.AgentStep{{

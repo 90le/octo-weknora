@@ -73,12 +73,14 @@ func (t *trackedRetrieval) Execute(ctx context.Context, args json.RawMessage) (*
 			trace.succeeded = true
 			if t.Tool.Name() == "source_browse" {
 				var input struct {
-					Action          string `json:"action"`
-					KnowledgeBaseID string `json:"knowledge_base_id"`
+					Action string `json:"action"`
 				}
-				var read types.SourceRead
-				if json.Unmarshal(args, &input) == nil && input.Action == "read" && input.KnowledgeBaseID != "" && json.Unmarshal([]byte(result.Output), &read) == nil && read.SourceURL != "" && read.Path != "" {
-					trace.sources = append(trace.sources, SourceCitation{KnowledgeBaseID: input.KnowledgeBaseID, URL: read.SourceURL, Path: read.Path, Revision: read.Revision})
+				if json.Unmarshal(args, &input) == nil && input.Action == "read" {
+					if raw, ok := result.Data[types.SourceBrowseCitationDataKey]; ok {
+						if citation, ok := raw.(types.SourceBrowseCitation); ok && citation.KnowledgeBaseID != "" && citation.URL != "" && citation.Path != "" {
+							trace.sources = append(trace.sources, SourceCitation{KnowledgeBaseID: citation.KnowledgeBaseID, URL: citation.URL, Path: citation.Path, Revision: citation.Revision})
+						}
+					}
 				}
 			}
 		}

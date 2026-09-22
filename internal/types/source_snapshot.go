@@ -61,6 +61,23 @@ type SourceRead struct {
 	SourceURL    string `json:"source_url,omitempty"`
 	PreviewURL   string `json:"preview_url"`
 }
+
+// SourceBrowseCitationDataKey is private, turn-local provenance attached to a
+// source_browse read result. It lets trusted transport code prove that a public
+// source URL came from an authorized source read without disclosing the
+// knowledge-base ID to the model, client, or persisted agent history.
+const SourceBrowseCitationDataKey = "_source_browse_citation"
+
+// SourceBrowseCitation is intentionally non-serializable. It is held only in
+// ToolResult.Data during the live turn; persistence and client sanitizers drop
+// its key before the result leaves the agent process.
+type SourceBrowseCitation struct {
+	KnowledgeBaseID string `json:"-"`
+	URL             string `json:"-"`
+	Path            string `json:"-"`
+	Revision        string `json:"-"`
+}
+
 type SourceMatch struct {
 	Path      string `json:"path"`
 	Line      int    `json:"line"`

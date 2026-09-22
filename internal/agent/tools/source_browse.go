@@ -514,6 +514,7 @@ func (t *SourceBrowseTool) Execute(ctx context.Context, args json.RawMessage) (*
 	}
 
 	var out interface{}
+	var citation *types.SourceBrowseCitation
 	switch input.Action {
 	case "list":
 		kbIDs := t.allowedIDs()
@@ -558,6 +559,9 @@ func (t *SourceBrowseTool) Execute(ctx context.Context, args json.RawMessage) (*
 			read, err = t.reader.ReadSourceFile(scoped, binding.KnowledgeBaseID, binding.SourceID, binding.SnapshotID, input.Path, input.Start, input.End)
 			if err == nil {
 				out = sourceBrowseRead{SourceRef: ref, Repository: binding.Repository, Snapshot: binding.snapshot(), Path: read.Path, Revision: read.Revision, StartLine: read.StartLine, EndLine: read.EndLine, TotalLines: read.TotalLines, Content: read.Content, Truncated: read.Truncated, SourceURL: read.SourceURL}
+				if read.SourceURL != "" {
+					citation = &types.SourceBrowseCitation{KnowledgeBaseID: binding.KnowledgeBaseID, URL: read.SourceURL, Path: read.Path, Revision: read.Revision}
+				}
 			}
 		}
 	}
@@ -568,5 +572,9 @@ func (t *SourceBrowseTool) Execute(ctx context.Context, args json.RawMessage) (*
 	if err != nil {
 		return nil, err
 	}
-	return &types.ToolResult{Success: true, Output: string(b), Data: map[string]interface{}{"display_type": "source_snapshot", "action": input.Action}}, nil
+	data := map[string]interface{}{"display_type": "source_snapshot", "action": input.Action}
+	if citation != nil {
+		data[types.SourceBrowseCitationDataKey] = *citation
+	}
+	return &types.ToolResult{Success: true, Output: string(b), Data: data}, nil
 }

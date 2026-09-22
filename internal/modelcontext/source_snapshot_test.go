@@ -37,11 +37,12 @@ func TestCodeCitationsKeepDistinctLineAnchors(t *testing.T) {
 
 func TestSourceBrowseReadModelMetadataOmitsInternalIdentifiers(t *testing.T) {
 	r := NewRegistry(true)
-	model := r.ModelToolResultForTool("source_browse", &types.ToolResult{Success: true, Output: `{"source_ref":"s1","repository":"repo","snapshot":{"revision":"abc"},"source_id":"raw-source-uuid","snapshot_id":"raw-snapshot-uuid","path":"main.go","revision":"abc","start_line":1,"end_line":1,"total_lines":1,"content":"package main","source_url":"https://github.com/test/repo/blob/abc/main.go#L1-L1"}`, Data: map[string]interface{}{"display_type": "source_snapshot", "action": "read"}})
+	model := r.ModelToolResultForTool("source_browse", &types.ToolResult{Success: true, Output: `{"source_ref":"s1","repository":"repo","snapshot":{"revision":"abc"},"source_id":"raw-source-uuid","snapshot_id":"raw-snapshot-uuid","path":"main.go","revision":"abc","start_line":1,"end_line":1,"total_lines":1,"content":"package main","source_url":"https://github.com/test/repo/blob/abc/main.go#L1-L1"}`, Data: map[string]interface{}{"display_type": "source_snapshot", "action": "read", types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "raw-kb-uuid", URL: "https://github.com/test/repo/blob/abc/main.go#L1-L1", Path: "main.go", Revision: "abc"}}})
 	require.Contains(t, model, "s1")
 	require.Contains(t, model, "repo")
 	require.NotContains(t, model, "source_id")
 	require.NotContains(t, model, "snapshot_id")
 	require.NotContains(t, model, "raw-source-uuid")
 	require.NotContains(t, model, "raw-snapshot-uuid")
+	require.NotContains(t, model, "raw-kb-uuid")
 }
