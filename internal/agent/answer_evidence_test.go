@@ -148,6 +148,7 @@ func TestRecordAnswerEvidenceRequiresPrivateReleaseProvenance(t *testing.T) {
 				Repository:      "Mininglamp-OSS/octo-android",
 				TagName:         "v1.2.3",
 				URL:             "https://github.com/Mininglamp-OSS/octo-android/releases/tag/v1.2.3",
+				PublishedAt:     checkedAt,
 				CheckedAt:       checkedAt,
 			},
 		}},
@@ -223,7 +224,7 @@ func TestExecuteLoopDoesNotPublishUnsupportedIntegrationClaimWithoutEvidence(t *
 func TestExecuteLoopDeliversSafeUnknownIntegrationAnswerWithoutEvidence(t *testing.T) {
 	model := &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{{
 		ResponseType: types.ResponseTypeAnswer,
-		Content:      "当前授权资料无法确认 Claude 是否支持原生接入。",
+		Content:      "当前授权资料无法确认是否支持。",
 		Done:         true,
 		FinishReason: "stop",
 	}}}}}
@@ -240,7 +241,7 @@ func TestExecuteLoopDeliversSafeUnknownIntegrationAnswerWithoutEvidence(t *testi
 	require.NoError(t, err)
 	require.True(t, state.IsComplete)
 	require.Equal(t, 1, model.callCount, "a safe unknown must not be retried or replaced")
-	require.Equal(t, "当前授权资料无法确认 Claude 是否支持原生接入。", state.FinalAnswer)
+	require.Equal(t, "当前授权资料无法确认是否支持。", state.FinalAnswer)
 	require.Len(t, emitted, 2, "the held answer is released as the normal final stream after validation")
 	require.Equal(t, state.FinalAnswer, emitted[0].Content)
 	require.False(t, emitted[0].Done)
