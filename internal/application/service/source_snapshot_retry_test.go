@@ -48,7 +48,7 @@ func TestSourceSnapshotRetrySuccessClearsOnlyItsPreviousError(t *testing.T) {
 	require.NoError(t, logs.Create(ctx, current))
 	service := &DataSourceService{dsRepo: sources, syncLogRepo: logs}
 	connector := &retrySourceSnapshotConnector{fail: true}
-	require.Error(t, service.processSourceSnapshot(ctx, ds, cfg, connector, current, false))
+	require.Error(t, service.processSourceSnapshot(ctx, ds, cfg, connector, current, false, nil))
 	failed, err := logs.FindByID(ctx, current.ID)
 	require.NoError(t, err)
 	require.Equal(t, types.SyncLogStatusFailed, failed.Status)
@@ -57,7 +57,14 @@ func TestSourceSnapshotRetrySuccessClearsOnlyItsPreviousError(t *testing.T) {
 	ds, err = sources.FindByID(ctx, ds.ID)
 	require.NoError(t, err)
 	connector.fail = false
-	require.NoError(t, service.processSourceSnapshot(ctx, ds, cfg, connector, failed, false))
+	// ProcessSync keeps a retryable run in running state. This direct helper
+	// test simulates that queue claim explicitly before invoking the next
+	// attempt, so its CAS write cannot revive an arbitrary failed log.
+	failed.Status = types.SyncLogStatusRunning
+	failed.FinishedAt = nil
+	failed.ErrorMessage = ""
+	require.NoError(t, logs.UpdateResult(ctx, failed))
+	require.NoError(t, service.processSourceSnapshot(ctx, ds, cfg, connector, failed, false, nil))
 	succeeded, err := logs.FindByID(ctx, current.ID)
 	require.NoError(t, err)
 	require.Equal(t, current.ID, succeeded.ID)

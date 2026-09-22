@@ -1,5 +1,12 @@
 package types
 
+import "time"
+
+// DataSourceSyncTaskTimeout is the maximum execution lease used by both the
+// queue producer and startup recovery. Keep this in one place: marking a
+// running log stale before its worker timeout can race a valid long sync.
+const DataSourceSyncTaskTimeout = 2 * time.Hour
+
 // Worker-pool names are part of the runtime observability API. Each pool is
 // backed by an independent asynq.Server, so concurrency is hard-isolated
 // between pools instead of being only a weighted dequeue preference.

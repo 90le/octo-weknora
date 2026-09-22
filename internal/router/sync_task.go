@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -20,12 +21,34 @@ import (
 type SyncTaskExecutor struct {
 	mu       sync.RWMutex
 	handlers map[string]func(context.Context, *asynq.Task) error
+	// Lite mode has no durable queue. These semaphores intentionally bound
+	// active post-process and enrichment work, where one document can fan out
+	// into many graph/question tasks. Other task classes retain the historical
+	// direct goroutine behaviour.
+	limiters map[string]chan struct{}
 }
 
 func NewSyncTaskExecutor() *SyncTaskExecutor {
-	return &SyncTaskExecutor{
+	return newSyncTaskExecutorWithLimits(map[string]int{
+		types.WorkerPoolPostProcess: types.DefaultPostProcessWorkerConcurrency,
+		types.WorkerPoolEnrichment:  types.DefaultEnrichmentWorkerConcurrency,
+	})
+}
+
+// newSyncTaskExecutorWithLimits is kept package-private so tests can exercise
+// bounded Lite execution without changing production topology. A non-positive
+// value deliberately disables the limiter for that pool.
+func newSyncTaskExecutorWithLimits(limits map[string]int) *SyncTaskExecutor {
+	e := &SyncTaskExecutor{
 		handlers: make(map[string]func(context.Context, *asynq.Task) error),
+		limiters: make(map[string]chan struct{}),
 	}
+	for pool, limit := range limits {
+		if limit > 0 {
+			e.limiters[pool] = make(chan struct{}, limit)
+		}
+	}
+	return e
 }
 
 // RegisterHandler registers a handler for a given task type pattern.
@@ -48,6 +71,7 @@ func (e *SyncTaskExecutor) Enqueue(task *asynq.Task, opts ...asynq.Option) (*asy
 	}
 
 	var delay time.Duration
+	var timeout time.Duration
 	maxRetry := 25 // asynq default
 	maxRetrySet := false
 	for _, opt := range opts {
@@ -60,6 +84,10 @@ func (e *SyncTaskExecutor) Enqueue(task *asynq.Task, opts ...asynq.Option) (*asy
 			if n, ok := opt.Value().(int); ok {
 				maxRetry = n
 				maxRetrySet = true
+			}
+		case asynq.TimeoutOpt:
+			if d, ok := opt.Value().(time.Duration); ok {
+				timeout = d
 			}
 		}
 	}
@@ -101,10 +129,34 @@ func (e *SyncTaskExecutor) Enqueue(task *asynq.Task, opts ...asynq.Option) (*asy
 			}
 
 			attemptCtx := types.WithTaskRetryMetadata(ctx, attempt, maxRetry)
-			lastErr = handler(attemptCtx, task)
+			// Queueing behind a Lite fan-out limiter is scheduling delay, not
+			// handler execution. Start the task timeout only after a slot is
+			// acquired so a busy graph/postprocess pool cannot consume a task's
+			// entire timeout before its handler gets CPU time.
+			release, acquireErr := e.acquireLimiter(attemptCtx, task.Type())
+			if acquireErr != nil {
+				lastErr = acquireErr
+			} else {
+				handlerCtx := attemptCtx
+				cancelAttempt := func() {}
+				if timeout > 0 {
+					handlerCtx, cancelAttempt = context.WithTimeout(attemptCtx, timeout)
+				}
+				lastErr = handler(handlerCtx, task)
+				cancelAttempt()
+				release()
+			}
 			if lastErr == nil {
 				logger.Infof(ctx, "[SyncTask] Task completed type=%s id=%s elapsed=%v",
 					task.Type(), taskID, time.Since(start))
+				return
+			}
+			// asynq.SkipRetry is a terminal control-flow error. Retrying it in
+			// Lite mode used to re-run handlers after a datasource/sync log was
+			// deliberately cancelled or deleted.
+			if errors.Is(lastErr, asynq.SkipRetry) {
+				logger.Infof(ctx, "[SyncTask] Task stopped without retry type=%s id=%s elapsed=%v err=%v",
+					task.Type(), taskID, time.Since(start), lastErr)
 				return
 			}
 		}
@@ -114,6 +166,33 @@ func (e *SyncTaskExecutor) Enqueue(task *asynq.Task, opts ...asynq.Option) (*asy
 	}()
 
 	return info, nil
+}
+
+func (e *SyncTaskExecutor) acquireLimiter(ctx context.Context, taskType string) (func(), error) {
+	pool := litePoolForTaskType(taskType)
+	limiter := e.limiters[pool]
+	if limiter == nil {
+		return func() {}, nil
+	}
+	select {
+	case limiter <- struct{}{}:
+		return func() { <-limiter }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func litePoolForTaskType(taskType string) string {
+	queue, ok := types.QueueForTaskType(taskType)
+	if !ok {
+		return ""
+	}
+	for _, definition := range types.QueueDefinitions() {
+		if definition.Name == queue {
+			return definition.Pool
+		}
+	}
+	return ""
 }
 
 type SyncTaskParams struct {

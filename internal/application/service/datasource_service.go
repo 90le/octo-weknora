@@ -41,6 +41,13 @@ type DataSourceService struct {
 	manualSyncMu      sync.Mutex
 }
 
+// syncRunAtomicFinalizer is intentionally optional so lightweight test and
+// alternate repositories remain usable. The production SQL repository
+// implements it with a single transaction for SyncLog + DataSource state.
+type syncRunAtomicFinalizer interface {
+	UpdateResultAndDataSourceIfRunning(context.Context, *types.SyncLog, *types.DataSource) (bool, error)
+}
+
 // NewDataSourceService creates a new data source service
 func NewDataSourceService(
 	dsRepo interfaces.DataSourceRepository,
@@ -512,7 +519,7 @@ func (s *DataSourceService) ManualSync(ctx context.Context, dsID string) (*types
 
 	payloadJSON, _ := json.Marshal(payload)
 	task := asynq.NewTask(types.TypeDataSourceSync, payloadJSON,
-		asynq.Queue(types.QueueSync), asynq.MaxRetry(5), asynq.Timeout(2*time.Hour))
+		asynq.Queue(types.QueueSync), asynq.MaxRetry(5), asynq.Timeout(types.DataSourceSyncTaskTimeout))
 
 	info, err := s.taskEnqueuer.Enqueue(task)
 	if err != nil {
@@ -628,10 +635,11 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 			syncLog.Status = types.SyncLogStatusCanceled
 			syncLog.FinishedAt = timePtr(time.Now().UTC())
 			syncLog.ErrorMessage = "data source has been deleted"
-			_ = s.syncLogRepo.Update(ctx, syncLog)
+			_, _ = s.syncLogRepo.UpdateResultIfRunning(ctx, syncLog)
 		}
 		return nil
 	}
+	wasPaused := ds.Status == types.DataSourceStatusPaused
 
 	// Get sync log
 	syncLog, err := s.syncLogRepo.FindByID(ctx, payload.SyncLogID)
@@ -639,9 +647,25 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		logger.Errorf(ctx, "failed to get sync log: %v", err)
 		return nil
 	}
-	if syncLog.Status == types.SyncLogStatusCanceled {
+	if syncLog.Status != types.SyncLogStatusRunning {
+		logger.Infof(ctx, "sync log is already terminal, skipping execution: ds=%s syncLog=%s status=%s",
+			payload.DataSourceID, payload.SyncLogID, syncLog.Status)
 		return nil
 	}
+	runGuard := &syncRunGuard{svc: s, syncLogID: syncLog.ID}
+	if err := ensureSyncRunActive(ctx, runGuard); err != nil {
+		return s.finishSyncRunGuardError(ctx, ds, syncLog, nil, wasPaused, err)
+	}
+	// A terminal sync-log transition (deletion, explicit cancellation, or
+	// startup recovery) cancels connectors that honour context. Boundary
+	// checks below still protect non-cooperative connectors before they write.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	stopRunWatch := runGuard.watch(runCtx, cancelRun)
+	defer func() {
+		cancelRun()
+		stopRunWatch()
+	}()
+	ctx = runCtx
 
 	kb, kbErr := s.kbService.GetKnowledgeBaseByID(ctx, ds.KnowledgeBaseID)
 	if kbErr != nil {
@@ -650,63 +674,53 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		syncLog.Status = types.SyncLogStatusCanceled
 		syncLog.FinishedAt = timePtr(time.Now().UTC())
 		syncLog.ErrorMessage = "knowledge base has been deleted"
-		_ = s.syncLogRepo.Update(ctx, syncLog)
+		_, _ = s.syncLogRepo.UpdateResultIfRunning(ctx, syncLog)
 		return nil
 	}
 
 	ctx, err = access.WithKBTaskWrite(ctx, kb, ds.TenantID)
 	if err != nil {
-		return fmt.Errorf("%w: data source KB does not belong to its tenant", asynq.SkipRetry)
+		cause := fmt.Errorf("data source KB does not belong to its tenant: %w", err)
+		return s.failSyncRun(ctx, ds, syncLog, nil, cause.Error(), wasPaused, cause, false)
 	}
-	wasPaused := ds.Status == types.DataSourceStatusPaused
 
 	// Get connector
+	if err := ensureSyncRunActive(ctx, runGuard); err != nil {
+		return s.finishSyncRunGuardError(ctx, ds, syncLog, nil, wasPaused, err)
+	}
 	connector, err := s.connectorRegistry.Get(ds.Type)
 	if err != nil {
 		logger.Errorf(ctx, "connector not found: type=%s", ds.Type)
-		syncLog.Status = types.SyncLogStatusFailed
-		syncLog.FinishedAt = timePtr(time.Now().UTC())
-		syncLog.ErrorMessage = fmt.Sprintf("Connector not found: %s", ds.Type)
-		_ = s.syncLogRepo.Update(ctx, syncLog)
-		if !wasPaused {
-			ds.Status = types.DataSourceStatusError
-		}
-		ds.ErrorMessage = syncLog.ErrorMessage
-		_ = s.dsRepo.Update(ctx, ds)
-		return err
+		return s.failSyncRun(ctx, ds, syncLog, nil,
+			fmt.Sprintf("Connector not found: %s", ds.Type), wasPaused, err, false)
 	}
 
 	// Parse configuration
 	config, err := ds.ParseConfig()
 	if err != nil {
 		logger.Errorf(ctx, "failed to parse config: %v", err)
-		syncLog.Status = types.SyncLogStatusFailed
-		syncLog.FinishedAt = timePtr(time.Now().UTC())
-		syncLog.ErrorMessage = fmt.Sprintf("Invalid configuration: %v", err)
-		_ = s.syncLogRepo.Update(ctx, syncLog)
-		if !wasPaused {
-			ds.Status = types.DataSourceStatusError
-		}
-		ds.ErrorMessage = syncLog.ErrorMessage
-		_ = s.dsRepo.Update(ctx, ds)
-		return err
+		return s.failSyncRun(ctx, ds, syncLog, nil,
+			fmt.Sprintf("Invalid configuration: %v", err), wasPaused, err, false)
 	}
 	// Surface the KB's multimodal/VLM state to the connector so it only extracts
 	// embedded images for OCR when the KB can actually ingest them (never persisted).
 	config.MultimodalEnabled = kb.IsMultimodalEnabled()
 	guard := &syncAccessGuard{svc: s, ds: ds, config: config, allowPaused: wasPaused && payload.Trigger == "manual"}
+	if err := ensureSyncRunActive(ctx, runGuard); err != nil {
+		return s.finishSyncRunGuardError(ctx, ds, syncLog, nil, wasPaused, err)
+	}
 	if err := guard.check(ctx); err != nil {
-		return s.stopSyncAfterAccessChange(ctx, syncLog, nil, err)
+		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, nil, wasPaused, err)
 	}
 	if snapshot.IsSource(config) {
-		return s.processSourceSnapshot(ctx, ds, config, connector, syncLog, wasPaused)
+		return s.processSourceSnapshot(ctx, ds, config, connector, syncLog, wasPaused, runGuard)
 	}
 
 	// Streaming path: connectors that support it interleave fetch→ingest→
 	// checkpoint so a large sync bounds memory and resumes after a timeout
 	// instead of restarting (Tencent/WeKnora#2136). Others fall back below.
 	if sc, ok := connector.(datasource.StreamingConnector); ok {
-		return s.processSyncStreaming(ctx, sc, ds, syncLog, config, payload, wasPaused)
+		return s.processSyncStreaming(ctx, sc, ds, syncLog, config, payload, wasPaused, runGuard)
 	}
 
 	// Fetch items based on sync mode
@@ -714,6 +728,9 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	var nextCursor *types.SyncCursor
 	var fetchErr error
 
+	if err := ensureSyncRunActive(ctx, runGuard); err != nil {
+		return s.finishSyncRunGuardError(ctx, ds, syncLog, nil, wasPaused, err)
+	}
 	if payload.ForceFull || ds.SyncMode == types.SyncModeFull {
 		// Full sync
 		items, fetchErr = connector.FetchAll(ctx, config, config.ResourceIDs)
@@ -724,8 +741,11 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		items, nextCursor, fetchErr = connector.FetchIncremental(ctx, config, cursor)
 		logger.Infof(ctx, "incremental sync fetched %d items", len(items))
 	}
+	if err := ensureSyncRunActive(ctx, runGuard); err != nil {
+		return s.finishSyncRunGuardError(ctx, ds, syncLog, nil, wasPaused, err)
+	}
 	if err := guard.check(ctx); err != nil {
-		return s.stopSyncAfterAccessChange(ctx, syncLog, nil, err)
+		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, nil, wasPaused, err)
 	}
 
 	var fetchWarnings []string
@@ -741,22 +761,11 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		if nextCursor != nil {
 			if cursorJSON, cerr := nextCursor.ToJSON(); cerr == nil {
 				ds.LastSyncCursor = cursorJSON
-				if uerr := s.dsRepo.UpdateSyncState(ctx, ds); uerr != nil {
-					logger.Warnf(ctx, "failed to persist sync cursor after fetch error: %v", uerr)
-				}
 			}
 		}
 		logger.Errorf(ctx, "fetch operation failed: %v", fetchErr)
-		syncLog.Status = types.SyncLogStatusFailed
-		syncLog.FinishedAt = timePtr(time.Now().UTC())
-		syncLog.ErrorMessage = fmt.Sprintf("Fetch failed: %v", fetchErr)
-		_ = s.syncLogRepo.Update(ctx, syncLog)
-		if !wasPaused {
-			ds.Status = types.DataSourceStatusError
-		}
-		ds.ErrorMessage = syncLog.ErrorMessage
-		_ = s.dsRepo.Update(ctx, ds)
-		return fetchErr
+		return s.failSyncRun(ctx, ds, syncLog, nil,
+			fmt.Sprintf("Fetch failed: %v", fetchErr), wasPaused, fetchErr, true)
 	}
 
 	// Process fetched items and write to knowledge base
@@ -770,16 +779,8 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	tenant, err := s.tenantRepo.GetTenantByID(ctx, ds.TenantID)
 	if err != nil {
 		logger.Errorf(ctx, "failed to get tenant info: %v", err)
-		syncLog.Status = types.SyncLogStatusFailed
-		syncLog.FinishedAt = timePtr(time.Now().UTC())
-		syncLog.ErrorMessage = fmt.Sprintf("Failed to get tenant info: %v", err)
-		_ = s.syncLogRepo.Update(ctx, syncLog)
-		if !wasPaused {
-			ds.Status = types.DataSourceStatusError
-		}
-		ds.ErrorMessage = syncLog.ErrorMessage
-		_ = s.dsRepo.Update(ctx, ds)
-		return err
+		return s.failSyncRun(ctx, ds, syncLog, nil,
+			fmt.Sprintf("Failed to get tenant info: %v", err), wasPaused, err, true)
 	}
 	ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenant)
 
@@ -787,20 +788,32 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	autoTagIDs := s.resolveAutoTagIDs(ctx, ds)
 
 	for index, item := range items {
+		if err := runGuard.beforeItem(ctx, index); err != nil {
+			if errors.Is(err, errSyncRunTerminated) {
+				return stopSyncAfterRunTermination(err)
+			}
+			return s.finishSyncRunGuardError(ctx, ds, syncLog, result, wasPaused, err)
+		}
 		if err := guard.beforeItem(ctx, index); err != nil {
-			return s.stopSyncAfterAccessChange(ctx, syncLog, result, err)
+			return s.stopSyncAfterAccessChange(ctx, ds, syncLog, result, wasPaused, err)
 		}
 		item := item
 		s.applyFetchedItem(withKBActivitySuppressed(ctx), ds, &item, autoTagIDs, result)
 	}
+	if err := ensureSyncRunActive(ctx, runGuard); err != nil {
+		return s.finishSyncRunGuardError(ctx, ds, syncLog, result, wasPaused, err)
+	}
 	if err := guard.check(ctx); err != nil {
-		return s.stopSyncAfterAccessChange(ctx, syncLog, result, err)
+		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, result, wasPaused, err)
 	}
 
 	resultJSON, _ := result.ToJSON()
 	if err := allFetchedItemsFailedError(result); err != nil {
 		logger.Errorf(ctx, "data source sync failed while processing fetched items: %v", err)
-		s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON, types.SyncLogStatusFailed, err.Error(), wasPaused)
+		if updateErr := s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
+			types.SyncLogStatusFailed, err.Error(), wasPaused, true); updateErr != nil {
+			return updateErr
+		}
 		return err
 	}
 
@@ -836,7 +849,10 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 				"; %d deletion failure(s) will only retry on the next full sync", result.DeletionFailed)
 		}
 	}
-	s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON, syncStatus, syncErrorMessage, wasPaused)
+	if err := s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
+		syncStatus, syncErrorMessage, wasPaused, false); err != nil {
+		return err
+	}
 
 	logger.Infof(ctx, "data source sync completed: ds=%s created=%d updated=%d deleted=%d",
 		payload.DataSourceID, syncLog.ItemsCreated, syncLog.ItemsUpdated, syncLog.ItemsDeleted)
@@ -1030,12 +1046,13 @@ func streamStartCursor(ds *types.DataSource, forceFull bool, attempt int) (*type
 // Emit ingests each item as it arrives (bounding memory) and Checkpoint persists
 // the connector cursor plus live progress counts at page boundaries.
 type streamSyncHandler struct {
-	svc     *DataSourceService
-	ds      *types.DataSource
-	tagIDs  []string
-	result  *types.SyncResult
-	syncLog *types.SyncLog
-	guard   *syncAccessGuard
+	svc      *DataSourceService
+	ds       *types.DataSource
+	tagIDs   []string
+	result   *types.SyncResult
+	syncLog  *types.SyncLog
+	guard    *syncAccessGuard
+	runGuard *syncRunGuard
 }
 
 // Emit ingests one streamed item. A canceled context aborts the stream so the
@@ -1043,6 +1060,14 @@ type streamSyncHandler struct {
 // do NOT abort (matching the batch loop, which never fails the whole sync for
 // one bad document).
 func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) error {
+	if h.runGuard != nil {
+		if err := h.runGuard.beforeItem(ctx, h.result.Total); err != nil {
+			if errors.Is(err, errSyncRunTerminated) {
+				return stopSyncAfterRunTermination(err)
+			}
+			return err
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1062,6 +1087,11 @@ func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) er
 func (h *streamSyncHandler) Checkpoint(ctx context.Context, cursor *types.SyncCursor) error {
 	if cursor == nil {
 		return nil
+	}
+	if h.runGuard != nil {
+		if err := ensureSyncRunActive(ctx, h.runGuard); err != nil {
+			return err
+		}
 	}
 	if h.guard != nil {
 		if err := h.guard.check(ctx); err != nil {
@@ -1084,8 +1114,11 @@ func (h *streamSyncHandler) Checkpoint(ctx context.Context, cursor *types.SyncCu
 	h.syncLog.ItemsDeleted = h.result.Deleted
 	h.syncLog.ItemsSkipped = h.result.Skipped
 	h.syncLog.ItemsFailed = h.result.Failed
-	if err := h.svc.syncLogRepo.UpdateResult(ctx, h.syncLog); err != nil {
+	applied, err := h.svc.syncLogRepo.UpdateResultIfRunning(ctx, h.syncLog)
+	if err != nil {
 		logger.Warnf(ctx, "failed to persist sync log progress at checkpoint: %v", err)
+	} else if !applied {
+		return stopSyncAfterRunTermination(errSyncRunTerminated)
 	}
 	return nil
 }
@@ -1097,15 +1130,21 @@ func (s *DataSourceService) processSyncStreaming(
 	ctx context.Context, sc datasource.StreamingConnector,
 	ds *types.DataSource, syncLog *types.SyncLog,
 	config *types.DataSourceConfig, payload types.DataSourceSyncPayload, wasPaused bool,
+	runGuard *syncRunGuard,
 ) error {
+	if err := ensureSyncRunActive(ctx, runGuard); err != nil {
+		return s.finishSyncRunGuardError(ctx, ds, syncLog, nil, wasPaused, err)
+	}
 	// Tenant + auto-tag setup must precede fetching because the stream ingests
 	// each item on the fly.
 	ctx = context.WithValue(ctx, types.TenantIDContextKey, ds.TenantID)
 	tenant, err := s.tenantRepo.GetTenantByID(ctx, ds.TenantID)
 	if err != nil {
 		logger.Errorf(ctx, "failed to get tenant info: %v", err)
-		s.updateSyncRunResult(ctx, ds, syncLog, &types.SyncResult{}, nil,
-			types.SyncLogStatusFailed, fmt.Sprintf("Failed to get tenant info: %v", err), wasPaused)
+		if updateErr := s.updateSyncRunResult(ctx, ds, syncLog, &types.SyncResult{}, nil,
+			types.SyncLogStatusFailed, fmt.Sprintf("Failed to get tenant info: %v", err), wasPaused, true); updateErr != nil {
+			return updateErr
+		}
 		return err
 	}
 	ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenant)
@@ -1113,40 +1152,50 @@ func (s *DataSourceService) processSyncStreaming(
 	autoTagIDs := s.resolveAutoTagIDs(ctx, ds)
 
 	forceFull := payload.ForceFull || ds.SyncMode == types.SyncModeFull
-	attempt, _ := asynq.GetRetryCount(ctx)
+	attempt, _, _ := syncTaskAttempt(ctx)
 	startCursor, err := streamStartCursor(ds, forceFull, attempt)
 	if err != nil {
 		logger.Errorf(ctx, "failed to parse sync cursor: %v", err)
-		s.updateSyncRunResult(ctx, ds, syncLog, &types.SyncResult{}, nil,
-			types.SyncLogStatusFailed, fmt.Sprintf("Invalid cursor: %v", err), wasPaused)
-		return err
+		if updateErr := s.updateSyncRunResult(ctx, ds, syncLog, &types.SyncResult{}, nil,
+			types.SyncLogStatusFailed, fmt.Sprintf("Invalid cursor: %v", err), wasPaused, false); updateErr != nil {
+			return updateErr
+		}
+		return fmt.Errorf("%w: %w", asynq.SkipRetry, err)
 	}
 
 	result := &types.SyncResult{}
 	guard := &syncAccessGuard{svc: s, ds: ds, config: config, allowPaused: wasPaused && payload.Trigger == "manual"}
-	handler := &streamSyncHandler{svc: s, ds: ds, tagIDs: autoTagIDs, result: result, syncLog: syncLog, guard: guard}
+	handler := &streamSyncHandler{svc: s, ds: ds, tagIDs: autoTagIDs, result: result, syncLog: syncLog, guard: guard, runGuard: runGuard}
 
 	nextCursor, fetchErr := sc.FetchStream(ctx, config, startCursor, handler)
+	if err := ensureSyncRunActive(ctx, runGuard); err != nil {
+		return s.finishSyncRunGuardError(ctx, ds, syncLog, result, wasPaused, err)
+	}
 	if err := guard.check(ctx); err != nil {
-		return s.stopSyncAfterAccessChange(ctx, syncLog, result, err)
+		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, result, wasPaused, err)
 	}
 	if errors.Is(fetchErr, errSyncAccessChanged) {
-		return s.stopSyncAfterAccessChange(ctx, syncLog, result, fetchErr)
+		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, result, wasPaused, fetchErr)
 	}
 	if fetchErr != nil {
 		// Progress so far is already checkpointed onto ds.LastSyncCursor; leave
 		// it in place so the Asynq retry resumes from there. Persist counts.
 		logger.Errorf(ctx, "streaming fetch failed: %v", fetchErr)
 		resultJSON, _ := result.ToJSON()
-		s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
-			types.SyncLogStatusFailed, fmt.Sprintf("Fetch failed: %v", fetchErr), wasPaused)
+		if updateErr := s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
+			types.SyncLogStatusFailed, fmt.Sprintf("Fetch failed: %v", fetchErr), wasPaused, true); updateErr != nil {
+			return updateErr
+		}
 		return fetchErr
 	}
 
 	resultJSON, _ := result.ToJSON()
 	if err := allFetchedItemsFailedError(result); err != nil {
 		logger.Errorf(ctx, "streaming sync failed while processing fetched items: %v", err)
-		s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON, types.SyncLogStatusFailed, err.Error(), wasPaused)
+		if updateErr := s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
+			types.SyncLogStatusFailed, err.Error(), wasPaused, true); updateErr != nil {
+			return updateErr
+		}
 		return err
 	}
 
@@ -1174,7 +1223,10 @@ func (s *DataSourceService) processSyncStreaming(
 			errMsg += fmt.Sprintf("; %d deletion failure(s) will only retry on the next full sync", result.DeletionFailed)
 		}
 	}
-	s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON, status, errMsg, wasPaused)
+	if err := s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
+		status, errMsg, wasPaused, false); err != nil {
+		return err
+	}
 	logger.Infof(ctx, "streaming sync completed: ds=%s created=%d updated=%d deleted=%d skipped=%d failed=%d",
 		payload.DataSourceID, result.Created, result.Updated, result.Deleted, result.Skipped, result.Failed)
 	return nil
@@ -1189,22 +1241,38 @@ func (s *DataSourceService) updateSyncRunResult(
 	status string,
 	errorMessage string,
 	wasPaused bool,
-) {
+	retryable bool,
+) error {
+	if result == nil {
+		result = &types.SyncResult{}
+	}
+	// Preserve a running lease between retry attempts. A log becomes failed
+	// only when no retry remains (or the failure is known permanent), so a
+	// fresh/duplicate task can always treat failed as terminal without needing
+	// to guess who wrote it.
+	retryPending := status == types.SyncLogStatusFailed && retryable && syncTaskCanRetry(ctx)
+	effectiveStatus := status
+	if retryPending {
+		effectiveStatus = types.SyncLogStatusRunning
+	}
 	syncLog.ItemsTotal = result.Total
 	syncLog.ItemsCreated = result.Created
 	syncLog.ItemsUpdated = result.Updated
 	syncLog.ItemsDeleted = result.Deleted
 	syncLog.ItemsSkipped = result.Skipped
 	syncLog.ItemsFailed = result.Failed
-	syncLog.Status = status
-	syncLog.FinishedAt = timePtr(time.Now().UTC())
+	syncLog.Status = effectiveStatus
+	if retryPending {
+		syncLog.FinishedAt = nil
+	} else {
+		syncLog.FinishedAt = timePtr(time.Now().UTC())
+	}
 	syncLog.ErrorMessage = errorMessage
 	syncLog.Result = resultJSON
-	if err := s.syncLogRepo.UpdateResult(ctx, syncLog); err != nil {
-		logger.Errorf(ctx, "failed to update sync log: %v", err)
-	}
-
-	if status == types.SyncLogStatusFailed {
+	// Prepare the whole datasource outcome before handing it to the atomic
+	// repository path. The transaction must persist the status/error/result
+	// belonging to this exact SyncLog outcome, not the previous in-memory state.
+	if effectiveStatus == types.SyncLogStatusFailed {
 		if !wasPaused {
 			ds.Status = types.DataSourceStatusError
 		}
@@ -1215,24 +1283,76 @@ func (s *DataSourceService) updateSyncRunResult(
 	}
 	ds.ErrorMessage = errorMessage
 	ds.LastSyncResult = resultJSON
-	if err := s.dsRepo.UpdateSyncState(ctx, ds); err != nil {
-		logger.Errorf(ctx, "failed to update data source: %v", err)
+	persistCtx, cancelPersist := detachedSyncRunPersistenceContext(ctx)
+	defer cancelPersist()
+	var (
+		applied bool
+		err     error
+	)
+	if finalizer, ok := s.syncLogRepo.(syncRunAtomicFinalizer); ok {
+		// Production path: rollback the log CAS if datasource state cannot be
+		// persisted, keeping the run running for the next retry.
+		applied, err = finalizer.UpdateResultAndDataSourceIfRunning(persistCtx, syncLog, ds)
+	} else {
+		// Safe fallback for lightweight adapters: write datasource state first,
+		// so a state-write failure can never leave a terminal result behind.
+		if err = s.dsRepo.UpdateSyncState(persistCtx, ds); err == nil {
+			applied, err = s.syncLogRepo.UpdateResultIfRunning(persistCtx, syncLog)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("persist sync outcome: %w", err)
+	}
+	if !applied {
+		return stopSyncAfterRunTermination(errSyncRunTerminated)
+	}
+
+	if retryPending {
+		return nil
 	}
 	action := types.AuditActionDataSourceSyncCompleted
 	outcome := types.AuditOutcomeSuccess
-	if status == types.SyncLogStatusFailed {
+	if effectiveStatus == types.SyncLogStatusFailed {
 		action = types.AuditActionDataSourceSyncFailed
 		outcome = types.AuditOutcomeFailed
 	} else if status == types.SyncLogStatusPartial {
 		outcome = types.AuditOutcomePartial
 	}
-	recordKBActivity(ctx, s.audit, ds.TenantID, ds.KnowledgeBaseID, action,
+	recordKBActivity(persistCtx, s.audit, ds.TenantID, ds.KnowledgeBaseID, action,
 		"data_source", ds.ID, outcome,
 		map[string]any{
 			"name": ds.Name, "type": ds.Type, "sync_log_id": syncLog.ID,
 			"total": result.Total, "created": result.Created, "updated": result.Updated,
 			"deleted": result.Deleted, "skipped": result.Skipped, "failed": result.Failed,
 		})
+	return nil
+}
+
+// failSyncRun records a failure through the running-only CAS. Retryable
+// failures retain the running lease until the queue has exhausted its own
+// attempts; permanent failures are terminal and explicitly stop retry.
+func (s *DataSourceService) failSyncRun(
+	ctx context.Context,
+	ds *types.DataSource,
+	syncLog *types.SyncLog,
+	result *types.SyncResult,
+	errorMessage string,
+	wasPaused bool,
+	cause error,
+	retryable bool,
+) error {
+	if result == nil {
+		result = &types.SyncResult{}
+	}
+	resultJSON, _ := result.ToJSON()
+	if err := s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
+		types.SyncLogStatusFailed, errorMessage, wasPaused, retryable); err != nil {
+		return err
+	}
+	if !retryable {
+		return fmt.Errorf("%w: %w", asynq.SkipRetry, cause)
+	}
+	return cause
 }
 
 func allFetchedItemsFailedError(result *types.SyncResult) error {

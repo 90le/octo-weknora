@@ -11,7 +11,11 @@ import (
 	"gorm.io/gorm"
 )
 
-const resetPendingStaleWindow = 30 * time.Minute
+// Distributed workers may legally run for the datasource task timeout. Startup
+// recovery must wait beyond that lease; otherwise a restart on another replica
+// can mark a still-running, valid long sync as failed. Lite mode remains
+// immediate because its in-memory worker is gone with the process.
+const resetPendingStaleWindow = types.DataSourceSyncTaskTimeout + 5*time.Minute
 
 const restartInterruptedMessage = "Task interrupted due to application restart"
 
@@ -163,7 +167,11 @@ func stuckSyncLogQuery(db *gorm.DB, distributed bool, staleCutoff time.Time) *go
 	q := db.Model(&types.SyncLog{}).
 		Where("status = ?", types.SyncLogStatusRunning)
 	if distributed {
-		q = q.Where("started_at < ?", staleCutoff)
+		// updated_at is the durable activity lease: stream checkpoints and
+		// retryable attempt results refresh it. started_at alone describes the
+		// beginning of the logical run, which can legitimately outlive one
+		// worker timeout across resumable pages.
+		q = q.Where("COALESCE(updated_at, started_at) < ?", staleCutoff)
 	}
 	return q
 }

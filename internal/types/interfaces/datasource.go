@@ -151,6 +151,13 @@ type SyncLogRepository interface {
 	// UpdateResult updates only fields produced by a sync run.
 	UpdateResult(ctx context.Context, log *types.SyncLog) error
 
+	// UpdateResultIfRunning is the worker-safe counterpart to UpdateResult.
+	// It applies a progress or terminal result only while the durable run is
+	// still running, so an old worker cannot overwrite a cancellation, startup
+	// recovery failure, or another terminal outcome.
+	// It returns false, nil when the row was already terminal.
+	UpdateResultIfRunning(ctx context.Context, log *types.SyncLog) (bool, error)
+
 	// CancelPendingByDataSource marks all non-terminal sync logs for a data source as canceled.
 	CancelPendingByDataSource(ctx context.Context, dsID string) error
 
