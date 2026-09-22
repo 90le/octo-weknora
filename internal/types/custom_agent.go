@@ -53,6 +53,9 @@ const (
 	AgentTypeWikiQA = "wiki-qa"
 	// AgentTypeHybridRAGWiki orchestrates Wiki + RAG on KBs where both are enabled.
 	AgentTypeHybridRAGWiki = "hybrid-rag-wiki"
+	// AgentTypeSourceQA searches and reads authorized read-only source snapshots
+	// before answering implementation, configuration, or code-location questions.
+	AgentTypeSourceQA = "source-qa"
 	// AgentTypeDataAnalysis runs SQL / statistics over tabular files (CSV, Excel)
 	// uploaded into the KB. Retrieval semantics (vector/wiki/…) are largely
 	// irrelevant — this type is about data_schema + data_analysis tools.
@@ -101,7 +104,8 @@ type CustomAgentConfig struct {
 	AgentMode string `yaml:"agent_mode" json:"agent_mode"`
 	// AgentType is a preset category under smart-reasoning mode that pre-fills
 	// system prompt, allowed tools and recommended KB compatibility.
-	// Valid values: "rag-qa", "wiki-qa", "hybrid-rag-wiki", "custom".
+	// Valid values: "rag-qa", "wiki-qa", "hybrid-rag-wiki", "source-qa",
+	// "data-analysis", "custom".
 	// Empty / unknown values are treated as "custom" (no preset applied).
 	// Ignored for quick-answer mode.
 	AgentType string `yaml:"agent_type" json:"agent_type,omitempty"`

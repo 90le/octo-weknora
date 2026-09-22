@@ -85,8 +85,13 @@ func (a *Adapter) dispatch(ctx context.Context, msg *im.IncomingMessage, handler
 	return nil
 }
 
-// ExecutionFinished accounts for silence/cancellation/authorization changes as
-// terminal outcomes. Only pending reply delivery is retried automatically.
+// ExecutionFinished closes an admitted execution that did not already record a
+// delivery outcome. A completed agent run without a final reply is a failed
+// delivery, not a successful inbox outcome: treating it as finished would hide
+// a lost finalizer/stream reply and leave no safe retry payload.
+//
+// Only pending reply delivery is retried automatically. This method must not
+// synthesize another reply because a transport outcome can be ambiguous.
 func (a *Adapter) ExecutionFinished(ctx context.Context, msg *im.IncomingMessage) {
 	if a.db == nil || msg == nil {
 		return
@@ -101,11 +106,29 @@ func (a *Adapter) ExecutionFinished(ctx context.Context, msg *im.IncomingMessage
 			_ = a.SendReply(finishCtx, msg, &im.ReplyMessage{Content: deletionReceiptText, IsFinal: true})
 		}
 	}
-	state, code := "finished", ""
+	state, code := "failed", "final_reply_missing"
 	if ctx.Err() != nil {
 		state, code = "failed", "execution_interrupted"
 	}
 	_ = a.inboxQuery(context.WithoutCancel(ctx), msg.MessageID).Where("state = ?", "processing").Updates(map[string]any{"state": state, "error_code": code, "updated_at": time.Now()}).Error
+}
+
+// finishNoReply records the explicit no-reply contract separately from a
+// missing final reply. The latter is a delivery failure; NO_REPLY is a terminal
+// decision and must stay terminal without triggering an outbound retry.
+func (a *Adapter) finishNoReply(ctx context.Context, msg *im.IncomingMessage) {
+	if a.db == nil || msg == nil {
+		return
+	}
+	if ctx.Err() != nil {
+		a.ExecutionFinished(ctx, msg)
+		return
+	}
+	_ = a.inboxQuery(context.WithoutCancel(ctx), msg.MessageID).Where("state = ?", "processing").Updates(map[string]any{
+		"state":      "finished",
+		"error_code": "",
+		"updated_at": time.Now(),
+	}).Error
 }
 
 func (a *Adapter) recoverInbox(ctx context.Context, handler func(context.Context, *im.IncomingMessage) error) {

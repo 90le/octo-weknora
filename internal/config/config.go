@@ -560,7 +560,8 @@ func LoadConfig() (*Config, error) {
 		fmt.Printf("Warning: failed to load builtin agents config: %v\n", err)
 	}
 
-	// Load smart-reasoning agent type presets (rag-qa / wiki-qa / hybrid / custom).
+	// Load smart-reasoning agent type presets (RAG, Wiki, hybrid, source Q&A,
+	// data analysis, and custom).
 	if err := types.LoadAgentTypePresetsConfig(configDir); err != nil {
 		fmt.Printf("Warning: failed to load agent type presets: %v\n", err)
 	}

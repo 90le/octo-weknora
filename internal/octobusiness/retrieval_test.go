@@ -21,6 +21,17 @@ type fakeOtherTool struct {
 	name string
 }
 
+type sourceCitationTool struct {
+	types.Tool
+	result *types.ToolResult
+}
+
+func (*sourceCitationTool) Name() string { return "source_browse" }
+
+func (t *sourceCitationTool) Execute(context.Context, json.RawMessage) (*types.ToolResult, error) {
+	return t.result, nil
+}
+
 func (t *fakeOtherTool) Name() string { return t.name }
 
 func TestOnlyKnowledgeRetrievalChangesEvidence(t *testing.T) {
@@ -65,4 +76,15 @@ func TestMissingIssueRequiresTrustedSearchAndRejectsLatchedFailure(t *testing.T)
 	require.ErrorIs(t, err, ErrInvalid, "a partial retrieval failure prevents unsupported gap registration")
 	clean := WithRetrievalTrace(principalContext(testPrincipal()))
 	require.False(t, retrievalReady(clean), "previous turn evidence must not bleed into another turn")
+}
+
+func TestSourceBrowseReadTracksPrivateProvenanceWithSourceRef(t *testing.T) {
+	ctx := WithRetrievalTrace(context.Background())
+	url := "https://github.com/example/repo/blob/0123456789012345678901234567890123456789/main.go#L3-L7"
+	tool := &sourceCitationTool{result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", URL: url, Path: "main.go", Revision: "0123456789012345678901234567890123456789"},
+	}}}
+	_, err := TrackRetrieval(tool).Execute(ctx, json.RawMessage(`{"action":"read","source_ref":"s1"}`))
+	require.NoError(t, err)
+	require.Equal(t, []SourceCitation{{KnowledgeBaseID: "kb", URL: url, Path: "main.go", Revision: "0123456789012345678901234567890123456789"}}, SourceCitations(ctx))
 }

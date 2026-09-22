@@ -181,7 +181,7 @@ func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *
 		reply = &im.ReplyMessage{Content: deletionReceiptText, IsFinal: true}
 	}
 	if reply != nil && strings.TrimSpace(reply.Content) == "NO_REPLY" {
-		a.ExecutionFinished(ctx, in)
+		a.finishNoReply(ctx, in)
 		return nil
 	}
 	if in == nil || reply == nil || strings.TrimSpace(reply.Content) == "" {

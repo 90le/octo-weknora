@@ -83,17 +83,18 @@ func TestOctoCitationsRejectDraftsWrongKBAndChangedCommit(t *testing.T) {
 type octoCitationSourceTool struct {
 	types.Tool
 	output string
+	data   map[string]interface{}
 }
 
 func (*octoCitationSourceTool) Name() string { return "source_browse" }
 func (t *octoCitationSourceTool) Execute(context.Context, json.RawMessage) (*types.ToolResult, error) {
-	return &types.ToolResult{Success: true, Output: t.output}, nil
+	return &types.ToolResult{Success: true, Output: t.output, Data: t.data}, nil
 }
 func TestOctoRawSourceCitationRequiresObservedReadURL(t *testing.T) {
 	ctx := octobusiness.WithRetrievalTrace(octoCitationContext())
 	url := "https://github.com/test/code/blob/" + strings.Repeat("c", 40) + "/main.go#L3-L7"
 	result, _ := json.Marshal(types.SourceRead{Path: "main.go", SourceURL: url, Revision: strings.Repeat("c", 40)})
-	_, err := octobusiness.TrackRetrieval(&octoCitationSourceTool{output: string(result)}).Execute(ctx, []byte(`{"action":"read","knowledge_base_id":"kb"}`))
+	_, err := octobusiness.TrackRetrieval(&octoCitationSourceTool{output: string(result), data: map[string]interface{}{types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", URL: url, Path: "main.go", Revision: strings.Repeat("c", 40)}}}).Execute(ctx, []byte(`{"action":"read","source_ref":"s1"}`))
 	require.NoError(t, err)
 	service := &Service{}
 	answer := service.appendOctoSources(ctx, `answer <web title="main.go" url="`+url+`"/>`, nil)

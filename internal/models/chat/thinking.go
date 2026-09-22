@@ -170,3 +170,53 @@ func thinkingStrategyName(strategy ThinkingStrategy) string {
 		return "none"
 	}
 }
+
+// thinkingControlWireField returns the optional top-level request field emitted
+// by an explicitly configured thinking strategy. It is intentionally limited
+// to the fields we add ourselves: a provider's 400 must name this exact field
+// before the caller can retry without it.
+func thinkingControlWireField(strategy ThinkingStrategy) string {
+	switch strategy.(type) {
+	case enableThinking:
+		return "enable_thinking"
+	case thinkingTypeField:
+		return "thinking"
+	case chatTemplateKwargs:
+		return "chat_template_kwargs"
+	default:
+		return ""
+	}
+}
+
+// isUnsupportedThinkingControlParameterError recognizes only the narrow
+// OpenAI-compatible 400 responses that reject one of our optional thinking
+// fields as an unknown request parameter. Other 4xx/5xx responses, and even
+// 400s that do not name that exact field, must be returned to the caller
+// unchanged rather than triggering a second request.
+func isUnsupportedThinkingControlParameterError(err error, field string) bool {
+	if err == nil || field == "" {
+		return false
+	}
+
+	message := strings.ToLower(err.Error())
+	if !strings.Contains(message, "status 400") || !strings.Contains(message, strings.ToLower(field)) {
+		return false
+	}
+
+	for _, marker := range []string{
+		"unknown parameter",
+		"unknown field",
+		"unrecognized parameter",
+		"unrecognized field",
+		"unsupported parameter",
+		"unsupported field",
+		"unexpected field",
+		"extra fields not permitted",
+		"additional properties are not allowed",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}

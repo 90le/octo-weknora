@@ -16,6 +16,7 @@ var persistStripFields = map[string][]string{
 // persistStripFieldsByTool drops binary / duplicate blobs. stdout/stderr stay
 // (compacted separately) so a history reload can still render the card.
 var persistStripFieldsByTool = map[string][]string{
+	ToolSourceBrowse:          {types.SourceBrowseCitationDataKey},
 	ToolReadFile:              {"content", "content_base64", "instructions"},
 	ToolShellExec:             {"content", "content_base64"},
 	LegacyToolReadSandboxFile: {"content", "content_base64"},
