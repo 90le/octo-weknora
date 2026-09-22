@@ -41,8 +41,13 @@ type GitHubBatchRequest struct {
 	Mode            string                      `json:"mode"`
 	Paths           []string                    `json:"paths,omitempty"`
 	Exclude         []string                    `json:"exclude,omitempty"`
-	SyncSchedule    string                      `json:"sync_schedule,omitempty"`
-	StartSync       bool                        `json:"start_sync"`
+	// SyncPolicy makes an explicit batch choice distinguishable from an
+	// omitted legacy request. "manual" persists no cron and never queues an
+	// initial sync; "scheduled" requires a valid SyncSchedule. An omitted
+	// policy preserves the legacy six-hour schedule behaviour.
+	SyncPolicy   string `json:"sync_policy,omitempty"`
+	SyncSchedule string `json:"sync_schedule,omitempty"`
+	StartSync    bool   `json:"start_sync"`
 }
 
 type GitHubBatchItemResult struct {

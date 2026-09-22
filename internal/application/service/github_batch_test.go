@@ -127,3 +127,42 @@ func TestCreateGitHubBatchRejectsTooManyExclusionsBeforeCreating(t *testing.T) {
 	require.Nil(t, response)
 	require.EqualError(t, err, "GitHub batch exclusions must contain at most 100 paths")
 }
+
+func TestResolveGitHubBatchSyncPlanManualPersistsNoScheduleAndQueuesNothing(t *testing.T) {
+	plan, err := resolveGitHubBatchSyncPlan(&types.GitHubBatchRequest{SyncPolicy: "manual"})
+	require.NoError(t, err)
+	require.Empty(t, plan.Schedule)
+	require.False(t, plan.StartSync)
+}
+
+func TestResolveGitHubBatchSyncPlanManualRejectsAmbiguousAutoQueue(t *testing.T) {
+	_, err := resolveGitHubBatchSyncPlan(&types.GitHubBatchRequest{SyncPolicy: "manual", StartSync: true})
+	require.EqualError(t, err, "manual GitHub batch sync policy cannot queue an initial sync")
+
+	_, err = resolveGitHubBatchSyncPlan(&types.GitHubBatchRequest{SyncPolicy: "manual", SyncSchedule: "0 0 */6 * * *"})
+	require.EqualError(t, err, "manual GitHub batch sync policy cannot include a schedule")
+}
+
+func TestResolveGitHubBatchSyncPlanScheduledKeepsAndValidatesSchedule(t *testing.T) {
+	plan, err := resolveGitHubBatchSyncPlan(&types.GitHubBatchRequest{
+		SyncPolicy:   "scheduled",
+		SyncSchedule: "0 0 */6 * * *",
+		StartSync:    true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "0 0 */6 * * *", plan.Schedule)
+	require.True(t, plan.StartSync)
+
+	_, err = resolveGitHubBatchSyncPlan(&types.GitHubBatchRequest{SyncPolicy: "scheduled", SyncSchedule: "not a cron"})
+	require.ErrorContains(t, err, "GitHub batch sync schedule is invalid")
+
+	_, err = resolveGitHubBatchSyncPlan(&types.GitHubBatchRequest{SyncPolicy: "scheduled"})
+	require.EqualError(t, err, "scheduled GitHub batch sync policy requires a schedule")
+}
+
+func TestResolveGitHubBatchSyncPlanLegacyRequestsKeepSixHourDefault(t *testing.T) {
+	plan, err := resolveGitHubBatchSyncPlan(&types.GitHubBatchRequest{})
+	require.NoError(t, err)
+	require.Equal(t, defaultGitHubBatchSchedule, plan.Schedule)
+	require.False(t, plan.StartSync)
+}

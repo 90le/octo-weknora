@@ -6,6 +6,7 @@ import {
   defaultGitHubBulkSelection,
   filterGitHubRepositories,
   githubRepositoryModePresence,
+  githubBatchSyncPayload,
   hasGitHubRepositoryMode,
   mergeGitHubRepositoryPresence,
   normalizeGitHubRepository,
@@ -50,6 +51,22 @@ test('GitHub bulk paths and result summaries remain deterministic', () => {
     ]),
     { created: 1, existing: 1, failed: 1, other: 1 },
   )
+})
+
+test('GitHub bulk treats no schedule as an explicit dormant manual source', () => {
+  assert.deepEqual(githubBatchSyncPayload('', true), {
+    sync_policy: 'manual',
+    start_sync: false,
+  })
+  assert.deepEqual(githubBatchSyncPayload('  ', false), {
+    sync_policy: 'manual',
+    start_sync: false,
+  })
+  assert.deepEqual(githubBatchSyncPayload(' 0 0 */6 * * * ', true), {
+    sync_policy: 'scheduled',
+    sync_schedule: '0 0 */6 * * *',
+    start_sync: true,
+  })
 })
 
 test('GitHub bulk tracks source and document ingestion independently', () => {

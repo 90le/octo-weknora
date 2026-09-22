@@ -103,6 +103,7 @@ export interface GitHubDiscoveryResponse {
 }
 
 export type GitHubBulkMode = 'source' | 'documents'
+export type GitHubBatchSyncPolicy = 'manual' | 'scheduled'
 
 export interface GitHubBatchResultItem {
   repository: string
@@ -221,6 +222,7 @@ export function createGitHubDataSourceBatch(data: {
   credentials?: Record<string, unknown>
   mode: GitHubBulkMode
   paths?: string[]
+  sync_policy?: GitHubBatchSyncPolicy
   sync_schedule?: string
   start_sync?: boolean
 }) {

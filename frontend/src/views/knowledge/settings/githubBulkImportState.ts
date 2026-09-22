@@ -1,4 +1,10 @@
-import type { DataSource, GitHubBatchResultItem, GitHubBulkMode, GitHubRepository } from '@/api/datasource'
+import type {
+  DataSource,
+  GitHubBatchResultItem,
+  GitHubBatchSyncPolicy,
+  GitHubBulkMode,
+  GitHubRepository,
+} from '@/api/datasource'
 
 /**
  * Whether a repository already has either of the two deliberately independent
@@ -169,6 +175,30 @@ export function parseGitHubPaths(value: string): string[] {
       .map((path) => path.trim())
       .filter(Boolean),
   ))
+}
+
+export type GitHubBatchSyncPayload = {
+  sync_policy: GitHubBatchSyncPolicy
+  sync_schedule?: string
+  start_sync: boolean
+}
+
+/**
+ * The blank schedule choice is an explicit manual policy, not an omitted
+ * value. That prevents the backend's legacy default schedule from turning a
+ * deliberately dormant source into a six-hour sync job. Manual sources are
+ * created only; users start their first sync from the normal source card.
+ */
+export function githubBatchSyncPayload(schedule: string, startSync: boolean): GitHubBatchSyncPayload {
+  const normalizedSchedule = schedule.trim()
+  if (!normalizedSchedule) {
+    return { sync_policy: 'manual', start_sync: false }
+  }
+  return {
+    sync_policy: 'scheduled',
+    sync_schedule: normalizedSchedule,
+    start_sync: startSync,
+  }
 }
 
 export type GitHubBulkResultSummary = {

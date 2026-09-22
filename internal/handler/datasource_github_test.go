@@ -64,13 +64,16 @@ func TestDataSourceGitHubBatchEnforcesOwnedKnowledgeBase(t *testing.T) {
 	service := &githubDataSourceServiceStub{batch: func(_ context.Context, req *types.GitHubBatchRequest) (*types.GitHubBatchResponse, error) {
 		called = true
 		require.Equal(t, uint64(7), req.TenantID)
+		require.Equal(t, "manual", req.SyncPolicy)
+		require.Empty(t, req.SyncSchedule)
+		require.False(t, req.StartSync)
 		return &types.GitHubBatchResponse{Owner: req.Owner, Results: []types.GitHubBatchItemResult{{Repository: "owner/repo", Status: "created", DataSourceID: "ds"}}}, nil
 	}}
 	kb := &stubKBServiceForDS{getByID: func(_ context.Context, id string) (*types.KnowledgeBase, error) {
 		return &types.KnowledgeBase{ID: id, TenantID: 7}, nil
 	}}
 	h := NewDataSourceHandler(service, kb)
-	body := `{"knowledge_base_id":"kb","owner":"owner","mode":"source","repositories":[{"repository":"owner/repo"}]}`
+	body := `{"knowledge_base_id":"kb","owner":"owner","mode":"source","sync_policy":"manual","repositories":[{"repository":"owner/repo"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/datasource/github/batch", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
