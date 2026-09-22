@@ -25,6 +25,65 @@ func TestGitHubBatchExistingPairsAreModeScoped(t *testing.T) {
 	require.False(t, belongsToOwner("other/repo", "example"))
 }
 
+func TestGitHubDataSourcePairsCanonicalizeLegacyDocumentRepositories(t *testing.T) {
+	makeSource := func(id string, settings map[string]interface{}) *types.DataSource {
+		blob, err := (&types.DataSourceConfig{Type: types.ConnectorTypeGitHub, Settings: settings}).ToJSON()
+		require.NoError(t, err)
+		return &types.DataSource{ID: id, Type: types.ConnectorTypeGitHub, Config: blob}
+	}
+
+	pairs := githubDataSourcePairs([]*types.DataSource{
+		// Legacy sources predate the explicit mode and must remain visible to
+		// document-mode batch retries.
+		makeSource("legacy-documents", map[string]interface{}{
+			"repository": "https://GitHub.com/Mininglamp-OSS/Octo-CLI.git",
+		}),
+		makeSource("empty-mode-documents", map[string]interface{}{
+			"repository": "MININGLAMP-OSS/octo-server",
+			"mode":       "",
+		}),
+	})
+
+	require.Equal(t, "legacy-documents", pairs["mininglamp-oss/octo-cli\x00documents"])
+	require.Equal(t, "empty-mode-documents", pairs["mininglamp-oss/octo-server\x00documents"])
+	key, ok := canonicalGitHubDataSourcePair("Mininglamp-OSS/OCTO-CLI.git", "documents")
+	require.True(t, ok)
+	require.Equal(t, "legacy-documents", pairs[key])
+}
+
+func TestGitHubDataSourcePairsKeepDocumentAndSourceModesDistinct(t *testing.T) {
+	makeSource := func(id, repository, mode string) *types.DataSource {
+		blob, err := (&types.DataSourceConfig{Type: types.ConnectorTypeGitHub, Settings: map[string]interface{}{
+			"repository": repository,
+			"mode":       mode,
+		}}).ToJSON()
+		require.NoError(t, err)
+		return &types.DataSource{ID: id, Type: types.ConnectorTypeGitHub, Config: blob}
+	}
+	pairs := githubDataSourcePairs([]*types.DataSource{
+		makeSource("documents", "https://github.com/Mininglamp-OSS/octo-cli.git", "documents"),
+		makeSource("source", "mininglamp-oss/OCTO-CLI", "source"),
+	})
+
+	documentKey, documentOK := canonicalGitHubDataSourcePair("Mininglamp-OSS/octo-cli", "documents")
+	sourceKey, sourceOK := canonicalGitHubDataSourcePair("https://github.com/MININGLAMP-OSS/octo-cli.git", "source")
+	require.True(t, documentOK)
+	require.True(t, sourceOK)
+	require.NotEqual(t, documentKey, sourceKey)
+	require.Equal(t, "documents", pairs[documentKey])
+	require.Equal(t, "source", pairs[sourceKey])
+}
+
+func TestCanonicalGitHubDataSourcePairDefaultsEmptyModeToDocuments(t *testing.T) {
+	key, ok := canonicalGitHubDataSourcePair("https://github.com/Mininglamp-OSS/octo-cli.git", "")
+	require.True(t, ok)
+	require.Equal(t, "mininglamp-oss/octo-cli\x00documents", key)
+	require.Empty(t, requestedGitHubBatchMode(""), "new batch requests must choose a mode explicitly")
+
+	_, ok = canonicalGitHubDataSourcePair("https://github.com/Mininglamp-OSS/octo-cli/tree/main", "documents")
+	require.False(t, ok, "a GitHub file/tree URL is not a repository identity")
+}
+
 func TestGitHubBatchSettingsOmitEmptyExclusions(t *testing.T) {
 	for _, excludes := range [][]string{nil, {}} {
 		settings := githubBatchSettings("Mininglamp-OSS/octo-cli", "main", "source", nil, excludes)

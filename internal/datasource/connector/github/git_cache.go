@@ -354,14 +354,36 @@ func (g *gitCache) commandIn(ctx context.Context, directory string, args ...stri
 	cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=https")
 	cleanup := func() {}
 	if g.token != "" {
-		askPass, remove, err := createAskPass(g.dir)
+		// `git clone` creates g.dir itself, so an initial private-repository
+		// sync cannot place the askpass helper inside that directory. Keep the
+		// short-lived helper in its already-private parent instead. This also
+		// makes the helper usable by both the first clone and later cache reads.
+		askPassDir, err := g.askPassDirectory()
 		if err != nil {
 			return nil, cleanup, err
+		}
+		askPass, remove, err := createAskPass(askPassDir)
+		if err != nil {
+			// Never expose the private cache path or an OS-specific failure through
+			// the sync result/UI.
+			return nil, cleanup, &Error{Code: "github_cache_unavailable", Message: "GitHub source credentials cannot be prepared"}
 		}
 		cleanup = remove
 		cmd.Env = append(cmd.Env, "GIT_ASKPASS="+askPass, "GIT_ASKPASS_REQUIRE=force", "WEKNORA_GITHUB_TOKEN="+g.token)
 	}
 	return cmd, cleanup, nil
+}
+
+func (g *gitCache) askPassDirectory() (string, error) {
+	dir := filepath.Dir(g.dir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", &Error{Code: "github_cache_unavailable", Message: "GitHub source cache cannot prepare credentials"}
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return "", &Error{Code: "github_cache_unavailable", Message: "GitHub source cache cannot prepare credentials"}
+	}
+	return dir, nil
 }
 
 func createAskPass(dir string) (string, func(), error) {
