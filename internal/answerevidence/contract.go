@@ -308,11 +308,12 @@ func ClaimsUnsupported(answer string) bool {
 // latest-version lookup found no trusted release provenance. Any other final
 // reply is retried, because even a bare tag or “no release” is a release fact.
 func isExplicitReleaseUnknown(answer string) bool {
-	lower := strings.ToLower(strings.TrimSpace(answer))
-	return lower != "" && containsAny(lower,
-		"无法确认最新", "无法核验最新", "不能确认最新", "无法确认当前版本", "当前材料无法确认", "当前资料无法确认", "当前授权资料无法确认",
-		"没有取得可核验的发布", "没有可核验的发布", "没有发布证据",
-		"cannot confirm the latest", "cannot verify the latest", "unable to verify the latest", "cannot confirm the current version", "cannot verify the current version", "current material cannot confirm", "no verifiable release evidence",
+	return isApprovedUncertaintyAnswer(answer,
+		"无法确认最新", "无法确认最新版本", "无法核验最新", "无法核验最新版本", "不能确认最新", "不能确认最新版本", "无法确认当前版本",
+		"当前材料无法确认", "当前材料无法确认最新版本", "当前资料无法确认", "当前资料无法确认最新版本", "当前授权资料无法确认", "当前授权资料无法确认最新版本",
+		"没有取得可核验的发布", "没有取得可核验的发布记录", "没有可核验的发布", "没有可核验的发布记录", "没有发布证据",
+		"cannot confirm the latest", "cannot confirm the latest version", "cannot verify the latest", "cannot verify the latest version", "unable to verify the latest", "unable to verify the latest version",
+		"cannot confirm the current version", "cannot verify the current version", "current material cannot confirm", "no verifiable release evidence",
 	)
 }
 
@@ -320,12 +321,32 @@ func isExplicitReleaseUnknown(answer string) bool {
 // no documentation/source body was read. Any other answer could assert either
 // support or non-support, including a terse “yes” or “no”.
 func isExplicitIntegrationUnknown(answer string) bool {
-	lower := strings.ToLower(strings.TrimSpace(answer))
-	return lower != "" && containsAny(lower,
+	return isApprovedUncertaintyAnswer(answer,
 		"当前材料无法确认", "当前资料无法确认", "当前授权资料无法确认", "无法确认是否支持", "无法核验是否支持", "不能确认是否支持",
-		"没有读取到可核验", "未读到可核验",
+		"当前材料无法确认是否支持", "当前资料无法确认是否支持", "当前授权资料无法确认是否支持",
+		"没有读取到可核验", "没有读取到可核验证据", "未读到可核验", "未读到可核验证据",
 		"cannot confirm support", "cannot verify support", "unable to confirm whether", "unable to verify whether",
 	)
+}
+
+// isApprovedUncertaintyAnswer permits only a complete, deliberately narrow
+// uncertainty reply. The old substring check let a model prepend a safe phrase
+// and then append an unverified version or integration claim after a comma or
+// contrast word. If a harmless but more elaborate uncertainty response is not
+// listed here, the normal retry/fallback path remains safe and supplies the
+// localized deterministic reply.
+func isApprovedUncertaintyAnswer(answer string, approved ...string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(answer))
+	normalized = strings.Trim(normalized, " \t\r\n。！？!?…")
+	if normalized == "" {
+		return false
+	}
+	for _, candidate := range approved {
+		if normalized == strings.ToLower(candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 // Prompt is system-owned guidance added only for classified Octo turns. The
