@@ -2,6 +2,7 @@ import { storageSpaceMessages } from '../storageSpaceMessages'
 import { sourceRootMessages } from '../sourceRootMessages'
 import { githubBulkMessages } from '../githubBulkMessages'
 import { datasourceDeleteMessages } from '../datasourceDeleteMessages'
+import { datasourceRestartRecoveryMessages } from '../datasourceRestartRecoveryMessages'
 export default {
   storageSpaces: storageSpaceMessages.en,
   sourceRoots: sourceRootMessages.en,
@@ -6382,6 +6383,7 @@ export default {
     },
     githubBulk: githubBulkMessages.en,
     deleteFlow: datasourceDeleteMessages.en,
+    restartRecovery: datasourceRestartRecoveryMessages.en,
     gitlab: {
       baseUrl: 'GitLab URL', accessToken: 'Personal access token', projects: 'GitLab projects',
       projectsHint: 'Enter a project ID or namespace path (for example group/project), with optional branch and directories.',

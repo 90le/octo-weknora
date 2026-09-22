@@ -2,6 +2,7 @@ import { storageSpaceMessages } from '../storageSpaceMessages'
 import { sourceRootMessages } from '../sourceRootMessages'
 import { githubBulkMessages } from '../githubBulkMessages'
 import { datasourceDeleteMessages } from '../datasourceDeleteMessages'
+import { datasourceRestartRecoveryMessages } from '../datasourceRestartRecoveryMessages'
 export default {
   storageSpaces: storageSpaceMessages.en,
   sourceRoots: sourceRootMessages.en,
@@ -6382,6 +6383,7 @@ export default {
     },
     githubBulk: githubBulkMessages.en,
     deleteFlow: datasourceDeleteMessages.en,
+    restartRecovery: datasourceRestartRecoveryMessages.en,
     gitlab: {
       baseUrl: 'GitLab URL', accessToken: 'パーソナルアクセストークン', projects: 'GitLabプロジェクト',
       projectsHint: 'プロジェクトIDまたはネームスペースのパス（例: group/project）を入力します。ブランチとディレクトリは任意です。',

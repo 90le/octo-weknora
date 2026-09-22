@@ -16,6 +16,8 @@ import DataSourceSyncLogs from './DataSourceSyncLogs.vue'
 import DataSourceTypeIcon from './DataSourceTypeIcon.vue'
 import SourceBrowserDrawer from './SourceBrowserDrawer.vue'
 import DataSourceDeleteDialog from './DataSourceDeleteDialog.vue'
+import DataSourceRestartRecoveryDialog from './DataSourceRestartRecoveryDialog.vue'
+import { canPreviewRestartRecoveryForSource } from './datasourceRestartRecoveryState'
 import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{ kbId: string }>()
@@ -40,6 +42,8 @@ const logsDsId = ref('')
 const logsDsName = ref('')
 const deletingDs = ref<DataSource | null>(null)
 const deleteVisible = ref(false)
+const recoveringDs = ref<DataSource | null>(null)
+const restartRecoveryVisible = ref(false)
 const pollTimer = ref<number | null>(null)
 
 function stopPolling() {
@@ -106,8 +110,25 @@ function onDeleteDialogVisibleChange(visible: boolean) {
   if (!visible) deletingDs.value = null
 }
 
+function openRestartRecoveryDialog(ds: DataSource) {
+  recoveringDs.value = ds
+  restartRecoveryVisible.value = true
+}
+
+function onRestartRecoveryVisibleChange(visible: boolean) {
+  restartRecoveryVisible.value = visible
+  if (!visible) recoveringDs.value = null
+}
+
 async function onDataSourceDeleted() {
   await loadList()
+}
+
+async function onRestartRecoveryCompleted() {
+  // A restart recovery is distinct from normal source sync, so only the
+  // explicit dialog polls its run. Refresh this card list once a terminal run
+  // arrives to reflect any resulting source/knowledge status.
+  await loadList(true)
 }
 
 async function handleSync(ds: DataSource) {
@@ -264,6 +285,12 @@ onBeforeUnmount(stopPolling)
                         <t-icon name="edit" /> {{ t('datasource.edit') }}
                       </t-dropdown-item>
                       <t-dropdown-item
+                        v-if="canPreviewRestartRecoveryForSource(ds, canManageDataSource)"
+                        @click="openRestartRecoveryDialog(ds)"
+                      >
+                        <t-icon name="refresh" /> {{ t('datasource.restartRecovery.action') }}
+                      </t-dropdown-item>
+                      <t-dropdown-item
                         v-if="canManageDataSource"
                         :disabled="isSyncRunning(ds)"
                         @click="handleSync(ds)"
@@ -389,6 +416,12 @@ onBeforeUnmount(stopPolling)
     :data-source="deletingDs"
     @update:visible="onDeleteDialogVisibleChange"
     @completed="onDataSourceDeleted"
+  />
+  <DataSourceRestartRecoveryDialog
+    :visible="restartRecoveryVisible"
+    :data-source="recoveringDs"
+    @update:visible="onRestartRecoveryVisibleChange"
+    @completed="onRestartRecoveryCompleted"
   />
 </template>
 

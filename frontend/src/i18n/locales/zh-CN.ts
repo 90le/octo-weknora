@@ -2,6 +2,7 @@ import { storageSpaceMessages } from '../storageSpaceMessages'
 import { sourceRootMessages } from '../sourceRootMessages'
 import { githubBulkMessages } from '../githubBulkMessages'
 import { datasourceDeleteMessages } from '../datasourceDeleteMessages'
+import { datasourceRestartRecoveryMessages } from '../datasourceRestartRecoveryMessages'
 export default {
   storageSpaces: storageSpaceMessages.zh,
   sourceRoots: sourceRootMessages.zh,
@@ -765,6 +766,7 @@ export default {
     },
     githubBulk: githubBulkMessages.zh,
     deleteFlow: datasourceDeleteMessages.zh,
+    restartRecovery: datasourceRestartRecoveryMessages.zh,
     gitlab: {
       baseUrl: 'GitLab 地址',
       accessToken: '个人访问令牌',
