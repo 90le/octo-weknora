@@ -287,6 +287,27 @@ func TestRegistryCompactsKnownIDsInBuiltInValidationErrors(t *testing.T) {
 	require.Equal(t, "Error: document d1 belongs to knowledge base b1", got)
 }
 
+func TestGitHubReleaseLookupUsesExplicitPublicOutputPolicy(t *testing.T) {
+	registry := NewRegistry(true)
+	require.True(t, HasToolPolicy("github_release_lookup"))
+
+	output := registry.ModelToolResultForTool("github_release_lookup", &types.ToolResult{
+		Success: true,
+		Output:  `{"release_ref":"r1","repository":"Mininglamp-OSS/octo-android","latest_stable":{"tag_name":"v1.2.3","url":"https://github.com/Mininglamp-OSS/octo-android/releases/tag/v1.2.3"}}`,
+		Data: map[string]interface{}{
+			types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{
+				KnowledgeBaseID: "private-kb-id",
+				DataSourceID:    "private-data-source-id",
+				Repository:      "Mininglamp-OSS/octo-android",
+			},
+		},
+	})
+	require.Contains(t, output, `"release_ref":"r1"`)
+	require.Contains(t, output, "https://github.com/Mininglamp-OSS/octo-android/releases/tag/v1.2.3")
+	require.NotContains(t, output, "private-kb-id")
+	require.NotContains(t, output, "private-data-source-id")
+}
+
 func TestModelToolResultForTool_failedSkillScriptKeepsStdout(t *testing.T) {
 	registry := NewRegistry(true)
 	stdout := `{"chart":{"success":false,"error":{"error":"X轴字段不存在：工作项目","available":["name","value"]}}}`

@@ -6007,6 +6007,8 @@ export default {
       knowledgeSearchDesc: 'Understand questions and find semantically relevant content',
       octoKnowledgeOperations: 'Octo knowledge operations',
       octoKnowledgeOperationsDesc: 'Record issues, retrieve contacts and reports, and confirm scoped knowledge changes in authorized Octo conversations. Unavailable in ordinary web chat.',
+      githubReleaseLookup: 'GitHub release lookup',
+      githubReleaseLookupDesc: 'Look up official releases, release notes and tags for authorized GitHub repositories; branch versions and tags are never treated as published releases.',
       listChunks: 'View Document Chunks',
       listChunksDesc: 'Get complete chunk content of a document',
       queryGraph: 'Query Knowledge Graph',

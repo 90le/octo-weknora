@@ -55,6 +55,7 @@ var ToolCapabilityRequirements = map[string]ToolRequirement{
 	"thinking":                  {},
 	"octo_knowledge_operations": {},
 	"source_browse":             {},
+	"github_release_lookup":     {},
 	"todo_write":                {},
 
 	// ---- RAG / chunk retrieval (need at least one chunk-indexed KB) ----

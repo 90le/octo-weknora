@@ -1229,6 +1229,8 @@ export default {
       knowledgeSearchDesc: '理解问题并查找语义相关内容',
       octoKnowledgeOperations: 'Octo 知识业务',
       octoKnowledgeOperationsDesc: '在已授权的 Octo 会话中登记问题、查询联系人和报告，并确认受限知识维护操作。普通网页对话不开放此工具。',
+      githubReleaseLookup: 'GitHub 发布查询',
+      githubReleaseLookupDesc: '查询已授权 GitHub 仓库的正式发布、更新说明和标签；不会把开发分支版本或标签当作正式发布。',
       listChunks: '查看文档分块',
       listChunksDesc: '获取文档完整分块内容',
       queryGraph: '查询知识图谱',

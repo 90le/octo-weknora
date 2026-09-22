@@ -44,6 +44,7 @@ export const TOOL_CAPABILITY_REQUIREMENTS: Record<string, ToolRequirement> = {
   // ---- base / reasoning (no KB dependency) ----
   thinking: {},
   source_browse: { consumesFiles: false },
+  github_release_lookup: { consumesFiles: false },
   octo_knowledge_operations: { consumesFiles: false },
   todo_write: {},
 

@@ -17,6 +17,7 @@ var persistStripFields = map[string][]string{
 // (compacted separately) so a history reload can still render the card.
 var persistStripFieldsByTool = map[string][]string{
 	ToolSourceBrowse:          {types.SourceBrowseCitationDataKey},
+	ToolGitHubReleaseLookup:   {types.GitHubReleaseCitationDataKey},
 	ToolReadFile:              {"content", "content_base64", "instructions"},
 	ToolShellExec:             {"content", "content_base64"},
 	LegacyToolReadSandboxFile: {"content", "content_base64"},

@@ -27,8 +27,8 @@ func TestBusinessContextAddsEvidenceContractForScopedAndDirectOctoTurns(t *testi
 	msg := &IncomingMessage{Platform: "octo", Content: "Claude 支持接入 Octo IM Bot 吗？", ChatType: ChatTypeDirect}
 	req := &qaRequest{msg: msg, channel: &IMChannel{Platform: "octo"}}
 	direct := (&Service{}).businessContext(context.Background(), req, nil)
-	if got := answerevidence.IntentFromContext(direct); got != answerevidence.IntentRelease {
-		t.Fatalf("direct intent = %q, want release", got)
+	if got := answerevidence.IntentFromContext(direct); got != answerevidence.IntentIntegration {
+		t.Fatalf("direct intent = %q, want integration", got)
 	}
 
 	command := "这个函数的源码在哪里实现？"

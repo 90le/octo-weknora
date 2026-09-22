@@ -1228,6 +1228,8 @@ export default {
       knowledgeSearchDesc: '질문을 이해하고 의미적으로 관련된 콘텐츠 찾기',
       octoKnowledgeOperations: 'Octo 지식 작업',
       octoKnowledgeOperationsDesc: '승인된 Octo 대화에서 문제를 등록하고 연락처와 보고서를 조회하며 허용된 지식 변경을 확인합니다. 일반 웹 채팅에서는 사용할 수 없습니다.',
+      githubReleaseLookup: 'GitHub 릴리스 조회',
+      githubReleaseLookupDesc: '권한이 있는 GitHub 저장소의 정식 릴리스, 릴리스 노트와 태그를 조회합니다. 개발 브랜치 버전이나 태그를 정식 릴리스로 취급하지 않습니다.',
       listChunks: '문서 청크 보기',
       listChunksDesc: '문서의 전체 청크 내용 조회',
       queryGraph: '지식 그래프 쿼리',

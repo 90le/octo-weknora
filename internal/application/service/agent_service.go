@@ -16,6 +16,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/browserskill"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/datasource"
+	githubConnector "github.com/Tencent/WeKnora/internal/datasource/connector/github"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/mcp"
@@ -104,6 +105,7 @@ type agentService struct {
 	eventBus             *event.EventBus
 	db                   *gorm.DB
 	connectorRegistry    *datasource.ConnectorRegistry
+	githubReleaseCache   *githubConnector.ReleaseCatalogCache
 	webSearchService     interfaces.WebSearchService
 	knowledgeBaseService interfaces.KnowledgeBaseService
 	knowledgeService     interfaces.KnowledgeService
@@ -164,6 +166,7 @@ func NewAgentService(
 		eventBus:             eventBus,
 		db:                   db,
 		connectorRegistry:    connectorRegistry,
+		githubReleaseCache:   githubConnector.NewReleaseCatalogCache(),
 		webSearchService:     webSearchService,
 		duckdb:               duckdb,
 		wikiPageService:      wikiPageService,
@@ -909,6 +912,7 @@ func (s *agentService) registerTools(
 		filteredTools := make([]string, 0)
 		kbTools := map[string]bool{
 			tools.ToolSourceBrowse:        true,
+			tools.ToolGitHubReleaseLookup: true,
 			tools.ToolKnowledgeSearch:     true,
 			tools.ToolGrepChunks:          true,
 			tools.ToolListKnowledgeChunks: true,
@@ -1052,6 +1056,11 @@ func (s *agentService) registerTools(
 		case tools.ToolSourceBrowse:
 			reader := &DataSourceService{dsRepo: repository.NewDataSourceRepository(s.db), kbService: s.knowledgeBaseService, connectorRegistry: s.connectorRegistry}
 			toolToRegister = tools.NewSourceBrowseTool(reader, s.knowledgeBaseService, config.SearchTargets)
+		case tools.ToolGitHubReleaseLookup:
+			toolToRegister = tools.NewGitHubReleaseLookupTool(
+				repository.NewDataSourceRepository(s.db), s.knowledgeBaseService, config.SearchTargets,
+				s.githubReleaseCache, nil,
+			)
 		case tools.ToolKnowledgeSearch:
 			toolToRegister = tools.NewKnowledgeSearchTool(
 				s.knowledgeBaseService,

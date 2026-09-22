@@ -79,6 +79,10 @@ var toolHandlePolicies = map[string]toolHandlePolicy{
 		sourceIDKeys: map[string]struct{}{"knowledge_base_id": {}},
 		sourceOutput: true,
 	},
+	// Release lookup accepts only the tool-local rN reference and returns public
+	// GitHub repository/release fields. Keep a deliberate empty policy so it
+	// cannot inherit an unrelated source-ID mapping or compact its fixed URL.
+	"github_release_lookup": {},
 	"knowledge_search": {
 		sourceIDKeys: map[string]struct{}{"knowledge_base_ids": {}},
 		sourceOutput: true,

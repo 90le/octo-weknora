@@ -46,6 +46,21 @@ func NewConnector() *Connector {
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &Connector{http: c, apiBase: apiBase, syncGate: make(chan struct{}, githubSyncConcurrency()), useGitCache: true}
 }
+
+// NewConnectorWithHTTPClient constructs the same restricted GitHub connector
+// with an injected transport/base URL. It is primarily useful for isolated
+// integration tests; callers still cannot change endpoint or credentials from
+// a user-facing data-source request.
+func NewConnectorWithHTTPClient(client *http.Client, base string) *Connector {
+	c := NewConnector()
+	if client != nil {
+		c.http = client
+	}
+	if strings.TrimSpace(base) != "" {
+		c.apiBase = strings.TrimRight(strings.TrimSpace(base), "/")
+	}
+	return c
+}
 func (*Connector) Type() string { return types.ConnectorTypeGitHub }
 
 func githubSyncConcurrency() int {
@@ -140,6 +155,18 @@ func parseSelection(cfg *types.DataSourceConfig) (selection, error) {
 	}
 	sort.Strings(s.Paths)
 	return s, nil
+}
+
+// ConfiguredRepository returns the canonical GitHub owner/repository identity after the
+// same validation used by sync and source snapshots. It exposes no credential,
+// ref or path data and lets other scoped capabilities avoid maintaining a
+// second parser for repository URLs.
+func ConfiguredRepository(cfg *types.DataSourceConfig) (string, bool) {
+	s, err := parseSelection(cfg)
+	if err != nil {
+		return "", false
+	}
+	return s.Repository, true
 }
 func safePath(p string) bool {
 	return p != "" && p != "." && p != ".." && !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "../") && path.Clean(p) == p && !strings.ContainsAny(p, "\\\x00\r\n")

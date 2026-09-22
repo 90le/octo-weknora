@@ -21,6 +21,10 @@ func recordAnswerEvidenceFromStep(ctx context.Context, step types.AgentStep) {
 		if call.Result == nil || !call.Result.Success {
 			continue
 		}
+		if call.Name == agenttools.ToolGitHubReleaseLookup && hasGitHubReleaseProvenance(call.Result) {
+			answerevidence.RecordReleaseEvidence(ctx)
+			continue
+		}
 		if call.Name == agenttools.ToolSourceBrowse && hasSourceBrowseReadProvenance(call.Result) {
 			answerevidence.RecordSourceRead(ctx)
 			continue
@@ -29,6 +33,36 @@ func recordAnswerEvidenceFromStep(ctx context.Context, step types.AgentStep) {
 			answerevidence.RecordDocumentEvidence(ctx)
 		}
 	}
+}
+
+// hasGitHubReleaseProvenance accepts only the typed, private marker attached
+// by trusted release lookup code. A public tag in tool text, an arbitrary RAG
+// chunk, or a source snapshot cannot set the latest-release evidence ledger.
+func hasGitHubReleaseProvenance(result *types.ToolResult) bool {
+	if result == nil || !result.Success || result.Data == nil {
+		return false
+	}
+	raw, ok := result.Data[types.GitHubReleaseCitationDataKey]
+	if !ok {
+		return false
+	}
+	switch citation := raw.(type) {
+	case types.GitHubReleaseCitation:
+		return validGitHubReleaseCitation(citation)
+	case *types.GitHubReleaseCitation:
+		return citation != nil && validGitHubReleaseCitation(*citation)
+	default:
+		return false
+	}
+}
+
+func validGitHubReleaseCitation(citation types.GitHubReleaseCitation) bool {
+	// Only a positive result from GitHub's dedicated latest-release endpoint can
+	// unlock a latest-version conclusion. Bounded history, tags, and the
+	// no-stable fallback remain useful context but cannot establish currentness.
+	return citation.KnowledgeBaseID != "" && citation.DataSourceID != "" &&
+		citation.Repository != "" && citation.TagName != "" && citation.URL != "" &&
+		!citation.PublishedAt.IsZero() && !citation.CheckedAt.IsZero()
 }
 
 func hasSourceBrowseReadProvenance(result *types.ToolResult) bool {
@@ -64,7 +98,12 @@ func hasDocumentEvidence(toolName, output string) bool {
 		// accept the minimal valid tags too so evidence classification follows
 		// the returned result rather than one presentation detail.
 		return strings.Contains(lower, "<chunk") || strings.Contains(lower, "<faq")
-	case agenttools.ToolGetDocumentInfo, agenttools.ToolWikiReadPage, agenttools.ToolWikiReadSourceDoc:
+	case agenttools.ToolGetDocumentInfo:
+		// The normal knowledge-id path exposes document metadata only. FAQ
+		// entries additionally include their answer body, which is actual
+		// document evidence; a title, path, or metadata record is not.
+		return strings.Contains(output, "Answers:")
+	case agenttools.ToolWikiReadPage, agenttools.ToolWikiReadSourceDoc:
 		return true
 	case agenttools.ToolWebFetch:
 		return strings.Contains(output, "Content (untrusted evidence):")
