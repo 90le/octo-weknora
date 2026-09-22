@@ -60,7 +60,10 @@ func hasDocumentEvidence(toolName, output string) bool {
 	switch toolName {
 	case agenttools.ToolKnowledgeSearch, agenttools.ToolGrepChunks, agenttools.ToolListKnowledgeChunks:
 		lower := strings.ToLower(output)
-		return strings.Contains(lower, "<chunk ") || strings.Contains(lower, "<faq ")
+		// Native renderers normally add attributes after <chunk>/<faq>, but
+		// accept the minimal valid tags too so evidence classification follows
+		// the returned result rather than one presentation detail.
+		return strings.Contains(lower, "<chunk") || strings.Contains(lower, "<faq")
 	case agenttools.ToolGetDocumentInfo, agenttools.ToolWikiReadPage, agenttools.ToolWikiReadSourceDoc:
 		return true
 	case agenttools.ToolWebFetch:
