@@ -14,19 +14,30 @@ import (
 
 // recordAnswerEvidenceFromStep promotes only trusted, completed tool outcomes
 // into the turn-local evidence contract. The model never controls these flags:
-// a source read needs the private provenance marker attached by source_browse,
-// while document evidence requires an actual returned passage or reader body.
+// source search/read and release lookup each need private markers attached by
+// their trusted tools, while document evidence requires an actual returned
+// passage or reader body.
 func recordAnswerEvidenceFromStep(ctx context.Context, step types.AgentStep) {
 	for _, call := range step.ToolCalls {
 		if call.Result == nil || !call.Result.Success {
 			continue
 		}
-		if call.Name == agenttools.ToolGitHubReleaseLookup && hasGitHubReleaseProvenance(call.Result) {
-			answerevidence.RecordReleaseEvidence(ctx)
+		if call.Name == agenttools.ToolGitHubReleaseLookup {
+			if hasGitHubReleaseLookupAudit(call.Result) {
+				answerevidence.RecordReleaseLookup(ctx)
+			}
+			if hasGitHubReleaseProvenance(call.Result) {
+				answerevidence.RecordReleaseEvidence(ctx)
+			}
 			continue
 		}
-		if call.Name == agenttools.ToolSourceBrowse && hasSourceBrowseReadProvenance(call.Result) {
-			answerevidence.RecordSourceRead(ctx)
+		if call.Name == agenttools.ToolSourceBrowse {
+			if search, ok := sourceBrowseSearchAudit(call.Result); ok {
+				answerevidence.RecordSourceSearch(ctx, search.Complete, search.Matched, search.Repository)
+			}
+			if citation, ok := sourceBrowseReadCitation(call.Result); ok {
+				answerevidence.RecordSourceRead(ctx, citation.Repository)
+			}
 			continue
 		}
 		if hasDocumentEvidence(call.Name, call.Result.Output) {
@@ -56,6 +67,24 @@ func hasGitHubReleaseProvenance(result *types.ToolResult) bool {
 	}
 }
 
+func hasGitHubReleaseLookupAudit(result *types.ToolResult) bool {
+	if result == nil || !result.Success || result.Data == nil {
+		return false
+	}
+	raw, ok := result.Data[types.GitHubReleaseLookupDataKey]
+	if !ok {
+		return false
+	}
+	switch audit := raw.(type) {
+	case types.GitHubReleaseLookupAudit:
+		return audit.Repository != ""
+	case *types.GitHubReleaseLookupAudit:
+		return audit != nil && audit.Repository != ""
+	default:
+		return false
+	}
+}
+
 func validGitHubReleaseCitation(citation types.GitHubReleaseCitation) bool {
 	// Only a positive result from GitHub's dedicated latest-release endpoint can
 	// unlock a latest-version conclusion. Bounded history, tags, and the
@@ -66,21 +95,48 @@ func validGitHubReleaseCitation(citation types.GitHubReleaseCitation) bool {
 }
 
 func hasSourceBrowseReadProvenance(result *types.ToolResult) bool {
+	_, ok := sourceBrowseReadCitation(result)
+	return ok
+}
+
+func sourceBrowseReadCitation(result *types.ToolResult) (types.SourceBrowseCitation, bool) {
 	if result == nil || !result.Success || result.Data == nil {
-		return false
+		return types.SourceBrowseCitation{}, false
 	}
 	raw, ok := result.Data[types.SourceBrowseCitationDataKey]
 	if !ok {
-		return false
+		return types.SourceBrowseCitation{}, false
 	}
 	switch citation := raw.(type) {
 	case types.SourceBrowseCitation:
-		return citation.KnowledgeBaseID != "" && citation.Path != ""
+		return citation, citation.KnowledgeBaseID != "" && citation.Path != ""
 	case *types.SourceBrowseCitation:
-		return citation != nil && citation.KnowledgeBaseID != "" && citation.Path != ""
+		if citation != nil && citation.KnowledgeBaseID != "" && citation.Path != "" {
+			return *citation, true
+		}
+		return types.SourceBrowseCitation{}, false
 	default:
-		return false
+		return types.SourceBrowseCitation{}, false
 	}
+}
+
+func sourceBrowseSearchAudit(result *types.ToolResult) (types.SourceBrowseSearchAudit, bool) {
+	if result == nil || !result.Success || result.Data == nil {
+		return types.SourceBrowseSearchAudit{}, false
+	}
+	raw, ok := result.Data[types.SourceBrowseSearchDataKey]
+	if !ok {
+		return types.SourceBrowseSearchAudit{}, false
+	}
+	switch audit := raw.(type) {
+	case types.SourceBrowseSearchAudit:
+		return audit, true
+	case *types.SourceBrowseSearchAudit:
+		if audit != nil {
+			return *audit, true
+		}
+	}
+	return types.SourceBrowseSearchAudit{}, false
 }
 
 // hasDocumentEvidence deliberately treats a zero-hit search as no evidence.

@@ -359,6 +359,52 @@ type ToolResult struct {
 	Images      []string               `json:"images,omitempty"` // Base64 data URIs from tool (e.g. MCP image content)
 }
 
+// MarshalJSON is the final safety boundary for a ToolResult that leaves the
+// live agent process. Tool implementations attach turn-local provenance to
+// Data under underscore-prefixed keys; callers must be able to inspect it in
+// memory for authorization/evidence decisions, but no ad-hoc json.Marshal
+// path may serialize it into agent history, logs, a client response, or a
+// third-party transport.
+//
+// The copy intentionally leaves the live Data map untouched. Direct callers
+// can continue their in-turn control-plane work after serializing a result.
+func (r ToolResult) MarshalJSON() ([]byte, error) {
+	type wireToolResult struct {
+		Success bool                   `json:"success"`
+		Output  string                 `json:"output"`
+		Data    map[string]interface{} `json:"data,omitempty"`
+		Error   string                 `json:"error,omitempty"`
+		Images  []string               `json:"images,omitempty"`
+	}
+	return json.Marshal(wireToolResult{
+		Success: r.Success,
+		Output:  r.Output,
+		Data:    publicToolResultData(r.Data),
+		Error:   r.Error,
+		Images:  r.Images,
+	})
+}
+
+// publicToolResultData copies only transport-safe top-level fields. Private
+// ToolResult.Data fields have a single reserved namespace: any key beginning
+// with '_' is live-only and is dropped by every canonical JSON encoding path.
+func publicToolResultData(data map[string]interface{}) map[string]interface{} {
+	if len(data) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(data))
+	for key, value := range data {
+		if strings.HasPrefix(key, "_") {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // ToolCall represents a single tool invocation within an agent step
 type ToolCall struct {
 	// Target identifies the actual proxy target; Name/Args retain the model call for replay.

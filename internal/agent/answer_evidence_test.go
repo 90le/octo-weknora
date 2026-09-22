@@ -73,13 +73,23 @@ func TestStreamThinkingToEventBusStreamsSourceAnswerAfterReadEvidence(t *testing
 	require.Equal(t, []string{"该函数会读取 API Key。"}, emitted)
 }
 
-func TestRecordAnswerEvidenceRequiresReadProvenanceAndActualDocumentHit(t *testing.T) {
+func TestRecordAnswerEvidenceRequiresSearchReadProvenanceAndActualDocumentHit(t *testing.T) {
 	sourceCtx := answerevidence.WithContract(context.Background(), "源码函数怎么实现？")
 	recordAnswerEvidenceFromStep(sourceCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
 		Name:   agenttools.ToolSourceBrowse,
 		Result: &types.ToolResult{Success: true},
 	}}})
 	require.False(t, answerevidence.SourceReadObserved(sourceCtx))
+	require.False(t, answerevidence.SourceSearchObserved(sourceCtx))
+
+	recordAnswerEvidenceFromStep(sourceCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
+		Name: agenttools.ToolSourceBrowse,
+		Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+			types.SourceBrowseSearchDataKey: types.SourceBrowseSearchAudit{Complete: true, Matched: false},
+		}},
+	}}})
+	require.True(t, answerevidence.SourceSearchObserved(sourceCtx))
+	require.False(t, answerevidence.SourceReadObserved(sourceCtx), "a zero-hit search is not a source read")
 
 	recordAnswerEvidenceFromStep(sourceCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
 		Name: agenttools.ToolSourceBrowse,
@@ -100,6 +110,7 @@ func TestRecordAnswerEvidenceRequiresReadProvenanceAndActualDocumentHit(t *testi
 		Result: &types.ToolResult{Success: true, Output: `<search_results count="1"><chunk>release note</chunk></search_results>`},
 	}}})
 	require.True(t, answerevidence.DocumentOrSourceEvidenceObserved(integrationCtx))
+	require.True(t, answerevidence.IntegrationEvidenceObserved(integrationCtx), "a real RAG body remains valid evidence for a generic support question")
 
 	metadataOnlyCtx := answerevidence.WithContract(context.Background(), "Claude 支持接入 Octo IM Bot 吗？")
 	recordAnswerEvidenceFromStep(metadataOnlyCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
@@ -122,6 +133,7 @@ func TestRecordAnswerEvidenceRequiresPrivateReleaseProvenance(t *testing.T) {
 		Result: &types.ToolResult{Success: true, Output: `{"tag_name":"v1.2.3"}`},
 	}}})
 	require.False(t, answerevidence.ReleaseEvidenceObserved(releaseCtx), "public tool text cannot establish latest-release evidence")
+	require.False(t, answerevidence.ReleaseLookupObserved(releaseCtx), "public tool text cannot claim the official latest endpoint was used")
 
 	recordAnswerEvidenceFromStep(releaseCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
 		Name: agenttools.ToolSourceBrowse,
@@ -208,6 +220,7 @@ func TestExecuteLoopDoesNotPublishUnsupportedIntegrationClaimWithoutEvidence(t *
 	model := &mockChat{responses: []mockResponse{
 		{chunks: []types.StreamResponse{{ResponseType: types.ResponseTypeAnswer, Content: "Claude 不支持原生接入。", Done: true, FinishReason: "stop"}}},
 		{chunks: []types.StreamResponse{{ResponseType: types.ResponseTypeAnswer, Content: "Claude 不支持原生接入。", Done: true, FinishReason: "stop"}}},
+		{chunks: []types.StreamResponse{{ResponseType: types.ResponseTypeAnswer, Content: "Claude 不支持原生接入。", Done: true, FinishReason: "stop"}}},
 	}}
 	engine := newTestEngine(t, model)
 	ctx := answerevidence.WithContract(context.Background(), "Claude 支持接入 Octo IM Bot 吗？")
@@ -216,8 +229,8 @@ func TestExecuteLoopDoesNotPublishUnsupportedIntegrationClaimWithoutEvidence(t *
 	_, err := engine.executeLoop(ctx, state, "Claude 支持接入 Octo IM Bot 吗？", emptyMessages(), nil, "session", "message")
 	require.NoError(t, err)
 	require.True(t, state.IsComplete)
-	require.Equal(t, 2, model.callCount)
-	require.Contains(t, state.FinalAnswer, "README、接口文档或源码")
+	require.Equal(t, 3, model.callCount, "source search and file read may need two evidence nudges")
+	require.Contains(t, state.FinalAnswer, "源码")
 	require.NotContains(t, state.FinalAnswer, "Claude 不支持")
 }
 
@@ -230,6 +243,7 @@ func TestExecuteLoopDeliversSafeUnknownIntegrationAnswerWithoutEvidence(t *testi
 	}}}}}
 	engine := newTestEngine(t, model)
 	ctx := answerevidence.WithContract(context.Background(), "Claude 支持接入 Octo IM Bot 吗？")
+	answerevidence.RecordSourceSearch(ctx, true, false)
 	var emitted []event.AgentFinalAnswerData
 	engine.eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
 		emitted = append(emitted, evt.Data.(event.AgentFinalAnswerData))
@@ -240,7 +254,7 @@ func TestExecuteLoopDeliversSafeUnknownIntegrationAnswerWithoutEvidence(t *testi
 	_, err := engine.executeLoop(ctx, state, "Claude 支持接入 Octo IM Bot 吗？", emptyMessages(), nil, "session", "message")
 	require.NoError(t, err)
 	require.True(t, state.IsComplete)
-	require.Equal(t, 1, model.callCount, "a safe unknown must not be retried or replaced")
+	require.Equal(t, 1, model.callCount, "a safe unknown is allowed only after an authorized zero-hit source search")
 	require.Equal(t, "当前授权资料无法确认是否支持。", state.FinalAnswer)
 	require.Len(t, emitted, 2, "the held answer is released as the normal final stream after validation")
 	require.Equal(t, state.FinalAnswer, emitted[0].Content)

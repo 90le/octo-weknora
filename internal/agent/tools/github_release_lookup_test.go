@@ -117,6 +117,9 @@ func TestGitHubReleaseLookupLatestReturnsTrustedReleaseCitation(t *testing.T) {
 	require.Equal(t, "ds-secret", citation.DataSourceID)
 	require.Equal(t, "v1.2.3", citation.TagName)
 	require.False(t, citation.PublishedAt.IsZero())
+	lookupAudit, ok := result.Data[types.GitHubReleaseLookupDataKey].(types.GitHubReleaseLookupAudit)
+	require.True(t, ok)
+	require.Equal(t, "Acme/Widget", lookupAudit.Repository)
 
 	// A release history is useful context, but never proves that the first
 	// returned page is the current GitHub latest release.
@@ -175,4 +178,7 @@ func TestGitHubReleaseLookupNoStableFallbackDoesNotCreateLatestCitation(t *testi
 	require.Contains(t, result.Output, `"history_complete":false`)
 	_, hasCitation := result.Data[types.GitHubReleaseCitationDataKey]
 	require.False(t, hasCitation)
+	lookupAudit, ok := result.Data[types.GitHubReleaseLookupDataKey].(types.GitHubReleaseLookupAudit)
+	require.True(t, ok, "an official latest endpoint check remains observable even when no stable release exists")
+	require.Equal(t, "Acme/Widget", lookupAudit.Repository)
 }
