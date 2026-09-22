@@ -131,6 +131,31 @@ func TestSourceBrowseCitationProvenanceNeverLeavesLiveToolResult(t *testing.T) {
 	}
 }
 
+func TestGitHubReleaseCitationProvenanceNeverLeavesLiveToolResult(t *testing.T) {
+	data := map[string]interface{}{
+		"display_type": "github_release",
+		"action":       "latest",
+		types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{
+			KnowledgeBaseID: "private-kb",
+			DataSourceID:    "private-datasource",
+			Repository:      "example/repo",
+			TagName:         "v1.2.3",
+		},
+	}
+	persisted := SanitizeToolDataForPersist(ToolGitHubReleaseLookup, data)
+	if _, ok := persisted[types.GitHubReleaseCitationDataKey]; ok {
+		t.Fatal("private GitHub release provenance must not enter persisted agent data")
+	}
+	client := SanitizeToolResultForClient(ToolGitHubReleaseLookup, &types.ToolResult{Success: true, Data: data})
+	if _, ok := client[types.GitHubReleaseCitationDataKey]; ok {
+		t.Fatal("private GitHub release provenance must not enter client event data")
+	}
+	stored := SanitizeAgentStepsForStorage([]types.AgentStep{{ToolCalls: []types.ToolCall{{Name: ToolGitHubReleaseLookup, Result: &types.ToolResult{Success: true, Data: data}}}}})
+	if _, ok := stored[0].ToolCalls[0].Result.Data[types.GitHubReleaseCitationDataKey]; ok {
+		t.Fatal("private GitHub release provenance must not enter persisted agent steps")
+	}
+}
+
 func TestSandboxToolPersistenceStripsDuplicatePayloadsAndCompactsHistory(t *testing.T) {
 	rawOutput := strings.Repeat("shell output ", 1000)
 	steps := []types.AgentStep{{
