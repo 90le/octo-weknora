@@ -85,8 +85,8 @@ func TestInboxDeduplicatesAcrossAdapterRestart(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("completed input executed %d times", calls)
 	}
-	if row := inboxRow(t, a, msg.MessageID); row.State != "finished" {
-		t.Fatalf("terminal state = %s", row.State)
+	if row := inboxRow(t, a, msg.MessageID); row.State != "failed" || row.ErrorCode != "final_reply_missing" {
+		t.Fatalf("missing-reply terminal state = %+v", row)
 	}
 	otherChannel := restartAdapterForTest(t, a)
 	otherChannel.channelID = "another-channel"
@@ -213,6 +213,62 @@ func TestInboxInterruptedWorkIsNotMarkedCompleted(t *testing.T) {
 	row := inboxRow(t, a, msg.MessageID)
 	if row.State != "failed" || row.ErrorCode != "execution_interrupted" {
 		t.Fatalf("interrupted work claimed completion: %+v", row)
+	}
+}
+
+func TestInboxExecutionFinishedPreservesDeliveryAndFailsMissingReply(t *testing.T) {
+	t.Run("delivered reply remains delivered", func(t *testing.T) {
+		a, msg := durableAdapter(t)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"message_id":"2098355867442221058"}`))
+		}))
+		defer server.Close()
+		a.api.base = server.URL
+
+		if err := a.accept(context.Background(), msg, func(context.Context, *im.IncomingMessage) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.SendReply(context.Background(), msg, &im.ReplyMessage{Content: "Delivered answer", IsFinal: true}); err != nil {
+			t.Fatal(err)
+		}
+		a.ExecutionFinished(context.Background(), msg)
+
+		row := inboxRow(t, a, msg.MessageID)
+		if row.State != "delivered" || row.ErrorCode != "" {
+			t.Fatalf("delivery outcome was overwritten: %+v", row)
+		}
+	})
+
+	t.Run("missing final reply is failed without a fallback send", func(t *testing.T) {
+		a, msg := durableAdapter(t)
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Error("ExecutionFinished must not synthesize a second final reply")
+		}))
+		defer server.Close()
+		a.api.base = server.URL
+		if err := a.accept(context.Background(), msg, func(context.Context, *im.IncomingMessage) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+		a.ExecutionFinished(context.Background(), msg)
+
+		row := inboxRow(t, a, msg.MessageID)
+		if row.State != "failed" || row.ErrorCode != "final_reply_missing" || row.Attempts != 0 {
+			t.Fatalf("missing final reply was not terminal and non-duplicating: %+v", row)
+		}
+	})
+}
+
+func TestInboxExplicitNoReplyRemainsFinished(t *testing.T) {
+	a, msg := durableAdapter(t)
+	if err := a.accept(context.Background(), msg, func(context.Context, *im.IncomingMessage) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SendReply(context.Background(), msg, &im.ReplyMessage{Content: "NO_REPLY", IsFinal: true}); err != nil {
+		t.Fatal(err)
+	}
+	row := inboxRow(t, a, msg.MessageID)
+	if row.State != "finished" || row.ErrorCode != "" || row.Attempts != 0 {
+		t.Fatalf("explicit no-reply lost its terminal contract: %+v", row)
 	}
 }
 
