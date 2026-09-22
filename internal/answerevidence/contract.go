@@ -133,9 +133,17 @@ func repositoryLeaf(repository string) string {
 }
 
 // WithContract classifies one incoming turn and starts its evidence ledger.
+// It is idempotent: an ingress such as Octo IM may establish the contract
+// after normalizing an addressed message, while AgentEngine.Execute establishes
+// the same contract for every other transport. Replacing the existing state
+// would lose trusted evidence already recorded by the ingress and could make
+// the same turn use two different classifications.
 // Returning the original context for an unrelated question avoids imposing
 // product-specific policy on general agent work.
 func WithContract(ctx context.Context, query string) context.Context {
+	if stateFrom(ctx) != nil {
+		return ctx
+	}
 	intent := Classify(query)
 	if intent == IntentNone {
 		return ctx

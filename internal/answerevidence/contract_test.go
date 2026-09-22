@@ -29,6 +29,19 @@ func TestClassifyKeepsSourceFactsSeparateFromReleaseQuestions(t *testing.T) {
 	}
 }
 
+func TestWithContractPreservesExistingTurnState(t *testing.T) {
+	ctx := WithContract(context.Background(), "octo-android 最新版本更新了什么？")
+	RecordReleaseLookup(ctx)
+
+	// A later generic transport wrapper must not replace an ingress-created
+	// release contract with IntentNone or discard its recorded lookup state.
+	again := WithContract(ctx, "你好")
+	require.Equal(t, IntentRelease, IntentFromContext(again))
+	require.True(t, ReleaseLookupObserved(again))
+	RecordReleaseEvidence(again)
+	require.True(t, ReleaseEvidenceObserved(ctx), "both contexts must address the same turn state")
+}
+
 func TestSourceContractRequiresReadAndProducesLocalizedFallback(t *testing.T) {
 	ctx := WithContract(context.Background(), "这个函数的源码怎么实现？")
 	require.Equal(t, IntentSource, IntentFromContext(ctx))

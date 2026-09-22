@@ -81,19 +81,40 @@ func TestAnswerEvidencePreflightReadsAuthorizedLatestReleaseBeforeModel(t *testi
 	engine := newTestEngine(t, model)
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	engine.toolRegistry.RegisterTool(releaseTool)
-	ctx := answerevidence.WithContract(context.Background(), "Octo 安卓最新版本更新了什么？")
+	// Deliberately do not pre-wrap ctx: this covers direct UI/API agent-chat
+	// execution, which previously skipped the Octo-only ingress contract.
+	ctx := context.Background()
 
 	state, err := engine.Execute(ctx, "session", "message", "Octo 安卓最新版本更新了什么？", nil)
 	require.NoError(t, err)
 	require.True(t, state.IsComplete)
-	require.True(t, answerevidence.ReleaseLookupObserved(ctx))
-	require.True(t, answerevidence.ReleaseEvidenceObserved(ctx))
 	require.Equal(t, []string{"list", "latest"}, releaseTool.actions())
 	require.Len(t, model.calls, 1)
 	prompt := systemMessage(t, model.calls[0])
 	require.Contains(t, prompt, "https://github.com/ExampleOrg/octo-android/releases/tag/v9.1.0")
 	require.Contains(t, prompt, "system-retrieved, authorized evidence")
 	require.Len(t, state.RoundSteps[0].ToolCalls, 2, "preflight remains auditable in the agent state")
+}
+
+func TestExecutePreservesIngressEvidenceContractWithoutResettingIt(t *testing.T) {
+	query := "octo-android 最新版本更新了什么？"
+	ctx := answerevidence.WithContract(context.Background(), query)
+	answerevidence.RecordReleaseEvidence(ctx)
+	model := &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{{
+		ResponseType: types.ResponseTypeAnswer,
+		Content:      "正式发布已在入口证据中确认。",
+		Done:         true,
+		FinishReason: "stop",
+	}}}}}
+	engine := newTestEngine(t, model)
+	engine.toolRegistry = agenttools.NewToolRegistry()
+
+	state, err := engine.Execute(ctx, "session", "message", query, nil)
+	require.NoError(t, err)
+	require.True(t, state.IsComplete)
+	require.Equal(t, "正式发布已在入口证据中确认。", state.FinalAnswer)
+	require.Equal(t, 1, model.callCount, "Execute must retain the ingress state instead of starting a second evidence contract")
+	require.True(t, answerevidence.ReleaseEvidenceObserved(ctx))
 }
 
 func TestAnswerEvidencePreflightReadsEveryNamedReleaseCandidate(t *testing.T) {
