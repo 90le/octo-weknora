@@ -145,7 +145,7 @@ func TestSourceBrowseCatalogBindsOpaqueRefAndRedactsInternalIDs(t *testing.T) {
 	require.NotContains(t, read.Output, "snapshot-uuid")
 	citation, ok := read.Data[types.SourceBrowseCitationDataKey].(types.SourceBrowseCitation)
 	require.True(t, ok, "read provenance stays in private live ToolResult.Data")
-	require.Equal(t, types.SourceBrowseCitation{KnowledgeBaseID: "kb-uuid", URL: "https://github.com/example/repo/blob/commit-1/src/main.go", Path: "src/main.go", Revision: "commit-1"}, citation)
+	require.Equal(t, types.SourceBrowseCitation{KnowledgeBaseID: "kb-uuid", Repository: "github.com/example/repo", URL: "https://github.com/example/repo/blob/commit-1/src/main.go", Path: "src/main.go", Revision: "commit-1"}, citation)
 	serialized, err := json.Marshal(read)
 	require.NoError(t, err)
 	require.NotContains(t, string(serialized), "kb-uuid", "private provenance must not serialize with a live ToolResult")
@@ -163,8 +163,33 @@ func TestSourceBrowseReadRetainsPrivateEvidenceForLocalDirectories(t *testing.T)
 	citation, ok := read.Data[types.SourceBrowseCitationDataKey].(types.SourceBrowseCitation)
 	require.True(t, ok, "a local source read still needs private provenance")
 	require.Equal(t, "kb-uuid", citation.KnowledgeBaseID)
+	require.Equal(t, "local/project", citation.Repository)
 	require.Equal(t, "main.go", citation.Path)
 	require.Empty(t, citation.URL, "transport may omit a public URL without losing read evidence")
+}
+
+func TestSourceBrowseSearchRetainsPrivateAuditWithoutPromotingReadEvidence(t *testing.T) {
+	reader := &sourceToolReader{
+		summaries: map[string][]types.SourceSummary{
+			"kb-uuid": {sourceSummary("source-uuid", "snapshot-uuid", "github.com/example/repo")},
+		},
+		results: map[string]*types.SourceSearch{
+			"source-uuid": {SnapshotID: "snapshot-uuid", Matches: []types.SourceMatch{}, ScannedFiles: 3, Complete: true},
+		},
+	}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb-uuid"}})
+	result, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"search","query":"missing"}`))
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+	audit, ok := result.Data[types.SourceBrowseSearchDataKey].(types.SourceBrowseSearchAudit)
+	require.True(t, ok)
+	require.True(t, audit.Complete)
+	require.False(t, audit.Matched)
+	_, hasReadCitation := result.Data[types.SourceBrowseCitationDataKey]
+	require.False(t, hasReadCitation)
+	serialized, err := json.Marshal(result)
+	require.NoError(t, err)
+	require.NotContains(t, string(serialized), "_source_browse_search")
 }
 
 func TestSourceBrowseRejectsMalformedRefsAndSafelyCorrectsLegacyArguments(t *testing.T) {

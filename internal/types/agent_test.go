@@ -1,8 +1,36 @@
 package types
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
+
+func TestToolResultMarshalJSONOmitsPrivateDataWithoutMutatingLiveResult(t *testing.T) {
+	result := ToolResult{
+		Success: true,
+		Output:  "ok",
+		Data: map[string]interface{}{
+			"public":           "visible",
+			"_source_citation": "private",
+			"_release_audit":   map[string]interface{}{"repository": "private/repo"},
+		},
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serialized := string(encoded)
+	if strings.Contains(serialized, "_source_citation") || strings.Contains(serialized, "private/repo") {
+		t.Fatalf("private ToolResult data escaped canonical JSON: %s", serialized)
+	}
+	if !strings.Contains(serialized, `"public":"visible"`) {
+		t.Fatalf("public ToolResult data was lost: %s", serialized)
+	}
+	if result.Data["_source_citation"] != "private" || result.Data["public"] != "visible" {
+		t.Fatalf("MarshalJSON mutated live ToolResult.Data: %#v", result.Data)
+	}
+}
 
 func TestResolveSystemPrompt(t *testing.T) {
 	tests := []struct {

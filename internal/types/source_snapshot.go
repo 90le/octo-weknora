@@ -68,14 +68,31 @@ type SourceRead struct {
 // knowledge-base ID to the model, client, or persisted agent history.
 const SourceBrowseCitationDataKey = "_source_browse_citation"
 
+// SourceBrowseSearchDataKey is private, turn-local audit data attached to a
+// successful source_browse search. It records that an authorized search ran,
+// while deliberately keeping a search-only result distinct from read evidence.
+// Persistence and client serializers must strip it before a tool result leaves
+// the agent process.
+const SourceBrowseSearchDataKey = "_source_browse_search"
+
 // SourceBrowseCitation is intentionally non-serializable. It is held only in
 // ToolResult.Data during the live turn; persistence and client sanitizers drop
 // its key before the result leaves the agent process.
 type SourceBrowseCitation struct {
 	KnowledgeBaseID string `json:"-"`
+	Repository      string `json:"-"`
 	URL             string `json:"-"`
 	Path            string `json:"-"`
 	Revision        string `json:"-"`
+}
+
+// SourceBrowseSearchAudit is intentionally non-serializable. A completed
+// zero-hit search proves only that a bounded lookup ran; it never establishes
+// a source fact or authorizes automatic knowledge-gap registration.
+type SourceBrowseSearchAudit struct {
+	Repository string `json:"-"`
+	Complete   bool   `json:"-"`
+	Matched    bool   `json:"-"`
 }
 
 type SourceMatch struct {

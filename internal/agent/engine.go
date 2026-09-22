@@ -334,12 +334,14 @@ func (e *AgentEngine) Execute(
 		CurrentRound:  0,
 	}
 
-	// Build system prompt using progressive RAG prompt
-	// If skills are enabled, include skills metadata (Level 1 - Progressive Disclosure)
+	// Build system prompt using progressive RAG prompt.
+	// If skills are enabled, include skills metadata (Level 1 - Progressive Disclosure).
+	// The deterministic evidence preflight below may append a narrow,
+	// system-owned context after the tool registry has been refreshed.
 	systemPrompt := e.buildSystemPrompt(ctx)
 	logger.Debugf(ctx, "[Agent] SystemPrompt: %d chars", len(systemPrompt))
 
-	// Initialize messages with history
+	// Initialize messages with history.
 	var imgs []string
 	if len(imageURLs) > 0 {
 		imgs = imageURLs[0]
@@ -348,6 +350,14 @@ func (e *AgentEngine) Execute(
 	if e.toolRegistry != nil {
 		e.toolRegistry.RememberMCPHistory(messages)
 		e.toolRegistry.RefreshMCPTools(ctx)
+		if evidence := e.prepareAnswerEvidencePreflight(ctx, state, query); evidence != "" {
+			if len(messages) > 0 && messages[0].Role == "system" {
+				messages[0].Content += "\n\n" + evidence
+			} else {
+				messages = append([]chat.Message{{Role: "system", Content: evidence}}, messages...)
+			}
+			logger.Infof(ctx, "[Agent] Added system-owned answer evidence preflight (%d chars)", len(evidence))
+		}
 	}
 
 	// Get tool definitions for function calling

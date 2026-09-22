@@ -507,6 +507,21 @@ func (t *SourceBrowseTool) globalSearch(ctx context.Context, query, prefix strin
 	return out, nil
 }
 
+// searchAuditFromOutput returns only the control-plane facts needed by the
+// answer-evidence contract. A source search result can be useful navigation,
+// including when it has zero matches, but it must never be mistaken for a
+// source-file read or for an affirmative knowledge claim.
+func searchAuditFromOutput(out interface{}) *types.SourceBrowseSearchAudit {
+	switch result := out.(type) {
+	case sourceBrowseSearch:
+		return &types.SourceBrowseSearchAudit{Repository: result.Repository, Complete: result.Complete, Matched: len(result.Matches) > 0}
+	case sourceBrowseGlobalSearch:
+		return &types.SourceBrowseSearchAudit{Complete: result.Complete, Matched: result.MatchedSources > 0}
+	default:
+		return nil
+	}
+}
+
 func (t *SourceBrowseTool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	input, err := decodeSourceBrowseInput(args)
 	if err != nil || input.validate() != nil {
@@ -515,6 +530,7 @@ func (t *SourceBrowseTool) Execute(ctx context.Context, args json.RawMessage) (*
 
 	var out interface{}
 	var citation *types.SourceBrowseCitation
+	var searchAudit *types.SourceBrowseSearchAudit
 	switch input.Action {
 	case "list":
 		kbIDs := t.allowedIDs()
@@ -563,7 +579,7 @@ func (t *SourceBrowseTool) Execute(ctx context.Context, args json.RawMessage) (*
 				// source directory that has no public GitHub URL. Transport code may
 				// only render the URL when it is safe, while the agent evidence
 				// contract still needs to distinguish a real read from list/search.
-				citation = &types.SourceBrowseCitation{KnowledgeBaseID: binding.KnowledgeBaseID, URL: read.SourceURL, Path: read.Path, Revision: read.Revision}
+				citation = &types.SourceBrowseCitation{KnowledgeBaseID: binding.KnowledgeBaseID, Repository: binding.Repository, URL: read.SourceURL, Path: read.Path, Revision: read.Revision}
 			}
 		}
 	}
@@ -575,8 +591,14 @@ func (t *SourceBrowseTool) Execute(ctx context.Context, args json.RawMessage) (*
 		return nil, err
 	}
 	data := map[string]interface{}{"display_type": "source_snapshot", "action": input.Action}
+	if input.Action == "search" {
+		searchAudit = searchAuditFromOutput(out)
+	}
 	if citation != nil {
 		data[types.SourceBrowseCitationDataKey] = *citation
+	}
+	if searchAudit != nil {
+		data[types.SourceBrowseSearchDataKey] = *searchAudit
 	}
 	return &types.ToolResult{Success: true, Output: string(b), Data: data}, nil
 }

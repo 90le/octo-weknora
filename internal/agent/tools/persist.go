@@ -16,8 +16,8 @@ var persistStripFields = map[string][]string{
 // persistStripFieldsByTool drops binary / duplicate blobs. stdout/stderr stay
 // (compacted separately) so a history reload can still render the card.
 var persistStripFieldsByTool = map[string][]string{
-	ToolSourceBrowse:          {types.SourceBrowseCitationDataKey},
-	ToolGitHubReleaseLookup:   {types.GitHubReleaseCitationDataKey},
+	ToolSourceBrowse:          {types.SourceBrowseCitationDataKey, types.SourceBrowseSearchDataKey},
+	ToolGitHubReleaseLookup:   {types.GitHubReleaseCitationDataKey, types.GitHubReleaseLookupDataKey},
 	ToolReadFile:              {"content", "content_base64", "instructions"},
 	ToolShellExec:             {"content", "content_base64"},
 	LegacyToolReadSandboxFile: {"content", "content_base64"},
@@ -68,6 +68,13 @@ func sanitizeToolData(data map[string]interface{}, extraOmit []string) map[strin
 	}
 	out := make(map[string]interface{}, len(data))
 	for k, v := range data {
+		// Underscore-prefixed keys are reserved for live, in-process control
+		// data such as source/release provenance. Keep the per-tool omit lists
+		// below as defence in depth, but do not make a future private key depend
+		// on every outbound sanitizer being updated in lockstep.
+		if strings.HasPrefix(k, "_") {
+			continue
+		}
 		out[k] = v
 	}
 	displayType := stringField(data, "display_type")

@@ -465,6 +465,7 @@ func (t *GitHubReleaseLookupTool) Execute(ctx context.Context, args json.RawMess
 
 	var output interface{}
 	var citation *types.GitHubReleaseCitation
+	var lookupAudit *types.GitHubReleaseLookupAudit
 	switch input.Action {
 	case "list":
 		output = t.catalog(ctx, input.Query)
@@ -485,6 +486,7 @@ func (t *GitHubReleaseLookupTool) Execute(ctx context.Context, args json.RawMess
 			if latestResult.LatestStable != nil {
 				copy := releaseForLookup(*latestResult.LatestStable, maxLatestReleaseNotesChars, true)
 				output = githubReleaseLatest{ReleaseRef: input.ReleaseRef, Repository: binding.Repository, CheckedAt: latestResult.CheckedAt.Format(time.RFC3339), LatestStable: &copy, ReleaseMetadataStale: latestResult.Stale}
+				lookupAudit = &types.GitHubReleaseLookupAudit{Repository: binding.Repository}
 				if !latestResult.Stale {
 					marker := releaseCitation(binding, &copy, latestResult.CheckedAt)
 					citation = &marker
@@ -508,6 +510,7 @@ func (t *GitHubReleaseLookupTool) Execute(ctx context.Context, args json.RawMess
 			}
 			historyComplete := catalog.HistoryComplete
 			output = githubReleaseLatest{ReleaseRef: input.ReleaseRef, Repository: binding.Repository, CheckedAt: latestResult.CheckedAt.Format(time.RFC3339), NoPublishedStable: latestResult.NoPublishedStable, LatestPrerelease: prerelease, ObservedTags: catalog.Tags[:releaseLimit(input, len(catalog.Tags))], HistoryComplete: &historyComplete, ReleaseMetadataStale: latestResult.Stale || catalog.ReleasesStale, TagMetadataStale: catalog.TagsStale}
+			lookupAudit = &types.GitHubReleaseLookupAudit{Repository: binding.Repository}
 		case "history":
 			var catalog githubconnector.ReleaseCatalog
 			catalog, err = t.catalogForBinding(ctx, binding, source, false)
@@ -536,6 +539,9 @@ func (t *GitHubReleaseLookupTool) Execute(ctx context.Context, args json.RawMess
 	data := map[string]interface{}{"display_type": "github_release", "action": input.Action}
 	if citation != nil {
 		data[types.GitHubReleaseCitationDataKey] = *citation
+	}
+	if lookupAudit != nil {
+		data[types.GitHubReleaseLookupDataKey] = *lookupAudit
 	}
 	return &types.ToolResult{Success: true, Output: string(encoded), Data: data}, nil
 }

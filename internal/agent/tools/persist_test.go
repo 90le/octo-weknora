@@ -112,22 +112,33 @@ func TestSourceBrowseCitationProvenanceNeverLeavesLiveToolResult(t *testing.T) {
 		"action":       "read",
 		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{
 			KnowledgeBaseID: "private-kb",
+			Repository:      "example/repo",
 			URL:             "https://github.com/example/repo/blob/commit/main.go#L1-L2",
 			Path:            "main.go",
 			Revision:        "commit",
 		},
+		types.SourceBrowseSearchDataKey: types.SourceBrowseSearchAudit{Repository: "example/repo", Complete: true, Matched: true},
 	}
 	persisted := SanitizeToolDataForPersist(ToolSourceBrowse, data)
 	if _, ok := persisted[types.SourceBrowseCitationDataKey]; ok {
 		t.Fatal("private source provenance must not enter persisted agent data")
 	}
+	if _, ok := persisted[types.SourceBrowseSearchDataKey]; ok {
+		t.Fatal("private source search audit must not enter persisted agent data")
+	}
 	client := SanitizeToolResultForClient(ToolSourceBrowse, &types.ToolResult{Success: true, Data: data})
 	if _, ok := client[types.SourceBrowseCitationDataKey]; ok {
 		t.Fatal("private source provenance must not enter client event data")
 	}
+	if _, ok := client[types.SourceBrowseSearchDataKey]; ok {
+		t.Fatal("private source search audit must not enter client event data")
+	}
 	stored := SanitizeAgentStepsForStorage([]types.AgentStep{{ToolCalls: []types.ToolCall{{Name: ToolSourceBrowse, Result: &types.ToolResult{Success: true, Data: data}}}}})
 	if _, ok := stored[0].ToolCalls[0].Result.Data[types.SourceBrowseCitationDataKey]; ok {
 		t.Fatal("private source provenance must not enter persisted agent steps")
+	}
+	if _, ok := stored[0].ToolCalls[0].Result.Data[types.SourceBrowseSearchDataKey]; ok {
+		t.Fatal("private source search audit must not enter persisted agent steps")
 	}
 }
 
@@ -141,18 +152,28 @@ func TestGitHubReleaseCitationProvenanceNeverLeavesLiveToolResult(t *testing.T) 
 			Repository:      "example/repo",
 			TagName:         "v1.2.3",
 		},
+		types.GitHubReleaseLookupDataKey: types.GitHubReleaseLookupAudit{Repository: "example/repo"},
 	}
 	persisted := SanitizeToolDataForPersist(ToolGitHubReleaseLookup, data)
 	if _, ok := persisted[types.GitHubReleaseCitationDataKey]; ok {
 		t.Fatal("private GitHub release provenance must not enter persisted agent data")
 	}
+	if _, ok := persisted[types.GitHubReleaseLookupDataKey]; ok {
+		t.Fatal("private GitHub latest-lookup audit must not enter persisted agent data")
+	}
 	client := SanitizeToolResultForClient(ToolGitHubReleaseLookup, &types.ToolResult{Success: true, Data: data})
 	if _, ok := client[types.GitHubReleaseCitationDataKey]; ok {
 		t.Fatal("private GitHub release provenance must not enter client event data")
 	}
+	if _, ok := client[types.GitHubReleaseLookupDataKey]; ok {
+		t.Fatal("private GitHub latest-lookup audit must not enter client event data")
+	}
 	stored := SanitizeAgentStepsForStorage([]types.AgentStep{{ToolCalls: []types.ToolCall{{Name: ToolGitHubReleaseLookup, Result: &types.ToolResult{Success: true, Data: data}}}}})
 	if _, ok := stored[0].ToolCalls[0].Result.Data[types.GitHubReleaseCitationDataKey]; ok {
 		t.Fatal("private GitHub release provenance must not enter persisted agent steps")
+	}
+	if _, ok := stored[0].ToolCalls[0].Result.Data[types.GitHubReleaseLookupDataKey]; ok {
+		t.Fatal("private GitHub latest-lookup audit must not enter persisted agent steps")
 	}
 }
 
