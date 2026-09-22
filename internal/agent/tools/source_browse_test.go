@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
@@ -39,6 +40,7 @@ type sourceToolReader struct {
 	results       map[string]*types.SourceSearch
 	requireGrant  bool
 	omitSourceURL bool
+	readErr       error
 }
 
 func (r *sourceToolReader) ListSourceSnapshots(_ context.Context, kbID string) ([]types.SourceSummary, error) {
@@ -59,6 +61,9 @@ func (r *sourceToolReader) ReadSourceFile(_ context.Context, kbID, sourceID, sna
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.readCalls = append(r.readCalls, sourceToolCall{KnowledgeBaseID: kbID, SourceID: sourceID, SnapshotID: snapshotID})
+	if r.readErr != nil {
+		return nil, r.readErr
+	}
 	url := ""
 	if !r.omitSourceURL {
 		url = "https://github.com/example/repo/blob/commit-1/" + p
@@ -266,6 +271,64 @@ func TestSourceBrowseGlobalSearchCoversAllAuthorizedSnapshotsWithoutScopeWidenin
 	require.NoError(t, err)
 	require.True(t, tree.Success, tree.Error)
 	require.Equal(t, sourceToolCall{KnowledgeBaseID: "kb-authorized", SourceID: "source-37", SnapshotID: "snapshot-37"}, reader.treeCalls[len(reader.treeCalls)-1])
+}
+
+func TestSourceBrowseGlobalSearchMarksConfiguredUnsyncedSourceIncomplete(t *testing.T) {
+	reader := &sourceToolReader{
+		summaries: map[string][]types.SourceSummary{
+			"kb": {
+				sourceSummary("ready", "snapshot-ready", "github.com/example/ready"),
+				{ID: "sync-required", Name: "github.com/example/pending", Type: "github", Status: "sync_required"},
+			},
+		},
+		results: map[string]*types.SourceSearch{
+			"ready": {SnapshotID: "snapshot-ready", Matches: []types.SourceMatch{}, ScannedFiles: 3, Complete: true},
+		},
+	}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	result, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"search","query":"missing"}`))
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+	var search sourceBrowseGlobalSearch
+	require.NoError(t, json.Unmarshal([]byte(result.Output), &search))
+	require.False(t, search.Complete, "an unsynced source cannot prove an exhaustive zero-hit search")
+	audit, ok := result.Data[types.SourceBrowseSearchDataKey].(types.SourceBrowseSearchAudit)
+	require.True(t, ok)
+	require.False(t, audit.Complete)
+}
+
+func TestSourceBrowseReadExplainsUnreadableSnapshotWithoutSuggestingRefRetry(t *testing.T) {
+	reader := &sourceToolReader{
+		summaries: map[string][]types.SourceSummary{
+			"kb": {sourceSummary("source", "snapshot", "github.com/example/repo")},
+		},
+		readErr: snapshot.ErrUnavailable,
+	}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	_ = sourceCatalog(t, tool)
+	result, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"read","source_ref":"s1","path":"main.go","start_line":1,"end_line":1}`))
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	require.Contains(t, result.Error, "not currently readable")
+	require.Contains(t, result.Error, "source sync")
+	require.NotContains(t, result.Error, "copy a returned source_ref")
+}
+
+func TestSourceBrowseReadExplainsMissingPathWithoutSuggestingRefRetry(t *testing.T) {
+	reader := &sourceToolReader{
+		summaries: map[string][]types.SourceSummary{
+			"kb": {sourceSummary("source", "snapshot", "github.com/example/repo")},
+		},
+		readErr: access.ErrNotFound,
+	}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	_ = sourceCatalog(t, tool)
+	result, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"read","source_ref":"s1","path":"deleted.go","start_line":1,"end_line":1}`))
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	require.Contains(t, result.Error, "path is unavailable")
+	require.Contains(t, result.Error, "tree or search")
+	require.NotContains(t, result.Error, "copy a returned source_ref")
 }
 
 func TestSourceToolNeverWidensFileOrTagScope(t *testing.T) {

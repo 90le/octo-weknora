@@ -238,23 +238,14 @@ func canonicalGitHubDataSourcePair(repository, mode string) (string, bool) {
 // representation, but requires exactly one owner and one repository segment
 // so a tree/blob URL can never be mistaken for a repository source.
 func canonicalGitHubRepository(repository string) string {
-	repository = strings.TrimSpace(repository)
-	lower := strings.ToLower(repository)
-	for _, prefix := range []string{"https://github.com/", "http://github.com/", "github.com/"} {
-		if strings.HasPrefix(lower, prefix) {
-			repository = repository[len(prefix):]
-			break
-		}
-	}
-	repository = strings.Trim(strings.TrimSpace(repository), "/")
-	if len(repository) >= len(".git") && strings.EqualFold(repository[len(repository)-len(".git"):], ".git") {
-		repository = repository[:len(repository)-len(".git")]
-	}
-	parts := strings.Split(repository, "/")
-	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+	config := &types.DataSourceConfig{Type: types.ConnectorTypeGitHub, Settings: map[string]interface{}{
+		"repository": repository,
+	}}
+	canonical, ok := githubConnector.ConfiguredRepository(config)
+	if !ok {
 		return ""
 	}
-	return strings.ToLower(strings.TrimSpace(parts[0]) + "/" + strings.TrimSpace(parts[1]))
+	return strings.ToLower(canonical)
 }
 
 // requestedGitHubBatchMode validates new requests. A missing mode is never

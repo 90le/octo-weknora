@@ -16,6 +16,12 @@ export type GitHubRepositoryPresenceMap = Record<string, GitHubRepositoryModePre
 
 const emptyModePresence = (): GitHubRepositoryModePresence => ({ source: false, documents: false })
 
+// The backend applies this limit to one request so a large organisation cannot
+// create an unbounded amount of work in one transaction. The UI may submit
+// several of these requests sequentially when the user explicitly selected
+// more repositories.
+export const githubBulkRequestLimit = 20
+
 /**
  * GitHub treats owner/repository names case-insensitively. Existing normal
  * data sources may contain a GitHub URL or an SSH remote from older forms, so
@@ -175,6 +181,21 @@ export function parseGitHubPaths(value: string): string[] {
       .map((path) => path.trim())
       .filter(Boolean),
   ))
+}
+
+/** Splits an explicit repository selection into backend-safe request groups. */
+export function partitionGitHubRepositories(
+  repositories: readonly GitHubRepository[],
+  limit = githubBulkRequestLimit,
+): GitHubRepository[][] {
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new RangeError('GitHub batch limit must be a positive integer')
+  }
+  const groups: GitHubRepository[][] = []
+  for (let index = 0; index < repositories.length; index += limit) {
+    groups.push(repositories.slice(index, index + limit))
+  }
+  return groups
 }
 
 export type GitHubBatchSyncPayload = {

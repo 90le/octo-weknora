@@ -131,10 +131,13 @@ func (c *Connector) buildGitSnapshot(ctx context.Context, cfg *types.DataSourceC
 			previousFile.SourceURL = url
 			previousFile.Revision = commit
 			previousFile.GitBlob = entry.SHA
-			if err = b.Reuse(previousFile); err != nil {
+			reused, reuseErr := reuseGitSnapshotFile(b, previousFile)
+			if reuseErr != nil {
 				return &Error{Code: "github_snapshot_cache", Message: "Previous source snapshot is unavailable; retry the sync"}
 			}
-			continue
+			if reused {
+				continue
+			}
 		}
 		need = append(need, entry)
 	}
@@ -146,6 +149,22 @@ func (c *Connector) buildGitSnapshot(ctx context.Context, cfg *types.DataSourceC
 	return cache.readBlobs(ctx, need, func(entry gitTreeEntry, body []byte) error {
 		return b.AddGit(ctx, entry.Path, body, githubBlobURL(s.Repository, commit, entry.Path), commit, entry.SHA)
 	})
+}
+
+// reuseGitSnapshotFile keeps a partial cache loss repairable. A Git blob is
+// already known to be unchanged upstream, but the local content-addressed
+// object can disappear after a storage cleanup or interrupted migration. In
+// that case the caller must request the blob again instead of turning a normal
+// incremental sync into a permanent missing-file error.
+func reuseGitSnapshotFile(b *snapshot.Builder, file types.SourceFile) (bool, error) {
+	err := b.Reuse(file)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, snapshot.ErrUnavailable) {
+		return false, nil
+	}
+	return false, err
 }
 
 func repositoryCacheKey(repository string) string {

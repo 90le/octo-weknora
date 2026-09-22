@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -305,6 +306,14 @@ func sourceBrowseError() *types.ToolResult {
 	return &types.ToolResult{Success: false, Error: "Source reference is unavailable or invalid for the current authorized scope. Call list and copy a returned source_ref exactly."}
 }
 
+func sourceBrowseSnapshotUnavailableError() *types.ToolResult {
+	return &types.ToolResult{Success: false, Error: "The selected source snapshot is not currently readable. Do not retry the same source_ref; ask an administrator to run or repair the source sync."}
+}
+
+func sourceBrowsePathUnavailableError() *types.ToolResult {
+	return &types.ToolResult{Success: false, Error: "That path is unavailable in the selected source snapshot. Keep the same source_ref and use tree or search to find the current path."}
+}
+
 func (t *SourceBrowseTool) listBindings(ctx context.Context, kbIDs []string, limit int) ([]sourceBrowseBinding, bool) {
 	bindings := make([]sourceBrowseBinding, 0)
 	complete := true
@@ -336,6 +345,11 @@ func (t *SourceBrowseTool) listBindings(ctx context.Context, kbIDs []string, lim
 				break
 			}
 			if summary.ID == "" || summary.SnapshotID == "" {
+				// A configured but unsynced or unreadable source is part of the
+				// authorized search space. Omitting it must make a global zero-hit
+				// search incomplete, otherwise the evidence contract would treat
+				// that absence as an exhaustive code search.
+				complete = false
 				continue
 			}
 			bindings = append(bindings, bindingFromSummary(kbID, tenant, summary))
@@ -580,10 +594,15 @@ func (t *SourceBrowseTool) Execute(ctx context.Context, args json.RawMessage) (*
 				// only render the URL when it is safe, while the agent evidence
 				// contract still needs to distinguish a real read from list/search.
 				citation = &types.SourceBrowseCitation{KnowledgeBaseID: binding.KnowledgeBaseID, Repository: binding.Repository, URL: read.SourceURL, Path: read.Path, Revision: read.Revision}
+			} else if errors.Is(err, access.ErrNotFound) {
+				return sourceBrowsePathUnavailableError(), nil
 			}
 		}
 	}
 	if err != nil {
+		if errors.Is(err, snapshot.ErrUnavailable) {
+			return sourceBrowseSnapshotUnavailableError(), nil
+		}
 		return sourceBrowseError(), nil
 	}
 	b, err := json.Marshal(out)
