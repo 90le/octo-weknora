@@ -279,6 +279,12 @@ func (e *AgentEngine) Execute(
 	llmContext []chat.Message,
 	imageURLs ...[]string,
 ) (*types.AgentState, error) {
+	// Every transport ultimately reaches AgentEngine.Execute. Establish the
+	// answer-evidence contract here so direct UI/API agent-chat requests receive
+	// the same release/source controls as Octo IM. WithContract is idempotent,
+	// preserving the contract already created by an ingress that normalized its
+	// message text (for example, an addressed Octo group message).
+	ctx = answerevidence.WithContract(ctx, query)
 	logger.Infof(ctx, "[Agent] Starting execution: session=%s, message=%s, query_len=%d, context_msgs=%d",
 		sessionID, messageID, len(query), len(llmContext))
 	// Ensure tools are cleaned up after execution
