@@ -339,12 +339,18 @@ func RegisterDataSourceRoutes(
 
 		// Sync management — Admin+
 		ds.POST("/:id/sync", g.Admin(), handler.ManualSync)
+		// Restart recovery is a separate, two-step operation. Preview is
+		// read-only; execute accepts only its signed digest token and replays
+		// stored FilePath candidates without contacting GitHub.
+		ds.POST("/:id/restart-recovery/preview", g.Admin(), handler.PreviewRestartInterruptedRecovery)
+		ds.POST("/:id/restart-recovery", g.Admin(), handler.StartRestartInterruptedRecovery)
 		ds.POST("/:id/pause", g.Admin(), handler.PauseDataSource)
 		ds.POST("/:id/resume", g.Admin(), handler.ResumeDataSource)
 
 		// Sync logs — Viewer+ (read-only audit trail)
 		ds.GET("/:id/logs", g.Viewer(), handler.GetSyncLogs)
 		ds.GET("/logs/:log_id", g.Viewer(), handler.GetSyncLog)
+		ds.GET("/restart-recovery/:run_id", g.Admin(), handler.GetRestartInterruptedRecoveryRun)
 	}
 }
 

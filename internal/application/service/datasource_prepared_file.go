@@ -97,42 +97,105 @@ func (s *DataSourceService) ingestPreparedFile(ctx context.Context, ds *types.Da
 		case <-time.After(2 * time.Second):
 		}
 	}
-	if sourceURL := item.Metadata["github_url"]; sourceURL != "" {
-		// Native retrieval and document details expose Knowledge.Source, not
-		// connector-specific metadata. Publish the pinned URL before retiring old.
-		if err := repo.UpdateKnowledgeColumn(ctx, candidate.ID, "source", sourceURL); err != nil {
-			return old != nil, err
-		}
-	}
-	if old != nil {
-		if err := s.knowledgeService.DeleteKnowledge(ctx, old.ID); err != nil {
-			return true, fmt.Errorf("new version ready; previous version cleanup failed: %w", err)
-		}
-		if err := repo.HardDeleteKnowledge(ctx, ds.TenantID, old.ID); err != nil {
-			return true, err
-		}
-	}
-	// Update only metadata, never write stale parse/enable fields over the
-	// native asynchronous enrichment worker's state.
-	// Retain metadata written by the native parser when adopting the candidate.
-	var processedMetadata map[string]string
-	if json.Unmarshal(candidate.Metadata, &processedMetadata) == nil {
-		for key, value := range processedMetadata {
-			if _, exists := metadata[key]; !exists {
-				metadata[key] = value
-			}
-		}
-	}
-	metadata["external_id"] = item.ExternalID
-	delete(metadata, "sync_target_external_id")
-	b, err := json.Marshal(metadata)
+	// The adoption sequence is shared with restart recovery. It is deliberately
+	// extracted rather than duplicated: both paths must wait for the native
+	// parser, preserve parser-written metadata, publish the pinned source URL,
+	// and never retire a canonical document they did not explicitly own.
+	outcome, err := s.finalizePreparedCandidate(ctx, ds, candidate, old, item.Metadata)
 	if err != nil {
 		return old != nil, err
 	}
-	if err = repo.UpdateKnowledgeColumn(ctx, candidate.ID, "metadata", types.JSON(b)); err != nil {
-		return old != nil, err
+	if outcome != preparedCandidateFinalizePublished {
+		return old != nil, fmt.Errorf("repository document candidate cannot be published: %s", outcome)
 	}
 	return old != nil, nil
+}
+
+type preparedCandidateFinalizeOutcome string
+
+const (
+	preparedCandidateFinalizePublished preparedCandidateFinalizeOutcome = "published"
+	preparedCandidateFinalizeBlocked   preparedCandidateFinalizeOutcome = "blocked"
+	preparedCandidateFinalizeNotReady  preparedCandidateFinalizeOutcome = "not_ready"
+)
+
+// finalizePreparedCandidate turns a fully indexed repository-document
+// candidate into its canonical external_id. previous is non-nil only for the
+// normal sync replacement path; restart recovery passes nil, so the presence
+// of any canonical target is a hard block and no existing document is deleted.
+//
+// The caller must supply a fresh candidate read. This function only writes
+// metadata/source after indexedForSync returns true, preventing a parser or
+// enrichment worker from having its in-flight state overwritten.
+func (s *DataSourceService) finalizePreparedCandidate(
+	ctx context.Context,
+	ds *types.DataSource,
+	candidate, previous *types.Knowledge,
+	// sourceMetadata is the connector's original immutable metadata. Native
+	// parsing is allowed to add fields, but older parsers may rewrite metadata;
+	// normal sync passes this fallback so source_version/github_url survive.
+	sourceMetadata map[string]string,
+) (preparedCandidateFinalizeOutcome, error) {
+	if ds == nil || candidate == nil {
+		return preparedCandidateFinalizeBlocked, errors.New("prepared candidate requires data source and knowledge")
+	}
+	if !indexedForSync(candidate) {
+		return preparedCandidateFinalizeNotReady, nil
+	}
+	if candidate.TenantID != ds.TenantID || candidate.KnowledgeBaseID != ds.KnowledgeBaseID {
+		return preparedCandidateFinalizeBlocked, nil
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(candidate.Metadata, &metadata); err != nil {
+		return preparedCandidateFinalizeBlocked, fmt.Errorf("decode prepared candidate metadata: %w", err)
+	}
+	for key, value := range sourceMetadata {
+		if _, exists := metadata[key]; !exists {
+			metadata[key] = value
+		}
+	}
+	targetID := metadata["sync_target_external_id"]
+	if targetID == "" || metadata["datasource_id"] != ds.ID {
+		return preparedCandidateFinalizeBlocked, nil
+	}
+	repo := s.knowledgeService.GetRepository()
+	canonical, err := repo.FindByDataSourceExternalID(ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID, targetID)
+	if err != nil {
+		return preparedCandidateFinalizeBlocked, err
+	}
+	if canonical != nil && (previous == nil || canonical.ID != previous.ID) {
+		// Recovery never removes a canonical target it did not create. This
+		// includes an operator/manual re-sync that completed after preview.
+		return preparedCandidateFinalizeBlocked, nil
+	}
+	if sourceURL := metadata["github_url"]; sourceURL != "" {
+		// Native retrieval and document details expose Knowledge.Source, not
+		// connector-specific metadata. Publish the pinned URL before retiring old.
+		if err := repo.UpdateKnowledgeColumn(ctx, candidate.ID, "source", sourceURL); err != nil {
+			return preparedCandidateFinalizeBlocked, err
+		}
+	}
+	if previous != nil && previous.ID != candidate.ID {
+		if err := s.knowledgeService.DeleteKnowledge(ctx, previous.ID); err != nil {
+			return preparedCandidateFinalizeBlocked, fmt.Errorf("new version ready; previous version cleanup failed: %w", err)
+		}
+		if err := repo.HardDeleteKnowledge(ctx, ds.TenantID, previous.ID); err != nil {
+			return preparedCandidateFinalizeBlocked, err
+		}
+	}
+	// Update only metadata, never write stale parse/enable fields over the
+	// native asynchronous enrichment worker's state. Retain metadata written by
+	// the native parser when adopting the candidate.
+	metadata["external_id"] = targetID
+	delete(metadata, "sync_target_external_id")
+	b, err := json.Marshal(metadata)
+	if err != nil {
+		return preparedCandidateFinalizeBlocked, err
+	}
+	if err = repo.UpdateKnowledgeColumn(ctx, candidate.ID, "metadata", types.JSON(b)); err != nil {
+		return preparedCandidateFinalizeBlocked, err
+	}
+	return preparedCandidateFinalizePublished, nil
 }
 
 func indexedForSync(k *types.Knowledge) bool {

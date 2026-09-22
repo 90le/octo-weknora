@@ -483,6 +483,9 @@ func (s *DataSourceService) ManualSync(ctx context.Context, dsID string) (*types
 	if err != nil {
 		return nil, err
 	}
+	if ds.HasActiveRestartRecoveryLease(time.Now().UTC()) {
+		return nil, datasource.ErrRestartRecoveryInProgress
+	}
 
 	if ds.Status != types.DataSourceStatusActive &&
 		ds.Status != types.DataSourceStatusError &&
@@ -640,6 +643,20 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		return nil
 	}
 	wasPaused := ds.Status == types.DataSourceStatusPaused
+	if ds.HasActiveRestartRecoveryLease(time.Now().UTC()) {
+		// A queued sync may have been admitted in the short interval before
+		// recovery acquired its database lease. It must terminate before any
+		// connector fetch; the recovery plan owns the candidate metadata and
+		// local reparse lifecycle for this source.
+		if syncLog, slErr := s.syncLogRepo.FindByID(ctx, payload.SyncLogID); slErr == nil && syncLog != nil && syncLog.Status == types.SyncLogStatusRunning {
+			syncLog.Status = types.SyncLogStatusCanceled
+			syncLog.FinishedAt = timePtr(time.Now().UTC())
+			syncLog.ErrorMessage = datasource.ErrRestartRecoveryInProgress.Error()
+			_, _ = s.syncLogRepo.UpdateResultIfRunning(ctx, syncLog)
+		}
+		logger.Infof(ctx, "skipping data source sync while restart recovery owns source: ds=%s", payload.DataSourceID)
+		return nil
+	}
 
 	// Get sync log
 	syncLog, err := s.syncLogRepo.FindByID(ctx, payload.SyncLogID)

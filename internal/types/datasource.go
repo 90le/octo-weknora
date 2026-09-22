@@ -109,6 +109,14 @@ type DataSource struct {
 	// Error message if status is "error"
 	ErrorMessage string `json:"error_message"`
 
+	// RestartRecoveryLeaseID/Until temporarily fence normal source sync while an
+	// operator-approved, local-file-only recovery is re-parsing interrupted
+	// repository candidates. They are deliberately not exposed through the
+	// public data-source DTO: a lease is an internal concurrency primitive, not
+	// a credential or a user-configurable source setting.
+	RestartRecoveryLeaseID    string     `json:"-" gorm:"type:varchar(36)"`
+	RestartRecoveryLeaseUntil *time.Time `json:"-"`
+
 	// Number of days to keep sync logs (default: 30)
 	SyncLogRetentionDays int `json:"sync_log_retention_days" gorm:"default:30"`
 
@@ -126,6 +134,15 @@ type DataSource struct {
 
 	// Latest sync log (not stored in DB, populated on query)
 	LatestSyncLog *SyncLog `json:"latest_sync_log" gorm:"-"`
+}
+
+// HasActiveRestartRecoveryLease reports whether a restart-recovery worker owns
+// this source at the given time. A non-empty id without an expiry is treated as
+// inactive so a partially migrated or malformed row can never block syncs
+// forever.
+func (d *DataSource) HasActiveRestartRecoveryLease(now time.Time) bool {
+	return d != nil && d.RestartRecoveryLeaseID != "" &&
+		d.RestartRecoveryLeaseUntil != nil && d.RestartRecoveryLeaseUntil.After(now)
 }
 
 // TableName specifies the table name for DataSource

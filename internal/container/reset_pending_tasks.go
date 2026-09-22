@@ -17,7 +17,7 @@ import (
 // immediate because its in-memory worker is gone with the process.
 const resetPendingStaleWindow = types.DataSourceSyncTaskTimeout + 5*time.Minute
 
-const restartInterruptedMessage = "Task interrupted due to application restart"
+const restartInterruptedMessage = types.RestartInterruptedKnowledgeError
 
 // resetPendingTasks resets the state of any knowledge items or sync logs stuck in processing
 // due to an unexpected application restart.

@@ -145,6 +145,10 @@ func (s *Scheduler) triggerSync(dataSourceID string, tenantID uint64) {
 		logger.Infof(ctx, "[Scheduler] skipping sync for ds=%s (not active or not found)", dataSourceID)
 		return
 	}
+	if ds.HasActiveRestartRecoveryLease(time.Now().UTC()) {
+		logger.Infof(ctx, "[Scheduler] skipping sync for ds=%s (restart recovery owns source)", dataSourceID)
+		return
+	}
 
 	// Layer 1: prevent overlap with a still-running sync
 	if running, _ := s.syncLogRepo.HasRunningSync(ctx, dataSourceID); running {

@@ -90,6 +90,7 @@ var queueDefinitions = []QueueDefinition{
 	{Name: QueueMaintenance, Pool: WorkerPoolMaintenance, Weight: 1, TaskTypes: []string{
 		TypeFAQImport, TypeKBClone, TypeIndexDelete, TypeKBDelete,
 		TypeKnowledgeListDelete, TypeKnowledgeListReparse, TypeKnowledgeMove,
+		TypeDataSourceRestartRecovery,
 	}},
 	{Name: QueueWiki, Pool: WorkerPoolWiki, Weight: 1, TaskTypes: []string{TypeWikiIngest, TypeWikiFinalize}},
 }
@@ -239,26 +240,30 @@ type WorkerServerStat struct {
 }
 
 const (
-	TypeChunkExtract             = "chunk:extract"
-	TypeDocumentProcess          = "document:process"           // 文档处理任务
-	TypeFAQImport                = "faq:import"                 // FAQ导入任务（包含dry run模式）
-	TypeQuestionGeneration       = "question:generation"        // 问题生成任务
-	TypeSummaryGeneration        = "summary:generation"         // 摘要生成任务
-	TypeKBClone                  = "kb:clone"                   // 知识库复制任务
-	TypeIndexDelete              = "index:delete"               // 索引删除任务
-	TypeKBDelete                 = "kb:delete"                  // 知识库删除任务
-	TypeKnowledgeListDelete      = "knowledge:list_delete"      // 批量删除知识任务
-	TypeKnowledgeListReparse     = "knowledge:list_reparse"     // 批量重解析知识任务
-	TypeKnowledgeMove            = "knowledge:move"             // 知识移动任务
-	TypeDataTableSummary         = "datatable:summary"          // 表格摘要任务
-	TypeImageMultimodal          = "image:multimodal"           // 图片多模态处理任务（OCR + VLM Caption）
-	TypeKnowledgePostProcess     = "knowledge:post_process"     // 知识后处理任务（统一调度）
-	TypeKnowledgeAutoTag         = "knowledge:auto_tag"         // 文档自动关联知识库已有标签
-	TypeManualProcess            = "manual:process"             // 手工知识更新任务（cleanup + 重新索引）
-	TypeDataSourceSync           = "datasource:sync"            // 数据源同步任务
-	TypeWikiIngest               = "wiki:ingest"                // Wiki 页面同步任务
-	TypeWikiFinalize             = "wiki:finalize"              // Wiki KB 级收尾任务（防抖：索引重建/死链清理/交叉链接）
-	TypeTemporaryDocumentProcess = "temporary_document:process" // 会话临时文档解析任务
+	TypeChunkExtract         = "chunk:extract"
+	TypeDocumentProcess      = "document:process"       // 文档处理任务
+	TypeFAQImport            = "faq:import"             // FAQ导入任务（包含dry run模式）
+	TypeQuestionGeneration   = "question:generation"    // 问题生成任务
+	TypeSummaryGeneration    = "summary:generation"     // 摘要生成任务
+	TypeKBClone              = "kb:clone"               // 知识库复制任务
+	TypeIndexDelete          = "index:delete"           // 索引删除任务
+	TypeKBDelete             = "kb:delete"              // 知识库删除任务
+	TypeKnowledgeListDelete  = "knowledge:list_delete"  // 批量删除知识任务
+	TypeKnowledgeListReparse = "knowledge:list_reparse" // 批量重解析知识任务
+	TypeKnowledgeMove        = "knowledge:move"         // 知识移动任务
+	TypeDataTableSummary     = "datatable:summary"      // 表格摘要任务
+	TypeImageMultimodal      = "image:multimodal"       // 图片多模态处理任务（OCR + VLM Caption）
+	TypeKnowledgePostProcess = "knowledge:post_process" // 知识后处理任务（统一调度）
+	TypeKnowledgeAutoTag     = "knowledge:auto_tag"     // 文档自动关联知识库已有标签
+	TypeManualProcess        = "manual:process"         // 手工知识更新任务（cleanup + 重新索引）
+	TypeDataSourceSync       = "datasource:sync"        // 数据源同步任务
+	// TypeDataSourceRestartRecovery replays an explicitly approved set of
+	// already-stored GitHub document candidates after a Lite restart. It never
+	// calls a connector or provider API.
+	TypeDataSourceRestartRecovery = "datasource:restart_recovery"
+	TypeWikiIngest                = "wiki:ingest"                // Wiki 页面同步任务
+	TypeWikiFinalize              = "wiki:finalize"              // Wiki KB 级收尾任务（防抖：索引重建/死链清理/交叉链接）
+	TypeTemporaryDocumentProcess  = "temporary_document:process" // 会话临时文档解析任务
 	// TypeMemoryExtract 长期记忆抽取任务（会话轮次防抖后异步执行）
 	TypeMemoryExtract = "memory:extract"
 )
