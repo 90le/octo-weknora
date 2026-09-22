@@ -118,6 +118,9 @@ func TestPreparedSyncRetiresOnlyAfterReady(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "new", k.ID)
 	require.Equal(t, item.Metadata["github_url"], k.Source)
+	metadata := k.GetMetadata()
+	require.Equal(t, "doc", metadata["external_id"])
+	require.Empty(t, metadata["sync_target_external_id"], "published candidates must no longer be hidden from answers")
 }
 func TestPreparedSyncCancellationKeepsOld(t *testing.T) {
 	s, ks, ds, item := preparedFixture()
@@ -164,4 +167,27 @@ func TestPreparedSyncResumesReadyCandidateWithoutRecreating(t *testing.T) {
 	}
 	require.Equal(t, 1, created)
 	require.NotContains(t, ks.r.rows, "old")
+}
+
+func TestFinalizePreparedCandidateWithoutPreviousBlocksCanonicalTarget(t *testing.T) {
+	s, ks, ds, _ := preparedFixture()
+	now := time.Now()
+	metadata, err := json.Marshal(map[string]string{
+		"datasource_id": "ds", "external_id": "doc:pending:new",
+		"sync_target_external_id": "doc", "github_url": "https://github.com/test/repo/blob/new/guide.md",
+	})
+	require.NoError(t, err)
+	candidate := &types.Knowledge{
+		ID: "candidate", TenantID: ds.TenantID, KnowledgeBaseID: ds.KnowledgeBaseID,
+		Metadata: metadata, ParseStatus: types.ParseStatusCompleted, EnableStatus: "enabled", ProcessedAt: &now,
+	}
+	ks.r.rows[candidate.ID] = candidate
+
+	outcome, err := s.finalizePreparedCandidate(context.Background(), ds, candidate, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, preparedCandidateFinalizeBlocked, outcome)
+	require.Contains(t, ks.r.rows, "old", "recovery must not delete an existing canonical target")
+	var after map[string]string
+	require.NoError(t, json.Unmarshal(candidate.Metadata, &after))
+	require.Equal(t, "doc", after["sync_target_external_id"], "blocked candidates remain unpublished")
 }

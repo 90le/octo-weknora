@@ -522,6 +522,85 @@ func (h *DataSourceHandler) ManualSync(c *gin.Context) {
 	c.JSON(http.StatusOK, syncLog)
 }
 
+// PreviewRestartInterruptedRecovery returns a read-only, signed plan for the
+// narrow case where a Lite restart left GitHub prepared-file candidates failed.
+// It intentionally has no caller-supplied candidate, file, URL, or connector
+// inputs; all candidate discovery remains server-side and datasource-scoped.
+func (h *DataSourceHandler) PreviewRestartInterruptedRecovery(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID := h.getTenantID(c)
+	if tenantID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	id := c.Param("id")
+	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id); status != http.StatusOK {
+		c.JSON(status, gin.H{"error": msg})
+		return
+	}
+	preview, err := h.service.PreviewRestartInterruptedRecovery(ctx, id)
+	if err != nil {
+		h.writeRestartRecoveryError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, preview)
+}
+
+// StartRestartInterruptedRecovery persists an already-previewed plan and
+// queues its worker. The handler is Admin-gated by routing; the service also
+// binds the token to the authenticated principal and fresh plan digest.
+func (h *DataSourceHandler) StartRestartInterruptedRecovery(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID := h.getTenantID(c)
+	if tenantID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	id := c.Param("id")
+	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, id); status != http.StatusOK {
+		c.JSON(status, gin.H{"error": msg})
+		return
+	}
+	var req types.DataSourceRestartRecoveryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid restart recovery request"})
+		return
+	}
+	run, err := h.service.StartRestartInterruptedRecovery(ctx, id, &req)
+	if err != nil {
+		h.writeRestartRecoveryError(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, run)
+}
+
+func (h *DataSourceHandler) GetRestartInterruptedRecoveryRun(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenantID := h.getTenantID(c)
+	if tenantID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	run, err := h.service.GetRestartInterruptedRecoveryRun(ctx, c.Param("run_id"))
+	if err != nil || run == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "restart recovery run not found"})
+		return
+	}
+	if _, status, msg := h.getOwnedDataSource(ctx, tenantID, run.DataSourceID); status != http.StatusOK {
+		c.JSON(status, gin.H{"error": msg})
+		return
+	}
+	c.JSON(http.StatusOK, run)
+}
+
+func (h *DataSourceHandler) writeRestartRecoveryError(c *gin.Context, err error) {
+	if appErr, ok := apperrors.IsAppError(err); ok {
+		c.JSON(appErr.HTTPCode, gin.H{"error": appErr.Message, "code": appErr.Code})
+		return
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+}
+
 // PauseDataSource godoc
 // @Summary Pause data source
 // @Description Pause a data source's scheduled syncs

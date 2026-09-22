@@ -488,6 +488,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// persistence succeeded immediately before trigger enqueue failed). Re-arm
 	// them only after the matching handlers are ready.
 	must(container.Invoke(recoverPendingWikiTasks))
+	// Restart recovery plans are durable while Lite task triggers are not.
+	// Re-arm only the plans that an administrator already confirmed; the worker
+	// itself revalidates lease, candidate ownership, and local-file safety.
+	must(container.Invoke(recoverPendingDataSourceRestartRecoveryRuns))
 
 	logger.Infof(ctx, "[Container] Container initialization completed successfully")
 	return container

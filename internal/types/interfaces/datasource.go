@@ -87,6 +87,19 @@ type DataSourceService interface {
 	// ManualSync triggers an immediate sync for a data source
 	ManualSync(ctx context.Context, dsID string) (*types.SyncLog, error)
 
+	// PreviewRestartInterruptedRecovery builds a read-only, signed recovery
+	// plan for local file-backed GitHub candidates that were marked failed by
+	// the restart cleanup path.
+	PreviewRestartInterruptedRecovery(ctx context.Context, dsID string) (*types.DataSourceRestartRecoveryPreview, error)
+
+	// StartRestartInterruptedRecovery accepts only a fresh preview token. It
+	// persists an approved plan and queues its worker; it never accepts caller
+	// supplied file paths, candidate IDs, URLs, or provider credentials.
+	StartRestartInterruptedRecovery(ctx context.Context, dsID string, req *types.DataSourceRestartRecoveryRequest) (*types.DataSourceRestartRecoveryRun, error)
+
+	// GetRestartInterruptedRecoveryRun reads one tenant-scoped durable run.
+	GetRestartInterruptedRecoveryRun(ctx context.Context, runID string) (*types.DataSourceRestartRecoveryRun, error)
+
 	// PauseDataSource pauses a data source's scheduled syncs
 	PauseDataSource(ctx context.Context, id string) error
 
@@ -101,6 +114,10 @@ type DataSourceService interface {
 
 	// ProcessSync handles the actual sync operation (called by asynq task)
 	ProcessSync(ctx context.Context, task *asynq.Task) error
+
+	// ProcessRestartInterruptedRecovery advances an approved local-file replay
+	// plan. It is a task handler, never an HTTP request path.
+	ProcessRestartInterruptedRecovery(ctx context.Context, task *asynq.Task) error
 }
 
 // DataSourceRepository defines database access patterns for data sources

@@ -26,8 +26,12 @@ var (
 	ErrSyncFailed         = errors.New("sync operation failed")
 	ErrSyncCanceled       = errors.New("sync operation was canceled")
 	ErrSyncAlreadyRunning = errors.New("a sync is already running for this data source")
-	ErrFetchFailed        = errors.New("failed to fetch items from source")
-	ErrResourceNotFound   = errors.New("resource not found in source system")
+	// ErrRestartRecoveryInProgress is returned before a manual or scheduled
+	// source sync can fetch remote content while a local-file-only restart
+	// recovery owns the source. Callers may retry after the short lease ends.
+	ErrRestartRecoveryInProgress = errors.New("restart recovery is in progress for this data source")
+	ErrFetchFailed               = errors.New("failed to fetch items from source")
+	ErrResourceNotFound          = errors.New("resource not found in source system")
 
 	// Knowledge base errors
 	ErrKnowledgeBaseNotFound = errors.New("knowledge base not found")
