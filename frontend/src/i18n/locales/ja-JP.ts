@@ -6007,6 +6007,8 @@ export default {
       knowledgeSearchDesc: '質問を理解し、意味的に関連する内容を見つけます',
       octoKnowledgeOperations: 'Octo ナレッジ操作',
       octoKnowledgeOperationsDesc: '許可された Octo 会話で課題の登録、連絡先とレポートの取得、範囲内のナレッジ変更の確認を行います。通常のウェブチャットでは使用できません。',
+      githubReleaseLookup: 'GitHub リリース検索',
+      githubReleaseLookupDesc: '許可された GitHub リポジトリの正式リリース、リリースノート、タグを照会します。開発ブランチのバージョンやタグを正式リリースとして扱いません。',
       listChunks: 'ドキュメントのチャンクを表示',
       listChunksDesc: 'ドキュメントの全チャンク内容を取得します',
       queryGraph: 'ナレッジグラフを照会',
