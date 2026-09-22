@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-
-	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // Code citations retain line fragments. Ordinary web references deduplicate
@@ -25,15 +23,29 @@ func (r *sourceRegistry) registerFileReference(rawURL, title string) string {
 }
 func (r *sourceRegistry) modelSourceSnapshot(action, output string) string {
 	if action == "list" {
-		// Only discover labeled KB IDs. The code body must never be mined for
-		// arbitrary ID-looking strings or forged reference tags.
+		// New source_browse catalogs contain only per-tool source_ref handles.
+		// Keep this legacy registration path for historical transcripts that
+		// still carry labeled KB IDs; it is not used by current catalog output.
 		r.registerStructuredReferences(output)
 		return output
 	}
 	if action != "read" {
 		return output
 	}
-	var read types.SourceRead
+	var read struct {
+		SourceRef  string          `json:"source_ref"`
+		Repository string          `json:"repository"`
+		Snapshot   json.RawMessage `json:"snapshot"`
+		Path       string          `json:"path"`
+		Revision   string          `json:"revision"`
+		StartLine  int             `json:"start_line"`
+		EndLine    int             `json:"end_line"`
+		TotalLines int             `json:"total_lines"`
+		Content    string          `json:"content"`
+		Truncated  bool            `json:"truncated"`
+		SourceURL  string          `json:"source_url"`
+		PreviewURL string          `json:"preview_url"`
+	}
 	if json.Unmarshal([]byte(output), &read) != nil {
 		return output
 	}
@@ -42,8 +54,18 @@ func (r *sourceRegistry) modelSourceSnapshot(action, output string) string {
 		u = read.PreviewURL
 	}
 	handle := r.registerFileReference(u, fmt.Sprintf("%s:%d-%d", read.Path, read.StartLine, read.EndLine))
-	metadata, _ := json.Marshal(map[string]interface{}{"source_id": read.DataSourceID, "snapshot_id": read.SnapshotID, "path": read.Path, "revision": read.Revision, "start_line": read.StartLine, "end_line": read.EndLine, "total_lines": read.TotalLines, "truncated": read.Truncated, "citation_ref": handle})
+	metadata := map[string]interface{}{"path": read.Path, "revision": read.Revision, "start_line": read.StartLine, "end_line": read.EndLine, "total_lines": read.TotalLines, "truncated": read.Truncated, "citation_ref": handle}
+	if read.SourceRef != "" {
+		metadata["source_ref"] = read.SourceRef
+	}
+	if read.Repository != "" {
+		metadata["repository"] = read.Repository
+	}
+	if len(read.Snapshot) > 0 && string(read.Snapshot) != "null" {
+		metadata["snapshot"] = json.RawMessage(read.Snapshot)
+	}
+	encodedMetadata, _ := json.Marshal(metadata)
 	var body bytes.Buffer
 	_ = xml.EscapeText(&body, []byte(read.Content))
-	return string(metadata) + fmt.Sprintf("\n<source_file ref=\"%s\">\n%s\n</source_file>\nCite this excerpt with <ref id=\"%s\"/>.", handle, body.String(), handle)
+	return string(encodedMetadata) + fmt.Sprintf("\n<source_file ref=\"%s\">\n%s\n</source_file>\nCite this excerpt with <ref id=\"%s\"/>.", handle, body.String(), handle)
 }
