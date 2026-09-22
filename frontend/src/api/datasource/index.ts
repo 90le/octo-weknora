@@ -145,6 +145,70 @@ export interface DeleteDataSourceWithModeRequest {
   preview_token: string
 }
 
+/** A display-safe candidate returned by the restart-recovery preview. */
+export type DataSourceRestartRecoveryCandidateState =
+  | 'pending'
+  | 'reparsing'
+  | 'published'
+  | 'failed'
+  | 'blocked'
+  | 'excluded'
+
+export interface DataSourceRestartRecoveryCandidate {
+  knowledge_id: string
+  title?: string
+  file_name?: string
+  source_version?: string
+  target_external_id?: string
+  state: DataSourceRestartRecoveryCandidateState
+  reason?: string
+  attempted_at?: string
+  completed_at?: string
+}
+
+/**
+ * Read-only restart recovery preview. The opaque token is bound to the exact
+ * eligible candidate set and current caller; it must only be sent back after
+ * an explicit confirmation.
+ */
+export interface DataSourceRestartRecoveryPreview {
+  data_source_id: string
+  knowledge_base_id: string
+  eligible_count: number
+  excluded_count: number
+  blocked_count: number
+  candidates: DataSourceRestartRecoveryCandidate[]
+  blockers?: string[]
+  plan_digest: string
+  preview_token: string
+  expires_at: string
+}
+
+export type DataSourceRestartRecoveryRunStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'partial'
+  | 'failed'
+  | 'blocked'
+
+export interface DataSourceRestartRecoveryRun {
+  id: string
+  tenant_id: number
+  data_source_id: string
+  knowledge_base_id: string
+  status: DataSourceRestartRecoveryRunStatus
+  error_message?: string
+  started_at?: string | null
+  finished_at?: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface StartDataSourceRestartRecoveryRequest {
+  preview_token: string
+}
+
 // --- API calls ---
 
 export function getConnectorTypes() {
@@ -186,6 +250,25 @@ export function previewDataSourceDeletion(id: string) {
  */
 export function deleteDataSourceWithMode(id: string, data: DeleteDataSourceWithModeRequest) {
   return post(`/api/v1/datasource/${id}/delete`, data)
+}
+
+/**
+ * Explicitly asks the server to inspect restart-interrupted local candidates.
+ * This is never called while listing data sources; a manager must open the
+ * recovery action for one selected source first.
+ */
+export function previewDataSourceRestartRecovery(id: string) {
+  return post<DataSourceRestartRecoveryPreview>(`/api/v1/datasource/${id}/restart-recovery/preview`, {})
+}
+
+/** Starts a previously previewed recovery plan using its opaque confirmation token. */
+export function startDataSourceRestartRecovery(id: string, data: StartDataSourceRestartRecoveryRequest) {
+  return post<DataSourceRestartRecoveryRun>(`/api/v1/datasource/${id}/restart-recovery`, data)
+}
+
+/** Polls one explicitly started restart recovery run; no datasource-wide polling occurs. */
+export function getDataSourceRestartRecoveryRun(runId: string) {
+  return get<DataSourceRestartRecoveryRun>(`/api/v1/datasource/restart-recovery/${runId}`)
 }
 
 export function validateConnection(id: string) {
