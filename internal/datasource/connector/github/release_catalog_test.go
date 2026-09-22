@@ -90,6 +90,84 @@ func TestFetchReleaseCatalogUsesTagFallbackWithoutCallingItARelease(t *testing.T
 	}}, catalog.Tags)
 }
 
+func TestFetchLatestReleaseUsesGitHubLatestEndpointRatherThanHistoryPublishedAt(t *testing.T) {
+	var latestCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/Acme/Widget/releases":
+			// A release drafted against an old commit and published today sorts
+			// ahead by published_at in the bounded history catalog, but it is not
+			// GitHub's latest release.
+			_, _ = w.Write([]byte(`[
+				{"id":1,"tag_name":"v1.0.0","published_at":"2026-09-22T00:00:00Z","created_at":"2025-01-01T00:00:00Z"},
+				{"id":2,"tag_name":"v2.0.0","published_at":"2026-09-21T00:00:00Z","created_at":"2026-09-21T00:00:00Z"}
+			]`))
+		case "/repos/Acme/Widget/releases/latest":
+			latestCalls.Add(1)
+			if r.Header.Get("If-None-Match") == `"latest-v2"` {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			w.Header().Set("ETag", `"latest-v2"`)
+			_, _ = w.Write([]byte(`{"id":2,"tag_name":"v2.0.0","published_at":"2026-09-21T00:00:00Z","created_at":"2026-09-21T00:00:00Z"}`))
+		default:
+			t.Fatalf("unexpected endpoint %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cache := NewReleaseCatalogCache()
+	cache.ttl = 0 // exercise conditional validation on the second latest call
+	connector := NewConnectorWithHTTPClient(server.Client(), server.URL)
+	catalog, err := connector.FetchReleaseCatalog(context.Background(), cache, "ds-latest", releaseTestConfig(), false)
+	require.NoError(t, err)
+	legacy, ok := catalog.LatestStable()
+	require.True(t, ok)
+	require.Equal(t, "v1.0.0", legacy.TagName, "the history sort is intentionally not latest authority")
+
+	latest, err := connector.FetchLatestRelease(context.Background(), cache, "ds-latest", releaseTestConfig())
+	require.NoError(t, err)
+	require.NotNil(t, latest.LatestStable)
+	require.Equal(t, "v2.0.0", latest.LatestStable.TagName)
+	require.False(t, latest.NoPublishedStable)
+	require.False(t, latest.Stale)
+
+	validated, err := connector.FetchLatestRelease(context.Background(), cache, "ds-latest", releaseTestConfig())
+	require.NoError(t, err)
+	require.NotNil(t, validated.LatestStable)
+	require.Equal(t, "v2.0.0", validated.LatestStable.TagName)
+	require.Equal(t, int32(2), latestCalls.Load(), "latest endpoint should use ETag validation")
+}
+
+func TestFetchLatestReleaseMarksCachedResultStaleAfterRefreshFailure(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/Acme/Widget/releases/latest" {
+			t.Fatalf("unexpected endpoint %s", r.URL.Path)
+		}
+		if calls.Add(1) == 1 {
+			w.Header().Set("ETag", `"latest-v1"`)
+			_, _ = w.Write([]byte(`{"id":1,"tag_name":"v1.0.0","published_at":"2026-09-01T00:00:00Z","created_at":"2026-09-01T00:00:00Z"}`))
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	cache := NewReleaseCatalogCache()
+	cache.ttl = 0
+	connector := NewConnectorWithHTTPClient(server.Client(), server.URL)
+	first, err := connector.FetchLatestRelease(context.Background(), cache, "ds-stale", releaseTestConfig())
+	require.NoError(t, err)
+	require.NotNil(t, first.LatestStable)
+
+	stale, err := connector.FetchLatestRelease(context.Background(), cache, "ds-stale", releaseTestConfig())
+	require.NoError(t, err)
+	require.NotNil(t, stale.LatestStable)
+	require.Equal(t, "v1.0.0", stale.LatestStable.TagName)
+	require.True(t, stale.Stale)
+}
+
 func TestReleaseCatalogCacheSeparatesCredentialReplacements(t *testing.T) {
 	cache := NewReleaseCatalogCache()
 	first := releaseCatalogCacheKey("ds", "Acme/Widget", &types.DataSourceConfig{Credentials: map[string]interface{}{"access_token": "one"}})

@@ -69,7 +69,7 @@ type githubReleaseLatest struct {
 	NoPublishedStable    bool                     `json:"no_published_stable_release,omitempty"`
 	LatestPrerelease     *githubconnector.Release `json:"latest_prerelease,omitempty"`
 	ObservedTags         []githubconnector.Tag    `json:"observed_tags,omitempty"`
-	HistoryComplete      bool                     `json:"history_complete"`
+	HistoryComplete      *bool                    `json:"history_complete,omitempty"`
 	ReleaseMetadataStale bool                     `json:"release_metadata_stale,omitempty"`
 	TagMetadataStale     bool                     `json:"tag_metadata_stale,omitempty"`
 }
@@ -434,12 +434,20 @@ func (t *GitHubReleaseLookupTool) catalogForBinding(ctx context.Context, binding
 	return t.connector.FetchReleaseCatalog(ctx, t.cache, binding.DataSourceID, config, includeTags)
 }
 
-func releaseCitation(binding githubReleaseBinding, latest *githubconnector.Release, catalog githubconnector.ReleaseCatalog) types.GitHubReleaseCitation {
+func (t *GitHubReleaseLookupTool) latestForBinding(ctx context.Context, binding githubReleaseBinding, source *types.DataSource) (githubconnector.LatestReleaseResult, error) {
+	config, err := source.ParseConfig()
+	if err != nil || config == nil {
+		return githubconnector.LatestReleaseResult{}, errors.New("release source configuration is unavailable")
+	}
+	return t.connector.FetchLatestRelease(ctx, t.cache, binding.DataSourceID, config)
+}
+
+func releaseCitation(binding githubReleaseBinding, latest *githubconnector.Release, checkedAt time.Time) types.GitHubReleaseCitation {
 	citation := types.GitHubReleaseCitation{
 		KnowledgeBaseID: binding.KnowledgeBaseID,
 		DataSourceID:    binding.DataSourceID,
 		Repository:      binding.Repository,
-		CheckedAt:       catalog.CheckedAt,
+		CheckedAt:       checkedAt,
 	}
 	if latest != nil {
 		citation.TagName = latest.TagName
@@ -469,20 +477,26 @@ func (t *GitHubReleaseLookupTool) Execute(ctx context.Context, args json.RawMess
 		}
 		switch input.Action {
 		case "latest":
-			var catalog githubconnector.ReleaseCatalog
-			catalog, err = t.catalogForBinding(ctx, binding, source, false)
+			var latestResult githubconnector.LatestReleaseResult
+			latestResult, err = t.latestForBinding(ctx, binding, source)
 			if err != nil {
 				break
 			}
-			if latest, ok := catalog.LatestStable(); ok {
-				copy := releaseForLookup(latest, maxLatestReleaseNotesChars, true)
-				output = githubReleaseLatest{ReleaseRef: input.ReleaseRef, Repository: binding.Repository, CheckedAt: catalog.CheckedAt.Format(time.RFC3339), LatestStable: &copy, HistoryComplete: catalog.HistoryComplete, ReleaseMetadataStale: catalog.ReleasesStale}
-				if !catalog.ReleasesStale {
-					marker := releaseCitation(binding, &copy, catalog)
+			if latestResult.LatestStable != nil {
+				copy := releaseForLookup(*latestResult.LatestStable, maxLatestReleaseNotesChars, true)
+				output = githubReleaseLatest{ReleaseRef: input.ReleaseRef, Repository: binding.Repository, CheckedAt: latestResult.CheckedAt.Format(time.RFC3339), LatestStable: &copy, ReleaseMetadataStale: latestResult.Stale}
+				if !latestResult.Stale {
+					marker := releaseCitation(binding, &copy, latestResult.CheckedAt)
 					citation = &marker
 				}
 				break
 			}
+
+			// The latest endpoint is authoritative for a positive latest-release
+			// answer. A 404/no-stable result may still show tags and prereleases as
+			// context, but the bounded history fallback cannot establish a latest
+			// fact and therefore never receives a private evidence marker.
+			var catalog githubconnector.ReleaseCatalog
 			catalog, err = t.catalogForBinding(ctx, binding, source, true)
 			if err != nil {
 				break
@@ -492,22 +506,17 @@ func (t *GitHubReleaseLookupTool) Execute(ctx context.Context, args json.RawMess
 				copy := releaseForLookup(latestPrerelease, maxHistoryReleaseNotesChars, true)
 				prerelease = &copy
 			}
-			output = githubReleaseLatest{ReleaseRef: input.ReleaseRef, Repository: binding.Repository, CheckedAt: catalog.CheckedAt.Format(time.RFC3339), NoPublishedStable: true, LatestPrerelease: prerelease, ObservedTags: catalog.Tags[:releaseLimit(input, len(catalog.Tags))], HistoryComplete: catalog.HistoryComplete, ReleaseMetadataStale: catalog.ReleasesStale, TagMetadataStale: catalog.TagsStale}
-			if !catalog.ReleasesStale {
-				marker := releaseCitation(binding, nil, catalog)
-				citation = &marker
-			}
+			historyComplete := catalog.HistoryComplete
+			output = githubReleaseLatest{ReleaseRef: input.ReleaseRef, Repository: binding.Repository, CheckedAt: latestResult.CheckedAt.Format(time.RFC3339), NoPublishedStable: latestResult.NoPublishedStable, LatestPrerelease: prerelease, ObservedTags: catalog.Tags[:releaseLimit(input, len(catalog.Tags))], HistoryComplete: &historyComplete, ReleaseMetadataStale: latestResult.Stale || catalog.ReleasesStale, TagMetadataStale: catalog.TagsStale}
 		case "history":
 			var catalog githubconnector.ReleaseCatalog
 			catalog, err = t.catalogForBinding(ctx, binding, source, false)
 			if err != nil {
 				break
 			}
+			// History is intentionally browse-only. Its bounded first page remains
+			// useful for release notes but must not unlock a latest-version claim.
 			output = githubReleaseHistory{ReleaseRef: input.ReleaseRef, Repository: binding.Repository, CheckedAt: catalog.CheckedAt.Format(time.RFC3339), Releases: historyForLookup(catalog.Releases, releaseLimit(input, len(catalog.Releases))), HistoryComplete: catalog.HistoryComplete, ReleaseMetadataStale: catalog.ReleasesStale}
-			if !catalog.ReleasesStale {
-				marker := releaseCitation(binding, nil, catalog)
-				citation = &marker
-			}
 		case "tags":
 			var catalog githubconnector.ReleaseCatalog
 			catalog, err = t.catalogForBinding(ctx, binding, source, true)

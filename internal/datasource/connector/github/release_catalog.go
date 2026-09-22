@@ -39,8 +39,20 @@ type ReleaseCatalog struct {
 	TagsStale       bool      `json:"tags_stale,omitempty"`
 }
 
-// LatestStable returns the latest *published, non-prerelease* GitHub Release.
-// It never derives a release from a tag or a branch/package version string.
+// LatestReleaseResult is the authoritative result of GitHub's dedicated
+// /releases/latest endpoint. It is intentionally separate from the bounded
+// history catalog: the history endpoint is useful for browsing, but it cannot
+// establish the current release when pagination is incomplete.
+type LatestReleaseResult struct {
+	LatestStable      *Release  `json:"latest_stable,omitempty"`
+	NoPublishedStable bool      `json:"no_published_stable_release,omitempty"`
+	CheckedAt         time.Time `json:"checked_at"`
+	Stale             bool      `json:"stale,omitempty"`
+}
+
+// LatestStable returns the newest stable record in this bounded history page,
+// ordered by published_at. It is browse-only and must not be used to answer a
+// repository's current/latest version; use FetchLatestRelease for that fact.
 func (c ReleaseCatalog) LatestStable() (Release, bool) {
 	for _, release := range c.Releases {
 		if !release.Draft && !release.Prerelease && !release.PublishedAt.IsZero() {
@@ -50,9 +62,9 @@ func (c ReleaseCatalog) LatestStable() (Release, bool) {
 	return Release{}, false
 }
 
-// LatestPrerelease returns the newest published prerelease. It is exposed as
-// additional context only; callers must not silently substitute it for the
-// latest stable release.
+// LatestPrerelease returns the newest prerelease in this bounded history page.
+// It is additional context only and must never substitute for current stable
+// release evidence.
 func (c ReleaseCatalog) LatestPrerelease() (Release, bool) {
 	for _, release := range c.Releases {
 		if !release.Draft && release.Prerelease && !release.PublishedAt.IsZero() {
@@ -119,6 +131,11 @@ type githubTagAPI struct {
 
 type releaseCacheEntry struct {
 	Repository       string
+	Latest           Release
+	LatestETag       string
+	LatestCheckedAt  time.Time
+	LatestLoaded     bool
+	LatestNoStable   bool
 	Releases         []Release
 	ReleaseETag      string
 	ReleaseCheckedAt time.Time
@@ -161,9 +178,14 @@ func releaseCatalogCacheKey(scope, repository string, cfg *types.DataSourceConfi
 func cloneReleases(in []Release) []Release {
 	out := make([]Release, len(in))
 	for i, release := range in {
-		out[i] = release
-		out[i].Assets = append([]ReleaseAsset(nil), release.Assets...)
+		out[i] = cloneRelease(release)
 	}
+	return out
+}
+
+func cloneRelease(in Release) Release {
+	out := in
+	out.Assets = append([]ReleaseAsset(nil), in.Assets...)
 	return out
 }
 
@@ -176,6 +198,7 @@ func (c *ReleaseCatalogCache) entry(key string) releaseCacheEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	entry := c.entries[key]
+	entry.Latest = cloneRelease(entry.Latest)
 	entry.Releases = cloneReleases(entry.Releases)
 	entry.Tags = cloneTags(entry.Tags)
 	return entry
@@ -187,6 +210,7 @@ func (c *ReleaseCatalogCache) store(key string, entry releaseCacheEntry) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	entry.Latest = cloneRelease(entry.Latest)
 	entry.Releases = cloneReleases(entry.Releases)
 	entry.Tags = cloneTags(entry.Tags)
 	c.entries[key] = entry
@@ -282,6 +306,68 @@ func (c *Connector) FetchReleaseCatalog(
 	return catalogFromEntry(entry, includeTags), nil
 }
 
+// FetchLatestRelease reads GitHub's dedicated latest-release endpoint. GitHub
+// defines that endpoint as the newest non-draft, non-prerelease release by
+// created_at; do not derive it from a truncated history page or published_at.
+// A cached result may be returned only with Stale=true after a refresh failure,
+// so callers never treat an old version as current evidence.
+func (c *Connector) FetchLatestRelease(
+	ctx context.Context,
+	cache *ReleaseCatalogCache,
+	cacheScope string,
+	cfg *types.DataSourceConfig,
+) (LatestReleaseResult, error) {
+	if cache == nil {
+		cache = NewReleaseCatalogCache()
+	}
+	selection, err := parseSelection(cfg)
+	if err != nil {
+		return LatestReleaseResult{}, err
+	}
+	key := releaseCatalogCacheKey(cacheScope, selection.Repository, cfg)
+	now := cache.clock()
+	entry := cache.entry(key)
+	if entry.Repository != "" && entry.Repository != selection.Repository {
+		entry = releaseCacheEntry{}
+	}
+	entry.Repository = selection.Repository
+
+	if !entry.LatestLoaded || !cache.fresh(entry.LatestCheckedAt, now) {
+		latest, etag, noStable, notModified, fetchErr := c.fetchLatestRelease(ctx, cfg, selection.Repository, entry.LatestETag)
+		if fetchErr != nil {
+			if !entry.LatestLoaded {
+				return LatestReleaseResult{}, fetchErr
+			}
+			result := latestFromEntry(entry)
+			result.Stale = true
+			return result, nil
+		}
+		if !notModified {
+			entry.Latest = latest
+			entry.LatestETag = etag
+			entry.LatestNoStable = noStable
+		} else if etag != "" {
+			entry.LatestETag = etag
+		}
+		entry.LatestLoaded = true
+		entry.LatestCheckedAt = now
+		cache.store(key, entry)
+	}
+	return latestFromEntry(entry), nil
+}
+
+func latestFromEntry(entry releaseCacheEntry) LatestReleaseResult {
+	result := LatestReleaseResult{
+		NoPublishedStable: entry.LatestNoStable,
+		CheckedAt:         entry.LatestCheckedAt,
+	}
+	if !entry.LatestNoStable {
+		latest := cloneRelease(entry.Latest)
+		result.LatestStable = &latest
+	}
+	return result
+}
+
 func catalogFromEntry(entry releaseCacheEntry, includeTags bool) ReleaseCatalog {
 	checkedAt := entry.ReleaseCheckedAt
 	if includeTags && entry.TagCheckedAt.After(checkedAt) {
@@ -321,6 +407,27 @@ func (c *Connector) fetchReleases(ctx context.Context, cfg *types.DataSourceConf
 		return releases[i].PublishedAt.After(releases[j].PublishedAt)
 	})
 	return releases, headers.Get("ETag"), !hasNextPage(headers.Get("Link")), false, nil
+}
+
+// fetchLatestRelease preserves the endpoint's no-latest distinction without
+// leaking GitHub status details to callers. A 404 is not promoted to release
+// provenance by itself: callers may use it only as a clearly labeled fallback
+// for tags/prereleases, while a positive latest answer requires the Release.
+func (c *Connector) fetchLatestRelease(ctx context.Context, cfg *types.DataSourceConfig, repository, etag string) (Release, string, bool, bool, error) {
+	var payload githubReleaseAPI
+	headers, status, notModified, err := c.getConditionalJSONStatus(ctx, cfg,
+		"/repos/"+repository+"/releases/latest", etag, &payload, 2<<20)
+	if status == http.StatusNotFound {
+		return Release{}, headers.Get("ETag"), true, false, nil
+	}
+	if err != nil || notModified {
+		return Release{}, headers.Get("ETag"), false, notModified, err
+	}
+	latest, ok := normalizeRelease(repository, payload)
+	if !ok || latest.Draft || latest.Prerelease {
+		return Release{}, headers.Get("ETag"), false, false, &Error{Code: "github_response_invalid", Message: "GitHub latest release response is invalid"}
+	}
+	return latest, headers.Get("ETag"), false, false, nil
 }
 
 func (c *Connector) fetchTags(ctx context.Context, cfg *types.DataSourceConfig, repository, etag string) ([]Tag, string, bool, bool, error) {
@@ -434,13 +541,28 @@ func (c *Connector) getConditionalJSON(
 	out interface{},
 	limit int64,
 ) (http.Header, bool, error) {
+	headers, _, notModified, err := c.getConditionalJSONStatus(ctx, cfg, endpoint, etag, out, limit)
+	return headers, notModified, err
+}
+
+// getConditionalJSONStatus is the shared conditional GET path with the HTTP
+// status retained for the one GitHub endpoint whose 404 means "no latest
+// release" rather than a generic connector failure. All returned errors still
+// flow through githubHTTPError and remain credential-safe.
+func (c *Connector) getConditionalJSONStatus(
+	ctx context.Context,
+	cfg *types.DataSourceConfig,
+	endpoint, etag string,
+	out interface{},
+	limit int64,
+) (http.Header, int, bool, error) {
 	base := apiBase
 	if c != nil && c.apiBase != "" {
 		base = c.apiBase
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+endpoint, nil)
 	if err != nil {
-		return nil, false, &Error{Code: "github_request", Message: "GitHub request is invalid"}
+		return nil, 0, false, &Error{Code: "github_request", Message: "GitHub request is invalid"}
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
@@ -453,21 +575,21 @@ func (c *Connector) getConditionalJSON(
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, false, &Error{Code: "github_connection", Message: "GitHub connection failed"}
+		return nil, 0, false, &Error{Code: "github_connection", Message: "GitHub connection failed"}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotModified {
-		return resp.Header, true, nil
+		return resp.Header, resp.StatusCode, true, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return resp.Header, false, githubHTTPError(resp)
+		return resp.Header, resp.StatusCode, false, githubHTTPError(resp)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil || int64(len(body)) > limit {
-		return resp.Header, false, &Error{Code: "github_response_limit", Message: "GitHub response is incomplete or exceeds the sync limit"}
+		return resp.Header, resp.StatusCode, false, &Error{Code: "github_response_limit", Message: "GitHub response is incomplete or exceeds the sync limit"}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
-		return resp.Header, false, &Error{Code: "github_response_invalid", Message: "GitHub response is invalid"}
+		return resp.Header, resp.StatusCode, false, &Error{Code: "github_response_invalid", Message: "GitHub response is invalid"}
 	}
-	return resp.Header, false, nil
+	return resp.Header, resp.StatusCode, false, nil
 }

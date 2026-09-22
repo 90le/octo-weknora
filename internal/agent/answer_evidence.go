@@ -57,11 +57,12 @@ func hasGitHubReleaseProvenance(result *types.ToolResult) bool {
 }
 
 func validGitHubReleaseCitation(citation types.GitHubReleaseCitation) bool {
-	// A verified "no published stable release" result has no tag or URL by
-	// design. The data-source binding and checked timestamp still establish the
-	// provenance of that negative latest-release result.
+	// Only a positive result from GitHub's dedicated latest-release endpoint can
+	// unlock a latest-version conclusion. Bounded history, tags, and the
+	// no-stable fallback remain useful context but cannot establish currentness.
 	return citation.KnowledgeBaseID != "" && citation.DataSourceID != "" &&
-		citation.Repository != "" && !citation.CheckedAt.IsZero()
+		citation.Repository != "" && citation.TagName != "" && citation.URL != "" &&
+		!citation.PublishedAt.IsZero() && !citation.CheckedAt.IsZero()
 }
 
 func hasSourceBrowseReadProvenance(result *types.ToolResult) bool {

@@ -132,6 +132,7 @@ func TestRecordAnswerEvidenceRequiresPrivateReleaseProvenance(t *testing.T) {
 				Repository:      "Mininglamp-OSS/octo-android",
 				TagName:         "v1.2.3",
 				URL:             "https://github.com/Mininglamp-OSS/octo-android/releases/tag/v1.2.3",
+				PublishedAt:     checkedAt,
 				CheckedAt:       checkedAt,
 			},
 		}},
@@ -158,7 +159,7 @@ func TestRecordAnswerEvidenceRequiresPrivateReleaseProvenance(t *testing.T) {
 		Name: agenttools.ToolGitHubReleaseLookup,
 		Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
 			types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{
-				KnowledgeBaseID: "kb", DataSourceID: "source", Repository: "Mininglamp-OSS/octo-android", TagName: "v1.2.3", URL: "https://example.test/release", CheckedAt: checkedAt,
+				KnowledgeBaseID: "kb", DataSourceID: "source", Repository: "Mininglamp-OSS/octo-android", TagName: "v1.2.3", URL: "https://example.test/release", PublishedAt: checkedAt, CheckedAt: checkedAt,
 			},
 		}},
 	}}})
@@ -174,7 +175,7 @@ func TestRecordAnswerEvidenceRequiresPrivateReleaseProvenance(t *testing.T) {
 			},
 		}},
 	}}})
-	require.True(t, answerevidence.ReleaseEvidenceObserved(noStableCtx), "a checked no-stable-release result is valid release provenance")
+	require.False(t, answerevidence.ReleaseEvidenceObserved(noStableCtx), "a no-stable fallback cannot establish the current release")
 }
 
 func TestExecuteLoopStopsUnevidencedSourceClaimWithDeterministicFallback(t *testing.T) {
