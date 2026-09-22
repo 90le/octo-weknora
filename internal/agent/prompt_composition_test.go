@@ -121,7 +121,9 @@ func TestFinalSynthesisKeepsConversationRolesImagesAndSteering(t *testing.T) {
 	require.Equal(t, original, got[:len(messages)],
 		"synthesis must use the same live conversation, including tool roles and latest steering")
 	require.Empty(t, model.opts[0].Tools)
-	require.Equal(t, "none", model.opts[0].ToolChoice)
+	// The final synthesis has no tools. Providers reject tool_choice=none when
+	// the tools field is absent, so the option must be omitted entirely.
+	require.Empty(t, model.opts[0].ToolChoice)
 	require.Equal(t, original, messages, "synthesis must not mutate the live transcript")
 }
 
