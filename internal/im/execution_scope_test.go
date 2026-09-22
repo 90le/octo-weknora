@@ -82,3 +82,11 @@ func TestScopedAgentPreservesExplicitNativeSourceReader(t *testing.T) {
 		t.Fatal("native source capability lost or execution widened")
 	}
 }
+
+func TestScopedAgentPreservesExplicitGitHubReleaseLookup(t *testing.T) {
+	agent := &types.CustomAgent{Config: types.CustomAgentConfig{AllowedTools: []string{"github_release_lookup", "shell_exec"}}}
+	out, err := scopeAgent(agent, &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r"})
+	if err != nil || len(out.Config.AllowedTools) != 1 || out.Config.AllowedTools[0] != "github_release_lookup" {
+		t.Fatal("native GitHub release lookup lost or execution widened")
+	}
+}
