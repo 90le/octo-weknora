@@ -63,7 +63,8 @@ func Classify(query string) Intent {
 		return IntentRelease
 	}
 	if containsAny(q,
-		"是否支持", "支持", "接入", "集成", "兼容", "对接", "原生接入", "integration", "integrate", "compatible", "support",
+		"是否支持", "支持", "接入", "集成", "兼容", "对接", "原生接入", "channel-octo", "octo-channel", "github.com/",
+		"integration", "integrate", "compatible", "support",
 	) {
 		return IntentIntegration
 	}
@@ -353,11 +354,11 @@ This turn asks about a latest version, release, or changelog. Only a trusted rel
 	case IntentIntegration:
 		if isChinese(ctx) {
 			return `<answer_evidence_contract>
-本回合询问支持、接入、集成或兼容性。无论结论是“支持”还是“不支持”，都必须先读取当前授权范围内的 README、接口文档或实际源码；发布标签、RAG 未命中、文档缺失和文件名都不能单独证明接入结论。若未读到证据，只能说明当前材料无法确认。
+本回合询问支持、接入、集成、兼容性或某个 channel 项目的职责。无论结论是“支持”还是“不支持”，或对项目用途的说明，都必须先读取当前授权范围内的 README、接口文档或实际源码；发布标签、RAG 未命中、文档缺失和文件名都不能单独证明结论。若未读到证据，只能说明当前材料无法确认。
 </answer_evidence_contract>`
 		}
 		return `<answer_evidence_contract>
-This turn asks about support, integration, or compatibility. Both affirmative and negative conclusions require an actual read of authorized README/API documentation or source. A release tag, RAG miss, missing document, or filename alone cannot establish an integration conclusion. If no content was read, say the current material cannot confirm it.
+This turn asks about support, integration, compatibility, or a channel project's responsibility. Both affirmative and negative conclusions, and a description of a project's role, require an actual read of authorized README/API documentation or source. A release tag, RAG miss, missing document, or filename alone cannot establish the conclusion. If no content was read, say the current material cannot confirm it.
 </answer_evidence_contract>`
 	default:
 		return ""

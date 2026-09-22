@@ -15,6 +15,7 @@ func TestClassifyKeepsSourceFactsSeparateFromReleaseQuestions(t *testing.T) {
 		{"apiSecretsForRequest 在哪个文件、如何实现？", IntentSource},
 		{"octo-android 最新版本更新了什么？", IntentRelease},
 		{"Octo 支持 Codex 接入 IM Bot 吗？", IntentIntegration},
+		{"codex-channel-octo、cc-channel-octo 和 hermes-channel-octo 项目是干嘛的？", IntentIntegration},
 		{"最新版本是否支持新的 IM 接入？", IntentRelease},
 		{"帮我解释一下知识库", IntentNone},
 		{"这个类明天怎么安排？", IntentNone},
