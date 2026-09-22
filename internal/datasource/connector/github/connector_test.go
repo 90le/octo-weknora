@@ -94,6 +94,38 @@ func TestInvalidPathsAndUnsupportedModes(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, next)
 }
+
+func TestFetchIncrementalRejectsSourceMode(t *testing.T) {
+	c, cfg, requests := fixture(t, []string{"guide.md"}, false)
+	cfg.Settings["mode"] = "source"
+	items, next, err := c.FetchIncremental(context.Background(), cfg, nil)
+	require.ErrorContains(t, err, "source mode must use the snapshot pipeline")
+	require.Nil(t, items)
+	require.Nil(t, next)
+	require.Empty(t, *requests, "source mode must not make document/RAG fetch requests")
+}
+
+func TestParseSelectionNormalizesLegacyGitHubRemoteForms(t *testing.T) {
+	for _, repository := range []string{
+		"https://github.com/Mininglamp-OSS/octo-cli.git",
+		"http://www.github.com/Mininglamp-OSS/octo-cli",
+		"github.com/Mininglamp-OSS/octo-cli",
+		"git@github.com:Mininglamp-OSS/octo-cli.git",
+		"ssh://git@github.com/Mininglamp-OSS/octo-cli.git",
+	} {
+		s, err := parseSelection(&types.DataSourceConfig{Settings: map[string]interface{}{
+			"repository": repository,
+			"ref":        "main",
+		}})
+		require.NoError(t, err, repository)
+		require.Equal(t, "Mininglamp-OSS/octo-cli", s.Repository, repository)
+	}
+
+	_, err := parseSelection(&types.DataSourceConfig{Settings: map[string]interface{}{
+		"repository": "git@github.com:Mininglamp-OSS/octo-cli/tree/main",
+	}})
+	require.Error(t, err, "a GitHub tree path is not a repository identity")
+}
 func TestTokenNeverFollowsRedirectOrAppearsInError(t *testing.T) {
 	c := NewConnector()
 	calls := 0

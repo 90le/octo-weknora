@@ -110,3 +110,22 @@ func TestGitSnapshotFastPathFallsBackWhenPriorObjectIsMissing(t *testing.T) {
 	require.ErrorIs(t, err, errGitUnavailable)
 	require.Equal(t, []string{"/repos/test/docs", "/repos/test/docs/commits/main"}, *requests)
 }
+
+func TestReuseGitSnapshotFileRefetchesWhenOnePriorObjectIsMissing(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	cfg := fastPathConfig()
+	store := &snapshot.Store{Base: t.TempDir()}
+	ds := &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb"}
+	previous := fastPathPreviousSnapshot(t, store, ds, cfg, commit)
+
+	objects, err := filepath.Glob(filepath.Join(store.Base, "*", "objects", previous.Files[0].Object))
+	require.NoError(t, err)
+	require.Len(t, objects, 1)
+	require.NoError(t, os.Remove(objects[0]))
+
+	next, err := store.Begin(ds, cfg)
+	require.NoError(t, err)
+	reused, err := reuseGitSnapshotFile(next, previous.Files[0])
+	require.NoError(t, err)
+	require.False(t, reused, "the caller must re-read this known Git blob")
+}

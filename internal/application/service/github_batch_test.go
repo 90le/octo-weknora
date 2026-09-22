@@ -51,6 +51,25 @@ func TestGitHubDataSourcePairsCanonicalizeLegacyDocumentRepositories(t *testing.
 	require.Equal(t, "legacy-documents", pairs[key])
 }
 
+func TestGitHubDataSourcePairsCanonicalizeLegacySSHRepositories(t *testing.T) {
+	makeSource := func(id, repository string) *types.DataSource {
+		blob, err := (&types.DataSourceConfig{Type: types.ConnectorTypeGitHub, Settings: map[string]interface{}{
+			"repository": repository,
+			"mode":       "source",
+		}}).ToJSON()
+		require.NoError(t, err)
+		return &types.DataSource{ID: id, Type: types.ConnectorTypeGitHub, Config: blob}
+	}
+
+	pairs := githubDataSourcePairs([]*types.DataSource{
+		makeSource("ssh-colon", "git@github.com:Mininglamp-OSS/octo-cli.git"),
+		makeSource("ssh-url", "ssh://git@github.com/Mininglamp-OSS/octo-server.git"),
+	})
+
+	require.Equal(t, "ssh-colon", pairs["mininglamp-oss/octo-cli\x00source"])
+	require.Equal(t, "ssh-url", pairs["mininglamp-oss/octo-server\x00source"])
+}
+
 func TestGitHubDataSourcePairsKeepDocumentAndSourceModesDistinct(t *testing.T) {
 	makeSource := func(id, repository, mode string) *types.DataSource {
 		blob, err := (&types.DataSourceConfig{Type: types.ConnectorTypeGitHub, Settings: map[string]interface{}{

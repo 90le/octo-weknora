@@ -137,11 +137,10 @@ func parseSelection(cfg *types.DataSourceConfig) (selection, error) {
 	if err = json.Unmarshal(b, &s); err != nil {
 		return s, datasource.ErrInvalidConfig
 	}
-	s.Repository = strings.TrimSuffix(strings.TrimSpace(s.Repository), ".git")
-	s.Repository = strings.TrimPrefix(s.Repository, "https://github.com/")
+	s.Repository = normalizeGitHubRepository(s.Repository)
 	s.Ref = strings.TrimSpace(s.Ref)
 	if !repoPattern.MatchString(s.Repository) || strings.HasSuffix(s.Repository, "/.") || strings.HasSuffix(s.Repository, "/..") {
-		return s, fmt.Errorf("%w: repository must be owner/name or an HTTPS GitHub repository URL", datasource.ErrInvalidConfig)
+		return s, fmt.Errorf("%w: repository must be owner/name or a GitHub repository URL", datasource.ErrInvalidConfig)
 	}
 	if len(s.Ref) > 256 || strings.ContainsAny(s.Ref, "\x00\r\n") {
 		return s, datasource.ErrInvalidConfig
@@ -155,6 +154,34 @@ func parseSelection(cfg *types.DataSourceConfig) (selection, error) {
 	}
 	sort.Strings(s.Paths)
 	return s, nil
+}
+
+// normalizeGitHubRepository accepts the repository URL forms that earlier
+// datasource versions persisted. The connector still validates the resulting
+// owner/name pair below, so paths such as /tree/main never become a source.
+func normalizeGitHubRepository(repository string) string {
+	repository = strings.TrimSpace(repository)
+	lower := strings.ToLower(repository)
+	for _, prefix := range []string{
+		"https://github.com/",
+		"http://github.com/",
+		"https://www.github.com/",
+		"http://www.github.com/",
+		"github.com/",
+		"git@github.com:",
+		"git@github.com/",
+		"ssh://git@github.com/",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			repository = repository[len(prefix):]
+			break
+		}
+	}
+	repository = strings.Trim(strings.TrimSpace(repository), "/")
+	if len(repository) >= len(".git") && strings.EqualFold(repository[len(repository)-len(".git"):], ".git") {
+		repository = repository[:len(repository)-len(".git")]
+	}
+	return repository
 }
 
 // ConfiguredRepository returns the canonical GitHub owner/repository identity after the
@@ -373,6 +400,9 @@ func (c *Connector) FetchIncremental(ctx context.Context, cfg *types.DataSourceC
 }
 
 func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceConfig, old *types.SyncCursor) ([]types.FetchedItem, *types.SyncCursor, error) {
+	if snapshot.IsSource(cfg) {
+		return nil, nil, fmt.Errorf("%w: source mode must use the snapshot pipeline", datasource.ErrInvalidConfig)
+	}
 	s, err := parseSelection(cfg)
 	if err != nil {
 		return nil, nil, err
