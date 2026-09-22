@@ -18,10 +18,12 @@ import {
   defaultGitHubBulkSelection,
   filterGitHubRepositories,
   githubRepositoryModePresence,
+  githubBulkRequestLimit,
   githubBatchSyncPayload,
   hasGitHubRepositoryMode,
   mergeGitHubRepositoryPresence,
   parseGitHubPaths,
+  partitionGitHubRepositories,
   selectableGitHubRepository,
   selectableGitHubRepositoryMode,
   summarizeGitHubBulkResults,
@@ -60,7 +62,7 @@ const results = ref<GitHubBatchResultItem[]>([])
 const resultModePresence = ref<Record<string, { source: boolean; documents: boolean }>>({})
 const nextCursor = ref('')
 const loadingMore = ref(false)
-const batchLimit = 20
+const batchLimit = githubBulkRequestLimit
 
 const stepTitles = computed(() => [
   t('datasource.githubBulk.steps.discover'),
@@ -90,7 +92,8 @@ const selectedRepositories = computed(() => repositories.value.filter(
   (repository) => selectedRepositorySet.value.has(repository.repository),
 ))
 const selectedCount = computed(() => selectedRepositories.value.length)
-const selectionLimitExceeded = computed(() => selectedCount.value > batchLimit)
+const requestBatchCount = computed(() => Math.ceil(selectedCount.value / batchLimit))
+const selectionRequiresMultipleRequests = computed(() => requestBatchCount.value > 1)
 const resultSummary = computed(() => summarizeGitHubBulkResults(results.value))
 const isManualSyncPolicy = computed(() => !syncSchedule.value.trim())
 
@@ -108,7 +111,7 @@ const drawerConfirmText = computed(() => {
 
 const confirmDisabled = computed(() => {
   if (step.value === 0) return !normalizeOwner(owner.value)
-  if (step.value === 1) return selectedCount.value === 0 || selectionLimitExceeded.value
+  if (step.value === 1) return selectedCount.value === 0
   return false
 })
 
@@ -194,7 +197,6 @@ async function discover() {
 function selectVisible() {
   const selected = new Set(selectedRepositoryNames.value)
   for (const repository of filteredRepositories.value) {
-    if (selected.size >= batchLimit) break
     if (selectableGitHubRepositoryMode(repository, mode.value, repositoryPresence.value)) {
       selected.add(repository.repository)
     }
@@ -234,16 +236,41 @@ async function createBatch() {
   errorMessage.value = ''
   try {
     const sync = githubBatchSyncPayload(syncSchedule.value, startSync.value)
-    const response = unwrapResponse<GitHubBatchResponse>(await createGitHubDataSourceBatch({
-      knowledge_base_id: props.kbId,
-      owner: owner.value,
-      repositories: selectedRepositories.value,
-      credentials: credentials(),
-      mode: mode.value,
-      paths: parseGitHubPaths(pathsText.value),
-      ...sync,
-    }))
-    results.value = response.results || []
+    const batches = partitionGitHubRepositories(selectedRepositories.value, batchLimit)
+    const nextResults: GitHubBatchResultItem[] = []
+    for (let index = 0; index < batches.length; index += 1) {
+      const repositories = batches[index]
+      try {
+        const response = unwrapResponse<GitHubBatchResponse>(await createGitHubDataSourceBatch({
+          knowledge_base_id: props.kbId,
+          owner: owner.value,
+          repositories,
+          credentials: credentials(),
+          mode: mode.value,
+          paths: parseGitHubPaths(pathsText.value),
+          ...sync,
+        }))
+        nextResults.push(...(response.results || []))
+      } catch (error) {
+        const message = readError(error)
+        nextResults.push(...repositories.map((repository) => ({
+          repository: repository.repository,
+          status: 'failed' as const,
+          message,
+        })))
+        for (const remainingBatch of batches.slice(index + 1)) {
+          for (const remaining of remainingBatch) {
+            nextResults.push({
+              repository: remaining.repository,
+              status: 'skipped',
+              message: t('datasource.githubBulk.notSubmittedAfterFailure'),
+            })
+          }
+        }
+        break
+      }
+    }
+    results.value = nextResults
     for (const result of results.value) {
       if (result.status === 'created' || result.status === 'existing') {
         resultModePresence.value = addGitHubRepositoryModePresence(
@@ -255,7 +282,7 @@ async function createBatch() {
     }
     step.value = 2
     emit('saved')
-    if (resultSummary.value.failed > 0) {
+    if (resultSummary.value.failed > 0 || resultSummary.value.other > 0) {
       MessagePlugin.warning(t('datasource.githubBulk.completedWithFailures'))
     } else {
       MessagePlugin.success(t('datasource.githubBulk.completed'))
@@ -424,9 +451,9 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
       </div>
 
       <t-alert
-        v-if="selectionLimitExceeded"
-        theme="warning"
-        :message="t('datasource.githubBulk.batchLimit', { count: batchLimit })"
+        v-if="selectionRequiresMultipleRequests"
+        theme="info"
+        :message="t('datasource.githubBulk.batchSplit', { count: selectedCount, batches: requestBatchCount, limit: batchLimit })"
       />
 
       <div v-if="filteredRepositories.length" class="github-bulk-repository-list">

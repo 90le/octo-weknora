@@ -10,6 +10,7 @@ import {
   hasGitHubRepositoryMode,
   mergeGitHubRepositoryPresence,
   normalizeGitHubRepository,
+  partitionGitHubRepositories,
   parseGitHubPaths,
   selectableGitHubRepository,
   selectableGitHubRepositoryMode,
@@ -51,6 +52,20 @@ test('GitHub bulk paths and result summaries remain deterministic', () => {
     ]),
     { created: 1, existing: 1, failed: 1, other: 1 },
   )
+})
+
+test('GitHub bulk partitions an explicit large selection into bounded requests', () => {
+  const selected = Array.from({ length: 45 }, (_, index) => ({
+    repository: `Mininglamp-OSS/repository-${index + 1}`,
+    default_branch: 'main',
+    archived: false,
+    description: '',
+  }))
+  const groups = partitionGitHubRepositories(selected, 20)
+  assert.deepEqual(groups.map((group) => group.length), [20, 20, 5])
+  assert.equal(groups[0][0]?.repository, 'Mininglamp-OSS/repository-1')
+  assert.equal(groups[2][4]?.repository, 'Mininglamp-OSS/repository-45')
+  assert.throws(() => partitionGitHubRepositories(selected, 0), /positive integer/)
 })
 
 test('GitHub bulk treats no schedule as an explicit dormant manual source', () => {
