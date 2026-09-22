@@ -975,3 +975,30 @@ func TestStreamFinalAnswerToEventBus_FailureEmitsTerminalFallback(t *testing.T) 
 		"the fallback must close IM runQA's final-answer wait")
 	assert.True(t, finalAnswerEvents[0].IsFallback)
 }
+
+func TestStreamFinalAnswerToEventBus_FailureAfterPartialAnswerPreservesVisibleContent(t *testing.T) {
+	mock := &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{
+		{ResponseType: types.ResponseTypeAnswer, Content: "已定位到相关实现。"},
+		{ResponseType: types.ResponseTypeError, Content: "upstream reset"},
+	}}}}
+	engine := newTestEngine(t, mock)
+	var finalAnswerEvents []event.AgentFinalAnswerData
+	engine.eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(event.AgentFinalAnswerData)
+		require.True(t, ok)
+		finalAnswerEvents = append(finalAnswerEvents, data)
+		return nil
+	})
+
+	state := &types.AgentState{}
+	err := engine.streamFinalAnswerToEventBus(context.Background(), "test query", state, "sess-1", emptyMessages())
+
+	require.Error(t, err)
+	assert.Equal(t, "已定位到相关实现。", state.FinalAnswer)
+	require.Len(t, finalAnswerEvents, 2)
+	assert.Equal(t, "已定位到相关实现。", finalAnswerEvents[0].Content)
+	assert.False(t, finalAnswerEvents[0].Done)
+	assert.Empty(t, finalAnswerEvents[1].Content, "terminal closure must not append a fallback after visible content")
+	assert.True(t, finalAnswerEvents[1].Done)
+	assert.False(t, finalAnswerEvents[1].IsFallback)
+}

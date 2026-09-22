@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
@@ -12,7 +13,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-const finalAnswerSynthesisFallback = "Sorry, I was unable to generate a complete answer."
+const finalAnswerSynthesisFallback = "抱歉，回答生成失败，请稍后重试。"
 
 // streamFinalAnswerToEventBus streams the final answer generation through EventBus
 func (e *AgentEngine) streamFinalAnswerToEventBus(
@@ -49,6 +50,7 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 	answerID := generateEventID("answer")
 	logger.Debugf(ctx, "[Agent][FinalAnswer] AnswerID: %s", answerID)
 	answerDoneEmitted := false
+	var visibleAnswer strings.Builder
 
 	budget := e.clampCompletionBudgetToContext(e.tokenEstimator.EstimateMessages(messages))
 	llmResult, err := e.streamLLMToEventBus(
@@ -59,12 +61,13 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 			MaxCompletionTokens: budget,
 			PromptCacheKey:      sessionID,
 		}, // Thinking disabled for final answer synthesis
-		func(chunk *types.StreamResponse, fullContent string) {
+		func(chunk *types.StreamResponse, _ string) {
 			// Defensive filter: only emit answer content, skip thinking chunks
 			if chunk.ResponseType == types.ResponseTypeThinking {
 				return
 			}
 			if chunk.Content != "" {
+				visibleAnswer.WriteString(chunk.Content)
 				logger.Debugf(ctx, "[Agent][FinalAnswer] Emitting answer chunk: %d chars", len(chunk.Content))
 				e.eventBus.Emit(ctx, event.Event{
 					ID:        answerID,
@@ -89,8 +92,25 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 		})
 		// A gateway can reject the synthesis request before it emits a single
 		// chunk. Close the final-answer stream ourselves so IM consumers do not
-		// wait forever for Done or EventError, and keep the completion event's
-		// FinalAnswer aligned with what those consumers receive.
+		// wait forever for Done or EventError. If visible content already arrived,
+		// preserve it and only close the stream; adding a fallback after it would
+		// produce a misleading half-answer plus an unrelated second answer.
+		partial := agenttools.StripThinkBlocks(visibleAnswer.String())
+		if strings.TrimSpace(partial) != "" {
+			state.FinalAnswer = partial
+			if !answerDoneEmitted {
+				e.eventBus.Emit(ctx, event.Event{
+					ID:        answerID,
+					Type:      event.EventAgentFinalAnswer,
+					SessionID: sessionID,
+					Data: event.AgentFinalAnswerData{
+						Content: "",
+						Done:    true,
+					},
+				})
+			}
+			return err
+		}
 		state.FinalAnswer = finalAnswerSynthesisFallback
 		e.eventBus.Emit(ctx, event.Event{
 			ID:        answerID,
