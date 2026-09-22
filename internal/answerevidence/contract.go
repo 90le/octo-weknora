@@ -40,7 +40,15 @@ type State struct {
 	releaseLookup     bool
 	releaseEvidence   bool
 	requiredRepos     []string
-	nudgeCount        int
+	// postPreflightSourceBrowse is deliberately separate from the normal
+	// source-evidence ledger. It is enabled only after the system has already
+	// searched and read every explicitly named channel repository. At that
+	// point a model may still need a few focused follow-up reads, but repeated
+	// repository-wide searches add latency and drown the answer context without
+	// improving the proof requirement.
+	postPreflightSourceBrowseActive    bool
+	postPreflightSourceBrowseRemaining int
+	nudgeCount                         int
 }
 
 type stateKey struct{}
@@ -279,6 +287,60 @@ func RequiredRepositories(ctx context.Context) []string {
 	state.mu.RLock()
 	defer state.mu.RUnlock()
 	return append([]string(nil), state.requiredRepos...)
+}
+
+// ActivatePostPreflightSourceBrowseBudget enables a small model-call budget
+// only after a caller has independently established complete evidence for the
+// explicitly named repositories. The caller decides when that condition is
+// true; this package only owns the request-local, concurrency-safe counter.
+// A zero or negative budget deliberately leaves normal source browsing alone.
+func ActivatePostPreflightSourceBrowseBudget(ctx context.Context, budget int) {
+	if budget <= 0 {
+		return
+	}
+	if state := stateFrom(ctx); state != nil {
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		if state.postPreflightSourceBrowseActive {
+			return
+		}
+		state.postPreflightSourceBrowseActive = true
+		state.postPreflightSourceBrowseRemaining = budget
+	}
+}
+
+// ConsumePostPreflightSourceBrowseBudget reserves one post-preflight
+// source_browse call. It returns true while no post-preflight control is
+// active, so ordinary source-code questions and incomplete preflights retain
+// their existing access. Callers must invoke it immediately before executing
+// the model-originated tool call; system-owned preflight calls bypass it.
+func ConsumePostPreflightSourceBrowseBudget(ctx context.Context) bool {
+	state := stateFrom(ctx)
+	if state == nil {
+		return true
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if !state.postPreflightSourceBrowseActive {
+		return true
+	}
+	if state.postPreflightSourceBrowseRemaining <= 0 {
+		return false
+	}
+	state.postPreflightSourceBrowseRemaining--
+	return true
+}
+
+// PostPreflightSourceBrowseBudget reports the active counter for diagnostics
+// and tests. It never exposes tool inputs, repository IDs, or evidence text.
+func PostPreflightSourceBrowseBudget(ctx context.Context) (active bool, remaining int) {
+	state := stateFrom(ctx)
+	if state == nil {
+		return false, 0
+	}
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	return state.postPreflightSourceBrowseActive, state.postPreflightSourceBrowseRemaining
 }
 
 // MissingRequiredRepositories reports which explicitly named channel projects

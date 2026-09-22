@@ -10,6 +10,7 @@ import (
 	"time"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/answerevidence"
 	"github.com/Tencent/WeKnora/internal/common"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -25,6 +26,10 @@ import (
 // Langfuse UI for every tool call is noisy. We keep a generous slice so the
 // gist is preserved, and include the original length in metadata.
 const langfuseToolOutputPreview = 4000
+
+const postPreflightSourceBrowseBudgetError = "System evidence preflight already read every explicitly named repository. " +
+	"The narrow follow-up source_browse budget is exhausted. Do not repeat broad searches; answer from the verified evidence, " +
+	"or state which precise file or line remains unavailable."
 
 // truncateForLangfuse returns s truncated to at most n runes, with a "…"
 // marker appended when truncated. Runes (not bytes) are used so multi-byte
@@ -454,6 +459,22 @@ func (e *AgentEngine) runToolCall(
 					Error:   fmt.Sprintf("Failed to parse repaired tool arguments: %v", err),
 				},
 			}
+		}
+	}
+
+	// A named channel-project question has already received one authenticated
+	// source read per repository from the system-owned preflight. Prevent a
+	// model from spending the rest of the same turn repeatedly searching those
+	// snapshots. The gate is inactive for ordinary source requests, incomplete
+	// preflights, and every other tool; it is also reached only after arguments
+	// parsed successfully, so malformed calls do not consume the allowance.
+	if tc.Function.Name == agenttools.ToolSourceBrowse && len(tc.UnresolvedHandles) == 0 && !answerevidence.ConsumePostPreflightSourceBrowseBudget(ctx) {
+		return types.ToolCall{
+			ID:               tc.ID,
+			Name:             tc.Function.Name,
+			Args:             args,
+			ProviderMetadata: tc.ProviderMetadata,
+			Result:           &types.ToolResult{Success: false, Error: postPreflightSourceBrowseBudgetError},
 		}
 	}
 

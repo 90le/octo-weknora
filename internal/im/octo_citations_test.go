@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -86,6 +87,16 @@ type octoCitationSourceTool struct {
 	data   map[string]interface{}
 }
 
+type octoCitationReleaseTool struct {
+	types.Tool
+	data map[string]interface{}
+}
+
+func (*octoCitationReleaseTool) Name() string { return "github_release_lookup" }
+func (t *octoCitationReleaseTool) Execute(context.Context, json.RawMessage) (*types.ToolResult, error) {
+	return &types.ToolResult{Success: true, Data: t.data}, nil
+}
+
 func (*octoCitationSourceTool) Name() string { return "source_browse" }
 func (t *octoCitationSourceTool) Execute(context.Context, json.RawMessage) (*types.ToolResult, error) {
 	return &types.ToolResult{Success: true, Output: t.output, Data: t.data}, nil
@@ -101,6 +112,26 @@ func TestOctoRawSourceCitationRequiresObservedReadURL(t *testing.T) {
 	require.Contains(t, stripIMCitationTags(answer), url)
 	forged := service.appendOctoSources(ctx, `answer <web title="other" url="https://github.com/other/code/blob/main/a.go"/>`, nil)
 	require.NotContains(t, stripIMCitationTags(forged), "github.com")
+}
+
+func TestOctoOfficialReleaseCitationIsAppendedWithoutModelRefAndRespectsSetting(t *testing.T) {
+	ctx := octobusiness.WithRetrievalTrace(octoCitationContext())
+	url := "https://github.com/test/octo-web/releases/tag/v1.2.3"
+	_, err := octobusiness.TrackRetrieval(&octoCitationReleaseTool{data: map[string]interface{}{
+		types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{
+			KnowledgeBaseID: "kb", DataSourceID: "source", Repository: "test/octo-web", TagName: "v1.2.3", URL: url,
+			PublishedAt: time.Date(2026, time.September, 22, 0, 0, 0, 0, time.UTC), CheckedAt: time.Date(2026, time.September, 22, 1, 0, 0, 0, time.UTC),
+		},
+	}}).Execute(ctx, []byte(`{"action":"latest","release_ref":"r1"}`))
+	require.NoError(t, err)
+	service := &Service{}
+	answer := service.appendOctoSources(ctx, "Web 客户端已发布 v1.2.3。", nil)
+	require.Contains(t, answer, url)
+	require.Contains(t, answer, "test/octo-web · v1.2.3")
+
+	octobusiness.SetCitationRenderingEnabled(ctx, false)
+	withoutCitations := service.appendOctoSources(ctx, "Web 客户端已发布 v1.2.3。", nil)
+	require.NotContains(t, withoutCitations, url)
 }
 func TestOctoCitationURLsDoNotExposeLocalPathsOrTokens(t *testing.T) {
 	for _, value := range []string{"file:///etc/passwd", "http://public.example", "https://127.0.0.1/private", "https://host.internal/doc", "https://user:pass@example.org/doc", "https://example.org/doc?token=secret", "javascript:alert(1)"} {

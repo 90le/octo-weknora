@@ -11,6 +11,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/models/rerank"
+	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -69,6 +70,11 @@ func (s *sessionService) AgentQA(
 	if err != nil {
 		return err
 	}
+	// businessContext creates one turn-local retrieval trace before AgentQA
+	// resolves the custom agent. Store the effective citation preference on that
+	// trace so IM can append trusted system-owned release links without bypassing
+	// an explicit citations-disabled configuration.
+	octobusiness.SetCitationRenderingEnabled(ctx, agentConfig.CitationsEnabled())
 
 	// Set VLM model ID for tool result image analysis (runtime-only field)
 	if req.CustomAgent != nil && req.CustomAgent.Config.VLMModelID != "" {

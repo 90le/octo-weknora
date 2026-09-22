@@ -262,6 +262,35 @@ func TestExecuteLoopDeliversSafeUnknownIntegrationAnswerWithoutEvidence(t *testi
 	require.True(t, emitted[1].Done)
 }
 
+func TestRunToolCallBoundsOnlyPostPreflightNamedChannelBrowsing(t *testing.T) {
+	executed := 0
+	sourceTool := newScriptedPreflightTool(agenttools.ToolSourceBrowse, func(map[string]interface{}) *types.ToolResult {
+		executed++
+		return &types.ToolResult{Success: true, Output: `{"sources":[]}`}
+	})
+	engine := newTestEngine(t, &mockChat{})
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	engine.toolRegistry.RegisterTool(sourceTool)
+	ctx := answerevidence.WithContract(context.Background(), "codex-channel-octo 项目是干嘛的？")
+	answerevidence.RecordSourceSearch(ctx, true, true, "Mininglamp-OSS/codex-channel-octo")
+	answerevidence.RecordSourceRead(ctx, "Mininglamp-OSS/codex-channel-octo")
+	answerevidence.ActivatePostPreflightSourceBrowseBudget(ctx, 1)
+	call := types.LLMToolCall{ID: "browse", Function: types.FunctionCall{Name: agenttools.ToolSourceBrowse, Arguments: `{"action":"list"}`}}
+
+	first := engine.runToolCall(ctx, call, 0, 0, 1, "session", "message")
+	require.True(t, first.Result.Success)
+	require.Equal(t, 1, executed)
+	second := engine.runToolCall(ctx, call, 1, 0, 1, "session", "message")
+	require.False(t, second.Result.Success)
+	require.Contains(t, second.Result.Error, "preflight already read")
+	require.Equal(t, 1, executed, "the excess model-originated source browse must not reach the tool")
+
+	ordinaryCtx := answerevidence.WithContract(context.Background(), "这个函数怎么实现？")
+	ordinary := engine.runToolCall(ordinaryCtx, call, 2, 0, 1, "session", "message")
+	require.True(t, ordinary.Result.Success)
+	require.Equal(t, 2, executed, "ordinary source investigation remains unrestricted")
+}
+
 func TestFinalSynthesisUsesEvidenceFallbackBeforeCallingModel(t *testing.T) {
 	model := &mockChat{}
 	engine := newTestEngine(t, model)

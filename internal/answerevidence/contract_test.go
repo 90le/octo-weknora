@@ -160,6 +160,36 @@ func TestNamedChannelProjectsNeedIndividualSourceReads(t *testing.T) {
 	require.Empty(t, MissingRequiredRepositories(ctx))
 }
 
+func TestPostPreflightSourceBrowseBudgetOnlyConstrainsCompletedNamedChannelEvidence(t *testing.T) {
+	ordinary := WithContract(context.Background(), "这个函数怎么实现？")
+	require.True(t, ConsumePostPreflightSourceBrowseBudget(ordinary), "ordinary source questions keep unrestricted reads")
+	ordinaryActive, _ := PostPreflightSourceBrowseBudget(ordinary)
+	require.False(t, ordinaryActive)
+
+	ctx := WithContract(context.Background(), "codex-channel-octo 和 cc-channel-octo 项目是干嘛的？")
+	RecordSourceSearch(ctx, true, true, "Mininglamp-OSS/codex-channel-octo")
+	RecordSourceRead(ctx, "Mininglamp-OSS/codex-channel-octo")
+	RecordSourceSearch(ctx, true, true, "Mininglamp-OSS/cc-channel-octo")
+	RecordSourceRead(ctx, "Mininglamp-OSS/cc-channel-octo")
+	require.True(t, IntegrationEvidenceObserved(ctx))
+
+	ActivatePostPreflightSourceBrowseBudget(ctx, 2)
+	active, remaining := PostPreflightSourceBrowseBudget(ctx)
+	require.True(t, active)
+	require.Equal(t, 2, remaining)
+	require.True(t, ConsumePostPreflightSourceBrowseBudget(ctx))
+	require.True(t, ConsumePostPreflightSourceBrowseBudget(ctx))
+	require.False(t, ConsumePostPreflightSourceBrowseBudget(ctx))
+	_, remaining = PostPreflightSourceBrowseBudget(ctx)
+	require.Zero(t, remaining)
+
+	// The activation point is idempotent: a later transport must not silently
+	// replenish a budget that the same model turn has already exhausted.
+	ActivatePostPreflightSourceBrowseBudget(ctx, 9)
+	_, remaining = PostPreflightSourceBrowseBudget(ctx)
+	require.Zero(t, remaining)
+}
+
 func TestIntegrationCanUseTwoBoundedEvidenceNudges(t *testing.T) {
 	ctx := WithContract(context.Background(), "Claude 支持接入 Octo IM Bot 吗？")
 	require.True(t, CanRetryEvidence(ctx))

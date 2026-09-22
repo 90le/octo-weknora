@@ -194,7 +194,14 @@ func TestAnswerEvidencePreflightSearchesAndReadsEachNamedChannelBeforeModel(t *t
 	require.True(t, answerevidence.SourceSearchObserved(ctx))
 	require.True(t, answerevidence.IntegrationEvidenceObserved(ctx))
 	require.Empty(t, answerevidence.MissingRequiredRepositories(ctx))
-	require.Equal(t, []string{"list", "search", "read", "search", "read", "search", "read"}, sourceTool.actions())
+	actions := sourceTool.actions()
+	require.Len(t, actions, 7)
+	require.Equal(t, "list", actions[0])
+	counts := map[string]int{}
+	for _, action := range actions[1:] {
+		counts[action]++
+	}
+	require.Equal(t, map[string]int{"search": 3, "read": 3}, counts, "independent repositories may run in parallel")
 	require.Len(t, model.calls, 1)
 	prompt := systemMessage(t, model.calls[0])
 	for _, repository := range projects {
@@ -202,6 +209,9 @@ func TestAnswerEvidencePreflightSearchesAndReadsEachNamedChannelBeforeModel(t *t
 	}
 	require.Contains(t, prompt, "do not infer another project's storage")
 	require.Len(t, state.RoundSteps[0].ToolCalls, 7)
+	active, remaining := answerevidence.PostPreflightSourceBrowseBudget(ctx)
+	require.True(t, active)
+	require.Equal(t, 6, remaining, "one focused search/read pair per named repository remains available")
 }
 
 func TestAnswerEvidencePreflightLeavesAmbiguousReleaseScopeForSafeUnknown(t *testing.T) {
