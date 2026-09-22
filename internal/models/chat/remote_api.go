@@ -127,6 +127,13 @@ func (c *RemoteAPIChat) shapedRequest(messages []Message, opts *ChatOptions, isS
 	return req
 }
 
+func (c *RemoteAPIChat) activeThinkingStrategy() ThinkingStrategy {
+	if c.thinkingOverride != nil {
+		return c.thinkingOverride
+	}
+	return c.adapter.Thinking()
+}
+
 // buildOutbound assembles the final outbound request: the body to send, the
 // endpoint override (empty for the standard endpoint), and whether the raw HTTP
 // path is required. This is the single place that composes adapter + thinking,
@@ -134,12 +141,17 @@ func (c *RemoteAPIChat) shapedRequest(messages []Message, opts *ChatOptions, isS
 func (c *RemoteAPIChat) buildOutbound(
 	ctx context.Context, messages []Message, opts *ChatOptions, isStream bool,
 ) (body any, endpoint string, useRawHTTP bool, err error) {
+	return c.buildOutboundWithThinking(ctx, messages, opts, isStream, c.activeThinkingStrategy())
+}
+
+// buildOutboundWithThinking is the implementation behind buildOutbound. The
+// fallback path uses noThinking when an explicitly configured optional thinking
+// field is rejected by an OpenAI-compatible gateway.
+func (c *RemoteAPIChat) buildOutboundWithThinking(
+	ctx context.Context, messages []Message, opts *ChatOptions, isStream bool, thinking ThinkingStrategy,
+) (body any, endpoint string, useRawHTTP bool, err error) {
 	req := c.shapedRequest(messages, opts, isStream)
 
-	thinking := c.thinkingOverride
-	if thinking == nil {
-		thinking = c.adapter.Thinking()
-	}
 	customBody, useRaw := thinking.Apply(&req, opts, isStream)
 
 	body = &req
@@ -165,6 +177,32 @@ func (c *RemoteAPIChat) buildOutbound(
 	return body, endpoint, useRawHTTP, nil
 }
 
+// retryOutboundWithoutConfiguredThinking prepares one retry after a gateway
+// explicitly rejects a thinking-control field configured in model extra_config.
+// It never changes the persisted model configuration; the downgrade applies to
+// this request only. Provider-default thinking is intentionally excluded because
+// it may be required by that provider rather than an optional user override.
+func (c *RemoteAPIChat) retryOutboundWithoutConfiguredThinking(
+	ctx context.Context, messages []Message, opts *ChatOptions, isStream bool, requestErr error,
+) (body any, endpoint string, retry bool, err error) {
+	if c.thinkingOverride == nil || opts == nil || opts.Thinking == nil {
+		return nil, "", false, nil
+	}
+
+	field := thinkingControlWireField(c.thinkingOverride)
+	if !isUnsupportedThinkingControlParameterError(requestErr, field) {
+		return nil, "", false, nil
+	}
+
+	body, endpoint, _, err = c.buildOutboundWithThinking(ctx, messages, opts, isStream, noThinking{})
+	if err != nil {
+		return nil, "", true, fmt.Errorf("build retry without optional thinking control: %w", err)
+	}
+
+	logger.Warnf(ctx, "[LLM Request] model=%s rejected optional %s; retrying once without it", c.modelName, field)
+	return body, endpoint, true, nil
+}
+
 // logRequest 记录请求日志
 func (c *RemoteAPIChat) logRequest(ctx context.Context, req any, isStream bool) {
 	if jsonData, err := json.MarshalIndent(req, "", "  "); err == nil {
@@ -185,7 +223,26 @@ func (c *RemoteAPIChat) Chat(ctx context.Context, messages []Message, opts *Chat
 		return nil, err
 	}
 	if useRawHTTP {
-		return c.chatWithRawHTTP(timeoutCtx, endpoint, body, opts)
+		result, requestErr := c.chatWithRawHTTP(timeoutCtx, endpoint, body, opts)
+		if requestErr == nil {
+			return result, nil
+		}
+
+		retryBody, retryEndpoint, retry, retryErr := c.retryOutboundWithoutConfiguredThinking(
+			timeoutCtx, messages, opts, false, requestErr,
+		)
+		if !retry {
+			return nil, requestErr
+		}
+		if retryErr != nil {
+			return nil, retryErr
+		}
+
+		result, retryErr = c.chatWithRawHTTP(timeoutCtx, retryEndpoint, retryBody, opts)
+		if retryErr != nil {
+			return nil, fmt.Errorf("chat completion failed after retrying without optional thinking control: %w", retryErr)
+		}
+		return result, nil
 	}
 
 	req := *(body.(*openai.ChatCompletionRequest))
@@ -286,6 +343,20 @@ func (c *RemoteAPIChat) ChatStream(ctx context.Context, messages []Message, opts
 	}
 	if useRawHTTP {
 		ch, err := c.chatStreamWithRawHTTP(timeoutCtx, endpoint, body, opts)
+		if err != nil {
+			retryBody, retryEndpoint, retry, retryErr := c.retryOutboundWithoutConfiguredThinking(
+				timeoutCtx, messages, opts, true, err,
+			)
+			if retry {
+				if retryErr != nil {
+					return wrapStreamCancel(nil, retryErr, cancel)
+				}
+				ch, err = c.chatStreamWithRawHTTP(timeoutCtx, retryEndpoint, retryBody, opts)
+				if err != nil {
+					err = fmt.Errorf("chat completion stream failed after retrying without optional thinking control: %w", err)
+				}
+			}
+		}
 		return wrapStreamCancel(ch, err, cancel)
 	}
 

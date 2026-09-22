@@ -3,11 +3,15 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/models/provider"
 	"github.com/Tencent/WeKnora/internal/types"
+	secutils "github.com/Tencent/WeKnora/internal/utils"
 	"github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +29,115 @@ func newTestRemoteChat(t *testing.T) *RemoteAPIChat {
 	})
 	require.NoError(t, err)
 	return chat
+}
+
+func newThinkingFallbackTestChat(t *testing.T, baseURL string) *RemoteAPIChat {
+	t.Helper()
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1")
+	secutils.ResetSSRFWhitelistForTest()
+	t.Cleanup(secutils.ResetSSRFWhitelistForTest)
+
+	chat, err := NewRemoteAPIChat(&ChatConfig{
+		Source:    types.ModelSourceRemote,
+		BaseURL:   baseURL,
+		ModelName: "gpt-5.6-luna",
+		ModelID:   "gpt-5.6-luna",
+		APIKey:    "test-key",
+		Provider:  string(provider.ProviderOpenAI),
+		ExtraConfig: map[string]string{
+			ExtraConfigThinkingControl: "chat_template_kwargs",
+		},
+	})
+	require.NoError(t, err)
+	return chat
+}
+
+func TestRemoteAPIChat_RetriesUnsupportedConfiguredThinkingControl(t *testing.T) {
+	var requests []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		requests = append(requests, request)
+
+		if len(requests) == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Unknown parameter: 'chat_template_kwargs'"}}`))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"fallback-1","object":"chat.completion","created":1,"model":"gpt-5.6-luna",
+			"choices":[{"index":0,"message":{"role":"assistant","content":"fallback completed"},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}
+		}`))
+	}))
+	defer server.Close()
+
+	chat := newThinkingFallbackTestChat(t, server.URL)
+	response, err := chat.Chat(context.Background(), []Message{{Role: "user", Content: "hello"}}, &ChatOptions{
+		Thinking: ptrBool(true),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	assert.Equal(t, "fallback completed", response.Content)
+	require.Len(t, requests, 2, "only one retry is allowed")
+	assert.Contains(t, requests[0], "chat_template_kwargs")
+	assert.NotContains(t, requests[1], "chat_template_kwargs")
+}
+
+func TestRemoteAPIChat_DoesNotRetryUnrelatedBadRequest(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"temperature must be between 0 and 1"}}`))
+	}))
+	defer server.Close()
+
+	chat := newThinkingFallbackTestChat(t, server.URL)
+	_, err := chat.Chat(context.Background(), []Message{{Role: "user", Content: "hello"}}, &ChatOptions{
+		Thinking: ptrBool(true),
+	})
+	require.Error(t, err)
+	assert.Equal(t, 1, requests, "unrelated provider failures must not be retried")
+}
+
+func TestRemoteAPIChat_StreamRetriesUnsupportedConfiguredThinkingControl(t *testing.T) {
+	var requests []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		requests = append(requests, request)
+
+		if len(requests) == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Unsupported parameter: chat_template_kwargs"}}`))
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"id\":\"fallback-stream\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-5.6-luna\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"fallback stream\"},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	chat := newThinkingFallbackTestChat(t, server.URL)
+	stream, err := chat.ChatStream(context.Background(), []Message{{Role: "user", Content: "hello"}}, &ChatOptions{
+		Thinking: ptrBool(true),
+	})
+	require.NoError(t, err)
+
+	var responses []types.StreamResponse
+	for response := range stream {
+		responses = append(responses, response)
+	}
+
+	require.Len(t, requests, 2, "only one retry is allowed")
+	assert.Contains(t, requests[0], "chat_template_kwargs")
+	assert.NotContains(t, requests[1], "chat_template_kwargs")
+	require.NotEmpty(t, responses)
+	assert.Contains(t, responses[0].Content, "fallback stream")
+	assert.True(t, responses[len(responses)-1].Done)
 }
 
 func TestBuildChatCompletionRequest_ParallelToolCalls(t *testing.T) {

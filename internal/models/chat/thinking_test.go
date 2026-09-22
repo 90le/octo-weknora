@@ -2,6 +2,7 @@ package chat
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/sashabaranov/go-openai"
@@ -141,4 +142,50 @@ func TestEffectiveThinkingControl(t *testing.T) {
 		ModelName:   "qwen3",
 		ExtraConfig: map[string]string{ExtraConfigThinkingControl: "none"},
 	}))
+}
+
+func TestUnsupportedThinkingControlParameterError(t *testing.T) {
+	cases := []struct {
+		name  string
+		err   error
+		field string
+		want  bool
+	}{
+		{
+			name:  "OpenAI-compatible unknown parameter",
+			err:   errors.New("API request failed with status 400: Unknown parameter: 'chat_template_kwargs'"),
+			field: "chat_template_kwargs",
+			want:  true,
+		},
+		{
+			name:  "provider unsupported field",
+			err:   errors.New("API request failed with status 400: unsupported field enable_thinking"),
+			field: "enable_thinking",
+			want:  true,
+		},
+		{
+			name:  "unrelated parameter must not retry",
+			err:   errors.New("API request failed with status 400: unknown parameter: temperature"),
+			field: "chat_template_kwargs",
+			want:  false,
+		},
+		{
+			name:  "ordinary validation failure must not retry",
+			err:   errors.New("API request failed with status 400: invalid request content"),
+			field: "chat_template_kwargs",
+			want:  false,
+		},
+		{
+			name:  "non-400 must not retry",
+			err:   errors.New("API request failed with status 401: unknown parameter: chat_template_kwargs"),
+			field: "chat_template_kwargs",
+			want:  false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, isUnsupportedThinkingControlParameterError(tc.err, tc.field))
+		})
+	}
 }
