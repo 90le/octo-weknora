@@ -8,6 +8,7 @@ import (
 
 	githubConnector "github.com/Tencent/WeKnora/internal/datasource/connector/github"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/robfig/cron/v3"
 )
 
 const maxGitHubBatchRepositories = 20
@@ -58,6 +59,10 @@ func (s *DataSourceService) CreateGitHubBatch(ctx context.Context, req *types.Gi
 	}
 	if len(req.Exclude) > maxGitHubBatchExclusions {
 		return nil, fmt.Errorf("GitHub batch exclusions must contain at most %d paths", maxGitHubBatchExclusions)
+	}
+	syncPlan, err := resolveGitHubBatchSyncPlan(req)
+	if err != nil {
+		return nil, err
 	}
 	kb, err := s.kbService.GetKnowledgeBaseByID(ctx, req.KnowledgeBaseID)
 	if err != nil || kb == nil || kb.TenantID != req.TenantID {
@@ -110,14 +115,10 @@ func (s *DataSourceService) CreateGitHubBatch(ctx context.Context, req *types.Gi
 			response.Results = append(response.Results, result)
 			continue
 		}
-		schedule := strings.TrimSpace(req.SyncSchedule)
-		if schedule == "" {
-			schedule = defaultGitHubBatchSchedule
-		}
 		ds := &types.DataSource{
 			TenantID: req.TenantID, KnowledgeBaseID: req.KnowledgeBaseID,
 			Name: "GitHub · " + repository, Type: types.ConnectorTypeGitHub, Config: blob,
-			SyncSchedule: schedule, SyncMode: types.SyncModeIncremental,
+			SyncSchedule: syncPlan.Schedule, SyncMode: types.SyncModeIncremental,
 			Status: types.DataSourceStatusActive, ConflictStrategy: types.ConflictStrategyOverwrite,
 		}
 		created, createErr := s.CreateDataSource(ctx, ds)
@@ -128,7 +129,7 @@ func (s *DataSourceService) CreateGitHubBatch(ctx context.Context, req *types.Gi
 		}
 		present[key] = created.ID
 		result.Status, result.DataSourceID, result.Message = "created", created.ID, "Created"
-		if req.StartSync {
+		if syncPlan.StartSync {
 			if _, syncErr := s.ManualSync(ctx, created.ID); syncErr != nil {
 				result.Message = "Created, but its first sync was not queued: " + syncErr.Error()
 			} else {
@@ -138,6 +139,62 @@ func (s *DataSourceService) CreateGitHubBatch(ctx context.Context, req *types.Gi
 		response.Results = append(response.Results, result)
 	}
 	return response, nil
+}
+
+type githubBatchSyncPlan struct {
+	Schedule  string
+	StartSync bool
+}
+
+// resolveGitHubBatchSyncPlan deliberately treats an omitted policy as a
+// compatibility path. Existing clients used an empty schedule to request the
+// six-hour default. New clients must opt into one of two unambiguous modes:
+// manual creates a dormant source, while scheduled requires a valid cron.
+func resolveGitHubBatchSyncPlan(req *types.GitHubBatchRequest) (githubBatchSyncPlan, error) {
+	if req == nil {
+		return githubBatchSyncPlan{}, errors.New("GitHub batch request is invalid")
+	}
+
+	policy := strings.ToLower(strings.TrimSpace(req.SyncPolicy))
+	schedule := strings.TrimSpace(req.SyncSchedule)
+	switch policy {
+	case "":
+		// Preserve the old API contract for callers that have not yet upgraded
+		// to sync_policy. An omitted schedule has always meant six-hour syncs.
+		if schedule == "" {
+			schedule = defaultGitHubBatchSchedule
+		}
+	case "manual":
+		if schedule != "" {
+			return githubBatchSyncPlan{}, errors.New("manual GitHub batch sync policy cannot include a schedule")
+		}
+		if req.StartSync {
+			return githubBatchSyncPlan{}, errors.New("manual GitHub batch sync policy cannot queue an initial sync")
+		}
+		return githubBatchSyncPlan{}, nil
+	case "scheduled":
+		if schedule == "" {
+			return githubBatchSyncPlan{}, errors.New("scheduled GitHub batch sync policy requires a schedule")
+		}
+	default:
+		return githubBatchSyncPlan{}, errors.New("GitHub batch sync policy must be manual or scheduled")
+	}
+
+	if err := validateGitHubBatchSchedule(schedule); err != nil {
+		return githubBatchSyncPlan{}, err
+	}
+	return githubBatchSyncPlan{Schedule: schedule, StartSync: req.StartSync}, nil
+}
+
+// validateGitHubBatchSchedule uses the exact six-field parser the runtime
+// scheduler uses. Validating before rows are created prevents a batch from
+// persisting a schedule which would later be silently skipped at startup.
+func validateGitHubBatchSchedule(schedule string) error {
+	cronScheduler := cron.New(cron.WithSeconds())
+	if _, err := cronScheduler.AddFunc(schedule, func() {}); err != nil {
+		return fmt.Errorf("GitHub batch sync schedule is invalid: %w", err)
+	}
+	return nil
 }
 
 // githubBatchSettings writes only explicit selection overrides. In particular,

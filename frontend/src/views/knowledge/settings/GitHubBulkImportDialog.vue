@@ -18,6 +18,7 @@ import {
   defaultGitHubBulkSelection,
   filterGitHubRepositories,
   githubRepositoryModePresence,
+  githubBatchSyncPayload,
   hasGitHubRepositoryMode,
   mergeGitHubRepositoryPresence,
   parseGitHubPaths,
@@ -91,6 +92,7 @@ const selectedRepositories = computed(() => repositories.value.filter(
 const selectedCount = computed(() => selectedRepositories.value.length)
 const selectionLimitExceeded = computed(() => selectedCount.value > batchLimit)
 const resultSummary = computed(() => summarizeGitHubBulkResults(results.value))
+const isManualSyncPolicy = computed(() => !syncSchedule.value.trim())
 
 const drawerDescription = computed(() => {
   if (step.value === 0) return t('datasource.githubBulk.description')
@@ -157,6 +159,10 @@ function reset() {
 
 watch(visible, (opened) => {
   if (opened) reset()
+})
+
+watch(isManualSyncPolicy, (manual) => {
+  if (manual) startSync.value = false
 })
 
 async function discover() {
@@ -227,6 +233,7 @@ async function createBatch() {
   submitting.value = true
   errorMessage.value = ''
   try {
+    const sync = githubBatchSyncPayload(syncSchedule.value, startSync.value)
     const response = unwrapResponse<GitHubBatchResponse>(await createGitHubDataSourceBatch({
       knowledge_base_id: props.kbId,
       owner: owner.value,
@@ -234,8 +241,7 @@ async function createBatch() {
       credentials: credentials(),
       mode: mode.value,
       paths: parseGitHubPaths(pathsText.value),
-      sync_schedule: syncSchedule.value || undefined,
-      start_sync: startSync.value,
+      ...sync,
     }))
     results.value = response.results || []
     for (const result of results.value) {
@@ -539,7 +545,7 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
         />
         <p class="github-bulk-field-hint">{{ t('datasource.githubBulk.pathsHint') }}</p>
       </div>
-      <t-checkbox v-model="startSync">{{ t('datasource.githubBulk.startSync') }}</t-checkbox>
+      <t-checkbox v-model="startSync" :disabled="isManualSyncPolicy">{{ t('datasource.githubBulk.startSync') }}</t-checkbox>
       <p class="github-bulk-field-hint">{{ t('datasource.githubBulk.startSyncHint') }}</p>
     </section>
   </SettingDrawer>
