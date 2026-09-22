@@ -12,6 +12,8 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+const finalAnswerSynthesisFallback = "Sorry, I was unable to generate a complete answer."
+
 // streamFinalAnswerToEventBus streams the final answer generation through EventBus
 func (e *AgentEngine) streamFinalAnswerToEventBus(
 	ctx context.Context,
@@ -56,7 +58,6 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 			Temperature:         e.config.Temperature,
 			MaxCompletionTokens: budget,
 			PromptCacheKey:      sessionID,
-			ToolChoice:          "none",
 		}, // Thinking disabled for final answer synthesis
 		func(chunk *types.StreamResponse, fullContent string) {
 			// Defensive filter: only emit answer content, skip thinking chunks
@@ -85,6 +86,21 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 		common.PipelineError(ctx, "Agent", "final_answer_stream_failed", map[string]interface{}{
 			"session_id": sessionID,
 			"error":      err.Error(),
+		})
+		// A gateway can reject the synthesis request before it emits a single
+		// chunk. Close the final-answer stream ourselves so IM consumers do not
+		// wait forever for Done or EventError, and keep the completion event's
+		// FinalAnswer aligned with what those consumers receive.
+		state.FinalAnswer = finalAnswerSynthesisFallback
+		e.eventBus.Emit(ctx, event.Event{
+			ID:        answerID,
+			Type:      event.EventAgentFinalAnswer,
+			SessionID: sessionID,
+			Data: event.AgentFinalAnswerData{
+				Content:    state.FinalAnswer,
+				Done:       true,
+				IsFallback: true,
+			},
 		})
 		return err
 	}
@@ -135,7 +151,6 @@ func (e *AgentEngine) handleMaxIterations(
 		common.PipelineError(ctx, "Agent", "final_answer_failed", map[string]interface{}{
 			"error": err.Error(),
 		})
-		state.FinalAnswer = "Sorry, I was unable to generate a complete answer."
 	}
 	state.IsComplete = true
 }

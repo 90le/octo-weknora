@@ -927,3 +927,51 @@ func TestStreamFinalAnswerToEventBus_EmitsDoneWhenProviderEndsWithEmptyChunk(t *
 		"a decoder may hold a short suffix until Done to rule out a split model handle")
 	assert.Equal(t, "final answer", state.FinalAnswer)
 }
+
+func TestStreamFinalAnswerToEventBus_OmitsToolChoiceWithoutTools(t *testing.T) {
+	mock := &mockChat{
+		responses: []mockResponse{
+			{chunks: []types.StreamResponse{{
+				ResponseType: types.ResponseTypeAnswer,
+				Content:      "final answer",
+				Done:         true,
+			}}},
+		},
+	}
+	engine := newTestEngine(t, mock)
+
+	err := engine.streamFinalAnswerToEventBus(
+		context.Background(), "test query", &types.AgentState{}, "sess-1", emptyMessages(),
+	)
+
+	require.NoError(t, err)
+	require.Len(t, mock.opts, 1)
+	assert.Empty(t, mock.opts[0].Tools)
+	assert.Empty(t, mock.opts[0].ToolChoice,
+		"tool_choice must be omitted when final synthesis has no tools")
+}
+
+func TestStreamFinalAnswerToEventBus_FailureEmitsTerminalFallback(t *testing.T) {
+	// No prepared response makes mockChat fail before any stream chunk, matching
+	// a gateway rejection of the final synthesis request.
+	mock := &mockChat{}
+	engine := newTestEngine(t, mock)
+	var finalAnswerEvents []event.AgentFinalAnswerData
+	engine.eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(event.AgentFinalAnswerData)
+		require.True(t, ok)
+		finalAnswerEvents = append(finalAnswerEvents, data)
+		return nil
+	})
+
+	state := &types.AgentState{}
+	err := engine.streamFinalAnswerToEventBus(context.Background(), "test query", state, "sess-1", emptyMessages())
+
+	require.Error(t, err)
+	assert.Equal(t, finalAnswerSynthesisFallback, state.FinalAnswer)
+	require.Len(t, finalAnswerEvents, 1)
+	assert.Equal(t, state.FinalAnswer, finalAnswerEvents[0].Content)
+	assert.True(t, finalAnswerEvents[0].Done,
+		"the fallback must close IM runQA's final-answer wait")
+	assert.True(t, finalAnswerEvents[0].IsFallback)
+}
