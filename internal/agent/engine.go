@@ -11,6 +11,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	agenttoken "github.com/Tencent/WeKnora/internal/agent/token"
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/answerevidence"
 	"github.com/Tencent/WeKnora/internal/common"
 	appconfig "github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/event"
@@ -163,7 +164,11 @@ func (e *AgentEngine) buildSystemPrompt(ctx context.Context) string {
 	for _, section := range sections {
 		logger.Debugf(ctx, "[Agent][Prompt] section=%s bytes=%d", section.Name, len(section.Content))
 	}
-	return renderSystemPromptSections(sections)
+	prompt := renderSystemPromptSections(sections)
+	if contract := answerevidence.Prompt(ctx); contract != "" {
+		prompt += "\n\n" + contract
+	}
+	return prompt
 }
 
 // SetMemoryPrompt supplies the long-term memory envelope for this run. Empty
@@ -722,7 +727,7 @@ func (e *AgentEngine) runReActIteration(
 
 	// Detect stuck loops: if the LLM keeps returning the same content
 	// without tool calls (e.g., an unhandled finish reason), break early.
-	if len(response.ToolCalls) == 0 && response.Content != "" {
+	if len(response.ToolCalls) == 0 && response.Content != "" && !answerevidence.ShouldHoldStreamingAnswer(ctx) {
 		if response.Content == *lastResponseContent {
 			*consecutiveSameContent++
 		} else {
@@ -768,6 +773,28 @@ func (e *AgentEngine) runReActIteration(
 		if step.Thought != "" || len(step.ToolCalls) > 0 || len(step.UserMessagesBefore) > 0 {
 			state.RoundSteps = append(state.RoundSteps, step)
 		}
+		return iterOutcomeBreak, nil
+	}
+
+	// A natural answer to a classified source/release question must not bypass
+	// the server-side evidence contract. The streaming layer held the text
+	// until this point, so an unverified claim has not already reached an IM
+	// user. Give the model one explicit chance to retrieve evidence; if it
+	// ignores that request again, finish with a deterministic uncertainty reply
+	// rather than spending the whole iteration budget on the same claim.
+	if isNaturalStopFinishReason(response.FinishReason) && len(response.ToolCalls) == 0 &&
+		answerevidence.NeedsEvidenceRetry(ctx, response.Content) {
+		if answerevidence.CanRetryEvidence(ctx) {
+			step.IntermediateAnswer = true
+			state.RoundSteps = append(state.RoundSteps, step)
+			*messagesPtr = e.appendToolResults(*messagesPtr, step)
+			*messagesPtr = append(*messagesPtr, chat.Message{
+				Role:    "user",
+				Content: answerevidence.RetryNudge(ctx),
+			})
+			return iterOutcomeNext, nil
+		}
+		e.completeWithEvidenceFallback(ctx, state, step, sessionID)
 		return iterOutcomeBreak, nil
 	}
 
@@ -845,6 +872,7 @@ func (e *AgentEngine) runReActIteration(
 	// 3. Act: Execute tool calls
 	e.executeToolCalls(ctx, response, &step, state.CurrentRound, sessionID, assistantMessageID)
 	toolCallCount = len(step.ToolCalls)
+	recordAnswerEvidenceFromStep(ctx, step)
 
 	// 4. Observe: Add tool results to messages and write to context
 	state.RoundSteps = append(state.RoundSteps, step)

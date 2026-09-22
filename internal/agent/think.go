@@ -10,6 +10,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/agent/compaction"
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/answerevidence"
 	"github.com/Tencent/WeKnora/internal/common"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -278,6 +279,10 @@ func (e *AgentEngine) streamThinkingToEventBus(
 	splitter := agenttools.NewThinkStreamSplitter()
 	thinkingOpen := false
 	answerStreamed := false
+	// A classified answer is buffered until its evidence can be checked at the
+	// end of the round. Without this hold, an LLM can stream an unsupported
+	// conclusion before the engine sees whether it requested any retrieval.
+	holdAnswer := answerevidence.ShouldHoldStreamingAnswer(ctx)
 
 	emitThought := func(content string, done bool) {
 		if content == "" && !done {
@@ -306,6 +311,9 @@ func (e *AgentEngine) streamThinkingToEventBus(
 	}
 	emitAnswer := func(content string) {
 		if content == "" {
+			return
+		}
+		if holdAnswer {
 			return
 		}
 		// Suppress whitespace-only content emitted before the real answer has

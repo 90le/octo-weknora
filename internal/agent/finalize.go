@@ -6,6 +6,7 @@ import (
 	"time"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/answerevidence"
 	"github.com/Tencent/WeKnora/internal/common"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -23,6 +24,28 @@ func (e *AgentEngine) streamFinalAnswerToEventBus(
 	sessionID string,
 	conversation []chat.Message,
 ) error {
+	// Max-iteration/error synthesis has no new tool phase. If the active
+	// contract still lacks its required evidence, asking an LLM to summarize
+	// would merely give it another chance to invent a conclusion. Finish with
+	// the deterministic uncertainty response instead.
+	if answerevidence.NeedsSynthesisFallback(ctx) {
+		state.FinalAnswer = answerevidence.FallbackReply(ctx)
+		answerID := generateEventID("answer")
+		_ = e.eventBus.Emit(ctx, event.Event{
+			ID:        answerID,
+			Type:      event.EventAgentFinalAnswer,
+			SessionID: sessionID,
+			Data: event.AgentFinalAnswerData{
+				Content:    state.FinalAnswer,
+				Done:       true,
+				IsFallback: true,
+			},
+		})
+		common.PipelineWarn(ctx, "Agent", "answer_evidence_synthesis_fallback", map[string]interface{}{
+			"intent": string(answerevidence.IntentFromContext(ctx)),
+		})
+		return nil
+	}
 	totalToolCalls := countTotalToolCalls(state.RoundSteps)
 	logger.Infof(ctx, "[Agent][FinalAnswer] Synthesizing from %d steps, %d tool calls",
 		len(state.RoundSteps), totalToolCalls)
