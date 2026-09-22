@@ -3,9 +3,9 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -23,36 +23,122 @@ const (
 // loggerResponseBodyWriter 自定义ResponseWriter用于捕获响应内容（用于logger中间件）
 type loggerResponseBodyWriter struct {
 	gin.ResponseWriter
-	body *bytes.Buffer
+	body      *bytes.Buffer
+	truncated bool
 }
 
 // Write 重写Write方法，同时写入buffer和原始writer
 // 限制buffer大小，避免SSE等流式响应导致内存无限增长
-func (r loggerResponseBodyWriter) Write(b []byte) (int, error) {
+func (r *loggerResponseBodyWriter) Write(b []byte) (int, error) {
 	if r.body.Len() < maxBodySize {
 		remaining := maxBodySize - r.body.Len()
 		if len(b) <= remaining {
 			r.body.Write(b)
 		} else {
 			r.body.Write(b[:remaining])
+			r.truncated = true
 		}
+	} else if len(b) > 0 {
+		r.truncated = true
 	}
 	return r.ResponseWriter.Write(b)
 }
 
-// sensitiveFieldRegex 匹配 JSON 中的敏感字段（不区分大小写，兼容 snake_case / camelCase / PascalCase）。
-// $1 捕获原始字段名（包括两侧引号），保持日志中的字段名不变，仅将值替换为 "***"。
-var sensitiveFieldRegex = regexp.MustCompile(
-	`(?i)("(?:new[_-]?password|old[_-]?password|password|passwd|ticket|token|access[_-]?token|` +
-		`refresh[_-]?token|next[_-]?token|device[_-]?token|pending[_-]?token|pairing[_-]?link|` +
-		`id[_-]?token|authorization|auth[_-]?token|api[_-]?key|` +
-		`api[_-]?secret|secret[_-]?key|client[_-]?secret|private[_-]?key|secret|` +
-		`authorization[_-]?url|authorization[_-]?attempt)")\s*:\s*"[^"]*"`,
-)
+// isSensitiveLogFieldName normalizes snake_case, camelCase, and kebab-case
+// names. Any field ending in "token" is redacted, covering preview_token,
+// confirmation_token, invite_token, publishToken, and future signed
+// confirmation tokens without requiring endpoint-specific additions.
+func isSensitiveLogFieldName(field string) bool {
+	var normalized strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(field)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			normalized.WriteRune(r)
+		}
+	}
+	name := normalized.String()
+	if strings.HasSuffix(name, "token") || strings.HasSuffix(name, "signature") || strings.HasSuffix(name, "nonce") ||
+		strings.HasSuffix(name, "key") || strings.Contains(name, "secret") || strings.Contains(name, "password") || strings.Contains(name, "credential") || strings.Contains(name, "accesskey") {
+		return true
+	}
+	switch name {
+	case "ticket", "authorization", "apikey", "apisecret", "secretkey", "privatekey", "pairinglink", "authorizationurl", "authorizationattempt", "state", "code", "headers", "authheaders", "customheaders", "connectionconfig", "authconfig", "securityconfig":
+		return true
+	default:
+		return false
+	}
+}
 
-// sanitizeBody 清理敏感信息
+func redactJSONValueForLog(value interface{}, field string) interface{} {
+	if field != "" && isSensitiveLogFieldName(field) {
+		return "***"
+	}
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		redacted := make(map[string]interface{}, len(typed))
+		for key, child := range typed {
+			redacted[key] = redactJSONValueForLog(child, key)
+		}
+		return redacted
+	case []interface{}:
+		redacted := make([]interface{}, len(typed))
+		for index, child := range typed {
+			redacted[index] = redactJSONValueForLog(child, "")
+		}
+		return redacted
+	default:
+		return value
+	}
+}
+
+func sanitizeJSONBodyForLog(body []byte) string {
+	var decoded interface{}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return "[invalid JSON body omitted]"
+	}
+	redacted, err := json.Marshal(redactJSONValueForLog(decoded, ""))
+	if err != nil {
+		return "[JSON body omitted]"
+	}
+	return string(redacted)
+}
+
+func sanitizeFormBodyForLog(body []byte) string {
+	values, err := url.ParseQuery(string(body))
+	if err != nil {
+		return "[invalid form body omitted]"
+	}
+	for field := range values {
+		if isSensitiveLogFieldName(field) {
+			values[field] = []string{"***"}
+		}
+	}
+	return values.Encode()
+}
+
+// sanitizeHTTPBodyForLog is the only request/response payload path used by the
+// generic HTTP logger. It fails closed for malformed JSON and text bodies: a
+// payload that cannot be structurally redacted is never written to logs.
+func sanitizeHTTPBodyForLog(contentType string, body []byte) string {
+	contentType = strings.ToLower(contentType)
+	switch {
+	case strings.Contains(contentType, "application/json"), strings.Contains(contentType, "+json"):
+		return sanitizeJSONBodyForLog(body)
+	case strings.Contains(contentType, "application/x-www-form-urlencoded"):
+		return sanitizeFormBodyForLog(body)
+	default:
+		return "[body omitted]"
+	}
+}
+
+// sanitizeBody remains a small test-facing wrapper for legacy direct callers.
+// Production request/response logging must use sanitizeHTTPBodyForLog with the
+// actual content type so malformed and text payloads fail closed.
 func sanitizeBody(body string) string {
-	return sensitiveFieldRegex.ReplaceAllString(body, `$1:"***"`)
+	trimmed := strings.TrimSpace(body)
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return sanitizeJSONBodyForLog([]byte(body))
+	}
+	return sanitizeFormBodyForLog([]byte(body))
 }
 
 var sensitiveQueryFields = map[string]struct{}{
@@ -80,7 +166,7 @@ func sanitizeQuery(raw string) string {
 		return "[invalid query omitted]"
 	}
 	for key := range values {
-		if _, sensitive := sensitiveQueryFields[strings.ToLower(key)]; sensitive {
+		if _, sensitive := sensitiveQueryFields[strings.ToLower(key)]; sensitive || isSensitiveLogFieldName(key) {
 			values[key] = []string{"***"}
 		}
 	}
@@ -93,11 +179,14 @@ func readRequestBody(c *gin.Context) string {
 		return ""
 	}
 
-	// 检查Content-Type，只记录JSON类型
+	// Read and restore only textual request bodies. Non-text uploads remain
+	// untouched for handlers and are never buffered for logging.
 	contentType := c.GetHeader("Content-Type")
-	if !strings.Contains(contentType, "application/json") &&
-		!strings.Contains(contentType, "application/x-www-form-urlencoded") &&
-		!strings.Contains(contentType, "text/") {
+	isJSONOrForm := strings.Contains(strings.ToLower(contentType), "application/json") ||
+		strings.Contains(strings.ToLower(contentType), "+json") ||
+		strings.Contains(strings.ToLower(contentType), "application/x-www-form-urlencoded")
+	isText := strings.Contains(strings.ToLower(contentType), "text/")
+	if !isJSONOrForm && !isText {
 		return "[非文本类型，已跳过]"
 	}
 
@@ -110,20 +199,21 @@ func readRequestBody(c *gin.Context) string {
 	// 重置request body，使用完整内容，确保后续handler能读取到完整数据
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
-	// 用于日志的body（限制大小）
-	var logBodyBytes []byte
-	if len(bodyBytes) > maxBodySize {
-		logBodyBytes = bodyBytes[:maxBodySize]
-	} else {
-		logBodyBytes = bodyBytes
+	// Redact before truncating. A sensitive value that starts immediately
+	// before the logging limit used to be sliced into an invalid JSON fragment,
+	// which prevented field-level redaction and leaked its prefix.
+	sanitizedBody := sanitizeHTTPBodyForLog(contentType, bodyBytes)
+	logBodyBytes := []byte(sanitizedBody)
+	if len(logBodyBytes) > maxBodySize {
+		logBodyBytes = logBodyBytes[:maxBodySize]
 	}
 
 	bodyStr := string(logBodyBytes)
-	if len(bodyBytes) > maxBodySize {
+	if len(sanitizedBody) > maxBodySize {
 		bodyStr += "... [内容过长，已截断]"
 	}
 
-	return sanitizeBody(bodyStr)
+	return bodyStr
 }
 
 // RequestID middleware adds a unique request ID to the context
@@ -222,17 +312,13 @@ func Logger() gin.HandlerFunc {
 			contentType := c.Writer.Header().Get("Content-Type")
 			if strings.Contains(contentType, "text/event-stream") {
 				responseBodyStr = "[SSE流式响应，已跳过]"
-			} else if strings.Contains(contentType, "application/json") ||
-				strings.Contains(contentType, "text/") {
-				bodyBytes := responseBody.Bytes()
-				if len(bodyBytes) >= maxBodySize {
-					responseBodyStr = string(bodyBytes[:maxBodySize]) + "... [内容过长，已截断]"
-				} else {
-					responseBodyStr = string(bodyBytes)
-				}
-				responseBodyStr = sanitizeBody(responseBodyStr)
+			} else if responseWriter.truncated {
+				// The capture limit cut an unknown byte boundary. Do not attempt
+				// a partial JSON/text sanitizer that could expose a secret prefix.
+				responseBodyStr = "[响应内容过长，已省略]"
 			} else {
-				responseBodyStr = "[非文本类型，已跳过]"
+				bodyBytes := responseBody.Bytes()
+				responseBodyStr = sanitizeHTTPBodyForLog(contentType, bodyBytes)
 			}
 		}
 
