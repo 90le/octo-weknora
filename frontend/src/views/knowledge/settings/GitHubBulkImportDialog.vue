@@ -14,15 +14,27 @@ import {
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import DataSourceTypeIcon from './DataSourceTypeIcon.vue'
 import {
+  addGitHubRepositoryModePresence,
   defaultGitHubBulkSelection,
   filterGitHubRepositories,
+  githubRepositoryModePresence,
+  hasGitHubRepositoryMode,
+  mergeGitHubRepositoryPresence,
   parseGitHubPaths,
   selectableGitHubRepository,
+  selectableGitHubRepositoryMode,
   summarizeGitHubBulkResults,
   uniqueGitHubRepositories,
 } from './githubBulkImportState'
+import type { DataSource } from '@/api/datasource'
 
-const props = defineProps<{ kbId: string }>()
+const props = withDefaults(defineProps<{
+  kbId: string
+  /** Existing sources in this knowledge base, supplied by DataSourceSettings. */
+  dataSources?: DataSource[]
+}>(), {
+  dataSources: () => [],
+})
 const visible = defineModel<boolean>('visible', { default: false })
 const emit = defineEmits<{ saved: [] }>()
 const { t } = useI18n()
@@ -44,6 +56,7 @@ const discovering = ref(false)
 const submitting = ref(false)
 const errorMessage = ref('')
 const results = ref<GitHubBatchResultItem[]>([])
+const resultModePresence = ref<Record<string, { source: boolean; documents: boolean }>>({})
 const nextCursor = ref('')
 const loadingMore = ref(false)
 const batchLimit = 20
@@ -68,6 +81,10 @@ const filteredRepositories = computed(() => filterGitHubRepositories(
 ))
 
 const selectedRepositorySet = computed(() => new Set(selectedRepositoryNames.value))
+const repositoryPresence = computed(() => mergeGitHubRepositoryPresence(
+  githubRepositoryModePresence(props.dataSources),
+  resultModePresence.value,
+))
 const selectedRepositories = computed(() => repositories.value.filter(
   (repository) => selectedRepositorySet.value.has(repository.repository),
 ))
@@ -133,6 +150,7 @@ function reset() {
   submitting.value = false
   errorMessage.value = ''
   results.value = []
+  resultModePresence.value = {}
   nextCursor.value = ''
   loadingMore.value = false
 }
@@ -171,7 +189,9 @@ function selectVisible() {
   const selected = new Set(selectedRepositoryNames.value)
   for (const repository of filteredRepositories.value) {
     if (selected.size >= batchLimit) break
-    if (selectableGitHubRepository(repository)) selected.add(repository.repository)
+    if (selectableGitHubRepositoryMode(repository, mode.value, repositoryPresence.value)) {
+      selected.add(repository.repository)
+    }
   }
   selectedRepositoryNames.value = Array.from(selected)
 }
@@ -218,6 +238,15 @@ async function createBatch() {
       start_sync: startSync.value,
     }))
     results.value = response.results || []
+    for (const result of results.value) {
+      if (result.status === 'created' || result.status === 'existing') {
+        resultModePresence.value = addGitHubRepositoryModePresence(
+          resultModePresence.value,
+          result.repository,
+          mode.value,
+        )
+      }
+    }
     step.value = 2
     emit('saved')
     if (resultSummary.value.failed > 0) {
@@ -231,6 +260,34 @@ async function createBatch() {
     submitting.value = false
   }
 }
+
+function repositoryHasMode(repository: GitHubRepository, usage: GitHubBulkMode): boolean {
+  return hasGitHubRepositoryMode(repository.repository, usage, repositoryPresence.value)
+}
+
+function repositoryIsSelectable(repository: GitHubRepository): boolean {
+  return selectableGitHubRepositoryMode(repository, mode.value, repositoryPresence.value)
+}
+
+function repositoryDisabledReason(repository: GitHubRepository): string {
+  if (!selectableGitHubRepository(repository)) return ''
+  return repositoryHasMode(repository, mode.value)
+    ? t('datasource.githubBulk.currentModeAlreadyExists')
+    : ''
+}
+
+function modeLabel(usage: GitHubBulkMode): string {
+  return t(usage === 'source' ? 'datasource.source.readonly' : 'datasource.source.documents')
+}
+
+function pruneSelectedRepositories() {
+  selectedRepositoryNames.value = selectedRepositoryNames.value.filter((repositoryName) => {
+    const repository = repositories.value.find((item) => item.repository === repositoryName)
+    return repository ? repositoryIsSelectable(repository) : false
+  })
+}
+
+watch([mode, repositoryPresence], pruneSelectedRepositories)
 
 function close() {
   visible.value = false
@@ -372,9 +429,14 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
             v-for="repository in filteredRepositories"
             :key="repository.repository"
             class="github-bulk-repository-row"
-            :class="{ 'is-selected': selectedRepositorySet.has(repository.repository), archived: repository.archived || repository.disabled || repository.fork }"
+            :class="{
+              'is-selected': selectedRepositorySet.has(repository.repository),
+              archived: repository.archived || repository.disabled || repository.fork,
+              'is-existing-current-mode': repositoryHasMode(repository, mode),
+            }"
+            :title="repositoryDisabledReason(repository) || undefined"
           >
-            <t-checkbox :value="repository.repository" :disabled="!selectableGitHubRepository(repository)" />
+            <t-checkbox :value="repository.repository" :disabled="!repositoryIsSelectable(repository)" />
             <span class="github-bulk-repository-row__body">
               <span class="github-bulk-repository-row__title">
                 <strong>{{ repository.repository }}</strong>
@@ -387,12 +449,31 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
                 <t-tag v-else-if="repository.fork" size="small" theme="default" variant="light">
                   {{ t('datasource.githubBulk.fork') }}
                 </t-tag>
+                <t-tag
+                  v-if="repositoryHasMode(repository, 'source')"
+                  size="small"
+                  theme="primary"
+                  variant="light"
+                >
+                  {{ t('datasource.githubBulk.modePresentSource') }}
+                </t-tag>
+                <t-tag
+                  v-if="repositoryHasMode(repository, 'documents')"
+                  size="small"
+                  theme="success"
+                  variant="light"
+                >
+                  {{ t('datasource.githubBulk.modePresentDocuments') }}
+                </t-tag>
               </span>
               <span v-if="repository.description" class="github-bulk-repository-row__description">
                 {{ repository.description }}
               </span>
               <span class="github-bulk-repository-row__meta">
                 {{ t('datasource.githubBulk.defaultBranch', { branch: repository.default_branch || '--' }) }}
+                <template v-if="repositoryHasMode(repository, mode)">
+                  · {{ t('datasource.githubBulk.currentModeAlreadyExists') }}
+                </template>
               </span>
             </span>
           </label>
@@ -417,7 +498,10 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
       <div v-if="results.length" class="github-bulk-result-list">
         <div v-for="result in results" :key="result.repository" class="github-bulk-result-row">
           <div>
-            <strong>{{ result.repository }}</strong>
+            <div class="github-bulk-result-row__title">
+              <strong>{{ result.repository }}</strong>
+              <t-tag size="small" theme="primary" variant="light">{{ modeLabel(mode) }}</t-tag>
+            </div>
             <p v-if="result.message">{{ result.message }}</p>
           </div>
           <t-tag :theme="resultTheme(result.status)" variant="light">
@@ -553,6 +637,7 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
 
   &:hover, &.is-selected { background: var(--td-bg-color-container); }
   &.archived { opacity: 0.72; }
+  &.is-existing-current-mode:not(.archived) { background: var(--td-bg-color-secondarycontainer); }
   :deep(.t-checkbox) { margin-top: 2px; }
 }
 
@@ -571,6 +656,7 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
 .github-bulk-result-list { display: flex; flex-direction: column; gap: 4px; max-height: min(48vh, 460px); overflow: auto; }
 .github-bulk-result-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 10px; border-bottom: 1px solid var(--td-component-stroke); }
 .github-bulk-result-row strong { color: var(--td-text-color-primary); font-size: 13px; }
+.github-bulk-result-row__title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .github-bulk-result-row p { margin: 4px 0 0; color: var(--td-text-color-secondary); font-size: 12px; line-height: 1.5; }
 
 @media (max-width: 640px) {

@@ -1,4 +1,124 @@
-import type { GitHubBatchResultItem, GitHubRepository } from '@/api/datasource'
+import type { DataSource, GitHubBatchResultItem, GitHubBulkMode, GitHubRepository } from '@/api/datasource'
+
+/**
+ * Whether a repository already has either of the two deliberately independent
+ * GitHub usages in the current knowledge base. `source` is the read-only
+ * source snapshot; `documents` goes through the normal parser/RAG pipeline.
+ */
+export type GitHubRepositoryModePresence = Record<GitHubBulkMode, boolean>
+export type GitHubRepositoryPresenceMap = Record<string, GitHubRepositoryModePresence>
+
+const emptyModePresence = (): GitHubRepositoryModePresence => ({ source: false, documents: false })
+
+/**
+ * GitHub treats owner/repository names case-insensitively. Existing normal
+ * data sources may contain a GitHub URL or an SSH remote from older forms, so
+ * normalize those shapes before comparing them with discovery results.
+ */
+export function normalizeGitHubRepository(repository: unknown): string {
+  if (typeof repository !== 'string') return ''
+  let value = repository.trim()
+    .replace(/^https?:\/\/(?:www\.)?github\.com\//i, '')
+    .replace(/^git@github\.com[:/]/i, '')
+    .replace(/^ssh:\/\/git@github\.com\//i, '')
+    .replace(/^\/+|\/+$/g, '')
+    .replace(/\.git$/i, '')
+
+  const parts = value.split('/').filter(Boolean)
+  // Do not collapse a branch/file URL such as owner/repo/tree/main into the
+  // repository key. It is not a repository identity and the backend rejects
+  // it too; treating it as one here would incorrectly hide a valid picker row.
+  if (parts.length !== 2) return ''
+  value = `${parts[0]}/${parts[1]}`
+  return value.toLowerCase()
+}
+
+function dataSourceSettings(dataSource: DataSource): Record<string, unknown> | null {
+  let config = dataSource.config
+  if (typeof config === 'string') {
+    try {
+      config = JSON.parse(config)
+    } catch {
+      return null
+    }
+  }
+  const settings = config?.settings
+  return settings && typeof settings === 'object' && !Array.isArray(settings)
+    ? settings as Record<string, unknown>
+    : null
+}
+
+/** Builds a canonical repository -> mode presence map from the normal source list. */
+export function githubRepositoryModePresence(dataSources: DataSource[]): GitHubRepositoryPresenceMap {
+  const presence: GitHubRepositoryPresenceMap = {}
+  for (const dataSource of dataSources) {
+    if (dataSource.type !== 'github') continue
+    const settings = dataSourceSettings(dataSource)
+    const repository = normalizeGitHubRepository(settings?.repository)
+    if (!repository) continue
+
+    // Earlier single-source GitHub configurations did not store mode. They
+    // always used document ingestion, so represent them accurately instead
+    // of offering a duplicate document source in the batch picker.
+    const mode: GitHubBulkMode = settings?.mode === 'source' ? 'source' : 'documents'
+    const current = presence[repository] || emptyModePresence()
+    current[mode] = true
+    presence[repository] = current
+  }
+  return presence
+}
+
+export function mergeGitHubRepositoryPresence(
+  base: GitHubRepositoryPresenceMap,
+  additions: GitHubRepositoryPresenceMap,
+): GitHubRepositoryPresenceMap {
+  const merged: GitHubRepositoryPresenceMap = {}
+  for (const [repository, modes] of Object.entries(base)) {
+    merged[repository] = { ...emptyModePresence(), ...modes }
+  }
+  for (const [repository, modes] of Object.entries(additions)) {
+    const current = merged[repository] || emptyModePresence()
+    // Presence is monotonic while the drawer is open: a successful result may
+    // add one mode but must never erase the other mode learned from the list.
+    merged[repository] = {
+      source: current.source || modes.source,
+      documents: current.documents || modes.documents,
+    }
+  }
+  return merged
+}
+
+export function addGitHubRepositoryModePresence(
+  presence: GitHubRepositoryPresenceMap,
+  repository: string,
+  mode: GitHubBulkMode,
+): GitHubRepositoryPresenceMap {
+  const key = normalizeGitHubRepository(repository)
+  if (!key) return presence
+  return {
+    ...presence,
+    [key]: { ...emptyModePresence(), ...presence[key], [mode]: true },
+  }
+}
+
+export function hasGitHubRepositoryMode(
+  repository: string,
+  mode: GitHubBulkMode,
+  presence: GitHubRepositoryPresenceMap,
+): boolean {
+  const key = normalizeGitHubRepository(repository)
+  return Boolean(key && presence[key]?.[mode])
+}
+
+/** A repository is selectable when it is valid and missing only the mode being added. */
+export function selectableGitHubRepositoryMode(
+  repository: GitHubRepository,
+  mode: GitHubBulkMode,
+  presence: GitHubRepositoryPresenceMap,
+): boolean {
+  return selectableGitHubRepository(repository)
+    && !hasGitHubRepositoryMode(repository.repository, mode, presence)
+}
 
 /**
  * Keeps the bulk-import drawer's selection rules independent from its Vue

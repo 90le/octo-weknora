@@ -148,6 +148,22 @@ function syncModeLabel(mode: string) {
   return t(`datasource.syncMode.${mode}`)
 }
 
+/**
+ * GitHub has two intentionally independent usages. Show that choice on the
+ * card, rather than exposing its implementation detail (snapshot) or the
+ * generic transport schedule (incremental).
+ */
+function dataSourceUsageLabel(ds: DataSource) {
+  if (ds.type === 'github') {
+    return ds.config?.settings?.mode === 'source'
+      ? t('datasource.source.readonly')
+      : t('datasource.source.documents')
+  }
+  return ds.config?.settings?.mode === 'source'
+    ? t('datasource.source.snapshot')
+    : syncModeLabel(ds.sync_mode)
+}
+
 function connectorLabel(type: string) {
   return t(`datasource.connector.${type}`) || type
 }
@@ -285,7 +301,7 @@ onBeforeUnmount(stopPolling)
               </div>
             </div>
             <p class="ds-card__subtitle">
-              {{ connectorLabel(ds.type) }} · {{ ds.config?.settings?.mode === 'source' ? t('datasource.source.snapshot') : syncModeLabel(ds.sync_mode) }}
+              {{ connectorLabel(ds.type) }} · {{ dataSourceUsageLabel(ds) }}
               <span class="ds-card__sep">·</span>
               <span class="ds-card__status" :class="`ds-card__status--${ds.status}`">
                 <span class="ds-status-dot" aria-hidden="true" />
@@ -357,6 +373,7 @@ onBeforeUnmount(stopPolling)
     <GitHubBulkImportDialog
       v-model:visible="githubBulkVisible"
       :kb-id="kbId"
+      :data-sources="dataSources"
       @saved="onGitHubBulkSaved"
     />
 
@@ -626,6 +643,7 @@ onBeforeUnmount(stopPolling)
     display: flex;
     align-items: flex-start;
     gap: 6px;
+    min-width: 0;
     margin-top: 8px;
     padding: 8px 10px;
     border-radius: 6px;
@@ -634,6 +652,12 @@ onBeforeUnmount(stopPolling)
     font-size: 12px;
     line-height: 1.45;
     text-align: left;
+
+    span {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
   }
 
   &__actions {
