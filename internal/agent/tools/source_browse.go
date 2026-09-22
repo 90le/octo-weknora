@@ -559,9 +559,11 @@ func (t *SourceBrowseTool) Execute(ctx context.Context, args json.RawMessage) (*
 			read, err = t.reader.ReadSourceFile(scoped, binding.KnowledgeBaseID, binding.SourceID, binding.SnapshotID, input.Path, input.Start, input.End)
 			if err == nil {
 				out = sourceBrowseRead{SourceRef: ref, Repository: binding.Repository, Snapshot: binding.snapshot(), Path: read.Path, Revision: read.Revision, StartLine: read.StartLine, EndLine: read.EndLine, TotalLines: read.TotalLines, Content: read.Content, Truncated: read.Truncated, SourceURL: read.SourceURL}
-				if read.SourceURL != "" {
-					citation = &types.SourceBrowseCitation{KnowledgeBaseID: binding.KnowledgeBaseID, URL: read.SourceURL, Path: read.Path, Revision: read.Revision}
-				}
+				// This private marker proves an authorized read even for a local
+				// source directory that has no public GitHub URL. Transport code may
+				// only render the URL when it is safe, while the agent evidence
+				// contract still needs to distinguish a real read from list/search.
+				citation = &types.SourceBrowseCitation{KnowledgeBaseID: binding.KnowledgeBaseID, URL: read.SourceURL, Path: read.Path, Revision: read.Revision}
 			}
 		}
 	}

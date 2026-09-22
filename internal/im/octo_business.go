@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/answerevidence"
 	"github.com/Tencent/WeKnora/internal/octobusiness"
 )
 
@@ -14,8 +15,17 @@ type generatedFileSender interface {
 // Business identity is built from adapter-verified native facts, never tool
 // arguments. Every operation resolves current scope and membership again.
 func (s *Service) businessContext(ctx context.Context, req *qaRequest, scope *ExecutionScope) context.Context {
-	if scope == nil || req.channel.Platform != "octo" {
+	if req == nil || req.channel == nil || req.channel.Platform != "octo" {
 		return ctx
+	}
+	// The answer-evidence contract applies to every Octo turn, including a
+	// direct message without a group binding. It only changes classified
+	// source/release questions and leaves ordinary conversation untouched.
+	if scope == nil {
+		if req.msg == nil {
+			return ctx
+		}
+		return answerevidence.WithContract(ctx, req.msg.Content)
 	}
 	principal := func(current *ExecutionScope) octobusiness.Principal {
 		text := req.msg.Content
@@ -38,6 +48,7 @@ func (s *Service) businessContext(ctx context.Context, req *qaRequest, scope *Ex
 		return p
 	}
 	p := principal(scope)
+	ctx = answerevidence.WithContract(ctx, p.MessageText)
 	p.Validate = func(callCtx context.Context) (octobusiness.Principal, error) {
 		current, err := authorizeExecution(callCtx, req.adapter, req.channel, req.msg)
 		if err != nil {

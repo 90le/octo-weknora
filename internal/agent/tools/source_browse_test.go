@@ -30,14 +30,15 @@ type sourceToolCall struct {
 type sourceToolReader struct {
 	interfaces.SourceSnapshotReader
 
-	mu           sync.Mutex
-	summaries    map[string][]types.SourceSummary
-	listCalls    []string
-	treeCalls    []sourceToolCall
-	readCalls    []sourceToolCall
-	searches     []sourceToolCall
-	results      map[string]*types.SourceSearch
-	requireGrant bool
+	mu            sync.Mutex
+	summaries     map[string][]types.SourceSummary
+	listCalls     []string
+	treeCalls     []sourceToolCall
+	readCalls     []sourceToolCall
+	searches      []sourceToolCall
+	results       map[string]*types.SourceSearch
+	requireGrant  bool
+	omitSourceURL bool
 }
 
 func (r *sourceToolReader) ListSourceSnapshots(_ context.Context, kbID string) ([]types.SourceSummary, error) {
@@ -58,7 +59,11 @@ func (r *sourceToolReader) ReadSourceFile(_ context.Context, kbID, sourceID, sna
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.readCalls = append(r.readCalls, sourceToolCall{KnowledgeBaseID: kbID, SourceID: sourceID, SnapshotID: snapshotID})
-	return &types.SourceRead{DataSourceID: sourceID, SnapshotID: snapshotID, Path: p, Revision: "commit-1", StartLine: start, EndLine: end, TotalLines: 12, Content: "source body", SourceURL: "https://github.com/example/repo/blob/commit-1/" + p, PreviewURL: "/platform/knowledge-bases/" + kbID + "?source_id=" + sourceID + "&snapshot_id=" + snapshotID}, nil
+	url := ""
+	if !r.omitSourceURL {
+		url = "https://github.com/example/repo/blob/commit-1/" + p
+	}
+	return &types.SourceRead{DataSourceID: sourceID, SnapshotID: snapshotID, Path: p, Revision: "commit-1", StartLine: start, EndLine: end, TotalLines: 12, Content: "source body", SourceURL: url, PreviewURL: "/platform/knowledge-bases/" + kbID + "?source_id=" + sourceID + "&snapshot_id=" + snapshotID}, nil
 }
 
 func (r *sourceToolReader) SearchSourceFiles(ctx context.Context, kbID, sourceID, snapshotID, _ string, _ string) (*types.SourceSearch, error) {
@@ -144,6 +149,22 @@ func TestSourceBrowseCatalogBindsOpaqueRefAndRedactsInternalIDs(t *testing.T) {
 	serialized, err := json.Marshal(read)
 	require.NoError(t, err)
 	require.NotContains(t, string(serialized), "kb-uuid", "private provenance must not serialize with a live ToolResult")
+}
+
+func TestSourceBrowseReadRetainsPrivateEvidenceForLocalDirectories(t *testing.T) {
+	reader := &sourceToolReader{omitSourceURL: true, summaries: map[string][]types.SourceSummary{
+		"kb-uuid": {sourceSummary("source-uuid", "snapshot-uuid", "local/project")},
+	}}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb-uuid"}})
+	_ = sourceCatalog(t, tool)
+	read, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"read","source_ref":"s1","path":"main.go","start_line":1,"end_line":1}`))
+	require.NoError(t, err)
+	require.True(t, read.Success, read.Error)
+	citation, ok := read.Data[types.SourceBrowseCitationDataKey].(types.SourceBrowseCitation)
+	require.True(t, ok, "a local source read still needs private provenance")
+	require.Equal(t, "kb-uuid", citation.KnowledgeBaseID)
+	require.Equal(t, "main.go", citation.Path)
+	require.Empty(t, citation.URL, "transport may omit a public URL without losing read evidence")
 }
 
 func TestSourceBrowseRejectsMalformedRefsAndSafelyCorrectsLegacyArguments(t *testing.T) {

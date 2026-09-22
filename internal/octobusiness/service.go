@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/answerevidence"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/google/uuid"
@@ -167,7 +168,7 @@ func (s *Service) CreateIssue(ctx context.Context, in IssueInput) (*Issue, error
 	if len(in.MissingFields) > 0 || !validText(in.Title, 300) || !validText(in.Description, 12000) {
 		return nil, ErrClarify
 	}
-	if in.Kind == "missing" && (in.RetrievalStatus != "no_answer" || !retrievalReady(ctx)) {
+	if in.Kind == "missing" && (in.RetrievalStatus != "no_answer" || !retrievalReady(ctx) || !answerevidence.AllowsMissingIssue(ctx)) {
 		return nil, ErrInvalid
 	}
 	if in.Kind == "bug" && (!validText(in.Expected, 4000) || !validText(in.Steps, 6000)) {

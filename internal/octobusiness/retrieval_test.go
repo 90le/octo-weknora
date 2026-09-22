@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/answerevidence"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
 )
@@ -76,6 +77,33 @@ func TestMissingIssueRequiresTrustedSearchAndRejectsLatchedFailure(t *testing.T)
 	require.ErrorIs(t, err, ErrInvalid, "a partial retrieval failure prevents unsupported gap registration")
 	clean := WithRetrievalTrace(principalContext(testPrincipal()))
 	require.False(t, retrievalReady(clean), "previous turn evidence must not bleed into another turn")
+}
+
+func TestMissingIssueHonorsAnswerEvidenceContract(t *testing.T) {
+	service := testService(t)
+
+	// principalContext contains a successful retrieval trace, the same state
+	// that formerly let a search-only source answer create a false knowledge
+	// gap. A source contract still requires an actual source read.
+	sourcePrincipal := testPrincipal()
+	sourcePrincipal.MessageID = "source-message"
+	sourceCtx := answerevidence.WithContract(principalContext(sourcePrincipal), "这个函数的源码如何实现？")
+	_, err := service.CreateIssue(sourceCtx, gapInput())
+	require.ErrorIs(t, err, ErrInvalid)
+	answerevidence.RecordSourceRead(sourceCtx)
+	_, err = service.CreateIssue(sourceCtx, gapInput())
+	require.NoError(t, err)
+
+	// A release/integration prompt has the same protection: a generic search
+	// success cannot make absence of RAG material into a “missing” issue.
+	releasePrincipal := testPrincipal()
+	releasePrincipal.MessageID = "release-message"
+	releaseCtx := answerevidence.WithContract(principalContext(releasePrincipal), "Claude 支持接入 Octo IM 吗？")
+	_, err = service.CreateIssue(releaseCtx, gapInput())
+	require.ErrorIs(t, err, ErrInvalid)
+	answerevidence.RecordDocumentEvidence(releaseCtx)
+	_, err = service.CreateIssue(releaseCtx, gapInput())
+	require.NoError(t, err)
 }
 
 func TestSourceBrowseReadTracksPrivateProvenanceWithSourceRef(t *testing.T) {
