@@ -157,11 +157,11 @@ func parseSelection(cfg *types.DataSourceConfig) (selection, error) {
 	return s, nil
 }
 
-// Repository returns the canonical GitHub owner/repository identity after the
+// ConfiguredRepository returns the canonical GitHub owner/repository identity after the
 // same validation used by sync and source snapshots. It exposes no credential,
 // ref or path data and lets other scoped capabilities avoid maintaining a
 // second parser for repository URLs.
-func Repository(cfg *types.DataSourceConfig) (string, bool) {
+func ConfiguredRepository(cfg *types.DataSourceConfig) (string, bool) {
 	s, err := parseSelection(cfg)
 	if err != nil {
 		return "", false

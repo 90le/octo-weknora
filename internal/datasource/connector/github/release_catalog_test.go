@@ -169,7 +169,6 @@ func TestFetchLatestReleaseMarksCachedResultStaleAfterRefreshFailure(t *testing.
 }
 
 func TestReleaseCatalogCacheSeparatesCredentialReplacements(t *testing.T) {
-	cache := NewReleaseCatalogCache()
 	first := releaseCatalogCacheKey("ds", "Acme/Widget", &types.DataSourceConfig{Credentials: map[string]interface{}{"access_token": "one"}})
 	second := releaseCatalogCacheKey("ds", "Acme/Widget", &types.DataSourceConfig{Credentials: map[string]interface{}{"access_token": "two"}})
 	require.NotEqual(t, first, second)

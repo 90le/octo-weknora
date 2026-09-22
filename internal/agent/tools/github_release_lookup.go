@@ -305,7 +305,7 @@ func (t *GitHubReleaseLookupTool) bindings(ctx context.Context, query string) ([
 				complete = false
 				continue
 			}
-			repository, ok := githubconnector.Repository(config)
+			repository, ok := githubconnector.ConfiguredRepository(config)
 			if !ok {
 				complete = false
 				continue
@@ -377,7 +377,7 @@ func (t *GitHubReleaseLookupTool) resolveBinding(ctx context.Context, ref string
 			continue
 		}
 		config, parseErr := row.ParseConfig()
-		repository, valid := githubconnector.Repository(config)
+		repository, valid := githubconnector.ConfiguredRepository(config)
 		if parseErr == nil && valid && strings.EqualFold(repository, binding.Repository) {
 			return scoped, binding, row, nil
 		}
