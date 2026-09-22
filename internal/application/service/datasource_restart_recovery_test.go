@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,12 +79,55 @@ func (r *restartRecoveryKnowledgeRepo) FindByDataSourceExternalID(
 
 type restartRecoveryKnowledgeService struct {
 	interfaces.KnowledgeService
-	repo interfaces.KnowledgeRepository
+	repo     interfaces.KnowledgeRepository
+	openErr  map[string]error
+	readErr  map[string]error
+	closeErr map[string]error
+	empty    map[string]bool
+	readCall []string
+	reads    map[string]int
+	closed   map[string]bool
 }
 
 func (s *restartRecoveryKnowledgeService) GetRepository() interfaces.KnowledgeRepository {
 	return s.repo
 }
+
+func (s *restartRecoveryKnowledgeService) GetKnowledgeFile(_ context.Context, id string) (io.ReadCloser, string, error) {
+	s.readCall = append(s.readCall, id)
+	if err := s.openErr[id]; err != nil {
+		return nil, "", err
+	}
+	content := "x"
+	if s.empty[id] {
+		content = ""
+	}
+	return &restartRecoveryReadCloser{Reader: strings.NewReader(content), readErr: s.readErr[id], onRead: func() {
+		s.reads[id]++
+	}, close: func() error {
+		s.closed[id] = true
+		return s.closeErr[id]
+	}}, id + ".md", nil
+}
+
+type restartRecoveryReadCloser struct {
+	io.Reader
+	readErr error
+	onRead  func()
+	close   func() error
+}
+
+func (r *restartRecoveryReadCloser) Read(p []byte) (int, error) {
+	if r.onRead != nil {
+		r.onRead()
+	}
+	if r.readErr != nil {
+		return 0, r.readErr
+	}
+	return r.Reader.Read(p)
+}
+
+func (r *restartRecoveryReadCloser) Close() error { return r.close() }
 
 type restartRecoveryKBService struct {
 	interfaces.KnowledgeBaseService
@@ -90,6 +136,12 @@ type restartRecoveryKBService struct {
 
 func (s *restartRecoveryKBService) GetKnowledgeBaseByID(_ context.Context, _ string) (*types.KnowledgeBase, error) {
 	return s.kb, nil
+}
+
+type restartRecoveryTenantRepo struct{ interfaces.TenantRepository }
+
+func (r *restartRecoveryTenantRepo) GetTenantByID(_ context.Context, id uint64) (*types.Tenant, error) {
+	return &types.Tenant{ID: id}, nil
 }
 
 type restartRecoverySyncLogs struct {
@@ -132,12 +184,17 @@ func newRestartRecoveryPreviewFixture(t *testing.T) (*DataSourceService, *restar
 	}}
 	dataSources := &restartRecoveryDataSourceRepo{ds: ds, runs: map[string]*types.DataSourceRestartRecoveryRun{}}
 	queue := &restartRecoveryTaskQueue{}
+	knowledgeService := &restartRecoveryKnowledgeService{
+		repo: repo, openErr: map[string]error{}, readErr: map[string]error{}, closeErr: map[string]error{},
+		empty: map[string]bool{}, reads: map[string]int{}, closed: map[string]bool{},
+	}
 	svc := &DataSourceService{
 		dsRepo:           dataSources,
 		syncLogRepo:      &restartRecoverySyncLogs{},
-		knowledgeService: &restartRecoveryKnowledgeService{repo: repo},
+		knowledgeService: knowledgeService,
 		kbService:        &restartRecoveryKBService{kb: &types.KnowledgeBase{ID: "kb", TenantID: 7, Type: types.KnowledgeBaseTypeDocument, IndexingStrategy: types.DefaultIndexingStrategy()}},
 		taskEnqueuer:     queue,
+		tenantRepo:       &restartRecoveryTenantRepo{},
 	}
 	ctx := types.WithCaller(types.WithExecutionTenant(context.Background(), 7), types.Caller{TenantID: 7, UserID: "admin", Role: types.TenantRoleAdmin})
 	return svc, dataSources, repo, ctx
@@ -153,6 +210,10 @@ func TestRestartRecoveryPreviewIsReadOnlyAndExcludesURL(t *testing.T) {
 	require.NotEmpty(t, preview.PreviewToken)
 	require.Empty(t, sources.runs, "preview must not persist a run")
 	require.Zero(t, sources.leaseWrites, "preview must not acquire a source lease")
+	knowledgeService := svc.knowledgeService.(*restartRecoveryKnowledgeService)
+	require.Contains(t, knowledgeService.readCall, "file")
+	require.Positive(t, knowledgeService.reads["file"], "preview must read a storage byte, not only open the handle")
+	require.True(t, knowledgeService.closed["file"], "preview must close its one-byte storage readability probe")
 	for _, candidate := range preview.Candidates {
 		require.NotContains(t, candidate.Reason, "resource://", "preview must not disclose FilePath")
 		if candidate.KnowledgeID == "url" {
@@ -196,4 +257,73 @@ func TestManualSyncRejectsActiveRestartRecoveryLease(t *testing.T) {
 	sources.ds.RestartRecoveryLeaseUntil = &until
 	_, err := svc.ManualSync(ctx, sources.ds.ID)
 	require.ErrorIs(t, err, datasource.ErrRestartRecoveryInProgress)
+}
+
+func TestRestartRecoveryPreviewExcludesUnreadableStoredFileFromSignedPlan(t *testing.T) {
+	svc, sources, repo, ctx := newRestartRecoveryPreviewFixture(t)
+	metadata, err := json.Marshal(map[string]string{
+		"datasource_id": "ds", "external_id": "missing:pending:def", "sync_target_external_id": "missing",
+		"source_version": "def", "github_url": "https://github.com/example/repo/blob/def/missing.md",
+	})
+	require.NoError(t, err)
+	repo.items = append(repo.items, &types.Knowledge{
+		ID: "missing", TenantID: 7, KnowledgeBaseID: "kb", Title: "Missing", FileName: "missing.md", FileType: "md",
+		Type: "file", Channel: types.ConnectorTypeGitHub, FilePath: "resource://missing", Metadata: metadata,
+		ParseStatus: types.ParseStatusFailed, EnableStatus: "disabled", ErrorMessage: types.RestartInterruptedKnowledgeError, UpdatedAt: time.Now().UTC(),
+	})
+	knowledgeService := svc.knowledgeService.(*restartRecoveryKnowledgeService)
+	knowledgeService.openErr["missing"] = errors.New("failed to open file: /private/path/missing.md")
+
+	preview, err := svc.PreviewRestartInterruptedRecovery(ctx, "ds")
+	require.NoError(t, err)
+	require.Equal(t, 1, preview.EligibleCount)
+	require.Equal(t, 2, preview.ExcludedCount)
+	require.Contains(t, knowledgeService.readCall, "missing")
+	for _, candidate := range preview.Candidates {
+		if candidate.KnowledgeID == "missing" {
+			require.Equal(t, types.DataSourceRestartRecoveryCandidateExcluded, candidate.State)
+			require.Equal(t, "stored file is not readable from current knowledge-base storage", candidate.Reason)
+			require.NotContains(t, candidate.Reason, "/private/path")
+		}
+	}
+
+	run, err := svc.StartRestartInterruptedRecovery(ctx, "ds", &types.DataSourceRestartRecoveryRequest{PreviewToken: preview.PreviewToken})
+	require.NoError(t, err)
+	var plan types.DataSourceRestartRecoveryPlan
+	require.NoError(t, json.Unmarshal(run.Plan, &plan))
+	require.Len(t, plan.Candidates, 1, "unreadable rows must not enter the signed executable plan")
+	require.Equal(t, "file", plan.Candidates[0].KnowledgeID)
+	require.Contains(t, sources.runs, run.ID)
+}
+
+func TestRestartRecoveryStoredFileReadabilityAcceptsEOFAndRejectsReadOrCloseFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		empty     bool
+		readErr   error
+		closeErr  error
+		wantReady bool
+	}{
+		{name: "empty file is readable", empty: true, wantReady: true},
+		{name: "read failure", readErr: errors.New("read failed"), wantReady: false},
+		{name: "close failure", closeErr: errors.New("close failed"), wantReady: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _, _, ctx := newRestartRecoveryPreviewFixture(t)
+			knowledgeService := svc.knowledgeService.(*restartRecoveryKnowledgeService)
+			knowledgeService.empty["file"] = tc.empty
+			knowledgeService.readErr["file"] = tc.readErr
+			knowledgeService.closeErr["file"] = tc.closeErr
+			ready, err := svc.restartRecoveryStoredFileReadable(ctx, &types.DataSource{ID: "ds", TenantID: 7}, "file")
+			if tc.wantReady {
+				require.NoError(t, err)
+				require.True(t, ready)
+			} else {
+				require.Error(t, err)
+				require.False(t, ready)
+			}
+			require.Positive(t, knowledgeService.reads["file"])
+			require.True(t, knowledgeService.closed["file"])
+		})
+	}
 }

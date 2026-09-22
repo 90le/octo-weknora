@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -84,11 +85,11 @@ func (s *DataSourceService) PreviewRestartInterruptedRecovery(
 	preview := &types.DataSourceRestartRecoveryPreview{
 		DataSourceID:    ds.ID,
 		KnowledgeBaseID: ds.KnowledgeBaseID,
-		Candidates:      append([]types.DataSourceRestartRecoveryCandidate(nil), plan.Candidates...),
+		Candidates:      append([]types.DataSourceRestartRecoveryCandidate(nil), plan.PreviewCandidates...),
 		Blockers:        append([]string(nil), plan.Blockers...),
 		PlanDigest:      digest,
 	}
-	for _, candidate := range plan.Candidates {
+	for _, candidate := range plan.PreviewCandidates {
 		switch candidate.State {
 		case types.DataSourceRestartRecoveryCandidatePending:
 			preview.EligibleCount++
@@ -500,6 +501,7 @@ func (s *DataSourceService) buildRestartRecoveryPlan(ctx context.Context, dsID s
 		DataSourceFingerprint:    restartRecoveryDataSourceFingerprint(ds),
 		KnowledgeBaseFingerprint: restartRecoveryKnowledgeBaseFingerprint(kb),
 		Candidates:               make([]types.DataSourceRestartRecoveryCandidate, 0),
+		PreviewCandidates:        make([]types.DataSourceRestartRecoveryCandidate, 0),
 	}
 	if ds.Type != types.ConnectorTypeGitHub {
 		plan.Blockers = append(plan.Blockers, "only GitHub document sources support restart recovery")
@@ -551,6 +553,11 @@ func (s *DataSourceService) buildRestartRecoveryPlan(ctx context.Context, dsID s
 			if err := validateDefaultFileImportRequirements(ctx, kb, ResolveProcessConfig(kb, nil), item.FileType); err != nil {
 				candidate.State = types.DataSourceRestartRecoveryCandidateBlocked
 				candidate.Reason = "current processing configuration cannot reparse this file: " + sanitizeRestartRecoveryError(err)
+			} else if readable, readErr := s.restartRecoveryStoredFileReadable(ctx, ds, item.ID); readErr != nil || !readable {
+				// Do not surface a storage provider error: those often contain an
+				// absolute FilePath. The preview only needs to state the safety
+				// result, and this candidate must never enter the signed plan.
+				candidate.Reason = "stored file is not readable from current knowledge-base storage"
 			} else if canonical, findErr := s.knowledgeService.GetRepository().FindByDataSourceExternalID(ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID, candidate.TargetExternalID); findErr != nil {
 				return nil, nil, nil, findErr
 			} else if canonical != nil {
@@ -563,9 +570,47 @@ func (s *DataSourceService) buildRestartRecoveryPlan(ctx context.Context, dsID s
 				candidate.State = types.DataSourceRestartRecoveryCandidatePending
 			}
 		}
-		plan.Candidates = append(plan.Candidates, candidate)
+		plan.PreviewCandidates = append(plan.PreviewCandidates, candidate)
+		if candidate.State == types.DataSourceRestartRecoveryCandidatePending {
+			plan.Candidates = append(plan.Candidates, candidate)
+		}
 	}
 	return ds, kb, plan, nil
+}
+
+// restartRecoveryStoredFileReadable opens, reads one byte, and closes through
+// KnowledgeService.GetKnowledgeFile. That helper resolves the same KB-aware
+// FileServiceForPath chain used by Reparse/ProcessDocument, including resource
+// catalog and historical provider fallback. No connector, GitHub, or URL
+// fetcher is called here.
+func (s *DataSourceService) restartRecoveryStoredFileReadable(
+	ctx context.Context,
+	ds *types.DataSource,
+	knowledgeID string,
+) (bool, error) {
+	if s == nil || s.knowledgeService == nil || s.tenantRepo == nil || ds == nil || knowledgeID == "" {
+		return false, errors.New("restart recovery file verification is unavailable")
+	}
+	tenant, err := s.tenantRepo.GetTenantByID(ctx, ds.TenantID)
+	if err != nil || tenant == nil {
+		return false, errors.New("restart recovery tenant storage context is unavailable")
+	}
+	readCtx := types.WithExecutionTenant(ctx, ds.TenantID)
+	readCtx = context.WithValue(readCtx, types.TenantInfoContextKey, tenant)
+	file, _, err := s.knowledgeService.GetKnowledgeFile(readCtx, knowledgeID)
+	if err != nil || file == nil {
+		return false, err
+	}
+	var probe [1]byte
+	_, readErr := file.Read(probe[:])
+	closeErr := file.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return false, readErr
+	}
+	if closeErr != nil {
+		return false, closeErr
+	}
+	return true, nil
 }
 
 func restartRecoveryCandidateFromKnowledge(item *types.Knowledge, metadata map[string]string) types.DataSourceRestartRecoveryCandidate {

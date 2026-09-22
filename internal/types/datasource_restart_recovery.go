@@ -50,11 +50,18 @@ type DataSourceRestartRecoveryCandidate struct {
 // a process restart can resume already-started work without treating normal
 // parser state changes as a stale preview.
 type DataSourceRestartRecoveryPlan struct {
-	Version                  int                                  `json:"version"`
-	DataSourceFingerprint    string                               `json:"data_source_fingerprint"`
-	KnowledgeBaseFingerprint string                               `json:"knowledge_base_fingerprint"`
-	Candidates               []DataSourceRestartRecoveryCandidate `json:"candidates"`
-	Blockers                 []string                             `json:"blockers,omitempty"`
+	Version                  int    `json:"version"`
+	DataSourceFingerprint    string `json:"data_source_fingerprint"`
+	KnowledgeBaseFingerprint string `json:"knowledge_base_fingerprint"`
+	// Candidates is the executable, signed set only. Excluded and blocked
+	// preview rows intentionally never enter the persisted plan or digest, so
+	// a later worker cannot accidentally act on an unreadable/unsafe file.
+	Candidates []DataSourceRestartRecoveryCandidate `json:"candidates"`
+	Blockers   []string                             `json:"blockers,omitempty"`
+	// PreviewCandidates is deliberately transient. It lets the UI explain why
+	// a row was excluded without granting it execution authority or persisting
+	// private storage details inside an approved recovery run.
+	PreviewCandidates []DataSourceRestartRecoveryCandidate `json:"-"`
 }
 
 // DataSourceRestartRecoveryPreview is read-only. PreviewToken binds the exact
