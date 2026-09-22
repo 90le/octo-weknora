@@ -52,8 +52,8 @@ func (s *DataSourceService) CreateGitHubBatch(ctx context.Context, req *types.Gi
 	if len(req.Repositories) == 0 || len(req.Repositories) > maxGitHubBatchRepositories {
 		return nil, fmt.Errorf("select between 1 and %d GitHub repositories per batch", maxGitHubBatchRepositories)
 	}
-	mode := strings.TrimSpace(req.Mode)
-	if mode != "source" && mode != "documents" {
+	mode := requestedGitHubBatchMode(req.Mode)
+	if mode == "" {
 		return nil, errors.New("GitHub batch mode must be source or documents")
 	}
 	if len(req.Exclude) > maxGitHubBatchExclusions {
@@ -72,8 +72,13 @@ func (s *DataSourceService) CreateGitHubBatch(ctx context.Context, req *types.Gi
 	seen := map[string]bool{}
 	for _, candidate := range req.Repositories {
 		repository := strings.TrimSuffix(strings.TrimSpace(candidate.Repository), ".git")
-		key := strings.ToLower(repository) + "\x00" + mode
+		key, validPair := canonicalGitHubDataSourcePair(repository, mode)
 		result := types.GitHubBatchItemResult{Repository: repository}
+		if !validPair {
+			result.Status, result.Message = "failed", "Repository must be an owner/name GitHub repository"
+			response.Results = append(response.Results, result)
+			continue
+		}
 		if seen[key] {
 			result.Status, result.Message = "existing", "Repository appears more than once in this batch"
 			response.Results = append(response.Results, result)
@@ -157,6 +162,68 @@ func belongsToOwner(repository, owner string) bool {
 	return len(parts) == 2 && parts[0] != "" && parts[1] != "" && strings.EqualFold(parts[0], strings.TrimSpace(owner))
 }
 
+// canonicalGitHubDataSourcePair is the one identity rule used for both a
+// batch candidate and an existing data source. Older data sources stored a
+// mixture of owner/name, HTTPS URLs, optional .git suffixes, and sometimes no
+// mode at all. Treating those representations as different made safe retries
+// create duplicates instead of reporting the existing source.
+func canonicalGitHubDataSourcePair(repository, mode string) (string, bool) {
+	repository = canonicalGitHubRepository(repository)
+	mode = storedGitHubDataSourceMode(mode)
+	if repository == "" || mode == "" {
+		return "", false
+	}
+	return repository + "\x00" + mode, true
+}
+
+// canonicalGitHubRepository returns the case-insensitive owner/name identity
+// used for duplicate detection. It deliberately accepts the legacy HTTPS URL
+// representation, but requires exactly one owner and one repository segment
+// so a tree/blob URL can never be mistaken for a repository source.
+func canonicalGitHubRepository(repository string) string {
+	repository = strings.TrimSpace(repository)
+	lower := strings.ToLower(repository)
+	for _, prefix := range []string{"https://github.com/", "http://github.com/", "github.com/"} {
+		if strings.HasPrefix(lower, prefix) {
+			repository = repository[len(prefix):]
+			break
+		}
+	}
+	repository = strings.Trim(strings.TrimSpace(repository), "/")
+	if len(repository) >= len(".git") && strings.EqualFold(repository[len(repository)-len(".git"):], ".git") {
+		repository = repository[:len(repository)-len(".git")]
+	}
+	parts := strings.Split(repository, "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(parts[0]) + "/" + strings.TrimSpace(parts[1]))
+}
+
+// requestedGitHubBatchMode validates new requests. A missing mode is never
+// silently accepted for a new batch: the client must make the user's chosen
+// ingestion behavior explicit.
+func requestedGitHubBatchMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "documents":
+		return "documents"
+	case "source":
+		return "source"
+	default:
+		return ""
+	}
+}
+
+// storedGitHubDataSourceMode preserves the original document-import behavior
+// for pre-mode data sources. Source snapshots and document ingestion remain
+// intentionally distinct so both can coexist for the same repository.
+func storedGitHubDataSourceMode(mode string) string {
+	if strings.TrimSpace(mode) == "" {
+		return "documents"
+	}
+	return requestedGitHubBatchMode(mode)
+}
+
 func githubDataSourcePairs(rows []*types.DataSource) map[string]string {
 	pairs := map[string]string{}
 	for _, ds := range rows {
@@ -169,10 +236,11 @@ func githubDataSourcePairs(rows []*types.DataSource) map[string]string {
 		}
 		repository, _ := config.Settings["repository"].(string)
 		mode, _ := config.Settings["mode"].(string)
-		if repository == "" || (mode != "source" && mode != "documents") {
+		key, ok := canonicalGitHubDataSourcePair(repository, mode)
+		if !ok {
 			continue
 		}
-		pairs[strings.ToLower(strings.TrimSuffix(repository, ".git"))+"\x00"+mode] = ds.ID
+		pairs[key] = ds.ID
 	}
 	return pairs
 }
