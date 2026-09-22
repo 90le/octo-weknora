@@ -19,7 +19,7 @@ func TestBuildSystemPromptAddsTurnScopedEvidenceContract(t *testing.T) {
 
 	releaseCtx := answerevidence.WithContract(context.Background(), "Claude 支持接入 Octo IM 吗？")
 	prompt := engine.buildSystemPrompt(releaseCtx)
-	require.Contains(t, prompt, "资料未命中")
+	require.Contains(t, prompt, "RAG 未命中")
 	require.Contains(t, prompt, "不能作为“不支持”")
 }
 
