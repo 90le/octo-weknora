@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"testing"
+	"time"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/answerevidence"
@@ -17,10 +18,14 @@ func TestBuildSystemPromptAddsTurnScopedEvidenceContract(t *testing.T) {
 	require.Contains(t, engine.buildSystemPrompt(sourceCtx), "<answer_evidence_contract>")
 	require.Contains(t, engine.buildSystemPrompt(sourceCtx), "source_browse")
 
-	releaseCtx := answerevidence.WithContract(context.Background(), "Claude 支持接入 Octo IM 吗？")
-	prompt := engine.buildSystemPrompt(releaseCtx)
-	require.Contains(t, prompt, "RAG 未命中")
-	require.Contains(t, prompt, "不能作为“不支持”")
+	releaseCtx := answerevidence.WithContract(context.Background(), "octo-android 最新版本更新了什么？")
+	releasePrompt := engine.buildSystemPrompt(releaseCtx)
+	require.Contains(t, releasePrompt, "可信发布查询")
+	require.Contains(t, releasePrompt, "不能证明它们代表最新发布")
+
+	integrationCtx := answerevidence.WithContract(context.Background(), "Claude 支持接入 Octo IM 吗？")
+	integrationPrompt := engine.buildSystemPrompt(integrationCtx)
+	require.Contains(t, integrationPrompt, "无论结论是“支持”还是“不支持”")
 }
 
 func TestStreamThinkingToEventBusHoldsUnevidencedSourceAnswer(t *testing.T) {
@@ -84,17 +89,92 @@ func TestRecordAnswerEvidenceRequiresReadProvenanceAndActualDocumentHit(t *testi
 	}}})
 	require.True(t, answerevidence.SourceReadObserved(sourceCtx))
 
-	releaseCtx := answerevidence.WithContract(context.Background(), "最新版本更新了什么？")
-	recordAnswerEvidenceFromStep(releaseCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
+	integrationCtx := answerevidence.WithContract(context.Background(), "Claude 支持接入 Octo IM Bot 吗？")
+	recordAnswerEvidenceFromStep(integrationCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
 		Name:   agenttools.ToolKnowledgeSearch,
 		Result: &types.ToolResult{Success: true, Output: `<search_results count="0"></search_results>`},
 	}}})
-	require.False(t, answerevidence.VerifiedEvidenceObserved(releaseCtx), "a zero-hit RAG call is not release evidence")
-	recordAnswerEvidenceFromStep(releaseCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
+	require.False(t, answerevidence.DocumentOrSourceEvidenceObserved(integrationCtx), "a zero-hit RAG call is not integration evidence")
+	recordAnswerEvidenceFromStep(integrationCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
 		Name:   agenttools.ToolKnowledgeSearch,
 		Result: &types.ToolResult{Success: true, Output: `<search_results count="1"><chunk>release note</chunk></search_results>`},
 	}}})
-	require.True(t, answerevidence.VerifiedEvidenceObserved(releaseCtx))
+	require.True(t, answerevidence.DocumentOrSourceEvidenceObserved(integrationCtx))
+
+	metadataOnlyCtx := answerevidence.WithContract(context.Background(), "Claude 支持接入 Octo IM Bot 吗？")
+	recordAnswerEvidenceFromStep(metadataOnlyCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
+		Name:   agenttools.ToolGetDocumentInfo,
+		Result: &types.ToolResult{Success: true, Output: "Document: Codex channel\nMetadata:\n  - repository: example"},
+	}}})
+	require.False(t, answerevidence.DocumentOrSourceEvidenceObserved(metadataOnlyCtx), "document metadata is not integration evidence")
+	recordAnswerEvidenceFromStep(metadataOnlyCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
+		Name:   agenttools.ToolGetDocumentInfo,
+		Result: &types.ToolResult{Success: true, Output: "FAQ ID: faq-1\nAnswers:\n  - Codex channel is documented here."},
+	}}})
+	require.True(t, answerevidence.DocumentOrSourceEvidenceObserved(metadataOnlyCtx))
+}
+
+func TestRecordAnswerEvidenceRequiresPrivateReleaseProvenance(t *testing.T) {
+	checkedAt := time.Date(2026, time.September, 22, 9, 0, 0, 0, time.UTC)
+	releaseCtx := answerevidence.WithContract(context.Background(), "octo-android 最新版本更新了什么？")
+	recordAnswerEvidenceFromStep(releaseCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
+		Name:   agenttools.ToolGitHubReleaseLookup,
+		Result: &types.ToolResult{Success: true, Output: `{"tag_name":"v1.2.3"}`},
+	}}})
+	require.False(t, answerevidence.ReleaseEvidenceObserved(releaseCtx), "public tool text cannot establish latest-release evidence")
+
+	recordAnswerEvidenceFromStep(releaseCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
+		Name: agenttools.ToolSourceBrowse,
+		Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+			types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{
+				KnowledgeBaseID: "kb",
+				DataSourceID:    "source",
+				Repository:      "Mininglamp-OSS/octo-android",
+				TagName:         "v1.2.3",
+				URL:             "https://github.com/Mininglamp-OSS/octo-android/releases/tag/v1.2.3",
+				CheckedAt:       checkedAt,
+			},
+		}},
+	}}})
+	require.False(t, answerevidence.ReleaseEvidenceObserved(releaseCtx), "only the dedicated release lookup can promote release provenance")
+
+	recordAnswerEvidenceFromStep(releaseCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
+		Name: agenttools.ToolGitHubReleaseLookup,
+		Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+			types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{
+				KnowledgeBaseID: "kb",
+				DataSourceID:    "source",
+				Repository:      "Mininglamp-OSS/octo-android",
+				TagName:         "v1.2.3",
+				URL:             "https://github.com/Mininglamp-OSS/octo-android/releases/tag/v1.2.3",
+				CheckedAt:       checkedAt,
+			},
+		}},
+	}}})
+	require.True(t, answerevidence.ReleaseEvidenceObserved(releaseCtx))
+
+	integrationCtx := answerevidence.WithContract(context.Background(), "Codex 支持接入 Octo IM 吗？")
+	recordAnswerEvidenceFromStep(integrationCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
+		Name: agenttools.ToolGitHubReleaseLookup,
+		Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+			types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{
+				KnowledgeBaseID: "kb", DataSourceID: "source", Repository: "Mininglamp-OSS/octo-android", TagName: "v1.2.3", URL: "https://example.test/release", CheckedAt: checkedAt,
+			},
+		}},
+	}}})
+	require.True(t, answerevidence.ReleaseEvidenceObserved(integrationCtx))
+	require.False(t, answerevidence.DocumentOrSourceEvidenceObserved(integrationCtx), "release provenance cannot establish support")
+
+	noStableCtx := answerevidence.WithContract(context.Background(), "这个项目是否有最新稳定版？")
+	recordAnswerEvidenceFromStep(noStableCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
+		Name: agenttools.ToolGitHubReleaseLookup,
+		Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+			types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{
+				KnowledgeBaseID: "kb", DataSourceID: "source", Repository: "Mininglamp-OSS/octo-android", CheckedAt: checkedAt,
+			},
+		}},
+	}}})
+	require.True(t, answerevidence.ReleaseEvidenceObserved(noStableCtx), "a checked no-stable-release result is valid release provenance")
 }
 
 func TestExecuteLoopStopsUnevidencedSourceClaimWithDeterministicFallback(t *testing.T) {
@@ -122,7 +202,7 @@ func TestExecuteLoopStopsUnevidencedSourceClaimWithDeterministicFallback(t *test
 	require.True(t, emitted[1].Done)
 }
 
-func TestExecuteLoopDoesNotPublishUnsupportedReleaseClaimWithoutEvidence(t *testing.T) {
+func TestExecuteLoopDoesNotPublishUnsupportedIntegrationClaimWithoutEvidence(t *testing.T) {
 	model := &mockChat{responses: []mockResponse{
 		{chunks: []types.StreamResponse{{ResponseType: types.ResponseTypeAnswer, Content: "Claude 不支持原生接入。", Done: true, FinishReason: "stop"}}},
 		{chunks: []types.StreamResponse{{ResponseType: types.ResponseTypeAnswer, Content: "Claude 不支持原生接入。", Done: true, FinishReason: "stop"}}},
@@ -135,11 +215,11 @@ func TestExecuteLoopDoesNotPublishUnsupportedReleaseClaimWithoutEvidence(t *test
 	require.NoError(t, err)
 	require.True(t, state.IsComplete)
 	require.Equal(t, 2, model.callCount)
-	require.Contains(t, state.FinalAnswer, "不能仅因资料未命中")
+	require.Contains(t, state.FinalAnswer, "README、接口文档或源码")
 	require.NotContains(t, state.FinalAnswer, "Claude 不支持")
 }
 
-func TestExecuteLoopDeliversSafeUnknownReleaseAnswerWithoutEvidence(t *testing.T) {
+func TestExecuteLoopDeliversSafeUnknownIntegrationAnswerWithoutEvidence(t *testing.T) {
 	model := &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{{
 		ResponseType: types.ResponseTypeAnswer,
 		Content:      "当前授权资料无法确认 Claude 是否支持原生接入。",

@@ -16,9 +16,10 @@ import (
 type Intent string
 
 const (
-	IntentNone    Intent = ""
-	IntentSource  Intent = "source"
-	IntentRelease Intent = "release"
+	IntentNone        Intent = ""
+	IntentSource      Intent = "source"
+	IntentRelease     Intent = "release"
+	IntentIntegration Intent = "integration"
 )
 
 // State is request-local mutable evidence state. It is placed in Context only
@@ -30,6 +31,7 @@ type State struct {
 	chinese          bool
 	sourceRead       bool
 	documentEvidence bool
+	releaseEvidence  bool
 	nudgeCount       int
 }
 
@@ -37,8 +39,10 @@ type stateKey struct{}
 
 // Classify uses deliberately narrow cues. A source classification has
 // precedence because a version question that explicitly asks about code still
-// needs a source read. Broad product words alone do not turn a request into a
-// source-code claim.
+// needs a source read. Latest-version, release, and changelog questions are
+// distinct from support/integration questions: the former need release
+// provenance, while the latter need actual documentation or source evidence.
+// Broad product words alone do not turn a request into a source-code claim.
 func Classify(query string) Intent {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
@@ -54,10 +58,14 @@ func Classify(query string) Intent {
 		return IntentSource
 	}
 	if containsAny(q,
-		"最新版本", "版本", "更新日志", "更新了什么", "更新", "发布", "发行", "变更", "release", "changelog", "release note",
-		"是否支持", "支持", "接入", "集成", "兼容", "integration", "integrate", "compatible", "support",
+		"最新版本", "当前版本", "版本", "更新日志", "更新了什么", "更新内容", "发布", "发行", "release", "changelog", "release note",
 	) {
 		return IntentRelease
+	}
+	if containsAny(q,
+		"是否支持", "支持", "接入", "集成", "兼容", "对接", "原生接入", "integration", "integrate", "compatible", "support",
+	) {
+		return IntentIntegration
 	}
 	return IntentNone
 }
@@ -122,6 +130,33 @@ func VerifiedEvidenceObserved(ctx context.Context) bool {
 	}
 	state.mu.RLock()
 	defer state.mu.RUnlock()
+	return state.sourceRead || state.documentEvidence || state.releaseEvidence
+}
+
+// ReleaseEvidenceObserved reports whether a trusted release-lookup result
+// supplied private release provenance during this turn. It must not be used to
+// establish support or integration: a release tag alone says nothing about an
+// integration's existence or behaviour.
+func ReleaseEvidenceObserved(ctx context.Context) bool {
+	state := stateFrom(ctx)
+	if state == nil {
+		return false
+	}
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	return state.releaseEvidence
+}
+
+// DocumentOrSourceEvidenceObserved is the integration contract's evidence
+// gate. It intentionally excludes release provenance: both positive and
+// negative support claims need actual documentation or source content.
+func DocumentOrSourceEvidenceObserved(ctx context.Context) bool {
+	state := stateFrom(ctx)
+	if state == nil {
+		return false
+	}
+	state.mu.RLock()
+	defer state.mu.RUnlock()
 	return state.sourceRead || state.documentEvidence
 }
 
@@ -146,16 +181,31 @@ func RecordDocumentEvidence(ctx context.Context) {
 	}
 }
 
+// RecordReleaseEvidence records trusted, private provenance from an official
+// release lookup. The future github_release_lookup tool is expected to call
+// this only after server code has validated its provenance marker. It is a
+// separate record so RAG/source results cannot accidentally establish a
+// "latest release" conclusion.
+func RecordReleaseEvidence(ctx context.Context) {
+	if state := stateFrom(ctx); state != nil {
+		state.mu.Lock()
+		state.releaseEvidence = true
+		state.mu.Unlock()
+	}
+}
+
 // ShouldHoldStreamingAnswer prevents an unverified natural answer from being
-// optimistically exposed in a stream. For release/integration questions, a
-// safe unknown answer is later released as normal; only categorical negative
-// claims are retried or replaced.
+// optimistically exposed in a stream. A safe explicit unknown is later
+// released as normal; only version or integration conclusions are retried or
+// replaced when their intent-specific evidence is missing.
 func ShouldHoldStreamingAnswer(ctx context.Context) bool {
 	switch IntentFromContext(ctx) {
 	case IntentSource:
 		return !SourceReadObserved(ctx)
 	case IntentRelease:
-		return !VerifiedEvidenceObserved(ctx)
+		return !ReleaseEvidenceObserved(ctx)
+	case IntentIntegration:
+		return !DocumentOrSourceEvidenceObserved(ctx)
 	default:
 		return false
 	}
@@ -190,9 +240,9 @@ func isChinese(ctx context.Context) bool {
 
 // NeedsEvidenceRetry reports whether a natural final answer is prohibited by
 // the active contract. Source facts always require a source read. Release and
-// integration questions reject only unsupported-style conclusions when there
-// is no concrete document or source evidence; a clearly uncertain answer is
-// allowed through.
+// integration turns allow only an explicit uncertainty reply without their
+// respective evidence; any other final content could be an affirmative or
+// negative conclusion hidden behind short wording such as "yes" or a tag.
 func NeedsEvidenceRetry(ctx context.Context, answer string) bool {
 	answer = strings.TrimSpace(answer)
 	if answer == "" {
@@ -202,7 +252,9 @@ func NeedsEvidenceRetry(ctx context.Context, answer string) bool {
 	case IntentSource:
 		return !SourceReadObserved(ctx)
 	case IntentRelease:
-		return !VerifiedEvidenceObserved(ctx) && ClaimsUnsupported(answer)
+		return !ReleaseEvidenceObserved(ctx) && !isExplicitReleaseUnknown(answer)
+	case IntentIntegration:
+		return !DocumentOrSourceEvidenceObserved(ctx) && !isExplicitIntegrationUnknown(answer)
 	default:
 		return false
 	}
@@ -215,7 +267,9 @@ func NeedsSynthesisFallback(ctx context.Context) bool {
 	case IntentSource:
 		return !SourceReadObserved(ctx)
 	case IntentRelease:
-		return !VerifiedEvidenceObserved(ctx)
+		return !ReleaseEvidenceObserved(ctx)
+	case IntentIntegration:
+		return !DocumentOrSourceEvidenceObserved(ctx)
 	default:
 		return false
 	}
@@ -230,7 +284,9 @@ func AllowsMissingIssue(ctx context.Context) bool {
 	case IntentSource:
 		return SourceReadObserved(ctx)
 	case IntentRelease:
-		return VerifiedEvidenceObserved(ctx)
+		return ReleaseEvidenceObserved(ctx)
+	case IntentIntegration:
+		return DocumentOrSourceEvidenceObserved(ctx)
 	default:
 		return true
 	}
@@ -244,6 +300,30 @@ func ClaimsUnsupported(answer string) bool {
 	return containsAny(lower,
 		"不支持", "未支持", "没有支持", "无法接入", "不能接入", "不存在该接入",
 		"not supported", "does not support", "unsupported", "cannot integrate", "can't integrate", "no integration",
+	)
+}
+
+// isExplicitReleaseUnknown identifies the narrow safe reply allowed when a
+// latest-version lookup found no trusted release provenance. Any other final
+// reply is retried, because even a bare tag or “no release” is a release fact.
+func isExplicitReleaseUnknown(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	return lower != "" && containsAny(lower,
+		"无法确认最新", "无法核验最新", "不能确认最新", "无法确认当前版本", "当前材料无法确认", "当前资料无法确认", "当前授权资料无法确认",
+		"没有取得可核验的发布", "没有可核验的发布", "没有发布证据",
+		"cannot confirm the latest", "cannot verify the latest", "unable to verify the latest", "cannot confirm the current version", "cannot verify the current version", "current material cannot confirm", "no verifiable release evidence",
+	)
+}
+
+// isExplicitIntegrationUnknown identifies the narrow safe reply allowed when
+// no documentation/source body was read. Any other answer could assert either
+// support or non-support, including a terse “yes” or “no”.
+func isExplicitIntegrationUnknown(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	return lower != "" && containsAny(lower,
+		"当前材料无法确认", "当前资料无法确认", "当前授权资料无法确认", "无法确认是否支持", "无法核验是否支持", "不能确认是否支持",
+		"没有读取到可核验", "未读到可核验",
+		"cannot confirm support", "cannot verify support", "unable to confirm whether", "unable to verify whether",
 	)
 }
 
@@ -264,11 +344,20 @@ This is a source-code fact question. Before asserting functions, implementation,
 	case IntentRelease:
 		if isChinese(ctx) {
 			return `<answer_evidence_contract>
-本回合涉及版本、发布、支持或接入。知识库 RAG 未命中、文档缺失或一次检索为空，都不能作为“不支持”或“没有接入”的证据。先按问题查授权范围内的发布说明、README、接口文档或源码；仍无可核验证据时，只能说明“当前材料无法确认”，不要把资料缺失推断成否定结论。
+本回合询问最新版本、发布或更新日志。只有经过可信发布查询并附带发布来源记录的结果，才能断言“最新”、当前版本、发布日期或完整更新内容。README、RAG 文档、源码快照和历史对话可补充背景，但不能证明它们代表最新发布；当前没有可核验发布记录时，只能说明无法确认。
 </answer_evidence_contract>`
 		}
 		return `<answer_evidence_contract>
-This turn concerns version, release, support, or integration. A RAG miss, missing document, or empty retrieval is not evidence that a feature is unsupported or absent. Check authorized release notes, README/API documentation, or source as appropriate. If no verifiable evidence is available, say the current material cannot confirm it; do not infer a negative conclusion from missing material.
+This turn asks about a latest version, release, or changelog. Only a trusted release lookup with recorded release provenance may establish "latest", the current version, release date, or complete changes. README/RAG/source snapshots and prior conversation may provide background but cannot prove they represent the latest release; without a verifiable release record, say it cannot be confirmed.
+</answer_evidence_contract>`
+	case IntentIntegration:
+		if isChinese(ctx) {
+			return `<answer_evidence_contract>
+本回合询问支持、接入、集成或兼容性。无论结论是“支持”还是“不支持”，都必须先读取当前授权范围内的 README、接口文档或实际源码；发布标签、RAG 未命中、文档缺失和文件名都不能单独证明接入结论。若未读到证据，只能说明当前材料无法确认。
+</answer_evidence_contract>`
+		}
+		return `<answer_evidence_contract>
+This turn asks about support, integration, or compatibility. Both affirmative and negative conclusions require an actual read of authorized README/API documentation or source. A release tag, RAG miss, missing document, or filename alone cannot establish an integration conclusion. If no content was read, say the current material cannot confirm it.
 </answer_evidence_contract>`
 	default:
 		return ""
@@ -284,9 +373,14 @@ func RetryNudge(ctx context.Context) string {
 		return "Before giving a source-code conclusion, use source_browse to find and read the actual file and lines. Do not repeat an unverified conclusion; if a read is unavailable, state that evidence is insufficient."
 	case IntentRelease:
 		if isChinese(ctx) {
-			return "不要把资料未命中当成“不支持”。请先查找可核验的发布、文档或源码证据；若仍无证据，只能说明当前材料无法确认。"
+			return "不要把 README、RAG、源码快照或资料未命中当成“最新发布”的证据。请查找可核验的发布记录；若仍无发布证据，只能说明当前材料无法确认。"
 		}
-		return "Do not treat missing material as unsupported. First look for verifiable release, documentation, or source evidence; if none exists, state that the current material cannot confirm it."
+		return "Do not treat README/RAG/source snapshots or missing material as proof of the latest release. Look for a verifiable release record; if none exists, state that the current material cannot confirm it."
+	case IntentIntegration:
+		if isChinese(ctx) {
+			return "不要把发布标签、RAG 未命中或资料缺失当成“支持”或“不支持”。请先读取可核验的 README、接口文档或源码；若仍无证据，只能说明当前材料无法确认。"
+		}
+		return "Do not treat a release tag, RAG miss, or missing material as proof of support or non-support. First read verifiable README/API documentation or source; if none exists, state that the current material cannot confirm it."
 	default:
 		return ""
 	}
@@ -301,9 +395,14 @@ func FallbackReply(ctx context.Context) string {
 		return "I did not obtain a verifiable source read, so I cannot confirm implementation, functions, configuration, or version behaviour. Please provide a repository, branch, path, function name, or error text, or confirm access to the relevant source."
 	case IntentRelease:
 		if isChinese(ctx) {
-			return "当前没有取得可核验的发布、文档或源码证据，不能仅因资料未命中就判断某项能力不支持或未接入。请提供版本、发布说明、仓库或文档范围后再确认。"
+			return "当前没有取得可核验的发布记录，不能确认最新版本、发布日期或完整更新内容。请提供发布页、版本标签或允许查询对应发布来源后再确认。"
 		}
-		return "No verifiable release, documentation, or source evidence was obtained. Missing material alone cannot establish that a capability is unsupported or not integrated; please provide a version, release note, repository, or document scope to confirm it."
+		return "No verifiable release record was obtained, so I cannot confirm the latest version, release date, or complete changelog. Please provide a release page, tag, or access to the relevant release source."
+	case IntentIntegration:
+		if isChinese(ctx) {
+			return "当前没有读取到可核验的 README、接口文档或源码，因此不能确认该能力支持或不支持接入。请提供仓库、路径、文档范围或允许访问对应资料后再确认。"
+		}
+		return "I did not read verifiable README/API documentation or source, so I cannot confirm whether the capability supports integration. Please provide a repository, path, document scope, or access to the relevant material."
 	default:
 		return ""
 	}
