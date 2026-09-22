@@ -45,7 +45,8 @@ func Classify(query string) Intent {
 		return IntentNone
 	}
 	if containsAny(q,
-		"源码", "源代码", "代码", "函数", "方法", "类", "接口实现", "具体实现", "实现细节", "调用链", "字段", "变量",
+		"源码", "源代码", "代码", "函数", "接口实现", "具体实现", "实现细节", "调用链", "字段", "变量",
+		"类定义", "类名", "方法名", "方法实现", "调用方法",
 		"错误码", "堆栈", "栈追踪", "哪个文件", "文件里", "文件中", "行号", "仓库里面", "仓库中", "仓库内",
 		"source code", "function", "method", "class ", "implementation", "call stack", "stack trace",
 		"error code", "repository", ".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".php", ".rs", ".swift", ".kt", ".yaml", ".yml",
@@ -217,6 +218,21 @@ func NeedsSynthesisFallback(ctx context.Context) bool {
 		return !VerifiedEvidenceObserved(ctx)
 	default:
 		return false
+	}
+}
+
+// AllowsMissingIssue is the persistence-side gate for an automatic “missing
+// knowledge” record. The normal retrieval trace proves that a lookup actually
+// ran; this method adds the stronger contract-specific proof so a source
+// search without an actual read cannot be mislabeled as a knowledge gap.
+func AllowsMissingIssue(ctx context.Context) bool {
+	switch IntentFromContext(ctx) {
+	case IntentSource:
+		return SourceReadObserved(ctx)
+	case IntentRelease:
+		return VerifiedEvidenceObserved(ctx)
+	default:
+		return true
 	}
 }
 

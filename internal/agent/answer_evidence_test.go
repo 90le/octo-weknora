@@ -139,6 +139,33 @@ func TestExecuteLoopDoesNotPublishUnsupportedReleaseClaimWithoutEvidence(t *test
 	require.NotContains(t, state.FinalAnswer, "Claude 不支持")
 }
 
+func TestExecuteLoopDeliversSafeUnknownReleaseAnswerWithoutEvidence(t *testing.T) {
+	model := &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{{
+		ResponseType: types.ResponseTypeAnswer,
+		Content:      "当前授权资料无法确认 Claude 是否支持原生接入。",
+		Done:         true,
+		FinishReason: "stop",
+	}}}}}
+	engine := newTestEngine(t, model)
+	ctx := answerevidence.WithContract(context.Background(), "Claude 支持接入 Octo IM Bot 吗？")
+	var emitted []event.AgentFinalAnswerData
+	engine.eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
+		emitted = append(emitted, evt.Data.(event.AgentFinalAnswerData))
+		return nil
+	})
+	state := &types.AgentState{}
+
+	_, err := engine.executeLoop(ctx, state, "Claude 支持接入 Octo IM Bot 吗？", emptyMessages(), nil, "session", "message")
+	require.NoError(t, err)
+	require.True(t, state.IsComplete)
+	require.Equal(t, 1, model.callCount, "a safe unknown must not be retried or replaced")
+	require.Equal(t, "当前授权资料无法确认 Claude 是否支持原生接入。", state.FinalAnswer)
+	require.Len(t, emitted, 2, "the held answer is released as the normal final stream after validation")
+	require.Equal(t, state.FinalAnswer, emitted[0].Content)
+	require.False(t, emitted[0].Done)
+	require.True(t, emitted[1].Done)
+}
+
 func TestFinalSynthesisUsesEvidenceFallbackBeforeCallingModel(t *testing.T) {
 	model := &mockChat{}
 	engine := newTestEngine(t, model)

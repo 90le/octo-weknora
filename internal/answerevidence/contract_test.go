@@ -16,6 +16,8 @@ func TestClassifyKeepsSourceFactsSeparateFromReleaseQuestions(t *testing.T) {
 		{"octo-android 最新版本更新了什么？", IntentRelease},
 		{"Octo 支持 Codex 接入 IM Bot 吗？", IntentRelease},
 		{"帮我解释一下知识库", IntentNone},
+		{"这个类明天怎么安排？", IntentNone},
+		{"这个方法先讨论一下", IntentNone},
 		{"最新版本的源码里这个函数如何实现？", IntentSource},
 	}
 	for _, tc := range cases {
@@ -31,6 +33,7 @@ func TestSourceContractRequiresReadAndProducesLocalizedFallback(t *testing.T) {
 	require.True(t, ShouldHoldStreamingAnswer(ctx))
 	require.True(t, NeedsEvidenceRetry(ctx, "它会读取配置并发送请求。"))
 	require.True(t, NeedsSynthesisFallback(ctx))
+	require.False(t, AllowsMissingIssue(ctx))
 	require.Contains(t, Prompt(ctx), "source_browse")
 	require.Contains(t, FallbackReply(ctx), "可核验的源码")
 
@@ -40,6 +43,7 @@ func TestSourceContractRequiresReadAndProducesLocalizedFallback(t *testing.T) {
 	require.False(t, ShouldHoldStreamingAnswer(ctx))
 	require.False(t, NeedsEvidenceRetry(ctx, "它会读取配置并发送请求。"))
 	require.False(t, NeedsSynthesisFallback(ctx))
+	require.True(t, AllowsMissingIssue(ctx))
 }
 
 func TestReleaseContractNeverEquatesMissingRAGWithUnsupported(t *testing.T) {
@@ -49,6 +53,7 @@ func TestReleaseContractNeverEquatesMissingRAGWithUnsupported(t *testing.T) {
 	require.True(t, NeedsEvidenceRetry(ctx, "Claude 不支持原生接入。"))
 	require.False(t, NeedsEvidenceRetry(ctx, "当前授权资料无法确认 Claude 是否支持原生接入。"), "an explicit unknown is not an unsupported claim")
 	require.True(t, NeedsSynthesisFallback(ctx))
+	require.False(t, AllowsMissingIssue(ctx))
 	require.Contains(t, Prompt(ctx), "未命中")
 	require.Contains(t, FallbackReply(ctx), "不能仅因资料未命中")
 
@@ -57,6 +62,7 @@ func TestReleaseContractNeverEquatesMissingRAGWithUnsupported(t *testing.T) {
 	require.False(t, ShouldHoldStreamingAnswer(ctx))
 	require.False(t, NeedsEvidenceRetry(ctx, "Claude 不支持原生接入。"))
 	require.False(t, NeedsSynthesisFallback(ctx))
+	require.True(t, AllowsMissingIssue(ctx))
 }
 
 func TestEvidenceRetryIsBounded(t *testing.T) {
