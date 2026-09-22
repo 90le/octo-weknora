@@ -147,6 +147,42 @@ agent_type_presets:
     # anything useful.
 
   # --------------------------------------------------------------------------
+  # Source Code Q&A — evidence-first answers over read-only source snapshots.
+  # Source snapshots are intentionally NOT vectorised: source_browse searches
+  # and reads the pinned repository files directly, then returns line-level
+  # source URLs. RAG is only a small supplement for README/API narratives.
+  # --------------------------------------------------------------------------
+  - id: "source-qa"
+    i18n:
+      default:
+        label: "Source Code Q&A"
+        description: "Evidence-first answers over read-only repository snapshots, with optional documentation lookup."
+      zh-CN:
+        label: "源码问答"
+        description: "优先检索并读取只读源码快照，再回答实现、函数、配置和错误定位问题；文档检索仅作补充。"
+      zh-TW:
+        label: "原始碼問答"
+        description: "優先檢索並讀取唯讀原始碼快照，再回答實作、函式、設定和錯誤定位問題；文件檢索僅作補充。"
+      ja-JP:
+        label: "ソースコード Q&A"
+        description: "読み取り専用のリポジトリスナップショットを先に検索・読取し、実装、関数、設定、エラーを根拠付きで回答します。"
+    config:
+      system_prompt_id: "source_qa_agent"
+      temperature: 0.2
+      max_iterations: 8
+      allowed_tools:
+        - "source_browse"
+        # Documentation chunks may help with README/API overviews, but the
+        # prompt requires source_browse evidence for code facts.
+        - "knowledge_search"
+        - "get_document_info"
+      retain_retrieval_history: false
+      kb_selection_mode: "all"
+    # source_browse works against authorized source snapshots and deliberately
+    # has no vector/wiki capability requirement. Do not add kb_filter here:
+    # doing so would hide source-only knowledge bases from the editor.
+
+  # --------------------------------------------------------------------------
   # Data Analysis — SQL / statistics over tabular files (CSV / Excel) in the KB.
   # Retrieval capabilities (vector/wiki/…) are largely irrelevant here — the
   # agent drives `data_schema` + `data_analysis` tools against uploaded files,

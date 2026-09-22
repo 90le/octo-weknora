@@ -5,8 +5,10 @@ import { get, post, put, del } from "../../utils/request";
 // 'rag-qa'       : 经典文档/FAQ 分块 RAG
 // 'wiki-qa'      : Wiki 图谱导航问答
 // 'hybrid-rag-wiki': Wiki + 分块混合检索
+// 'source-qa'    : 只读源码快照优先的实现与配置问答（文档检索仅作补充）
+// 'data-analysis': CSV / Excel 表格数据分析
 // 'custom'       : 完全自定义（不应用预设）
-export type AgentType = 'rag-qa' | 'wiki-qa' | 'hybrid-rag-wiki' | 'data-analysis' | 'custom';
+export type AgentType = 'rag-qa' | 'wiki-qa' | 'hybrid-rag-wiki' | 'source-qa' | 'data-analysis' | 'custom';
 
 export interface QuestionSuggestionConfig {
   starters: {
