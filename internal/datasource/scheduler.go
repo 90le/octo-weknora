@@ -180,7 +180,7 @@ func (s *Scheduler) triggerSync(dataSourceID string, tenantID uint64) {
 	_, err = s.taskEnqueuer.Enqueue(task,
 		asynq.Queue(types.QueueSync),
 		asynq.MaxRetry(5),
-		asynq.Timeout(2*time.Hour),
+		asynq.Timeout(types.DataSourceSyncTaskTimeout),
 		asynq.TaskID(taskID),
 	)
 	if err != nil {

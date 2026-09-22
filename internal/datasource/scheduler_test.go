@@ -125,6 +125,17 @@ func (r *fakeSyncLogRepo) UpdateResult(ctx context.Context, log *types.SyncLog) 
 	return r.Update(ctx, log)
 }
 
+func (r *fakeSyncLogRepo) UpdateResultIfRunning(_ context.Context, log *types.SyncLog) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current, ok := r.logs[log.ID]
+	if !ok || current.Status != types.SyncLogStatusRunning {
+		return false, nil
+	}
+	r.logs[log.ID] = log
+	return true, nil
+}
+
 func (r *fakeSyncLogRepo) CancelPendingByDataSource(_ context.Context, dsID string) error {
 	return nil
 }

@@ -95,6 +95,9 @@ func (r *kbDeleteSyncLogRepo) Update(_ context.Context, _ *types.SyncLog) error 
 func (r *kbDeleteSyncLogRepo) UpdateResult(_ context.Context, _ *types.SyncLog) error {
 	return nil
 }
+func (r *kbDeleteSyncLogRepo) UpdateResultIfRunning(_ context.Context, _ *types.SyncLog) (bool, error) {
+	return false, nil
+}
 func (r *kbDeleteSyncLogRepo) CancelPendingByDataSource(_ context.Context, dsID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

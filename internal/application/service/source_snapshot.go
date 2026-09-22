@@ -18,10 +18,21 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-func (s *DataSourceService) processSourceSnapshot(ctx context.Context, ds *types.DataSource, cfg *types.DataSourceConfig, connector datasource.Connector, log *types.SyncLog, paused bool) error {
+func (s *DataSourceService) processSourceSnapshot(
+	ctx context.Context,
+	ds *types.DataSource,
+	cfg *types.DataSourceConfig,
+	connector datasource.Connector,
+	log *types.SyncLog,
+	paused bool,
+	runGuard *syncRunGuard,
+) error {
+	if err := ensureSyncRunActive(ctx, runGuard); err != nil {
+		return s.finishSyncRunGuardError(ctx, ds, log, nil, paused, err)
+	}
 	guard := &syncAccessGuard{svc: s, ds: ds, config: cfg, allowPaused: paused}
 	if err := guard.check(ctx); err != nil {
-		return s.stopSyncAfterAccessChange(ctx, log, nil, err)
+		return s.stopSyncAfterAccessChange(ctx, ds, log, nil, paused, err)
 	}
 	store, err := snapshot.FromEnvironment()
 	var current *types.SourceSnapshot
@@ -45,21 +56,27 @@ func (s *DataSourceService) processSourceSnapshot(ctx context.Context, ds *types
 				err = errors.New("connector does not support source snapshots")
 			}
 			if err == nil {
+				if runErr := ensureSyncRunActive(ctx, runGuard); runErr != nil {
+					return s.finishSyncRunGuardError(ctx, ds, log, nil, paused, runErr)
+				}
 				if accessErr := guard.check(ctx); accessErr != nil {
 					if errors.Is(accessErr, errSyncSourceRemoved) {
 						_ = store.Delete(ds)
 					}
-					return s.stopSyncAfterAccessChange(ctx, log, nil, accessErr)
+					return s.stopSyncAfterAccessChange(ctx, ds, log, nil, paused, accessErr)
 				}
 				current, err = builder.Finish()
 			}
 		}
 	}
+	if runErr := ensureSyncRunActive(ctx, runGuard); runErr != nil {
+		return s.finishSyncRunGuardError(ctx, ds, log, nil, paused, runErr)
+	}
 	if accessErr := guard.check(ctx); accessErr != nil {
 		if store != nil && errors.Is(accessErr, errSyncSourceRemoved) {
 			_ = store.Delete(ds)
 		}
-		return s.stopSyncAfterAccessChange(ctx, log, nil, accessErr)
+		return s.stopSyncAfterAccessChange(ctx, ds, log, nil, paused, accessErr)
 	}
 	result := &types.SyncResult{}
 	if err == nil {
@@ -81,39 +98,22 @@ func (s *DataSourceService) processSourceSnapshot(ctx context.Context, ds *types
 		}
 		result.Deleted = len(previous)
 		result.Total = len(current.Files)
+		if runErr := ensureSyncRunActive(ctx, runGuard); runErr != nil {
+			return s.finishSyncRunGuardError(ctx, ds, log, result, paused, runErr)
+		}
 		ds.LastSyncCursor, _ = (&types.SyncCursor{ConnectorCursor: map[string]interface{}{"snapshot_id": current.ID, "revision": current.Revision}}).ToJSON()
 		ds.LastSyncAt = timePtr(time.Now().UTC())
-		ds.ErrorMessage = ""
-		if !paused {
-			ds.Status = types.DataSourceStatusActive
-		}
-		if e := s.dsRepo.UpdateSyncState(ctx, ds); e != nil {
-			err = e
-		}
 	}
-	log.Status = types.SyncLogStatusSuccess
-	// A retry reuses its sync-log row. A successful attempt must clear the
-	// previous attempt's error without rewriting other historical runs.
-	log.ErrorMessage = ""
+	status := types.SyncLogStatusSuccess
+	errorMessage := ""
 	if err != nil {
-		log.Status = types.SyncLogStatusFailed
-		log.ErrorMessage = err.Error()
-		ds.ErrorMessage = err.Error()
-		if !paused {
-			ds.Status = types.DataSourceStatusError
-		}
-		_ = s.dsRepo.UpdateSyncState(ctx, ds)
+		status = types.SyncLogStatusFailed
+		errorMessage = err.Error()
 	}
-	log.ItemsTotal = result.Total
-	log.ItemsCreated = result.Created
-	log.ItemsUpdated = result.Updated
-	log.ItemsDeleted = result.Deleted
-	log.ItemsSkipped = result.Skipped
-	log.ItemsFailed = result.Failed
-	log.Result, _ = result.ToJSON()
-	log.FinishedAt = timePtr(time.Now().UTC())
-	if e := s.syncLogRepo.UpdateResult(ctx, log); e != nil && err == nil {
-		err = e
+	resultJSON, _ := result.ToJSON()
+	if updateErr := s.updateSyncRunResult(ctx, ds, log, result, resultJSON,
+		status, errorMessage, paused, status == types.SyncLogStatusFailed); updateErr != nil {
+		return updateErr
 	}
 	return err
 }

@@ -107,11 +107,12 @@ func TestStreamHandler_EmitAbortsOnCanceledContext(t *testing.T) {
 // Checkpoint persists the connector cursor onto the data source so a crash
 // after it keeps the progress made so far.
 func TestStreamHandler_CheckpointPersistsCursor(t *testing.T) {
+	syncLog := &types.SyncLog{ID: "log-1", Status: types.SyncLogStatusRunning}
+	syncLogs := &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{syncLog.ID: syncLog}}
 	dsRepo := &recordingDSRepo{}
-	svc := &DataSourceService{dsRepo: dsRepo, syncLogRepo: &processSyncSyncLogRepo{logs: map[string]*types.SyncLog{}}}
+	svc := &DataSourceService{dsRepo: dsRepo, syncLogRepo: syncLogs}
 	ds := &types.DataSource{ID: "ds-1"}
 	result := &types.SyncResult{Created: 3}
-	syncLog := &types.SyncLog{ID: "log-1"}
 	h := newStreamHandler(svc, ds, result, syncLog)
 
 	cursor := &types.SyncCursor{ConnectorCursor: map[string]interface{}{

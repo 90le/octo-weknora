@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS knowledges (
     summary_status  VARCHAR(32) NOT NULL DEFAULT 'none',
     pending_subtasks_count INTEGER NOT NULL DEFAULT 0,
     error_message   TEXT,
+	metadata        TEXT,
+	enable_status   VARCHAR(32) NOT NULL DEFAULT 'disabled',
+	processed_at    DATETIME,
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     deleted_at      DATETIME
 );
@@ -238,10 +241,10 @@ func TestResetPendingTasks_LiteWikiDoesNotHideOtherLostSubtasks(t *testing.T) {
 
 func TestResetPendingTasks_SyncLogStaleRunning(t *testing.T) {
 	db := setupResetPendingDB(t)
-	stale := time.Now().Add(-2 * time.Hour)
+	stale := time.Now().Add(-resetPendingStaleWindow - time.Minute)
 	require.NoError(t, db.Exec(
-		`INSERT INTO sync_logs (id, status, started_at) VALUES (?, ?, ?)`,
-		"sync-1", types.SyncLogStatusRunning, stale,
+		`INSERT INTO sync_logs (id, status, started_at, updated_at) VALUES (?, ?, ?, ?)`,
+		"sync-1", types.SyncLogStatusRunning, stale, stale,
 	).Error)
 
 	t.Setenv("REDIS_ADDR", "redis:6379")
@@ -254,6 +257,25 @@ func TestResetPendingTasks_SyncLogStaleRunning(t *testing.T) {
 	).Row().Scan(&status, &finishedAt))
 	assert.Equal(t, types.SyncLogStatusFailed, status)
 	require.NotNil(t, finishedAt)
+}
+
+func TestResetPendingTasks_DistributedSyncInsideLeaseSurvivesRestart(t *testing.T) {
+	db := setupResetPendingDB(t)
+	staleStart := time.Now().Add(-resetPendingStaleWindow - time.Minute)
+	freshLease := time.Now().Add(-time.Minute)
+	require.NoError(t, db.Exec(
+		`INSERT INTO sync_logs (id, status, started_at, updated_at) VALUES (?, ?, ?, ?)`,
+		"sync-still-within-lease", types.SyncLogStatusRunning, staleStart, freshLease,
+	).Error)
+
+	t.Setenv("REDIS_ADDR", "redis:6379")
+	resetPendingTasks(db)
+
+	var status string
+	require.NoError(t, db.Raw(
+		`SELECT status FROM sync_logs WHERE id = ?`, "sync-still-within-lease",
+	).Row().Scan(&status))
+	assert.Equal(t, types.SyncLogStatusRunning, status)
 }
 
 func TestResetPendingTasks_SyncLogLiteMode(t *testing.T) {
@@ -271,6 +293,36 @@ func TestResetPendingTasks_SyncLogLiteMode(t *testing.T) {
 		`SELECT status FROM sync_logs WHERE id = ?`, "sync-lite",
 	).Row().Scan(&status))
 	assert.Equal(t, types.SyncLogStatusFailed, status)
+}
+
+// A repository-document sync may crash after its staged candidate becomes
+// searchable but before the datasource worker adopts it as the canonical
+// external_id. The next sync can safely resume that adoption, so startup must
+// never turn an already-completed candidate into a failed parsing row.
+func TestResetPendingTasks_PreservesCompletedPreparedCandidate(t *testing.T) {
+	db := setupResetPendingDB(t)
+	os.Unsetenv("REDIS_ADDR")
+	now := time.Now().UTC()
+	require.NoError(t, db.Exec(
+		`INSERT INTO knowledges
+			(id, parse_status, pending_subtasks_count, metadata, enable_status, processed_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		"candidate", types.ParseStatusCompleted, 0,
+		`{"external_id":"guide.md:pending:commit-new","sync_target_external_id":"guide.md"}`,
+		"enabled", now,
+	).Error)
+
+	resetPendingTasks(db)
+
+	var status, metadata, enable string
+	var processedAt *time.Time
+	require.NoError(t, db.Raw(
+		`SELECT parse_status, metadata, enable_status, processed_at FROM knowledges WHERE id = ?`, "candidate",
+	).Row().Scan(&status, &metadata, &enable, &processedAt))
+	assert.Equal(t, types.ParseStatusCompleted, status)
+	assert.Equal(t, "enabled", enable)
+	require.NotNil(t, processedAt)
+	assert.Contains(t, metadata, "sync_target_external_id")
 }
 
 func TestStuckKnowledgeParseQuery_ReuseAfterFindDoesNotBreakUpdate(t *testing.T) {

@@ -101,15 +101,20 @@ func (r *DataSourceRepository) Update(ctx context.Context, ds *types.DataSource)
 // Updates(struct) skips zero values, so use a map here to persist cleared error
 // messages without broadening the generic Update method.
 func (r *DataSourceRepository) UpdateSyncState(ctx context.Context, ds *types.DataSource) error {
+	return updateDataSourceSyncState(r.db.WithContext(ctx), ds)
+}
+
+func updateDataSourceSyncState(db *gorm.DB, ds *types.DataSource) error {
 	if ds == nil {
 		return errors.New("data source is nil")
 	}
 	if ds.ID == "" {
 		return errors.New("data source id is empty")
 	}
-	if err := r.db.WithContext(ctx).
+	result := db.
 		Model(&types.DataSource{}).
 		Where("id = ?", ds.ID).
+		Where("deleted_at IS NULL").
 		Updates(map[string]interface{}{
 			"status":           ds.Status,
 			"last_sync_at":     ds.LastSyncAt,
@@ -117,8 +122,12 @@ func (r *DataSourceRepository) UpdateSyncState(ctx context.Context, ds *types.Da
 			"last_sync_result": ds.LastSyncResult,
 			"error_message":    ds.ErrorMessage,
 			"updated_at":       time.Now().UTC(),
-		}).Error; err != nil {
-		return err
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("data source not found")
 	}
 	return nil
 }
@@ -154,6 +163,8 @@ func (r *DataSourceRepository) FindActive(ctx context.Context) ([]*types.DataSou
 type SyncLogRepository struct {
 	db *gorm.DB
 }
+
+var errSyncLogNoLongerRunning = errors.New("sync log is no longer running")
 
 // NewSyncLogRepository creates a new sync log repository
 func NewSyncLogRepository(db *gorm.DB) interfaces.SyncLogRepository {
@@ -265,31 +276,93 @@ func (r *SyncLogRepository) Update(ctx context.Context, log *types.SyncLog) erro
 // UpdateResult updates only fields produced by sync execution. Use an explicit
 // map so empty error messages are written when a later sync succeeds.
 func (r *SyncLogRepository) UpdateResult(ctx context.Context, log *types.SyncLog) error {
+	_, err := r.updateResult(ctx, log, false)
+	return err
+}
+
+// UpdateResultIfRunning is the compare-and-set write used by a live sync
+// worker. A cancellation or restart-recovery failure is terminal; a stale
+// worker must observe that transition rather than replacing it with a late
+// checkpoint or success result.
+func (r *SyncLogRepository) UpdateResultIfRunning(ctx context.Context, log *types.SyncLog) (bool, error) {
+	return r.updateResult(ctx, log, true)
+}
+
+// UpdateResultAndDataSourceIfRunning commits the sync outcome and the paired
+// datasource cursor/status in one transaction. The datasource row is updated
+// first, matching the datasource-delete → sync-log-cancel lock order. If the
+// log CAS subsequently misses, the transaction rolls that datasource update
+// back; a terminal cancellation can never coexist with this run's stale
+// cursor/result.
+func (r *SyncLogRepository) UpdateResultAndDataSourceIfRunning(
+	ctx context.Context,
+	log *types.SyncLog,
+	ds *types.DataSource,
+) (bool, error) {
+	if ds == nil {
+		return false, errors.New("data source is nil")
+	}
+	if ds.ID == "" {
+		return false, errors.New("data source id is empty")
+	}
+	applied := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := updateDataSourceSyncState(tx, ds); err != nil {
+			return err
+		}
+		written, err := r.updateResultWithDB(tx, log, true)
+		if err != nil {
+			return err
+		}
+		if !written {
+			return errSyncLogNoLongerRunning
+		}
+		applied = true
+		return nil
+	})
+	if errors.Is(err, errSyncLogNoLongerRunning) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return applied, nil
+}
+
+func (r *SyncLogRepository) updateResult(ctx context.Context, log *types.SyncLog, onlyRunning bool) (bool, error) {
+	return r.updateResultWithDB(r.db.WithContext(ctx), log, onlyRunning)
+}
+
+func (r *SyncLogRepository) updateResultWithDB(db *gorm.DB, log *types.SyncLog, onlyRunning bool) (bool, error) {
 	if log == nil {
-		return errors.New("sync log is nil")
+		return false, errors.New("sync log is nil")
 	}
 	if log.ID == "" {
-		return errors.New("sync log id is empty")
+		return false, errors.New("sync log id is empty")
 	}
-	if err := r.db.WithContext(ctx).
+	query := db.
 		Model(&types.SyncLog{}).
-		Where("id = ?", log.ID).
-		Updates(map[string]interface{}{
-			"status":        log.Status,
-			"finished_at":   log.FinishedAt,
-			"items_total":   log.ItemsTotal,
-			"items_created": log.ItemsCreated,
-			"items_updated": log.ItemsUpdated,
-			"items_deleted": log.ItemsDeleted,
-			"items_skipped": log.ItemsSkipped,
-			"items_failed":  log.ItemsFailed,
-			"error_message": log.ErrorMessage,
-			"result":        log.Result,
-			"updated_at":    time.Now().UTC(),
-		}).Error; err != nil {
-		return err
+		Where("id = ?", log.ID)
+	if onlyRunning {
+		query = query.Where("status = ?", types.SyncLogStatusRunning)
 	}
-	return nil
+	result := query.Updates(map[string]interface{}{
+		"status":        log.Status,
+		"finished_at":   log.FinishedAt,
+		"items_total":   log.ItemsTotal,
+		"items_created": log.ItemsCreated,
+		"items_updated": log.ItemsUpdated,
+		"items_deleted": log.ItemsDeleted,
+		"items_skipped": log.ItemsSkipped,
+		"items_failed":  log.ItemsFailed,
+		"error_message": log.ErrorMessage,
+		"result":        log.Result,
+		"updated_at":    time.Now().UTC(),
+	})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
 }
 
 // CancelPendingByDataSource marks all non-terminal sync logs for a data source as canceled.

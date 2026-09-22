@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -128,20 +129,27 @@ func (s *processSyncKBService) ProcessKBDelete(context.Context, *asynq.Task) err
 var _ interfaces.KnowledgeBaseService = (*processSyncKBService)(nil)
 
 type processSyncSyncLogRepo struct {
+	mu   sync.RWMutex
 	logs map[string]*types.SyncLog
 }
 
 func (r *processSyncSyncLogRepo) Create(_ context.Context, log *types.SyncLog) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.logs[log.ID] = log
 	return nil
 }
 
 func (r *processSyncSyncLogRepo) FindByID(_ context.Context, id string) (*types.SyncLog, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	log, ok := r.logs[id]
 	if !ok {
 		return nil, errors.New("sync log not found")
 	}
-	return log, nil
+	copy := *log
+	copy.Result = append(types.JSON(nil), log.Result...)
+	return &copy, nil
 }
 
 func (r *processSyncSyncLogRepo) FindByDataSource(context.Context, string, int, int) ([]*types.SyncLog, error) {
@@ -157,6 +165,8 @@ func (r *processSyncSyncLogRepo) HasRunningSync(context.Context, string) (bool, 
 }
 
 func (r *processSyncSyncLogRepo) Update(_ context.Context, log *types.SyncLog) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.logs[log.ID] = log
 	return nil
 }
@@ -165,10 +175,46 @@ func (r *processSyncSyncLogRepo) UpdateResult(_ context.Context, log *types.Sync
 	return r.Update(context.Background(), log)
 }
 
+func (r *processSyncSyncLogRepo) UpdateResultIfRunning(_ context.Context, log *types.SyncLog) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current, ok := r.logs[log.ID]
+	if !ok {
+		return false, errors.New("sync log not found")
+	}
+	if current.Status != types.SyncLogStatusRunning {
+		return false, nil
+	}
+	r.logs[log.ID] = log
+	return true, nil
+}
+
 func (r *processSyncSyncLogRepo) CancelPendingByDataSource(context.Context, string) error {
 	return nil
 }
 func (r *processSyncSyncLogRepo) CleanupOldLogs(context.Context, int) error { return nil }
+
+func (r *processSyncSyncLogRepo) setStatus(id, status string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if log := r.logs[id]; log != nil {
+		log.Status = status
+		now := time.Now().UTC()
+		log.FinishedAt = &now
+	}
+}
+
+func (r *processSyncSyncLogRepo) snapshot(id string) *types.SyncLog {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	log := r.logs[id]
+	if log == nil {
+		return nil
+	}
+	copy := *log
+	copy.Result = append(types.JSON(nil), log.Result...)
+	return &copy
+}
 
 func TestAllFetchedItemsFailedError(t *testing.T) {
 	err := allFetchedItemsFailedError(&types.SyncResult{
