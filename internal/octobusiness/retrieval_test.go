@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/answerevidence"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -25,6 +26,17 @@ type fakeOtherTool struct {
 type sourceCitationTool struct {
 	types.Tool
 	result *types.ToolResult
+}
+
+type githubReleaseCitationTool struct {
+	types.Tool
+	result *types.ToolResult
+}
+
+func (*githubReleaseCitationTool) Name() string { return "github_release_lookup" }
+
+func (t *githubReleaseCitationTool) Execute(context.Context, json.RawMessage) (*types.ToolResult, error) {
+	return t.result, nil
 }
 
 func (*sourceCitationTool) Name() string { return "source_browse" }
@@ -115,4 +127,22 @@ func TestSourceBrowseReadTracksPrivateProvenanceWithSourceRef(t *testing.T) {
 	_, err := TrackRetrieval(tool).Execute(ctx, json.RawMessage(`{"action":"read","source_ref":"s1"}`))
 	require.NoError(t, err)
 	require.Equal(t, []SourceCitation{{KnowledgeBaseID: "kb", URL: url, Path: "main.go", Revision: "0123456789012345678901234567890123456789"}}, SourceCitations(ctx))
+}
+
+func TestGitHubReleaseLookupTracksTrustedOfficialCitationWithoutChangingRetrievalReady(t *testing.T) {
+	ctx := WithRetrievalTrace(context.Background())
+	url := "https://github.com/example/octo-web/releases/tag/v1.2.3"
+	tool := &githubReleaseCitationTool{result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+		types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{
+			KnowledgeBaseID: "kb", DataSourceID: "source", Repository: "example/octo-web", TagName: "v1.2.3", URL: url,
+			PublishedAt: time.Date(2026, time.September, 22, 0, 0, 0, 0, time.UTC), CheckedAt: time.Date(2026, time.September, 22, 1, 0, 0, 0, time.UTC),
+		},
+	}}}
+	_, err := TrackRetrieval(tool).Execute(ctx, json.RawMessage(`{"action":"latest","release_ref":"r1"}`))
+	require.NoError(t, err)
+	require.False(t, retrievalReady(ctx), "release metadata is a citation source, not a generic KB retrieval for missing-issue gating")
+	require.Equal(t, []SourceCitation{{KnowledgeBaseID: "kb", URL: url, Title: "example/octo-web · v1.2.3", OfficialRelease: true}}, SourceCitations(ctx))
+
+	SetCitationRenderingEnabled(ctx, false)
+	require.False(t, CitationRenderingEnabled(ctx))
 }

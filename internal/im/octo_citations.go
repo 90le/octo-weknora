@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/octobusiness"
@@ -136,14 +137,30 @@ func (s *Service) appendOctoSources(ctx context.Context, answer string, refs []*
 		}
 	}
 	rawSources := map[string]octobusiness.SourceCitation{}
+	officialReleaseSources := []octoCitedSource{}
 	for _, source := range octobusiness.SourceCitations(ctx) {
 		if octoAllowedKB(p, source.KnowledgeBaseID) {
 			if valid := safeOctoSourceURL(source.URL); valid != "" {
 				rawSources[valid] = source
+				// A github_release_lookup citation is not a model-generated web
+				// tag: it comes from the system-owned latest-release preflight for
+				// this exact turn. Render it deterministically so a good factual
+				// answer cannot lose its official source merely because the model
+				// omitted a <ref/> handle. Ordinary source_browse reads keep the
+				// existing explicit-tag rule below.
+				if source.OfficialRelease && octobusiness.CitationRenderingEnabled(ctx) && strings.TrimSpace(source.Title) != "" {
+					officialReleaseSources = append(officialReleaseSources, octoCitedSource{title: source.Title, url: valid})
+				}
 			}
 		}
 	}
-	sources := []octoCitedSource{}
+	sort.Slice(officialReleaseSources, func(i, j int) bool {
+		if officialReleaseSources[i].title != officialReleaseSources[j].title {
+			return officialReleaseSources[i].title < officialReleaseSources[j].title
+		}
+		return officialReleaseSources[i].url < officialReleaseSources[j].url
+	})
+	sources := append([]octoCitedSource(nil), officialReleaseSources...)
 	for _, tag := range octoSourceTagRE.FindAllStringSubmatch(answer, -1) {
 		attrs := octoCitationAttrs(tag[2])
 		if tag[1] == "web" {
