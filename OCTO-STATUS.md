@@ -2,7 +2,19 @@
 
 更新：2026-09-23。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-23 13:29 后）
+## 当前状态（2026-09-23 15:58 CST）
+
+**隐私修复已发布。**[PR #41](https://github.com/90le/octo-weknora/pull/41)、[#42](https://github.com/90le/octo-weknora/pull/42)、[#43](https://github.com/90le/octo-weknora/pull/43)、[#45](https://github.com/90le/octo-weknora/pull/45) 已合并；最后的 #45 修复 QA 错误路径与 GORM SQL 警告泄露。生产 app 的不可变 Image ID 已回读为 `sha256:64e8489264404dc9d507efa544edbf4db9753d502775ca17d275be2ab90601bd`，对应合并提交 `43030dd1c2cdb2b75c82d28380c0c3d109369eea`，构建源归档校验值前缀 `7723ce70`；UI 仍为 `sha256:1406a7f1…`。四项 PR 的 Go 测试／构建与 lint 检查通过，#45 的 scope 检查也通过。生产后端健康 200、未认证知识 API 401、前端 200；认证系统信息返回完整 `43030dd1` 与 migration `105`、4 个知识库、Anydoc 可用。PostgreSQL migration `105` 非 dirty，4 个活动知识库、60 条活动来源、4 条问题，运行中的同步／解析均为 0；IM 通道启用 1 条、inbox 处理中 0 条，Octo 小丘 WebSocket 运行时已初始化。私人 OpenClaw Gateway 与 Octo daemon 保持 active。
+
+**真实群验收与隐私回读：**授权的「Octo 小测」在「Steward 联调群」原生 @ 一次，小丘以唯一相邻消息 `seq 520→521` 回答；inbox `delivered`、`attempts=1`，原生 reply 与 mention 精确指回提问者。答案给出 `npm install -g @mininglamp-oss/octo-cli` 和 `octo-cli --help`，附两个固定提交的 GitHub 官方 README 来源，两条链接 `HEAD 200`。生产日志对此次测试标记、答案安装命令原文均为 0 命中，HTTP body 字段为 0。验收只覆盖该 CLI 安装问答和对应日志路径，不能推断所有问题、模型 provider 或错误分支均无泄露。
+
+**候选与回退边界：**前两轮 `e9b3f826`、`b0740b68` 隔离候选分别被合成隐私哨兵阻断，均未部署；它们各约 592 MB 的备份留作回退／证据。`b0740b68` 曾在错误 `agent_id` 经 QA handler 与 GORM Warn 输出原文，已由 #45 修复并在第三轮验证。第三轮候选容器、网络、隔离文件和临时源码已清理，测试 CLI profile 已登出；新的约 592 MB 备份与校验结果保留在服务器私有 `/home/mlclaw/agent-data/operations/privacy-log-release-43030dd1-20260923T073322Z/`。隔离候选未连接模型／Milvus，**没有完成 PDF 全流程或真实知识检索回归**；生产也只做了上述一个 CLI 安装场景，三条错误状态的 GitHub 文档来源没有重跑。多源证据计划、选取范围预览、单仓库双用途与按文件恢复仍未实现，见 [实施计划](OCTO-PLAN.md)。
+
+**OpenClaw 收口：**五个旧公共 Agent 已经通过原生 Gateway 删除并移至 Trash，备份保留；现仅私人 `xiaoqiu` Agent 运行。计划任务从 13 条收敛到 3 条，六个 Bot account 恢复为启用／运行且原私聊绑定等值，并显式核对路由；旧插件停用。12 个旧 AgentDir 仍有 38 个打开文件句柄及 12 个活跃 lease，且 `main` 使用 `authInheritance`，因此保留目录及所需凭据；**删除 Agent 注册不等于可删除仍有引用的 AgentDir**。本轮未改变公开 Octo 小丘的 WeKnora 接入边界。
+
+**清理与空间：**服务器此前执行已核验的低风险清理，释放 `1,890,164,209` 字节数据盘空间及 `554,033,152` 字节根盘旧镜像空间；失败候选另清理约 1 GiB 隔离数据，保留备份与阻断证据。运行容器挂载、知识库数据、私人 OpenClaw 运行目录和发布回退材料保留。本轮共移除 23 个 Git 工作树（含本轮临时工作树）和 6 个 Junction 空壳目录，未合并的分支仍保留；桌面只读回查只剩主仓库和独立的 `octo-weknora-answer-quality-20260922` 克隆。该独立克隆的删除被自动审批以 `blocked by policy` 拦截，因此保留，不借其他命令绕过。根盘当前约 16 GiB 可用；`containerd` 仍是需单独监控的容量风险。迁移前须核对文件系统、存储驱动兼容性与回退方案，不能直接删除其数据目录或强迁。
+
+## 历史发布：4b（2026-09-23 13:29 后）
 
 生产后端已从 `3d58f986` 切换到合并提交 `4b2e84f882c8ba0e74619ba49c4bca348c31d484`，运行容器的不可变 app Image ID 为 `sha256:861b0f3d…`；前端代码未变，继续使用已验证的 `3d58f986` UI Image ID `sha256:1406a7f1…`。本轮一次发布包含已合并的 [PR #35](https://github.com/90le/octo-weknora/pull/35)（文档 blob 断流诊断与有限重试）、[#37](https://github.com/90le/octo-weknora/pull/37)（Octo 回答的来源传递）和 [#38](https://github.com/90le/octo-weknora/pull/38)（OpenAI 兼容模型通道的常规日志脱敏与分段计时）。三项均已通过 Linux 定向测试和 GitHub Go CI／lint；上线后健康 200、前端 200、未认证知识 API 401，登录管理页仍可见 4 个知识库。PostgreSQL migration `105` 非 dirty，4 个活动知识库、60 条活动来源和 4 条问题保持不变，切换时运行中同步及解析均为 0；Octo 小丘通道已在新 app 初始化。
 
