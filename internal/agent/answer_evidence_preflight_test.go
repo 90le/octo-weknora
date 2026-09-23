@@ -117,6 +117,31 @@ func TestExecutePreservesIngressEvidenceContractWithoutResettingIt(t *testing.T)
 	require.True(t, answerevidence.ReleaseEvidenceObserved(ctx))
 }
 
+func TestExecuteDoesNotReclassifyOrdinaryQuestionFromGroupRules(t *testing.T) {
+	original := "Octo 和 Loop 的关系是什么？"
+	ctx := answerevidence.WithContract(context.Background(), original)
+	modelQuery := original + "\n\nGROUP.md：联系人仅作指引，不主动通知、催办或发布。"
+	require.Equal(t, answerevidence.IntentRelease, answerevidence.Classify(modelQuery))
+	answer := "Loop 是 Octo 内的项目与任务协作模块。"
+	model := &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{{
+		ResponseType: types.ResponseTypeAnswer,
+		Content:      answer,
+		Done:         true,
+		FinishReason: "stop",
+	}}}}}
+	engine := newTestEngine(t, model)
+	engine.toolRegistry = agenttools.NewToolRegistry()
+
+	state, err := engine.Execute(ctx, "session", "message", modelQuery, nil)
+	require.NoError(t, err)
+	require.True(t, state.IsComplete)
+	require.Equal(t, answer, state.FinalAnswer, "correct relationship answer must be the final answer")
+	require.Equal(t, 1, model.callCount, "GROUP.md must not trigger a release nudge or fallback round")
+	require.Equal(t, answerevidence.IntentNone, answerevidence.IntentFromContext(ctx))
+	require.Len(t, state.RoundSteps, 1, "ordinary answer must not be demoted to an intermediate step")
+	require.False(t, state.RoundSteps[0].IntermediateAnswer)
+}
+
 func TestAnswerEvidencePreflightReadsEveryNamedReleaseCandidate(t *testing.T) {
 	checkedAt := time.Date(2026, time.September, 22, 10, 0, 0, 0, time.UTC)
 	refs := map[string]string{"octo-android": "r1", "octo-web": "r2"}
