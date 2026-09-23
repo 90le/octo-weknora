@@ -13,7 +13,7 @@ func TestPipelineLogRedactsContentAndKeepsDiagnostics(t *testing.T) {
 	const token = "SECRETABC123"
 	line := PipelineLog("AgentTool", "execute_done", map[string]interface{}{
 		"request_id":   "01234567-89ab-cdef-0123-456789abcdef",
-		"session_id":   "01234567-89ab-cdef-0123-456789abcdef",
+		"session_id":   "abcdef01-2345-6789-abcd-ef0123456789",
 		"tool":         token,
 		"reason":       token,
 		"status":       "failed",
