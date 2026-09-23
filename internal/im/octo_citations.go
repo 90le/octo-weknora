@@ -225,7 +225,9 @@ func (s *Service) appendOctoSources(ctx context.Context, answer string, refs []*
 		title := markdownSourceTitle(source.title)
 		if source.url != "" {
 			lines = append(lines, "- ["+title+"](<"+source.url+">)")
-		} else if !strings.Contains(visibleAnswer, source.title) {
+		} else {
+			// A title mentioned in prose is not a source entry. Keep an
+			// explicit, human-readable location even without a public URL.
 			lines = append(lines, "- "+title+"（知识库资料，未配置公开来源链接）")
 		}
 		if len(lines) >= 12 {

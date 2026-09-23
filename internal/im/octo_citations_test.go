@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/modelcontext"
 	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -50,6 +51,39 @@ func TestOctoCitationsOnlyLinkExplicitlyUsedAuthorizedReferences(t *testing.T) {
 	require.Contains(t, stripIMCitationTags(answer), "README.md")
 	unchanged := service.appendOctoSources(context.Background(), `answer <kb chunk_id="chunk-used"/>`, refs)
 	require.NotContains(t, unchanged, link)
+}
+
+func TestOctoAgentCitationSurvivesOutboundCleanup(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	link := "https://github.com/Mininglamp-OSS/octo-cli/blob/" + commit + "/README.md"
+	knowledge := &octoCitationKnowledge{rows: map[string]*types.Knowledge{
+		"doc": {ID: "doc", TenantID: 1, KnowledgeBaseID: "kb", Title: "Octo CLI README", Source: link, EnableStatus: "enabled"},
+	}}
+	registry := modelcontext.NewRegistry(true)
+	registry.RegisterChunk(modelcontext.ChunkReference{ChunkID: "chunk", KnowledgeID: "doc", KnowledgeBaseID: "kb", DocumentTitle: "Octo CLI README"})
+	answer := registry.DecodeOutputText(`Octo CLI 可安装。<ref id="c1"/>`)
+	service := &Service{knowledgeService: knowledge}
+	prepared := service.appendOctoSources(octoCitationContext(), answer, registry.CitedKnowledgeReferences(answer))
+	visible := formatIMOutboundAnswer(context.Background(), prepared, nil, nil)
+	require.NotContains(t, visible, "<kb")
+	require.NotContains(t, visible, "chunk")
+	require.Contains(t, visible, "Octo CLI README")
+	require.Contains(t, visible, link)
+}
+
+func TestOctoCitedPrivateDocumentKeepsSourceTitleWithoutInventedLink(t *testing.T) {
+	knowledge := &octoCitationKnowledge{rows: map[string]*types.Knowledge{
+		"doc": {ID: "doc", TenantID: 1, KnowledgeBaseID: "kb", Title: "内部运维指南", Source: "file:///private/ops.md", EnableStatus: "enabled"},
+	}}
+	service := &Service{knowledgeService: knowledge}
+	refs := []*types.SearchResult{{ID: "chunk", KnowledgeID: "doc", KnowledgeBaseID: "kb", KnowledgeTitle: "内部运维指南"}}
+	answer := service.appendOctoSources(octoCitationContext(), `根据内部运维指南，操作如下。<kb doc="内部运维指南" chunk_id="chunk" kb_id="kb"/>`, refs)
+	visible := stripIMCitationTags(answer)
+	require.Contains(t, visible, "来源：\n- 内部运维指南（知识库资料，未配置公开来源链接）")
+	require.NotContains(t, visible, "file://")
+	require.NotContains(t, visible, "/private/")
+	// A public link is never fabricated for a private local document.
+	require.NotContains(t, visible, "https://")
 }
 func TestOctoPlainSourceTitleMustBeUniqueAndExplicit(t *testing.T) {
 	knowledge := &octoCitationKnowledge{rows: map[string]*types.Knowledge{"one": {ID: "one", TenantID: 1, KnowledgeBaseID: "kb", Title: "Octo CLI README", EnableStatus: "enabled", Source: "https://example.org/guide"}}}

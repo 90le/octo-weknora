@@ -202,6 +202,10 @@ func (e *AgentEngine) handleMaxIterations(
 func (e *AgentEngine) emitCompletionEvent(
 	ctx context.Context, state *types.AgentState, sessionID, messageID string, startTime time.Time,
 ) {
+	// Agent tool results use request-local citation handles rather than the
+	// quick-QA reference event. Recover only the chunks actually cited in the
+	// final decoded answer so IM delivery can resolve their published sources.
+	state.KnowledgeRefs = e.modelContext.CitedKnowledgeReferences(state.FinalAnswer)
 	steps := state.RoundSteps
 	if len(state.PendingSteerMessages) > 0 {
 		// A stop or model failure can arrive after delivery but before the next
