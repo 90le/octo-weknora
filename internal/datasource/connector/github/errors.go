@@ -15,6 +15,11 @@ type Error struct {
 	Code       string
 	Message    string
 	RetryAfter *time.Time
+	// These diagnostics contain no URL, repository name, response body or token.
+	Stage      string
+	BytesRead  int64
+	LimitBytes int64
+	StatusCode int
 }
 
 func (e *Error) Error() string {
@@ -36,19 +41,22 @@ func githubHTTPError(resp *http.Response) error {
 	status := resp.StatusCode
 	switch status {
 	case http.StatusUnauthorized:
-		return &Error{Code: "github_auth", Message: "GitHub authentication failed; verify the read-only token"}
+		return &Error{Code: "github_auth", Message: "GitHub authentication failed; verify the read-only token", StatusCode: status}
 	case http.StatusNotFound:
-		return &Error{Code: "github_not_found", Message: "GitHub repository was not found or this token cannot read it"}
+		return &Error{Code: "github_not_found", Message: "GitHub repository was not found or this token cannot read it", StatusCode: status}
 	case http.StatusForbidden, http.StatusTooManyRequests:
 		if remaining := strings.TrimSpace(resp.Header.Get("X-RateLimit-Remaining")); remaining == "0" {
-			return &Error{Code: "github_rate_limit", Message: "GitHub API rate limit is exhausted", RetryAfter: githubReset(resp.Header)}
+			return &Error{Code: "github_rate_limit", Message: "GitHub API rate limit is exhausted", RetryAfter: githubReset(resp.Header), StatusCode: status}
 		}
 		if retry := retryAfter(resp.Header); retry != nil {
-			return &Error{Code: "github_secondary_rate_limit", Message: "GitHub temporarily limited this sync", RetryAfter: retry}
+			return &Error{Code: "github_secondary_rate_limit", Message: "GitHub temporarily limited this sync", RetryAfter: retry, StatusCode: status}
 		}
-		return &Error{Code: "github_forbidden", Message: "GitHub rejected this request; check repository access and rate limits"}
+		if status == http.StatusTooManyRequests {
+			return &Error{Code: "github_secondary_rate_limit", Message: "GitHub API rate limit is temporarily active", StatusCode: status}
+		}
+		return &Error{Code: "github_forbidden", Message: "GitHub rejected this request; check repository access and rate limits", StatusCode: status}
 	default:
-		return &Error{Code: "github_http", Message: fmt.Sprintf("GitHub API returned HTTP %d", status)}
+		return &Error{Code: "github_http", Message: fmt.Sprintf("GitHub API returned HTTP %d", status), RetryAfter: retryAfter(resp.Header), StatusCode: status}
 	}
 }
 
