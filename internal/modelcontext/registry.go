@@ -247,6 +247,16 @@ func (r *Registry) RegisterSearchResults(results []*types.SearchResult) {
 	r.sources.RegisterSearchResults(results)
 }
 
+// CitedKnowledgeReferences returns only chunks explicitly cited in this turn's
+// decoded final answer and backed by a current successful source result. It
+// does not expose merely retrieved, historical, or model-invented references.
+func (r *Registry) CitedKnowledgeReferences(answer string) []*types.SearchResult {
+	if r == nil || r.sources == nil {
+		return nil
+	}
+	return r.sources.citedKnowledgeReferences(answer)
+}
+
 func (r *Registry) ChunkHandle(id string) string {
 	if r == nil || r.sources == nil {
 		return ""

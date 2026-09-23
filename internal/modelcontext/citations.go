@@ -9,6 +9,8 @@ import (
 	"html"
 	"regexp"
 	"strings"
+
+	"github.com/Tencent/WeKnora/internal/types"
 )
 
 const sourceHandleProtocolPrompt = `
@@ -126,6 +128,47 @@ func publicAttr(expression *regexp.Regexp, tag string) string {
 		return ""
 	}
 	return html.UnescapeString(match[1])
+}
+
+// citedKnowledgeReferences reattaches the source metadata to canonical <kb/>
+// citations after the model response has been decoded. The source registry is
+// request-local; only a citable handle registered by a current tool result may
+// become a persisted reference for the answer. The title/IDs in the tag are
+// never trusted over the registry's own metadata.
+func (r *sourceRegistry) citedKnowledgeReferences(answer string) []*types.SearchResult {
+	if r == nil || !r.citationsEnabled || answer == "" {
+		return nil
+	}
+	refs := make([]*types.SearchResult, 0)
+	seen := make(map[string]bool)
+	for _, tag := range publicKBTagRE.FindAllString(answer, -1) {
+		chunkID := publicAttr(chunkAttrRE, tag)
+		if chunkID == "" || seen[chunkID] {
+			continue
+		}
+		handle, ok := r.chunks.handleForKey(chunkID)
+		if !ok {
+			continue
+		}
+		if _, citable := r.citable.Load(handle); !citable {
+			continue
+		}
+		_, source, ok := r.chunks.resolve(handle)
+		if !ok || source.KnowledgeID == "" || source.KnowledgeBaseID == "" {
+			continue
+		}
+		if claimedKB := publicAttr(publicKBAttrRE, tag); claimedKB != "" && claimedKB != source.KnowledgeBaseID {
+			continue
+		}
+		seen[chunkID] = true
+		refs = append(refs, &types.SearchResult{
+			ID: chunkID, KnowledgeID: source.KnowledgeID,
+			KnowledgeBaseID: source.KnowledgeBaseID,
+			KnowledgeTitle:  source.DocumentTitle, ChunkIndex: source.ChunkIndex,
+			ChunkType: source.ChunkType,
+		})
+	}
+	return refs
 }
 
 var (
