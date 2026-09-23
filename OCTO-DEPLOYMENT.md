@@ -12,6 +12,8 @@ The deployment uses app and frontend images built from this repository. Releases
 - Inject the commit/version build arguments supported by the upstream app Dockerfile. Record image IDs and source commit in the private deployment evidence.
 - Do not claim the old image was replaced merely by retagging it.
 
+If an external dependency download blocks a full build, an overlay on a previously verified runtime image is an exception, not the default recipe. Use it only when the reviewed source diff requires no new runtime dependency or asset. Recompile the release binary, build the matching UI, verify inherited runtime asset hashes and the actual image IDs, and record the base image, build inputs, limits, isolated startup and parser checks in private release evidence. A dependency, parser, OS-package or runtime-configuration change requires a complete compatible runtime build and corresponding regression checks before switching production.
+
 ## Replacement boundary
 
 Update app and frontend image references in the existing deployment. Preserve existing volume mounts, network, secrets, embedding adapter, PostgreSQL and document parser settings unless a reviewed compatibility change requires otherwise. Do not use `docker compose down -v`.

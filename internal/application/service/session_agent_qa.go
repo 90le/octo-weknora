@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/answerevidence"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
@@ -244,29 +245,7 @@ func (s *sessionService) AgentQA(
 		engine.SetSteerSink(req.SteerSink)
 	}
 
-	agentQuery := req.Query
-	var agentImageURLs []string
-	if agentModelSupportsVision && len(req.ImageURLs) > 0 {
-		agentImageURLs = req.ImageURLs
-		logger.Infof(ctx, "Agent model supports vision, passing %d image(s) directly", len(agentImageURLs))
-	} else if req.ImageDescription != "" {
-		agentQuery = req.Query + "\n\n[用户上传图片内容]\n" + req.ImageDescription
-		logger.Infof(ctx, "Agent model does not support vision, appending image description (%d chars)", len(req.ImageDescription))
-	}
-	if req.QuotedContext != "" {
-		agentQuery += "\n\n" + req.QuotedContext
-	}
-	// Inject attachment content (documents, audio transcripts, etc.) so the agent
-	// can see uploaded files. Mirrors the behavior of the KnowledgeQA pipeline
-	// (see chat_pipeline/into_chat_message.go).
-	if len(req.Attachments) > 0 {
-		agentQuery += req.Attachments.BuildPrompt()
-		logger.Infof(ctx, "Appended %d attachment(s) to agent query", len(req.Attachments))
-	}
-	if manifest := buildSandboxAttachmentsPrompt(stagedAttachments); manifest != "" {
-		agentQuery += manifest
-		logger.Infof(ctx, "Appended %d staged sandbox attachment path(s) to agent query", len(stagedAttachments))
-	}
+	ctx, agentQuery, agentImageURLs := buildAgentModelInput(ctx, req, agentModelSupportsVision, stagedAttachments)
 
 	// Scope envelopes (runtime_context / must_use) are injected per LLM call inside
 	// the agent engine only; we intentionally do not persist them on user messages
@@ -290,6 +269,41 @@ func (s *sessionService) AgentQA(
 	}
 	// Return empty - events will be handled by Handler via EventBus subscription
 	return nil
+}
+
+// buildAgentModelInput fixes the evidence policy from the original user turn,
+// while still passing quoted messages, GROUP.md and attachments to the model.
+// The latter are context, not authority to change the user's question type.
+func buildAgentModelInput(ctx context.Context, req *types.QARequest, supportsVision bool, stagedAttachments []stagedSessionAttachment) (context.Context, string, []string) {
+	// Octo ingress may already have classified an addressed message after native
+	// mention normalization. WithContract preserves that state, including an
+	// explicit ordinary (IntentNone) classification.
+	ctx = answerevidence.WithContract(ctx, req.Query)
+	agentQuery := req.Query
+	var agentImageURLs []string
+	if supportsVision && len(req.ImageURLs) > 0 {
+		agentImageURLs = req.ImageURLs
+		logger.Infof(ctx, "Agent model supports vision, passing %d image(s) directly", len(agentImageURLs))
+	} else if req.ImageDescription != "" {
+		agentQuery = req.Query + "\n\n[用户上传图片内容]\n" + req.ImageDescription
+		logger.Infof(ctx, "Agent model does not support vision, appending image description (%d chars)", len(req.ImageDescription))
+	}
+	if req.QuotedContext != "" {
+		agentQuery += "\n\n" + req.QuotedContext
+	}
+	// Inject attachment content (documents, audio transcripts, etc.) so the agent
+	// can see uploaded files. Mirrors the behavior of the KnowledgeQA pipeline
+	// (see chat_pipeline/into_chat_message.go).
+	if len(req.Attachments) > 0 {
+		agentQuery += req.Attachments.BuildPrompt()
+		logger.Infof(ctx, "Appended %d attachment(s) to agent query", len(req.Attachments))
+	}
+	if manifest := buildSandboxAttachmentsPrompt(stagedAttachments); manifest != "" {
+		agentQuery += manifest
+		logger.Infof(ctx, "Appended %d staged sandbox attachment path(s) to agent query", len(stagedAttachments))
+	}
+
+	return ctx, agentQuery, agentImageURLs
 }
 
 // buildAgentConfig creates a runtime AgentConfig from the QARequest's custom agent configuration,

@@ -1,4 +1,4 @@
-> Octo 知识助理二次开发： [需求地图](OCTO-REQUIREMENTS.md) · [架构](OCTO-INTEGRATION.md) · [配置指南](OCTO-SETUP.md) · [操作与界面](OCTO-UX.md) · [来源配置](OCTO-SOURCES.md) · [当前进度](OCTO-STATUS.md)
+> Octo 知识助理二次开发： [当前进度与接手入口](OCTO-STATUS.md) · [下一步计划](OCTO-PLAN.md) · [需求地图](OCTO-REQUIREMENTS.md) · [架构](OCTO-INTEGRATION.md) · [配置指南](OCTO-SETUP.md) · [操作与界面](OCTO-UX.md) · [来源配置](OCTO-SOURCES.md) · [发布约束](OCTO-DEPLOYMENT.md)
 
 <p align="center">
   <picture>

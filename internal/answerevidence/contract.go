@@ -52,6 +52,7 @@ type State struct {
 }
 
 type stateKey struct{}
+type classifiedNoneKey struct{}
 
 // Classify uses deliberately narrow cues. A source classification has
 // precedence because a version question that explicitly asks about code still
@@ -146,15 +147,17 @@ func repositoryLeaf(repository string) string {
 // the same contract for every other transport. Replacing the existing state
 // would lose trusted evidence already recorded by the ingress and could make
 // the same turn use two different classifications.
-// Returning the original context for an unrelated question avoids imposing
-// product-specific policy on general agent work.
+// IntentNone is still a classified turn. Keep a separate marker so later
+// model-only context (quoted messages, GROUP.md, attachment bodies) cannot
+// reclassify the user's ordinary question. It does not create an evidence
+// ledger, preserving ordinary agent behavior outside this policy.
 func WithContract(ctx context.Context, query string) context.Context {
-	if stateFrom(ctx) != nil {
+	if stateFrom(ctx) != nil || ctx.Value(classifiedNoneKey{}) != nil {
 		return ctx
 	}
 	intent := Classify(query)
 	if intent == IntentNone {
-		return ctx
+		return context.WithValue(ctx, classifiedNoneKey{}, true)
 	}
 	return context.WithValue(ctx, stateKey{}, &State{
 		intent:        intent,

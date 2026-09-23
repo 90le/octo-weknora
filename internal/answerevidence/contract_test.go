@@ -42,6 +42,38 @@ func TestWithContractPreservesExistingTurnState(t *testing.T) {
 	require.True(t, ReleaseEvidenceObserved(ctx), "both contexts must address the same turn state")
 }
 
+func TestWithContractLocksOrdinaryQuestionBeforeModelOnlyContext(t *testing.T) {
+	original := "Octo 和 Loop 的关系是什么？"
+	// GROUP.md and quoted messages help the model interpret the conversation,
+	// but their release/source vocabulary is not part of the user's question.
+	for _, tc := range []struct {
+		name       string
+		modelQuery string
+		misIntent  Intent
+	}{
+		{"release rules", original + "\n\nGROUP.md：版本、发布问题请核对证据。\n引用：最新版是多少？", IntentRelease},
+		{"old group rule", original + "\n\nGROUP.md：联系人仅作指引，不主动通知、催办或发布。", IntentRelease},
+		{"source rules", original + "\n\nGROUP.md：源码问题请读取文件和行号。", IntentSource},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := WithContract(context.Background(), original)
+			require.Nil(t, stateFrom(ctx), "ordinary turns must not acquire an evidence ledger")
+			require.NotNil(t, ctx.Value(classifiedNoneKey{}), "IntentNone must be recorded as a classified turn")
+			require.Equal(t, IntentNone, IntentFromContext(ctx))
+			require.Equal(t, tc.misIntent, Classify(tc.modelQuery), "regression requires a genuinely misleading model query")
+			again := WithContract(ctx, tc.modelQuery)
+			require.Same(t, ctx, again, "a later engine wrapper must retain the ordinary turn marker")
+			require.Equal(t, IntentNone, IntentFromContext(again))
+			require.Empty(t, Prompt(again))
+			require.False(t, ShouldHoldStreamingAnswer(again))
+			require.False(t, NeedsEvidenceRetry(again, "Loop 是 Octo 平台的项目协作模块。"))
+			require.False(t, NeedsSynthesisFallback(again))
+			require.False(t, CanRetryEvidence(again), "ordinary questions must not acquire an evidence nudge budget")
+			require.Empty(t, FallbackReply(again))
+		})
+	}
+}
+
 func TestSourceContractRequiresReadAndProducesLocalizedFallback(t *testing.T) {
 	ctx := WithContract(context.Background(), "这个函数的源码怎么实现？")
 	require.Equal(t, IntentSource, IntentFromContext(ctx))
