@@ -2,15 +2,17 @@
 
 更新：2026-09-23。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-23 15:38 CST，第三轮隐私修复候选验证中）
+## 当前状态（2026-09-23 15:58 CST）
 
-**代码与线上分开看：**[PR #41](https://github.com/90le/octo-weknora/pull/41)、[#42](https://github.com/90le/octo-weknora/pull/42)、[#43](https://github.com/90le/octo-weknora/pull/43) 已合并，分别收窄 Agent／检索、HTTP 问答／搜索及可选 SQL 工具的例行日志内容；[PR #45](https://github.com/90le/octo-weknora/pull/45) 补 QA 错误路径与 GORM SQL 日志，已合并为当前 `main` 的 `43030dd1c2cdb2b75c82d28380c0c3d109369eea`。四项 GitHub Go 测试／构建与 lint 检查通过，#45 的 scope 检查也通过。**生产后端仍运行 `4b2e84f8`，不能把已合并代码视作线上隐私修复。**早先 `e9b3f826` 和 `b0740b68` 两轮隔离候选都未通过合成隐私哨兵，均没有部署；目前第三轮 `43030dd1` 候选仍在做精确发布验证，尚无生产切换结果。
+**隐私修复已发布。**[PR #41](https://github.com/90le/octo-weknora/pull/41)、[#42](https://github.com/90le/octo-weknora/pull/42)、[#43](https://github.com/90le/octo-weknora/pull/43)、[#45](https://github.com/90le/octo-weknora/pull/45) 已合并；最后的 #45 修复 QA 错误路径与 GORM SQL 警告泄露。生产 app 的不可变 Image ID 已回读为 `sha256:64e8489264404dc9d507efa544edbf4db9753d502775ca17d275be2ab90601bd`，对应合并提交 `43030dd1c2cdb2b75c82d28380c0c3d109369eea`，构建源归档校验值前缀 `7723ce70`；UI 仍为 `sha256:1406a7f1…`。四项 PR 的 Go 测试／构建与 lint 检查通过，#45 的 scope 检查也通过。生产后端健康 200、未认证知识 API 401、前端 200；认证系统信息返回完整 `43030dd1` 与 migration `105`、4 个知识库、Anydoc 可用。PostgreSQL migration `105` 非 dirty，4 个活动知识库、60 条活动来源、4 条问题，运行中的同步／解析均为 0；IM 通道启用 1 条、inbox 处理中 0 条，Octo 小丘 WebSocket 运行时已初始化。私人 OpenClaw Gateway 与 Octo daemon 保持 active。
 
-`b0740b68` 候选曾使用 app Image ID `sha256:fdddfefd21cd051358188b4bfeae57e50ab56b6ec3f999cd44982fd7b0ce3c0d`。隔离候选已核对健康 200、未认证知识 API 401、认证系统信息完整提交 SHA、4 个知识库、Anydoc 可用，合成 session 创建／读回及 AgentQA 入口通过。常规 QA、Search、URL、响应及 `X-Request-ID` 日志的合成哨兵无原文命中；但错误请求携带任意 `agent_id` 时，QA handler 三处及 GORM 默认 Warn 插值 SQL 共四处仍命中原文。因此候选**未通过全路径隐私验收、未部署**。候选未接生产 Milvus／模型，知识检索调用返回 500，亦不构成真实检索或群问答验收。该失败候选的 app／PG／网络／镜像和约 1 GiB 隔离数据已清理；私有备份与阻断证据保留在 `/home/mlclaw/agent-data/operations/privacy-log-release-b0740b68-20260923T070516Z/`，其中新备份约 592 MB。第三轮发布前的生产回读：app Image ID 仍为 `sha256:861b0f3d…`，UI 为 `sha256:1406a7f1…`；健康 200、未认证 401、PG migration `105` 非 dirty，4 个知识库、60 条来源、4 条问题，运行中同步与解析均为 0。
+**真实群验收与隐私回读：**授权的「Octo 小测」在「Steward 联调群」原生 @ 一次，小丘以唯一相邻消息 `seq 520→521` 回答；inbox `delivered`、`attempts=1`，原生 reply 与 mention 精确指回提问者。答案给出 `npm install -g @mininglamp-oss/octo-cli` 和 `octo-cli --help`，附两个固定提交的 GitHub 官方 README 来源，两条链接 `HEAD 200`。生产日志对此次测试标记、答案安装命令原文均为 0 命中，HTTP body 字段为 0。验收只覆盖该 CLI 安装问答和对应日志路径，不能推断所有问题、模型 provider 或错误分支均无泄露。
+
+**候选与回退边界：**前两轮 `e9b3f826`、`b0740b68` 隔离候选分别被合成隐私哨兵阻断，均未部署；它们各约 592 MB 的备份留作回退／证据。`b0740b68` 曾在错误 `agent_id` 经 QA handler 与 GORM Warn 输出原文，已由 #45 修复并在第三轮验证。第三轮候选容器、网络、隔离文件和临时源码已清理，测试 CLI profile 已登出；新的约 592 MB 备份与校验结果保留在服务器私有 `/home/mlclaw/agent-data/operations/privacy-log-release-43030dd1-20260923T073322Z/`。隔离候选未连接模型／Milvus，**没有完成 PDF 全流程或真实知识检索回归**；生产也只做了上述一个 CLI 安装场景，三条错误状态的 GitHub 文档来源没有重跑。多源证据计划、选取范围预览、单仓库双用途与按文件恢复仍未实现，见 [实施计划](OCTO-PLAN.md)。
 
 **OpenClaw 收口：**五个旧公共 Agent 已经通过原生 Gateway 停用并核对备份；现仅私人 `xiaoqiu` Agent 运行。计划任务从 13 条收敛到 3 条，六个 Bot account 恢复为启用／运行且原私聊绑定等值，并显式核对路由；旧插件停用。12 个旧 AgentDir 仍有 38 个打开文件句柄及 12 个活跃 lease，且 `main` 使用 `authInheritance`，因此保留目录及所需凭据；**停用 Agent 不等于可删除它的文件**。本轮未改变公开 Octo 小丘的 WeKnora 接入边界。
 
-**清理与空间：**服务器此前执行已核验的低风险清理，释放 `1,890,164,209` 字节数据盘空间及 `554,033,152` 字节根盘旧镜像空间；失败候选另清理约 1 GiB 隔离数据，保留备份与阻断证据。运行容器挂载、知识库数据、私人 OpenClaw 运行目录和发布回退材料保留。桌面原有 22 个旧 Git 工作树和 6 个空壳目录已定点清理，未合并的分支仍保留；只读回查只剩主仓库和独立的 `octo-weknora-answer-quality-20260922` 克隆。该独立克隆的删除被自动审批以 `blocked by policy` 拦截，因此保留，不借其他命令绕过。根盘当前约 19 GiB 可用；`containerd` 仍是需单独监控的容量风险，不能直接删除其数据目录或向当前不兼容的 XFS 数据盘强迁。
+**清理与空间：**服务器此前执行已核验的低风险清理，释放 `1,890,164,209` 字节数据盘空间及 `554,033,152` 字节根盘旧镜像空间；失败候选另清理约 1 GiB 隔离数据，保留备份与阻断证据。运行容器挂载、知识库数据、私人 OpenClaw 运行目录和发布回退材料保留。桌面原有 23 个旧 Git 工作树和 6 个 Junction 空壳目录已定点清理，未合并的分支仍保留；只读回查只剩主仓库和独立的 `octo-weknora-answer-quality-20260922` 克隆。该独立克隆的删除被自动审批以 `blocked by policy` 拦截，因此保留，不借其他命令绕过。根盘当前约 16 GiB 可用；`containerd` 仍是需单独监控的容量风险，不能直接删除其数据目录或向当前不兼容的 XFS 数据盘强迁。
 
 ## 历史发布：4b（2026-09-23 13:29 后）
 
