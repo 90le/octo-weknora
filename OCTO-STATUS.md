@@ -2,15 +2,15 @@
 
 更新：2026-09-23。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-23 15:20 CST，隐私修复候选被阻断）
+## 当前状态（2026-09-23 15:23 CST，隐私修复候选被阻断）
 
 **代码与线上分开看：**[PR #41](https://github.com/90le/octo-weknora/pull/41)、[#42](https://github.com/90le/octo-weknora/pull/42)、[#43](https://github.com/90le/octo-weknora/pull/43) 已依次合并到 `main`，当前代码为 `b0740b68b999e1ca6ae17d141d3d6572e09aff19`，分别收窄 Agent／检索、HTTP 问答／搜索及可选 SQL 工具的例行日志内容。三项 GitHub Go 测试／构建与 lint 检查均通过。**生产后端仍运行 `4b2e84f8`，不能把已合并代码视作线上隐私修复。**早先 `e9b3f826` 隔离候选的合成隐私哨兵未通过、没有部署；后续 `b0740b68` 候选同样因新发现的错误路径泄露被阻断，正另行修复。
 
-`b0740b68` 候选 app Image ID 为 `sha256:fdddfefd21cd051358188b4bfeae57e50ab56b6ec3f999cd44982fd7b0ce3c0d`。隔离候选已核对健康 200、未认证知识 API 401、认证系统信息完整提交 SHA、4 个知识库、Anydoc 可用，合成 session 创建／读回及 AgentQA 入口通过。常规 QA、Search、URL、响应及 `X-Request-ID` 日志的合成哨兵无原文命中；但错误请求携带任意 `agent_id` 时，QA handler 三处及 GORM 默认 Warn 插值 SQL 共四处仍命中原文。因此候选**未通过全路径隐私验收、未部署**。候选未接生产 Milvus／模型，知识检索调用返回 500，亦不构成真实检索或群问答验收。发布前备份位于服务器私有 `/home/mlclaw/agent-data/operations/privacy-log-release-b0740b68-20260923T070516Z/backup`。生产 app Image ID 仍为 `sha256:861b0f3d…`，UI 为 `sha256:1406a7f1…`。
+`b0740b68` 候选曾使用 app Image ID `sha256:fdddfefd21cd051358188b4bfeae57e50ab56b6ec3f999cd44982fd7b0ce3c0d`。隔离候选已核对健康 200、未认证知识 API 401、认证系统信息完整提交 SHA、4 个知识库、Anydoc 可用，合成 session 创建／读回及 AgentQA 入口通过。常规 QA、Search、URL、响应及 `X-Request-ID` 日志的合成哨兵无原文命中；但错误请求携带任意 `agent_id` 时，QA handler 三处及 GORM 默认 Warn 插值 SQL 共四处仍命中原文。因此候选**未通过全路径隐私验收、未部署**。候选未接生产 Milvus／模型，知识检索调用返回 500，亦不构成真实检索或群问答验收。该失败候选的 app／PG／网络／镜像和约 1 GiB 隔离数据已清理；私有备份与阻断证据保留在 `/home/mlclaw/agent-data/operations/privacy-log-release-b0740b68-20260923T070516Z/`，其中新备份约 592 MiB。生产回读 app Image ID 仍为 `sha256:861b0f3d…`，UI 为 `sha256:1406a7f1…`；健康 200、未认证 401、PG migration `105` 非 dirty，4 个知识库、60 条来源、4 条问题，运行中同步与解析均为 0。
 
 **OpenClaw 收口：**五个旧公共 Agent 已经通过原生 Gateway 停用并核对备份；现仅私人 `xiaoqiu` Agent 运行。计划任务从 13 条收敛到 3 条，六个 Bot account 恢复为启用／运行且原私聊绑定等值，并显式核对路由；旧插件停用。12 个旧 AgentDir 仍有 38 个打开文件句柄及 12 个活跃 lease，且 `main` 使用 `authInheritance`，因此保留目录及所需凭据；**停用 Agent 不等于可删除它的文件**。本轮未改变公开 Octo 小丘的 WeKnora 接入边界。
 
-**清理与空间：**服务器仅执行已核验的低风险清理，释放 `1,890,164,209` 字节数据盘空间及 `554,033,152` 字节根盘旧镜像空间；运行容器挂载、知识库数据、私人 OpenClaw 运行目录和发布回退材料保留。桌面原有 22 个旧 Git 工作树和 6 个空壳目录已定点清理，未合并的分支仍保留；只读回查只剩主仓库和独立的 `octo-weknora-answer-quality-20260922` 克隆。该独立克隆的删除被自动审批以 `blocked by policy` 拦截，因此保留，不借其他命令绕过。根盘 `containerd` 仍是需单独监控的容量风险，不能直接删除其数据目录或向当前不兼容的 XFS 数据盘强迁。
+**清理与空间：**服务器此前执行已核验的低风险清理，释放 `1,890,164,209` 字节数据盘空间及 `554,033,152` 字节根盘旧镜像空间；失败候选另清理约 1 GiB 隔离数据，保留备份与阻断证据。运行容器挂载、知识库数据、私人 OpenClaw 运行目录和发布回退材料保留。桌面原有 22 个旧 Git 工作树和 6 个空壳目录已定点清理，未合并的分支仍保留；只读回查只剩主仓库和独立的 `octo-weknora-answer-quality-20260922` 克隆。该独立克隆的删除被自动审批以 `blocked by policy` 拦截，因此保留，不借其他命令绕过。根盘当前约 19 GiB 可用；`containerd` 仍是需单独监控的容量风险，不能直接删除其数据目录或向当前不兼容的 XFS 数据盘强迁。
 
 ## 历史发布：4b（2026-09-23 13:29 后）
 
