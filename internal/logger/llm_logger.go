@@ -36,8 +36,13 @@ func configureLLMDebugLog() {
 		dir = "llm_debug"
 	}
 
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		fmt.Fprintf(os.Stderr, "llm_debug: failed to create dir %s: %v\n", dir, err)
+		return
+	}
+	// A previously created debug directory may have broader permissions.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		fmt.Fprintf(os.Stderr, "llm_debug: failed to secure dir %s: %v\n", dir, err)
 		return
 	}
 
@@ -101,12 +106,16 @@ func LLMDebugLog(ctx context.Context, record *LLMCallRecord) {
 	defer llmDebug.mu.Unlock()
 
 	path := filepath.Join(llmDebug.dir, filename)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "llm_debug: open %s: %v\n", path, err)
 		return
 	}
 	defer f.Close()
+	if err := f.Chmod(0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "llm_debug: failed to secure file %s: %v\n", path, err)
+		return
+	}
 	_, _ = f.WriteString(text)
 }
 

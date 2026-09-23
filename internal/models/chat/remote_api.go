@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/provider"
@@ -203,12 +205,67 @@ func (c *RemoteAPIChat) retryOutboundWithoutConfiguredThinking(
 	return body, endpoint, true, nil
 }
 
-// logRequest 记录请求日志
-func (c *RemoteAPIChat) logRequest(ctx context.Context, req any, isStream bool) {
-	if jsonData, err := json.MarshalIndent(req, "", "  "); err == nil {
-		logger.Infof(ctx, "[LLM Request] model=%s, stream=%v, request:\n%s",
-			c.modelName, isStream, secutils.CompactImageDataURLForLog(string(jsonData)))
+// logRequest records only the shape of an outbound request. Prompt text,
+// tool arguments, image URLs and provider-specific fields must never enter the
+// routine application log.
+func (c *RemoteAPIChat) logRequest(ctx context.Context, jsonData []byte, isStream bool) {
+	var shape struct {
+		Messages []json.RawMessage `json:"messages"`
+		Tools    []json.RawMessage `json:"tools"`
 	}
+	_ = json.Unmarshal(jsonData, &shape)
+	logger.Infof(ctx, "[LLM Request] provider=%s model=%s stream=%t messages=%d tools=%d request_bytes=%d",
+		c.provider, c.modelName, isStream, len(shape.Messages), len(shape.Tools), len(jsonData))
+}
+
+// providerHTTPError intentionally retains only the HTTP status and a narrow,
+// non-sensitive retry signal. Provider error bodies can echo the prompt or
+// credentials and must not be embedded in returned/logged errors.
+type providerHTTPError struct {
+	statusCode               int
+	unsupportedThinkingField map[string]bool
+}
+
+func (e *providerHTTPError) Error() string {
+	return fmt.Sprintf("API request failed with status %d", e.statusCode)
+}
+
+func newProviderHTTPError(statusCode int, responseBody []byte) error {
+	e := &providerHTTPError{statusCode: statusCode}
+	if statusCode == http.StatusBadRequest {
+		for _, field := range []string{"chat_template_kwargs", "enable_thinking", "thinking"} {
+			if matchesUnsupportedThinkingControlMessage(string(responseBody), field) {
+				if e.unsupportedThinkingField == nil {
+					e.unsupportedThinkingField = make(map[string]bool)
+				}
+				e.unsupportedThinkingField[field] = true
+			}
+		}
+	}
+	return e
+}
+
+// safeProviderError strips SDK error responses before they reach callers or
+// routine stream logs. Retry/multimodal detection runs on the original error.
+func safeProviderError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var apiErr *openai.APIError
+	if errors.As(err, &apiErr) {
+		return fmt.Errorf("provider API request failed with status %d", apiErr.HTTPStatusCode)
+	}
+	var requestErr *openai.RequestError
+	if errors.As(err, &requestErr) {
+		return fmt.Errorf("provider request failed with status %d", requestErr.HTTPStatusCode)
+	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	return fmt.Errorf("provider transport failed: %T", err)
 }
 
 // Chat 进行非流式聊天
@@ -246,7 +303,8 @@ func (c *RemoteAPIChat) Chat(ctx context.Context, messages []Message, opts *Chat
 	}
 
 	req := *(body.(*openai.ChatCompletionRequest))
-	c.logRequest(timeoutCtx, req, false)
+	requestJSON, _ := json.Marshal(req)
+	c.logRequest(timeoutCtx, requestJSON, false)
 	resp, err := c.client.CreateChatCompletion(timeoutCtx, req)
 	if err != nil {
 		if isMultimodalNotSupportedError(err) {
@@ -256,7 +314,7 @@ func (c *RemoteAPIChat) Chat(ctx context.Context, messages []Message, opts *Chat
 			resp, err = c.client.CreateChatCompletion(timeoutCtx, req)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("create chat completion: %w", err)
+			return nil, fmt.Errorf("create chat completion: %w", safeProviderError(err))
 		}
 	}
 
@@ -281,8 +339,7 @@ func (c *RemoteAPIChat) chatWithRawHTTP(ctx context.Context, endpoint string, cu
 	if err := secutils.ValidateURLForSSRF(endpoint); err != nil {
 		return nil, fmt.Errorf("endpoint SSRF check failed: %w", err)
 	}
-	logger.Infof(ctx, "[LLM Request] Remote HTTP, endpoint=%s, model=%s, raw HTTP request:\n%s",
-		endpoint, c.modelName, secutils.CompactImageDataURLForLog(string(jsonData)))
+	c.logRequest(ctx, jsonData, false)
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -296,18 +353,18 @@ func (c *RemoteAPIChat) chatWithRawHTTP(ctx context.Context, endpoint string, cu
 	secutils.ApplyCustomHeaders(httpReq, c.customHeaders)
 	attachPromptCacheHeaders(httpReq, promptCachePolicyFor(c.provider, c.baseURL), promptCacheSessionID(ctx, opts))
 
-	logger.Infof(ctx, "[LLM Request] Remote HTTP, endpoint=%s, model=%s",
-		endpoint, c.modelName)
-
+	requestStarted := time.Now()
 	resp, err := rawHTTPClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
+		return nil, fmt.Errorf("send request: %w", safeProviderError(err))
 	}
 	defer resp.Body.Close()
+	logger.Infof(ctx, "[LLM Response] provider=%s model=%s stream=false status=%d headers_ms=%d",
+		c.provider, c.modelName, resp.StatusCode, time.Since(requestStarted).Milliseconds())
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<10))
+		return nil, newProviderHTTPError(resp.StatusCode, body)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -361,29 +418,34 @@ func (c *RemoteAPIChat) ChatStream(ctx context.Context, messages []Message, opts
 	}
 
 	req := *(body.(*openai.ChatCompletionRequest))
-	c.logRequest(timeoutCtx, req, true)
+	requestJSON, _ := json.Marshal(req)
+	c.logRequest(timeoutCtx, requestJSON, true)
 
 	streamDumper := newStreamPacketDumper(c.modelName, &req)
 	if streamDumper != nil {
-		logger.Infof(timeoutCtx, "[LLM Stream Raw Dump] writing packets to %s", streamDumper.Path())
+		logger.Infof(timeoutCtx, "[LLM Stream Raw Dump] enabled")
 	}
 
 	streamChan := make(chan types.StreamResponse)
 
+	requestStarted := time.Now()
 	stream, err := c.client.CreateChatCompletionStream(timeoutCtx, req)
 	if err != nil {
 		if isMultimodalNotSupportedError(err) {
 			logger.Warnf(timeoutCtx, "[LLM Stream] Model %s does not support multimodal, retrying without images", c.modelName)
 			cleaned := stripImagesFromMessages(messages)
 			req = c.shapedRequest(cleaned, opts, true)
+			requestStarted = time.Now()
 			stream, err = c.client.CreateChatCompletionStream(timeoutCtx, req)
 		}
 		if err != nil {
 			cancel()
 			close(streamChan)
-			return nil, fmt.Errorf("create chat completion stream: %w", err)
+			return nil, fmt.Errorf("create chat completion stream: %w", safeProviderError(err))
 		}
 	}
+	logger.Infof(timeoutCtx, "[LLM Response] provider=%s model=%s stream=true status=200 headers_ms=%d",
+		c.provider, c.modelName, time.Since(requestStarted).Milliseconds())
 
 	go func() {
 		defer cancel()
@@ -428,12 +490,7 @@ func (c *RemoteAPIChat) chatStreamWithRawHTTP(ctx context.Context, endpoint stri
 		return nil, fmt.Errorf("endpoint SSRF check failed: %w", err)
 	}
 
-	if prettyJSON, pErr := json.MarshalIndent(customReq, "", "  "); pErr == nil {
-		logger.Infof(ctx, "[LLM Stream Request] endpoint=%s, model=%s, stream=true, request:\n%s",
-			endpoint, c.modelName, secutils.CompactImageDataURLForLog(string(prettyJSON)))
-	} else {
-		logger.Infof(ctx, "[LLM Stream] endpoint=%s, model=%s", endpoint, c.modelName)
-	}
+	c.logRequest(ctx, jsonData, true)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -447,21 +504,24 @@ func (c *RemoteAPIChat) chatStreamWithRawHTTP(ctx context.Context, endpoint stri
 	secutils.ApplyCustomHeaders(httpReq, c.customHeaders)
 	attachPromptCacheHeaders(httpReq, promptCachePolicyFor(c.provider, c.baseURL), promptCacheSessionID(ctx, opts))
 
+	requestStarted := time.Now()
 	resp, err := rawHTTPClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
+		return nil, fmt.Errorf("send request: %w", safeProviderError(err))
 	}
+	logger.Infof(ctx, "[LLM Response] provider=%s model=%s stream=true status=%d headers_ms=%d",
+		c.provider, c.modelName, resp.StatusCode, time.Since(requestStarted).Milliseconds())
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<10))
 		resp.Body.Close()
-		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, newProviderHTTPError(resp.StatusCode, body)
 	}
 
 	streamChan := make(chan types.StreamResponse)
 	streamDumper := newStreamPacketDumper(c.modelName, customReq)
 	if streamDumper != nil {
-		logger.Infof(ctx, "[LLM Stream Raw Dump] writing packets to %s", streamDumper.Path())
+		logger.Infof(ctx, "[LLM Stream Raw Dump] enabled")
 	}
 
 	go func() {
