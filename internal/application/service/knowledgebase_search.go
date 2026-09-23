@@ -37,7 +37,7 @@ func (s *knowledgeBaseService) GetQueryEmbedding(ctx context.Context, kbID strin
 		embeddingModel, err = s.modelService.GetEmbeddingModel(ctx, kb.EmbeddingModelID)
 	}
 	if err != nil {
-		logger.Errorf(ctx, "GetQueryEmbedding: failed to get embedding model %s: %v", kb.EmbeddingModelID, err)
+		logger.Errorf(ctx, "GetQueryEmbedding: failed to get embedding model %s, error_type=%T", kb.EmbeddingModelID, err)
 		return nil, err
 	}
 
