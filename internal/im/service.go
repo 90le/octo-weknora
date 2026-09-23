@@ -1745,8 +1745,8 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 
 	logger.Infof(ctx, "[IM] HandleMessage: channel=%s platform=%s user=%s chat=%s msgtype=%s content_len=%d",
 		channelID, msg.Platform, msg.UserID, msg.ChatID, msg.MessageType, len(msg.Content))
-	logger.Debugf(ctx, "[IM] HandleMessage detail: msgid=%s raw_msgtype=%s filekey=%s filename=%s",
-		msg.MessageID, msg.Extra["raw_msgtype"], msg.FileKey, msg.FileName)
+	logger.Debugf(ctx, "[IM] HandleMessage detail: msgid=%s raw_msgtype=%s filekey_len=%d filename_len=%d",
+		msg.MessageID, msg.Extra["raw_msgtype"], len(msg.FileKey), len(msg.FileName))
 
 	// ── File/Image message handling ──
 	// File messages use the normal QA path as well.  A configured knowledge base

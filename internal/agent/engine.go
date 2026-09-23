@@ -293,7 +293,7 @@ func (e *AgentEngine) Execute(
 	common.PipelineInfo(ctx, "Agent", "execute_start", map[string]interface{}{
 		"session_id":   sessionID,
 		"message_id":   messageID,
-		"query":        query,
+		"query_len":    len(query),
 		"context_msgs": len(llmContext),
 	})
 
@@ -379,7 +379,7 @@ func (e *AgentEngine) Execute(
 
 	_, err := e.executeLoop(ctx, state, query, messages, tools, sessionID, messageID)
 	if err != nil {
-		logger.Errorf(ctx, "[Agent] Execution failed: %v", err)
+		logger.Errorf(ctx, "[Agent] Execution failed: error_type=%T", err)
 		e.eventBus.Emit(ctx, event.Event{
 			ID:        generateEventID("error"),
 			Type:      event.EventError,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -217,6 +218,26 @@ const (
 	pipelineTruncateEll     = "..."
 )
 
+// Pipeline fields can contain the user's message, quoted context, retrieved
+// passages, tool arguments and provider errors. Routine logs only need stable
+// identifiers and measurements; the full values remain in the request/trace
+// where their access controls apply. Keep this an allowlist so a newly added
+// string field cannot accidentally make private content part of server logs.
+var pipelineLogIdentifier = regexp.MustCompile(`^[A-Za-z0-9_./:@-]{1,128}$`)
+
+func safePipelineStringField(key string) bool {
+	switch key {
+	case "request_id", "session_id", "message_id", "user_message_id",
+		"kb_id", "knowledge_base_id", "knowledge_id", "chunk_id",
+		"chat_model", "model_id", "rerank_model", "rerank_model_id",
+		"vlm_model_id", "query_understand_model_id", "provider_id",
+		"finish_reason", "status", "error_code", "target_type":
+		return true
+	default:
+		return false
+	}
+}
+
 // PipelineLog builds a structured pipeline log string.
 func PipelineLog(stage, action string, fields map[string]interface{}) string {
 	if stage == "" {
@@ -244,7 +265,7 @@ func PipelineLog(stage, action string, fields map[string]interface{}) string {
 			builder.WriteString(" ")
 			builder.WriteString(key)
 			builder.WriteString("=")
-			builder.WriteString(secutils.SanitizeForLog(formatPipelineLogValue(fields[key])))
+			builder.WriteString(secutils.SanitizeForLog(formatPipelineLogValue(key, fields[key])))
 		}
 	}
 	return builder.String()
@@ -265,17 +286,32 @@ func PipelineError(ctx context.Context, stage, action string, fields map[string]
 	logger.GetLogger(ctx).Error(PipelineLog(stage, action, fields))
 }
 
-func formatPipelineLogValue(value interface{}) string {
-	switch v := value.(type) {
-	case string:
-		return strconv.Quote(truncatePipelineValue(v))
-	case fmt.Stringer:
-		return strconv.Quote(truncatePipelineValue(v.String()))
-	case json.RawMessage:
-		bytes, _ := v.MarshalJSON()
-		return string(bytes)
+func formatPipelineLogValue(key string, value interface{}) string {
+	v := reflect.ValueOf(value)
+	if !v.IsValid() {
+		return "nil"
+	}
+	for v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return "nil"
+		}
+		v = v.Elem()
+	}
+	switch v.Kind() {
+	case reflect.String:
+		content := v.String()
+		if safePipelineStringField(key) && pipelineLogIdentifier.MatchString(content) {
+			return strconv.Quote(content)
+		}
+		return strconv.Quote(fmt.Sprintf("[redacted len=%d]", utf8.RuneCountInString(content)))
+	case reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return fmt.Sprint(v.Interface())
+	case reflect.Slice, reflect.Array, reflect.Map:
+		return strconv.Quote(fmt.Sprintf("[redacted count=%d]", v.Len()))
 	default:
-		return fmt.Sprintf("%v", v)
+		return strconv.Quote("[redacted]")
 	}
 }
 

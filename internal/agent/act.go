@@ -395,8 +395,7 @@ func (e *AgentEngine) runToolCall(
 ) types.ToolCall {
 	tc.ID = agenttools.NormalizeToolCallID(tc.ID, tc.Function.Name, i)
 	total := "?" // unknown in isolation; callers log the batch size
-	toolTag := fmt.Sprintf("[Agent][Round-%d][Tool %s (%d/%s)]",
-		round, tc.Function.Name, i+1, total)
+	toolTag := fmt.Sprintf("[Agent][Round-%d][Tool %d/%s]", round, i+1, total)
 
 	var args map[string]any
 	argsStr := tc.Function.Arguments
@@ -489,7 +488,7 @@ func (e *AgentEngine) runToolCall(
 		executionName, executionArgs = target.Name, target.Args
 	}
 
-	logger.Debugf(ctx, "%s Args: %s", toolTag, tc.Function.Arguments)
+	logger.Debugf(ctx, "%s Args: bytes=%d", toolTag, len(tc.Function.Arguments))
 
 	toolCallStartTime := time.Now()
 
@@ -587,7 +586,7 @@ func (e *AgentEngine) runToolCall(
 	}
 
 	if err != nil {
-		logger.Errorf(ctx, "%s Failed in %dms: %v", toolTag, duration, err)
+		logger.Errorf(ctx, "%s Failed in %dms: error_type=%T", toolTag, duration, err)
 		toolCall.Result = &types.ToolResult{
 			Success: false,
 			Error:   err.Error(),
@@ -626,14 +625,10 @@ func (e *AgentEngine) runToolCall(
 	}
 
 	if toolCall.Result != nil && toolCall.Result.Output != "" {
-		preview := toolCall.Result.Output
-		if len(preview) > 500 {
-			preview = preview[:500] + "... (truncated)"
-		}
-		logger.Debugf(ctx, "%s Output preview:\n%s", toolTag, preview)
+		logger.Debugf(ctx, "%s Output: bytes=%d", toolTag, len(toolCall.Result.Output))
 	}
 	if toolCall.Result != nil && toolCall.Result.Error != "" {
-		logger.Debugf(ctx, "%s Tool error: %s", toolTag, toolCall.Result.Error)
+		logger.Debugf(ctx, "%s Tool error: bytes=%d", toolTag, len(toolCall.Result.Error))
 	}
 
 	return toolCall

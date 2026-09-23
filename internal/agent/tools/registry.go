@@ -145,8 +145,8 @@ func (r *ToolRegistry) ExecuteTool(
 		return &types.ToolResult{Success: false, Error: err.Error()}, err
 	}
 	common.PipelineInfo(ctx, "AgentTool", "execute_start", map[string]interface{}{
-		"tool": name,
-		"args": args,
+		"tool":       name,
+		"args_bytes": len(args),
 	})
 	tool, err := r.GetTool(name)
 	if err != nil {
@@ -250,8 +250,8 @@ func (r *ToolRegistry) execute(ctx context.Context, tool types.Tool, args json.R
 	}
 
 	fields := map[string]interface{}{
-		"tool": name,
-		"args": args,
+		"tool":       name,
+		"args_bytes": len(args),
 	}
 	if result != nil {
 		fields["success"] = result.Success

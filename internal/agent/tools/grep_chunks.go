@@ -113,7 +113,7 @@ func (t *GrepChunksTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 	// Compilation also validates the regex syntax before we send it to the DB.
 	re, err := regexp.Compile("(?i)" + query)
 	if err != nil {
-		logger.Errorf(ctx, "[Tool][GrepChunks] Invalid regex %q: %v", query, err)
+		logger.Errorf(ctx, "[Tool][GrepChunks] Invalid regex: query_bytes=%d error_type=%T", len(query), err)
 		return &types.ToolResult{
 			Success: false,
 			Error:   fmt.Sprintf("invalid regex query %q: %v", query, err),
@@ -133,8 +133,8 @@ func (t *GrepChunksTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 		kbIDsForMeta = t.searchTargets.GetAllKnowledgeBaseIDs()
 	}
 
-	logger.Infof(ctx, "[Tool][GrepChunks] Queries: %v, Limit: %d, fullKBs: %d, knowledgeIDs: %d, tagScopes: %d",
-		queries, limit, len(fullKBIDs), len(knowledgeIDs), len(tagTargets))
+	logger.Infof(ctx, "[Tool][GrepChunks] Queries: count=%d bytes=%d, Limit: %d, fullKBs: %d, knowledgeIDs: %d, tagScopes: %d",
+		len(queries), len(query), limit, len(fullKBIDs), len(knowledgeIDs), len(tagTargets))
 
 	results, err := t.searchChunks(ctx, queries, fullKBIDs, knowledgeIDs, tagTargets, kbTenantMap)
 	if err != nil {

@@ -331,7 +331,7 @@ func (r *sqliteRepository) keywordsRetrieve(ctx context.Context, params types.Re
 		return nil, fmt.Errorf("FTS5 query failed: %w", err)
 	}
 
-	logger.GetLogger(ctx).Infof("[SQLite] keywordsRetrieve: query=%q, ftsQuery=%q, matched=%d rows", params.Query, ftsQuery, len(rows))
+	logger.GetLogger(ctx).Infof("[SQLite] keywordsRetrieve: query_bytes=%d, fts_query_bytes=%d, matched=%d rows", len(params.Query), len(ftsQuery), len(rows))
 
 	items := make([]*types.IndexWithScore, len(rows))
 	for i, row := range rows {
