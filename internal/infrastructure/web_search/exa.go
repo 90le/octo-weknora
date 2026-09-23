@@ -102,7 +102,7 @@ func (p *ExaProvider) Search(
 		return nil, fmt.Errorf("failed to read Exa response: %w", err)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		logger.Warnf(ctx, "[WebSearch][Exa] API returned status %d: %s", resp.StatusCode, string(body))
+		logger.Warnf(ctx, "[WebSearch][Exa] API returned status %d, response_bytes=%d", resp.StatusCode, len(body))
 		return nil, fmt.Errorf("exa API returned status %d: %s", resp.StatusCode, string(body))
 	}
 

@@ -163,7 +163,7 @@ func (p *SearxngProvider) Search(
 		results = append(results, item)
 	}
 	if len(results) == 0 && len(data.UnresponsiveEngines) > 0 {
-		logger.Warnf(ctx, "[WebSearch][SearXNG] empty results, unresponsive_engines=%v", data.UnresponsiveEngines)
+		logger.Warnf(ctx, "[WebSearch][SearXNG] empty results, unresponsive_engine_count=%d", len(data.UnresponsiveEngines))
 	}
 	logger.Infof(ctx, "[WebSearch][SearXNG] returned %d results", len(results))
 	return results, nil

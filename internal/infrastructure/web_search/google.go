@@ -76,7 +76,7 @@ func (p *GoogleProvider) Search(
 
 	resp, err := cseCall.Do()
 	if err != nil {
-		logger.Warnf(ctx, "[WebSearch][Google] failed: %v", err)
+		logger.Warnf(ctx, "[WebSearch][Google] failed: error_type=%T", err)
 		return nil, err
 	}
 	results := make([]*types.WebSearchResult, 0)

@@ -89,7 +89,7 @@ func (p *TavilyProvider) Search(
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		logger.Warnf(ctx, "[WebSearch][Tavily] API returned status %d: %s", resp.StatusCode, string(respBody))
+		logger.Warnf(ctx, "[WebSearch][Tavily] API returned status %d, response_bytes=%d", resp.StatusCode, len(respBody))
 		return nil, fmt.Errorf("tavily API returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 

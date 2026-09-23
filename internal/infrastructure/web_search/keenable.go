@@ -103,7 +103,7 @@ func (p *KeenableProvider) Search(
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		logger.Warnf(ctx, "[WebSearch][Keenable] API returned status %d: %s", resp.StatusCode, string(respBody))
+		logger.Warnf(ctx, "[WebSearch][Keenable] API returned status %d, response_bytes=%d", resp.StatusCode, len(respBody))
 		return nil, fmt.Errorf("keenable API returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 
