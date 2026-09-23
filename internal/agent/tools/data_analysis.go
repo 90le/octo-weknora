@@ -232,7 +232,7 @@ func (t *DataAnalysisTool) Execute(ctx context.Context, args json.RawMessage) (*
 	// Replace knowledge ID with table name
 	input.Sql = strings.ReplaceAll(input.Sql, input.KnowledgeID, schema.TableName)
 	if rewrittenSQL, fixes := reconcileSQLColumnsWithSchema(input.Sql, schema); len(fixes) > 0 {
-		logger.Infof(ctx, "[Tool][DataAnalysis] Auto-rewrote SQL identifiers for session %s: %v", t.sessionID, fixes)
+		logger.Infof(ctx, "[Tool][DataAnalysis] Auto-rewrote SQL identifiers for session %s: count=%d", t.sessionID, len(fixes))
 		input.Sql = rewrittenSQL
 	}
 
@@ -246,7 +246,7 @@ func (t *DataAnalysisTool) Execute(ctx context.Context, args json.RawMessage) (*
 
 	if !isReadOnly {
 		// Reject modification queries
-		logger.Warnf(ctx, "[Tool][DataAnalysis] Modification query rejected for session %s: %s", t.sessionID, input.Sql)
+		logger.Warnf(ctx, "[Tool][DataAnalysis] Modification query rejected for session %s: sql_bytes=%d", t.sessionID, len(input.Sql))
 		return &types.ToolResult{
 			Success: false,
 			Error:   "DuckDB tool only supports read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN, PRAGMA). Modification operations (INSERT, UPDATE, DELETE, CREATE, DROP, etc.) are not allowed.",
@@ -261,14 +261,14 @@ func (t *DataAnalysisTool) Execute(ctx context.Context, args json.RawMessage) (*
 		utils.WithNoDangerousFunctions(), // Block dangerous functions
 	)
 	if !validation.Valid {
-		logger.Warnf(ctx, "[Tool][DataAnalysis] SQL validation failed for session %s: %v", t.sessionID, validation.Errors)
+		logger.Warnf(ctx, "[Tool][DataAnalysis] SQL validation failed for session %s: errors=%d", t.sessionID, len(validation.Errors))
 		return &types.ToolResult{
 			Success: false,
 			Error:   fmt.Sprintf("SQL validation failed: %v", validation.Errors),
 		}, fmt.Errorf("SQL validation failed: %v", validation.Errors)
 	}
 
-	logger.Infof(ctx, "[Tool][DataAnalysis] Received SQL query for session %s: %s", t.sessionID, input.Sql)
+	logger.Infof(ctx, "[Tool][DataAnalysis] Received SQL query for session %s: sql_bytes=%d", t.sessionID, len(input.Sql))
 	// Execute single query and get results
 	results, err := t.executeSingleQuery(ctx, input.Sql)
 	if err != nil {
@@ -312,7 +312,7 @@ func (t *DataAnalysisTool) Execute(ctx context.Context, args json.RawMessage) (*
 func (t *DataAnalysisTool) executeSingleQuery(ctx context.Context, sqlQuery string) ([]map[string]string, error) {
 	rows, err := t.db.QueryContext(ctx, sqlQuery)
 	if err != nil {
-		logger.Errorf(ctx, "[Tool][DataAnalysis] Query execution failed: %v", err)
+		logger.Errorf(ctx, "[Tool][DataAnalysis] Query execution failed: error_type=%T", err)
 		return nil, fmt.Errorf("query execution failed: %w", err)
 	}
 	defer rows.Close()
