@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -227,20 +228,102 @@ func (c *Connector) getWithHeaders(ctx context.Context, cfg *types.DataSourceCon
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, &Error{Code: "github_connection", Message: "GitHub connection failed"}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return resp.Header, githubHTTPError(resp)
 	}
+	stage := githubResponseStage(endpoint)
+	if resp.ContentLength > limit {
+		return resp.Header, &Error{Code: "github_response_limit", Stage: stage, LimitBytes: limit,
+			Message: fmt.Sprintf("GitHub %s response exceeds the %d-byte sync limit", stage, limit)}
+	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
-	if err != nil || int64(len(b)) > limit {
-		return resp.Header, &Error{Code: "github_response_limit", Message: "GitHub response is incomplete or exceeds the sync limit"}
+	if ctx.Err() != nil {
+		return resp.Header, ctx.Err()
+	}
+	if int64(len(b)) > limit {
+		return resp.Header, &Error{Code: "github_response_limit", Stage: stage, BytesRead: int64(len(b)), LimitBytes: limit,
+			Message: fmt.Sprintf("GitHub %s response exceeds the %d-byte sync limit (read %d bytes)", stage, limit, len(b))}
+	}
+	if err != nil || (resp.ContentLength > 0 && int64(len(b)) != resp.ContentLength) {
+		return resp.Header, &Error{Code: "github_response_incomplete", Stage: stage, BytesRead: int64(len(b)), LimitBytes: limit,
+			Message: fmt.Sprintf("GitHub %s response ended before completion (read %d bytes); retry later", stage, len(b))}
 	}
 	if err := json.Unmarshal(b, out); err != nil {
 		return resp.Header, &Error{Code: "github_response_invalid", Message: "GitHub response is invalid"}
 	}
 	return resp.Header, nil
+}
+
+// Only fixed stage labels are exposed in sync diagnostics, never API paths.
+func githubResponseStage(endpoint string) string {
+	switch {
+	case strings.Contains(endpoint, "/git/blobs/"):
+		return "blob"
+	case strings.Contains(endpoint, "/git/trees/"):
+		return "tree"
+	default:
+		return "metadata"
+	}
+}
+
+// A document blob is an immutable Git object. A bounded retry of transient
+// transport/server failures is safe; malformed content and configured size
+// limits are deliberately not retried. Long rate-limit windows are surfaced
+// to the scheduler instead of occupying a sync worker.
+func (c *Connector) getDocumentBlob(ctx context.Context, cfg *types.DataSourceConfig, endpoint string, out interface{}) error {
+	const attempts = 3
+	const maxWait = 2 * time.Second
+	for attempt := 1; attempt <= attempts; attempt++ {
+		err := c.get(ctx, cfg, endpoint, out, 24<<20)
+		if err == nil || ctx.Err() != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return err
+		}
+		var apiErr *Error
+		if !errors.As(err, &apiErr) || !transientBlobError(apiErr) || attempt == attempts {
+			return err
+		}
+		wait := time.Duration(100<<(attempt-1)) * time.Millisecond
+		if apiErr.RetryAfter != nil {
+			if hinted := time.Until(*apiErr.RetryAfter); hinted > wait {
+				wait = hinted
+			}
+		}
+		if wait > maxWait {
+			return err
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil
+}
+
+func transientBlobError(err *Error) bool {
+	switch err.Code {
+	case "github_connection", "github_response_incomplete", "github_secondary_rate_limit":
+		return true
+	case "github_rate_limit":
+		return err.RetryAfter != nil
+	case "github_http":
+		return err.StatusCode == http.StatusRequestTimeout || err.StatusCode == http.StatusTooManyRequests || err.StatusCode >= 500
+	case "github_forbidden":
+		return err.StatusCode == http.StatusTooManyRequests
+	default:
+		return false
+	}
 }
 func (c *Connector) Validate(ctx context.Context, cfg *types.DataSourceConfig) error {
 	if err := snapshot.ValidateSettings(cfg); err != nil {
@@ -464,7 +547,7 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 			Content  string `json:"content"`
 			SHA      string `json:"sha"`
 		}
-		if err := c.get(ctx, cfg, "/repos/"+s.Repository+"/git/blobs/"+e.SHA, &blob, 24<<20); err != nil {
+		if err := c.getDocumentBlob(ctx, cfg, "/repos/"+s.Repository+"/git/blobs/"+e.SHA, &blob); err != nil {
 			return nil, nil, err
 		}
 		if blob.Encoding != "base64" || blob.SHA != e.SHA {
