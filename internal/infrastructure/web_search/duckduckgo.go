@@ -127,7 +127,7 @@ func (p *DuckDuckGoProvider) searchHTML(
 		}
 	})
 
-	logger.Infof(ctx, "DuckDuckGo HTML search returned %d results for query: %s", len(results), query)
+	logger.Infof(ctx, "DuckDuckGo HTML search returned %d results, query_bytes=%d", len(results), len(query))
 	return results, nil
 }
 
@@ -214,7 +214,7 @@ func (p *DuckDuckGoProvider) searchAPI(
 		}
 	}
 
-	logger.Infof(ctx, "DuckDuckGo API search returned %d results for query: %s", len(results), query)
+	logger.Infof(ctx, "DuckDuckGo API search returned %d results, query_bytes=%d", len(results), len(query))
 	return results, nil
 }
 

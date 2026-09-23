@@ -77,7 +77,7 @@ func (p *KeenableProvider) Search(
 		path = "/v1/search"
 	}
 	endpoint := p.baseURL + path
-	logger.Infof(ctx, "[WebSearch][Keenable] query=%q maxResults=%d url=%s", query, maxResults, endpoint)
+	logger.Infof(ctx, "[WebSearch][Keenable] query_bytes=%d maxResults=%d", len(query), maxResults)
 
 	bodyBytes, err := json.Marshal(keenableSearchRequest{Query: query, Mode: "pro"})
 	if err != nil {

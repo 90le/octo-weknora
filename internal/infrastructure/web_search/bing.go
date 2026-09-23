@@ -80,7 +80,7 @@ func (p *BingProvider) Search(
 	if len(query) == 0 {
 		return nil, fmt.Errorf("query is empty")
 	}
-	logger.Infof(ctx, "[WebSearch][Bing] query=%q maxResults=%d url=%s", query, maxResults, p.baseURL)
+	logger.Infof(ctx, "[WebSearch][Bing] query_bytes=%d maxResults=%d", len(query), maxResults)
 	req, err := p.buildParams(ctx, query, maxResults, includeDate)
 	if err != nil {
 		return nil, err

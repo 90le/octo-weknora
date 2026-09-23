@@ -27,9 +27,9 @@ func (s *sessionService) KnowledgeQA(
 ) error {
 	logger.Infof(
 		ctx,
-		"Knowledge base question answering parameters, session ID: %s, query: %s, webSearchEnabled: %v",
+		"Knowledge base question answering parameters, session ID: %s, query_bytes: %d, webSearchEnabled: %v",
 		req.Session.ID,
-		req.Query,
+		len(req.Query),
 		req.WebSearchEnabled,
 	)
 
@@ -670,8 +670,8 @@ func (s *sessionService) KnowledgeQAByEvent(ctx context.Context,
 	chatManage *types.ChatManage, eventList []types.EventType,
 ) error {
 	logger.Info(ctx, "Start processing knowledge base question answering through events")
-	logger.Infof(ctx, "Knowledge base question answering parameters, session ID: %s, query: %s",
-		chatManage.SessionID, chatManage.Query)
+	logger.Infof(ctx, "Knowledge base question answering parameters, session ID: %s, query_bytes: %d",
+		chatManage.SessionID, len(chatManage.Query))
 
 	methods := make([]string, len(eventList))
 	for i, event := range eventList {
@@ -812,8 +812,8 @@ func (s *sessionService) SearchKnowledge(ctx context.Context,
 	knowledgeBaseIDs []string, knowledgeIDs []string, tagScopes []types.TagScope, query string,
 ) ([]*types.SearchResult, error) {
 	logger.Info(ctx, "Start knowledge base search without LLM summary")
-	logger.Infof(ctx, "Knowledge base search parameters, knowledge base IDs: %v, knowledge IDs: %v, tag scopes: %d, query: %s",
-		knowledgeBaseIDs, knowledgeIDs, len(tagScopes), query)
+	logger.Infof(ctx, "Knowledge base search parameters, knowledge base IDs: %v, knowledge IDs: %v, tag scopes: %d, query_bytes: %d",
+		knowledgeBaseIDs, knowledgeIDs, len(tagScopes), len(query))
 
 	// Get tenant ID from context
 	tenantID, ok := types.TenantIDFromContext(ctx)

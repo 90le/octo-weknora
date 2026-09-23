@@ -62,7 +62,7 @@ func (p *TavilyProvider) Search(
 	if len(query) == 0 {
 		return nil, fmt.Errorf("query is empty")
 	}
-	logger.Infof(ctx, "[WebSearch][Tavily] query=%q maxResults=%d url=%s", query, maxResults, p.baseURL)
+	logger.Infof(ctx, "[WebSearch][Tavily] query_bytes=%d maxResults=%d", len(query), maxResults)
 
 	reqBody := tavilySearchRequest{
 		APIKey:     p.apiKey,

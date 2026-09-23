@@ -15,6 +15,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
 // AgentStreamHandler handles agent events for SSE streaming
@@ -516,8 +517,8 @@ func (h *AgentStreamHandler) handleFinalAnswer(ctx context.Context, evt event.Ev
 	if !h.ttfbLogged && !h.receivedAt.IsZero() {
 		h.ttfbLogged = true
 		ttfb := time.Since(h.receivedAt)
-		logger.GetLogger(h.ctx).Infof("TTFB:first_answer_chunk request_id=%s, session_id=%s, ttfb_ms=%d",
-			h.requestID, h.sessionID, ttfb.Milliseconds())
+		logger.GetLogger(h.ctx).Infof("TTFB:first_answer_chunk request_id_sha256=%s, session_id=%s, ttfb_ms=%d",
+			secutils.HashRequestIDForLog(h.requestID), h.sessionID, ttfb.Milliseconds())
 	}
 
 	// Accumulate final answer locally for assistant message (database). Track

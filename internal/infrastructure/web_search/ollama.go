@@ -71,7 +71,7 @@ func (p *OllamaProvider) Search(
 		maxResults = maxOllamaResults
 	}
 
-	logger.Infof(ctx, "[WebSearch][Ollama] query=%q maxResults=%d url=%s", query, maxResults, p.baseURL)
+	logger.Infof(ctx, "[WebSearch][Ollama] query_bytes=%d maxResults=%d", len(query), maxResults)
 	req, err := p.buildRequest(ctx, query, maxResults)
 	if err != nil {
 		return nil, err

@@ -91,7 +91,7 @@ func (p *ExaProvider) Search(
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", p.apiKey)
 
-	logger.Infof(ctx, "[WebSearch][Exa] query=%q maxResults=%d url=%s", query, maxResults, p.baseURL)
+	logger.Infof(ctx, "[WebSearch][Exa] query_bytes=%d maxResults=%d", len(query), maxResults)
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute Exa request: %w", err)

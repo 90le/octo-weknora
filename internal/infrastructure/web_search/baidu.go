@@ -77,7 +77,7 @@ func (p *BaiduProvider) Search(
 		maxResults = maxBaiduResults
 	}
 
-	logger.Infof(ctx, "[WebSearch][Baidu] query=%q maxResults=%d url=%s", preparedQuery, maxResults, p.baseURL)
+	logger.Infof(ctx, "[WebSearch][Baidu] query_bytes=%d maxResults=%d", len(preparedQuery), maxResults)
 	req, err := p.buildRequest(ctx, preparedQuery, maxResults)
 	if err != nil {
 		return nil, err
