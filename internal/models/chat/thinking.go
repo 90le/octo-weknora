@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/models/provider"
@@ -197,12 +198,23 @@ func isUnsupportedThinkingControlParameterError(err error, field string) bool {
 	if err == nil || field == "" {
 		return false
 	}
-
-	message := strings.ToLower(err.Error())
-	if !strings.Contains(message, "status 400") || !strings.Contains(message, strings.ToLower(field)) {
-		return false
+	var httpErr *providerHTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.statusCode == 400 && httpErr.unsupportedThinkingField[field]
 	}
 
+	message := strings.ToLower(err.Error())
+	if !strings.Contains(message, "status 400") {
+		return false
+	}
+	return matchesUnsupportedThinkingControlMessage(message, field)
+}
+
+func matchesUnsupportedThinkingControlMessage(message, field string) bool {
+	message = strings.ToLower(message)
+	if !strings.Contains(message, strings.ToLower(field)) {
+		return false
+	}
 	for _, marker := range []string{
 		"unknown parameter",
 		"unknown field",

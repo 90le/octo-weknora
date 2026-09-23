@@ -130,11 +130,12 @@ func (c *RemoteAPIChat) processStream(
 					FinishReason: state.lastFinishReason,
 				}
 			} else {
+				safeErr := safeProviderError(err)
 				logger.Errorf(ctx, "Stream read error: %v (tool_calls_assembled=%d)",
-					err, len(state.toolCallMap))
+					safeErr, len(state.toolCallMap))
 				streamChan <- types.StreamResponse{
 					ResponseType: types.ResponseTypeError,
-					Content:      err.Error(),
+					Content:      safeErr.Error(),
 					Done:         true,
 					ToolCalls:    state.buildOrderedToolCalls(),
 					Usage:        state.usage,
@@ -146,6 +147,10 @@ func (c *RemoteAPIChat) processStream(
 
 		if dumper != nil {
 			dumper.WritePacket(response)
+		}
+		if !state.firstSSESeen {
+			state.firstSSESeen = true
+			logger.Infof(ctx, "[LLM Stream] first_sse_after_headers_ms=%d", state.elapsedMs())
 		}
 
 		if response.Usage != nil {
@@ -186,11 +191,12 @@ func (c *RemoteAPIChat) processRawHTTPStream(
 					Usage:        state.usage,
 				}
 			} else {
+				safeErr := safeProviderError(err)
 				logger.Errorf(ctx, "Stream read error: %v (tool_calls_assembled=%d)",
-					err, len(state.toolCallMap))
+					safeErr, len(state.toolCallMap))
 				streamChan <- types.StreamResponse{
 					ResponseType: types.ResponseTypeError,
-					Content:      err.Error(),
+					Content:      safeErr.Error(),
 					Done:         true,
 					ToolCalls:    state.buildOrderedToolCalls(),
 					Usage:        state.usage,
@@ -202,6 +208,10 @@ func (c *RemoteAPIChat) processRawHTTPStream(
 
 		if event == nil {
 			continue
+		}
+		if !state.firstSSESeen {
+			state.firstSSESeen = true
+			logger.Infof(ctx, "[LLM Stream] first_sse_after_headers_ms=%d", state.elapsedMs())
 		}
 
 		if event.Done {
@@ -323,6 +333,7 @@ type streamState struct {
 	//   (A) no tool_calls field ever observed (true natural-stop), and
 	//   (B) tool_calls field observed but marker not yet emitted.
 	firstToolCallSeen    bool // true once any delta carried tool_calls
+	firstSSESeen         bool // true once the first provider event arrived
 	noToolCallStopLogged bool // true once we logged "stop without tool_calls"
 	firstContentSeen     bool // true once delta.Content first appeared
 	firstReasoningSeen   bool // true once reasoning_content first appeared
@@ -429,8 +440,8 @@ func (c *RemoteAPIChat) processStreamDelta(
 		if !state.firstReasoningSeen {
 			state.firstReasoningSeen = true
 			logger.Infof(ctx, "[LLM Stream] First reasoning_content at OpenAI layer "+
-				"(len=%d, preview=%q, elapsed_ms=%d)",
-				len(reasoningContent), truncateForDebug(reasoningContent, 80), state.elapsedMs())
+				"(len=%d, after_headers_ms=%d)",
+				len(reasoningContent), state.elapsedMs())
 		}
 		state.emit(streamChan, reasoningContent)
 	}
@@ -443,8 +454,8 @@ func (c *RemoteAPIChat) processStreamDelta(
 		if !state.firstContentSeen {
 			state.firstContentSeen = true
 			logger.Infof(ctx, "[LLM Stream] First delta.Content at OpenAI layer "+
-				"(len=%d, preview=%q, tool_call_seen=%t, thinking_seen=%t, elapsed_ms=%d)",
-				len(delta.Content), truncateForDebug(delta.Content, 80),
+				"(len=%d, tool_call_seen=%t, thinking_seen=%t, after_headers_ms=%d)",
+				len(delta.Content),
 				state.firstToolCallSeen, state.firstReasoningSeen, state.elapsedMs())
 		}
 		// If we had thinking content and this is the first answer chunk,
@@ -502,22 +513,9 @@ func (c *RemoteAPIChat) processToolCallsDelta(
 	// "tool_calls field truly absent" when triaging stream behavior.
 	if !state.firstToolCallSeen && len(toolCalls) > 0 {
 		state.firstToolCallSeen = true
-		var firstID, firstName string
-		for _, tc := range toolCalls {
-			if tc.ID != "" {
-				firstID = tc.ID
-			}
-			if tc.Function.Name != "" {
-				firstName = tc.Function.Name
-			}
-			if firstID != "" || firstName != "" {
-				break
-			}
-		}
 		logger.Infof(ctx, "[LLM Stream] First tool_calls delta at OpenAI layer "+
-			"(count=%d, first_id=%q, first_name=%q, "+
-			"first_content_seen=%t, thinking_seen=%t, elapsed_ms=%d)",
-			len(toolCalls), firstID, firstName,
+			"(count=%d, first_content_seen=%t, thinking_seen=%t, after_headers_ms=%d)",
+			len(toolCalls),
 			state.firstContentSeen, state.firstReasoningSeen, state.elapsedMs())
 	}
 

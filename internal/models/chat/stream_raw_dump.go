@@ -43,7 +43,11 @@ func newStreamPacketDumper(modelName string, request any) *streamPacketDumper {
 	if dir == "" {
 		return nil
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil
+	}
+	// Existing opt-in dump directories may predate the private mode.
+	if err := os.Chmod(dir, 0o700); err != nil {
 		return nil
 	}
 
@@ -70,8 +74,12 @@ func newStreamPacketDumper(modelName string, request any) *streamPacketDumper {
 		return nil
 	}
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
+		return nil
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
 		return nil
 	}
 
