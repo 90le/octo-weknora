@@ -2,7 +2,15 @@
 
 更新：2026-09-23。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-23 12:03 后）
+## 当前状态（2026-09-23 13:15 CST）
+
+生产后端已从 `3d58f986` 切换到合并提交 `4b2e84f882c8ba0e74619ba49c4bca348c31d484`，运行容器的不可变 app Image ID 为 `sha256:861b0f3d…`；前端代码未变，继续使用已验证的 `3d58f986` UI Image ID `sha256:1406a7f1…`。本轮一次发布包含已合并的 [PR #35](https://github.com/90le/octo-weknora/pull/35)（文档 blob 断流诊断与有限重试）、[#37](https://github.com/90le/octo-weknora/pull/37)（Octo 回答的来源传递）和 [#38](https://github.com/90le/octo-weknora/pull/38)（OpenAI 兼容模型通道的常规日志脱敏与分段计时）。三项均已通过 Linux 定向测试和 GitHub Go CI／lint；上线后健康 200、前端 200、未认证知识 API 401，登录管理页仍可见 4 个知识库。PostgreSQL migration `105` 非 dirty，4 个活动知识库、60 条活动来源和 4 条问题保持不变，切换时运行中同步及解析均为 0；Octo 小丘通道已在新 app 初始化。
+
+隔离候选与生产运行容器的 app Image ID 均为 `861b0f3d…`。候选使用独立恢复数据库与 internal 网络，IM、报表、来源计划均关闭；健康 200、未认证 401、认证系统信息返回完整提交 SHA 和 migration105，认证知识库列表为 4 个；解析引擎报告 Anydoc 可用。**本轮未在隔离候选重新完成 PDF 全流程入库**，因为恢复库现有 KB 的向量／关键词索引需要候选网络未连接的模型与 Milvus；上一版使用同一已核验解析运行资产完成过合成 PDF 解析。生产备份（Compose、私有 env、PG 一致性导出及应用文件哈希）在数据盘私有 `/home/mlclaw/agent-data/operations/p1-backup-4b2e84f8-20260923T045323Z`，旧 app 镜像保留；Milvus／Neo4j 卷不在该次文件快照中，本轮代码无迁移或索引结构变更。
+
+**待做的真实验收和范围：**12:00–12:03 的关系问题／追问验收发生在旧 `3d58f986` app 上，证明 PR #34 错答覆盖已修复；[#37](https://github.com/90le/octo-weknora/pull/37) 新的群内来源标题／安全链接尚待上线后消息核对。[#35](https://github.com/90le/octo-weknora/pull/35) 已在代码中提供有限 blob 重试，但三条 GitHub 文档来源仍是 `error`，本轮没有擅自修改整仓选取范围或批量重跑；它不是可续传仓库同步方案。常规 OpenAI 兼容模型请求日志已去掉正文，但显式启用的专用调试仍可保存完整内容，权限已收紧；其他模型 provider 的错误文本路径需单独审查。正式的多源 Agent 证据计划、来源范围预览、单仓库双用途和按文件恢复仍在 [实施计划](OCTO-PLAN.md)，不得宣称已实现。
+
+## 历史发布：3d（2026-09-23 12:03 后）
 
 PR [#34](https://github.com/90le/octo-weknora/pull/34) 已合并为 `3d58f986`，生产 app/UI 已切换到该提交的镜像。运行容器实际镜像 ID 为 app `sha256:003e148a…`、UI `sha256:1406a7f1…`；隔离候选和生产 app 已核对为同一 app ID，候选系统信息返回完整提交 SHA。第一次切换遇到并行构建覆盖可变标签，已立即回退旧镜像，查明候选实际 ID 后改用唯一验证标签重新切换；不能把最初的标签或被覆盖的 `5327805…` 当作发布依据。
 
