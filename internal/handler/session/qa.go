@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -140,7 +139,7 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	// Parse request body
 	var request CreateKnowledgeQARequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		logger.Error(ctx, "Failed to parse request data", err)
+		logger.Warnf(ctx, "Failed to parse request data: error_type=%T", err)
 		return nil, nil, errors.NewBadRequestError(err.Error())
 	}
 
@@ -154,7 +153,7 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	// has started an invalid value can no longer be reported as a 400.
 	resourceRewriter, err := h.resolveStreamRewriter(c)
 	if err != nil {
-		logger.Warnf(ctx, "Rejected resource URL mode: %v", err)
+		logger.Warn(ctx, "Rejected resource URL mode")
 		return nil, nil, err
 	}
 	if h.suggestionService != nil && request.SuggestionAttribution != nil {
@@ -173,8 +172,8 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 
 	// Keep only request metadata in routine logs. The query, quoted messages,
 	// attachment content and image data belong to the conversation, not logs.
-	logger.Infof(ctx, "[%s] Request: session_id=%s, query_bytes=%d, images=%d, attachment_uploads=%d, attachment_ids=%d",
-		logPrefix, sessionID, len(request.Query), len(request.Images), len(request.AttachmentUploads), len(request.AttachmentIDs))
+	logger.Infof(ctx, "[%s] Request: query_bytes=%d, images=%d, attachment_uploads=%d, attachment_ids=%d",
+		logPrefix, len(request.Query), len(request.Images), len(request.AttachmentUploads), len(request.AttachmentIDs))
 
 	// Get session. QA writes new messages into the session, so use the strict
 	// owner scope: a tenant admin may read an API-key session but must not be
@@ -182,7 +181,7 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	// creation with a 500 instead of a clean not-found).
 	session, err := h.sessionService.GetOwnedSession(ctx, sessionID)
 	if err != nil {
-		logger.Errorf(ctx, "Failed to get session, session ID: %s, error: %v", sessionID, err)
+		logger.Warnf(ctx, "Failed to get session: error_type=%T", err)
 		return nil, nil, errors.NewNotFoundError("Session not found")
 	}
 
@@ -221,8 +220,8 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	}
 
 	// Log merge results for debugging
-	logger.Infof(ctx, "[%s] @mention merge: request.KnowledgeBaseIDs=%v, request.MentionedItems=%d, merged kbIDs=%v, merged knowledgeIDs=%v",
-		logPrefix, request.KnowledgeBaseIDs, len(request.MentionedItems), kbIDs, knowledgeIDs)
+	logger.Infof(ctx, "[%s] @mention merge: requested_kbs=%d, mentioned_items=%d, merged_kbs=%d, merged_knowledge=%d",
+		logPrefix, len(request.KnowledgeBaseIDs), len(request.MentionedItems), len(kbIDs), len(knowledgeIDs))
 
 	// Process inline base64 images: decode and save to storage.
 	// VLM analysis for RAG paths is deferred to the pipeline rewrite step.
@@ -235,7 +234,7 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		tenantID := c.GetUint64(types.TenantIDContextKey.String())
 		agentStorageProvider := customAgent.Config.ImageStorageProvider
 		if err := h.saveImageAttachments(ctx, request.Images, tenantID, agentStorageProvider); err != nil {
-			logger.Errorf(ctx, "[%s] Failed to save images: %v", logPrefix, err)
+			logger.Errorf(ctx, "[%s] Failed to save images: error_type=%T", logPrefix, err)
 			return nil, nil, errors.NewBadRequestError(fmt.Sprintf("Image save failed: %v", err))
 		}
 
@@ -313,7 +312,7 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 
 		if len(errChan) > 0 {
 			err := <-errChan
-			logger.Errorf(ctx, "[%s] attachment processing failed: %v", logPrefix, err)
+			logger.Errorf(ctx, "[%s] attachment processing failed: error_type=%T", logPrefix, err)
 			return nil, nil, errors.NewBadRequestError(fmt.Sprintf("attachment processing failed: %v", err))
 		}
 
@@ -556,7 +555,7 @@ func (h *Handler) resolveAgent(
 		return nil, 0, false
 	}
 
-	logger.Infof(ctx, "Resolving agent, agent ID: %s", secutils.SanitizeForLog(agentID))
+	logger.Info(ctx, "Resolving agent selection")
 
 	// Try shared agent first
 	var customAgent *types.CustomAgent
@@ -573,8 +572,7 @@ func (h *Handler) resolveAgent(
 			effectiveTenantID = agent.TenantID
 			customAgent = agent
 			sharedAgentReadOnly = true
-			logger.Infof(ctx, "Using shared agent: ID=%s, Name=%s, effectiveTenantID=%d (retrieval scope)",
-				customAgent.ID, customAgent.Name, effectiveTenantID)
+			logger.Infof(ctx, "Using shared agent: effectiveTenantID=%d (retrieval scope)", effectiveTenantID)
 		}
 	}
 
@@ -584,15 +582,13 @@ func (h *Handler) resolveAgent(
 		agent, err := h.customAgentService.GetAgentByID(ctx, agentID)
 		if err == nil {
 			customAgent = agent
-			logger.Infof(ctx, "Using own agent: ID=%s, Name=%s, AgentMode=%s",
-				customAgent.ID, customAgent.Name, customAgent.Config.AgentMode)
+			logger.Infof(ctx, "Using own agent: agent_mode_enabled=%t", customAgent.IsAgentMode())
 		} else {
-			logger.Warnf(ctx, "Failed to get custom agent, agent ID: %s, error: %v, using default config",
-				secutils.SanitizeForLog(agentID), err)
+			logger.Warnf(ctx, "Failed to get custom agent: error_type=%T; using default config", err)
 		}
 	} else if customAgent != nil {
-		logger.Infof(ctx, "Using custom agent: ID=%s, Name=%s, IsBuiltin=%v, AgentMode=%s, effectiveTenantID=%d",
-			customAgent.ID, customAgent.Name, customAgent.IsBuiltin, customAgent.Config.AgentMode, effectiveTenantID)
+		logger.Infof(ctx, "Using custom agent: is_builtin=%t, agent_mode_enabled=%t, effectiveTenantID=%d",
+			customAgent.IsBuiltin, customAgent.IsAgentMode(), effectiveTenantID)
 	}
 
 	return customAgent, effectiveTenantID, sharedAgentReadOnly
@@ -720,9 +716,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 			logger.CloneContext(baseCtx), reqCtx.sessionID,
 			reqCtx.assistantMessage.ID, reqCtx.requestID,
 		); err != nil {
-			logger.ErrorWithFields(reqCtx.ctx, err, map[string]interface{}{
-				"session_id": reqCtx.sessionID,
-			})
+			logger.Errorf(reqCtx.ctx, "Failed to set live agent run: error_type=%T", err)
 			streamCtx.liveRunFailed = true
 			streamCtx.liveRunErr = err
 			return streamCtx
@@ -766,7 +760,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 		if reqCtx.customAgent != nil && reqCtx.customAgent.Config.ModelID != "" {
 			modelID = reqCtx.customAgent.Config.ModelID
 		}
-		logger.Infof(reqCtx.ctx, "Session has no title, starting async title generation, session ID: %s, model: %s", reqCtx.sessionID, modelID)
+		logger.Info(reqCtx.ctx, "Session has no title, starting async title generation")
 		h.sessionService.GenerateTitleAsync(asyncCtx, reqCtx.session, reqCtx.query, modelID, eventBus)
 	}
 
@@ -793,7 +787,7 @@ func (h *Handler) SearchKnowledge(c *gin.Context) {
 	// Parse request body
 	var request SearchKnowledgeRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		logger.Error(ctx, "Failed to parse request data", err)
+		logger.Warnf(ctx, "Failed to parse request data: error_type=%T", err)
 		c.Error(errors.NewBadRequestError(err.Error()))
 		return
 	}
@@ -809,7 +803,7 @@ func (h *Handler) SearchKnowledge(c *gin.Context) {
 	// or a rejected scope costs nothing.
 	rewriter, err := h.resolveResourceRewriter(c)
 	if err != nil {
-		logger.Warnf(ctx, "Rejected resource URL mode: %v", err)
+		logger.Warn(ctx, "Rejected resource URL mode")
 		_ = c.Error(err)
 		return
 	}
@@ -833,7 +827,7 @@ func (h *Handler) SearchKnowledge(c *gin.Context) {
 	mentionScopes := tagScopesFromMentionedItems(request.MentionedItems)
 	requestTagIDs := dedupRequestStrings(request.TagIDs)
 	if err := validateUnscopedTagIDs(orphanTagIDsForScope(requestTagIDs, mentionScopes), secutils.SanitizeForLogArray(knowledgeBaseIDs)); err != nil {
-		logger.Error(ctx, err.Error())
+		logger.Warn(ctx, "Rejected unscoped tag selection")
 		c.Error(errors.NewBadRequestError(err.Error()))
 		return
 	}
@@ -851,9 +845,9 @@ func (h *Handler) SearchKnowledge(c *gin.Context) {
 
 	logger.Infof(
 		ctx,
-		"Knowledge search request, knowledge base IDs: %v, knowledge IDs: %v, tag scopes: %d, query_bytes: %d",
-		secutils.SanitizeForLogArray(knowledgeBaseIDs),
-		secutils.SanitizeForLogArray(request.KnowledgeIDs),
+		"Knowledge search request: knowledge_bases=%d, knowledge_items=%d, tag_scopes=%d, query_bytes=%d",
+		len(knowledgeBaseIDs),
+		len(request.KnowledgeIDs),
 		len(tagScopes),
 		len(request.Query),
 	)
@@ -861,7 +855,7 @@ func (h *Handler) SearchKnowledge(c *gin.Context) {
 	// Directly call knowledge retrieval service without LLM summarization
 	searchResults, err := h.sessionService.SearchKnowledge(ctx, knowledgeBaseIDs, request.KnowledgeIDs, tagScopes, request.Query)
 	if err != nil {
-		logger.ErrorWithFields(ctx, err, nil)
+		logger.Errorf(ctx, "Knowledge search failed: error_type=%T", err)
 		c.Error(errors.NewInternalServerError(err.Error()))
 		return
 	}
@@ -930,8 +924,7 @@ func (h *Handler) AgentQA(c *gin.Context) {
 	agentModeEnabled := request.AgentEnabled
 	if reqCtx.customAgent != nil {
 		agentModeEnabled = reqCtx.customAgent.IsAgentMode()
-		logger.Infof(reqCtx.ctx, "Agent mode determined by custom agent: %v (config.agent_mode=%s)",
-			agentModeEnabled, reqCtx.customAgent.Config.AgentMode)
+		logger.Infof(reqCtx.ctx, "Agent mode determined by custom agent: enabled=%t", agentModeEnabled)
 	}
 
 	// Sanity gate: agent mode requires a resolved CustomAgent. If we got
@@ -945,9 +938,7 @@ func (h *Handler) AgentQA(c *gin.Context) {
 	// cross-tenant switch where the previously selected agent is no
 	// longer visible.
 	if agentModeEnabled && reqCtx.customAgent == nil {
-		logger.Warnf(reqCtx.ctx,
-			"Agent mode requested without a resolvable agent_id, rejecting; session=%s, request.AgentID=%q",
-			reqCtx.sessionID, secutils.SanitizeForLog(request.AgentID))
+		logger.Warn(reqCtx.ctx, "Agent mode requested without a resolvable agent_id; rejecting")
 		c.Error(errors.NewBadRequestError(
 			"agent_id is required when agent mode is enabled"))
 		return
@@ -957,7 +948,7 @@ func (h *Handler) AgentQA(c *gin.Context) {
 	if agentModeEnabled {
 		h.executeQA(reqCtx, qaModeAgent, true)
 	} else {
-		logger.Infof(reqCtx.ctx, "Agent mode disabled, delegating to normal mode for session: %s", reqCtx.sessionID)
+		logger.Info(reqCtx.ctx, "Agent mode disabled, delegating to normal mode")
 		h.executeQA(reqCtx, qaModeNormal, !request.DisableTitle)
 	}
 }
@@ -1031,14 +1022,14 @@ func (h *Handler) rollbackTurnMessages(ctx context.Context, reqCtx *qaRequestCon
 	sessionID := reqCtx.sessionID
 	if user && reqCtx.userMessageID != "" {
 		if err := h.messageService.DeleteMessage(ctx, sessionID, reqCtx.userMessageID); err != nil {
-			logger.Warnf(ctx, "turn rollback failed for user message %s: %v", reqCtx.userMessageID, err)
+			logger.Warnf(ctx, "turn rollback failed for user message: error_type=%T", err)
 		} else {
 			reqCtx.userMessageID = ""
 		}
 	}
 	if assistant && reqCtx.assistantMessage != nil && reqCtx.assistantMessage.ID != "" {
 		if err := h.messageService.DeleteMessage(ctx, sessionID, reqCtx.assistantMessage.ID); err != nil {
-			logger.Warnf(ctx, "turn rollback failed for assistant message %s: %v", reqCtx.assistantMessage.ID, err)
+			logger.Warnf(ctx, "turn rollback failed for assistant message: error_type=%T", err)
 		} else {
 			reqCtx.assistantMessage.ID = ""
 		}
@@ -1081,7 +1072,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 			if reqCtx.c != nil && !reqCtx.skipSSE {
 				_ = reqCtx.c.Error(err)
 			} else {
-				logger.ErrorWithFields(ctx, err, map[string]interface{}{"session_id": sessionID})
+				logger.Warnf(ctx, "Agent run rejected: error_type=%T", err)
 			}
 			return
 		}
@@ -1099,7 +1090,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 				RequestID: reqCtx.requestID,
 			},
 		}); err != nil {
-			logger.Errorf(ctx, "Failed to emit agent query event: %v", err)
+			logger.Errorf(ctx, "Failed to emit agent query event: error_type=%T", err)
 			return
 		}
 	}
@@ -1113,15 +1104,15 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 		if reqCtx.c != nil && !reqCtx.skipSSE {
 			_ = reqCtx.c.Error(errors.NewInternalServerError(err.Error()))
 		} else {
-			logger.ErrorWithFields(ctx, err, map[string]interface{}{"session_id": sessionID})
+			logger.Errorf(ctx, "Failed to persist turn messages: error_type=%T", err)
 		}
 		return
 	}
 
 	if mode == qaModeNormal {
-		logger.Infof(ctx, "Using knowledge bases: %v", reqCtx.knowledgeBaseIDs)
+		logger.Infof(ctx, "Using knowledge bases: count=%d", len(reqCtx.knowledgeBaseIDs))
 	} else {
-		logger.Infof(ctx, "Calling agent QA service, session ID: %s", sessionID)
+		logger.Info(ctx, "Calling agent QA service")
 	}
 
 	// Move the previous run's leftovers onto this run's queue before the run
@@ -1132,7 +1123,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 		if err := h.streamManager.AppendSteerEvents(
 			ctx, sessionID, reqCtx.assistantMessage.ID, reqCtx.steerCarryOver,
 		); err != nil {
-			logger.Warnf(ctx, "steer carry-over append failed for session %s: %v", sessionID, err)
+			logger.Warnf(ctx, "steer carry-over append failed: error_type=%T", err)
 		}
 	}
 
@@ -1191,7 +1182,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 				}
 				completionHandled = true
 
-				logger.Infof(streamCtx.asyncCtx, "Knowledge QA service completed for session: %s", sessionID)
+				logger.Info(streamCtx.asyncCtx, "Knowledge QA service completed")
 				updateCtx := context.WithValue(streamCtx.asyncCtx, types.TenantIDContextKey, reqCtx.session.TenantID)
 				h.completeAssistantMessage(updateCtx, streamCtx.assistantMessage, reqCtx.query, reqCtx.userMessageID)
 				streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{
@@ -1210,15 +1201,13 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 		defer close(asyncDone)
 		defer func() {
 			if r := recover(); r != nil {
-				buf := make([]byte, 10240)
-				runtime.Stack(buf, true)
 				stageName := "Knowledge QA"
 				if mode == qaModeAgent {
 					stageName = "Agent QA"
 				}
-				logger.ErrorWithFields(streamCtx.asyncCtx,
-					errors.NewInternalServerError(fmt.Sprintf("%s service panicked: %v\n%s", stageName, r, string(buf))),
-					map[string]interface{}{"session_id": sessionID})
+				// A panic value can include a user query or token. Preserve the
+				// stage and type without writing the value or stack to routine logs.
+				logger.Errorf(streamCtx.asyncCtx, "%s service panicked: panic_type=%T", stageName, r)
 			}
 			// Agent mode: complete the assistant message in defer (normal mode does it via event handler)
 			if mode == qaModeAgent {
@@ -1263,9 +1252,9 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 				if err := h.streamManager.ClearLiveRun(
 					updateCtx, sessionID, streamCtx.assistantMessage.ID,
 				); err != nil {
-					logger.Warnf(updateCtx, "live run cleanup failed for session %s: %v", sessionID, err)
+					logger.Warnf(updateCtx, "live run cleanup failed: error_type=%T", err)
 				}
-				logger.Infof(streamCtx.asyncCtx, "Agent QA service completed for session: %s", sessionID)
+				logger.Info(streamCtx.asyncCtx, "Agent QA service completed")
 			}
 		}()
 
@@ -1295,9 +1284,9 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 			// the stop event already notifies the client, so don't emit a
 			// spurious error event (which would otherwise show an error toast).
 			if streamCtx.asyncCtx.Err() != nil {
-				logger.Infof(streamCtx.asyncCtx, "QA cancelled by user stop for session: %s", sessionID)
+				logger.Info(streamCtx.asyncCtx, "QA cancelled by user stop")
 			} else {
-				logger.ErrorWithFields(streamCtx.asyncCtx, serviceErr, nil)
+				logger.Errorf(streamCtx.asyncCtx, "QA service failed: error_type=%T", serviceErr)
 				streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{
 					Type:      event.EventError,
 					SessionID: sessionID,
@@ -1480,7 +1469,7 @@ func (h *Handler) resolveTemporaryAttachments(streamCtx *sseStreamContext, reqCt
 	}
 	if resolveErr != nil || temporaryResult == nil {
 		if resolveErr != nil {
-			logger.Warnf(ctx, "temporary attachment resolution failed for session %s: %v", sessionID, resolveErr)
+			logger.Warnf(ctx, "temporary attachment resolution failed: error_type=%T", resolveErr)
 		}
 		return
 	}
@@ -1528,8 +1517,7 @@ func (h *Handler) persistResolvedAttachmentContent(
 	)
 	msg, err := h.messageService.GetMessage(updateCtx, reqCtx.sessionID, reqCtx.userMessageID)
 	if err != nil || msg == nil {
-		logger.Warnf(updateCtx, "persist attachment content: load user message %s failed: %v",
-			reqCtx.userMessageID, err)
+		logger.Warnf(updateCtx, "persist attachment content: load user message failed: error_type=%T", err)
 		return
 	}
 	byID := make(map[string]types.MessageAttachment, len(resolved))
@@ -1552,8 +1540,7 @@ func (h *Handler) persistResolvedAttachmentContent(
 		return
 	}
 	if err := h.messageService.UpdateMessage(updateCtx, msg); err != nil {
-		logger.Warnf(updateCtx, "persist attachment content: update user message %s failed: %v",
-			reqCtx.userMessageID, err)
+		logger.Warnf(updateCtx, "persist attachment content: update user message failed: error_type=%T", err)
 	}
 }
 
@@ -1660,7 +1647,7 @@ func (h *Handler) persistLastRequestState(parentCtx context.Context, reqCtx *qaR
 	}
 
 	if err := h.sessionService.UpdateSessionLastRequestState(ctx, reqCtx.sessionID, state); err != nil {
-		logger.Warnf(ctx, "persist last_request_state failed for session %s: %v", reqCtx.sessionID, err)
+		logger.Warnf(ctx, "persist last_request_state failed: error_type=%T", err)
 	}
 }
 
@@ -1691,7 +1678,7 @@ func (h *Handler) completeAssistantMessage(
 			if _, err := h.suggestionService.EnsureFollowUps(
 				bgCtx, assistantMessage.SessionID, assistantMessage.ID, false,
 			); err != nil {
-				logger.Warnf(bgCtx, "follow-up suggestion generation failed for message %s: %v", assistantMessage.ID, err)
+				logger.Warnf(bgCtx, "follow-up suggestion generation failed: error_type=%T", err)
 			}
 		}()
 	}
@@ -1728,7 +1715,7 @@ func (h *Handler) recordTurnMemory(
 			// re-derived by the other.
 			SourceMessageID: userMessageID,
 		}); err != nil {
-			logger.Warnf(ctx, "memory: explicit remember failed for message %s: %v", assistantMessage.ID, err)
+			logger.Warnf(ctx, "memory: explicit remember failed: error_type=%T", err)
 		}
 	}
 	h.recordAnswerSources(ctx, assistantMessage)

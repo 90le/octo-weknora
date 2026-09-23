@@ -728,6 +728,7 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		return nil, fmt.Errorf("unsupported database driver: %s", os.Getenv("DB_DRIVER"))
 	}
 	db, err := gorm.Open(dialector, &gorm.Config{
+		Logger: database.NewPrivateGORMLogger(),
 		NowFunc: func() time.Time {
 			return time.Now().UTC()
 		},

@@ -20,11 +20,65 @@ type privacySessionServiceStub struct {
 	interfaces.SessionService
 	seenSessionID string
 	seenQuery     string
+	session       *types.Session
 }
 
 func (s *privacySessionServiceStub) GetOwnedSession(_ context.Context, id string) (*types.Session, error) {
 	s.seenSessionID = id
+	if s.session != nil {
+		return s.session, nil
+	}
 	return nil, stderrors.New("missing test session")
+}
+
+type privacyAgentServiceStub struct {
+	interfaces.CustomAgentService
+	seenAgentID string
+}
+
+func (s *privacyAgentServiceStub) GetAgentByID(_ context.Context, id string) (*types.CustomAgent, error) {
+	s.seenAgentID = id
+	return nil, stderrors.New("lookup failed for " + id)
+}
+
+func TestAgentQAInvalidAgentIDDoesNotLeakRequestValues(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var captured bytes.Buffer
+	logger.SetOutput(&captured)
+	t.Cleanup(logger.ConfigureFromEnv)
+
+	const agentID = "B074-PRIVACY-BADAGENT-0717"
+	const sessionID = "B074-PRIVACY-SESSION-0717"
+	const question = "B074-PRIVACY-QUESTION-0717"
+	service := &privacySessionServiceStub{session: &types.Session{ID: sessionID, TenantID: 1}}
+	agents := &privacyAgentServiceStub{}
+	h := &Handler{sessionService: service, customAgentService: agents}
+	r := gin.New()
+	r.Use(middleware.RequestID(), middleware.Logger())
+	r.POST("/api/v1/agent-chat/:session_id", func(c *gin.Context) {
+		h.AgentQA(c)
+		if len(c.Errors) != 0 {
+			c.Status(http.StatusBadRequest)
+		}
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-chat/"+sessionID,
+		strings.NewReader(`{"query":"`+question+`","agent_enabled":true,"agent_id":"`+agentID+`","disable_title":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest || service.seenSessionID != sessionID || agents.seenAgentID != agentID {
+		t.Fatalf("invalid agent request changed: status=%d session_ok=%t agent_ok=%t",
+			w.Code, service.seenSessionID == sessionID, agents.seenAgentID == agentID)
+	}
+	logs := captured.String()
+	for _, marker := range []string{agentID, sessionID, question} {
+		if strings.Contains(logs, marker) {
+			t.Fatal("invalid agent request leaked user-controlled value to routine logs")
+		}
+	}
+	if !strings.Contains(logs, "resolvable agent_id") || !strings.Contains(logs, "error_type=") {
+		t.Fatal("invalid agent request lost safe error diagnostics")
+	}
 }
 
 func (s *privacySessionServiceStub) SearchKnowledge(
