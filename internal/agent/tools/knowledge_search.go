@@ -167,9 +167,8 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 		}, err
 	}
 
-	// Log input arguments
-	argsJSON, _ := json.MarshalIndent(input, "", "  ")
-	logger.Debugf(ctx, "[Tool][KnowledgeSearch] Input args:\n%s", string(argsJSON))
+	logger.Debugf(ctx, "[Tool][KnowledgeSearch] Input: queries=%d knowledge_bases=%d",
+		len(input.Queries), len(input.KnowledgeBaseIDs))
 
 	// Determine which KBs to search - user can optionally filter to specific KBs
 	var userSpecifiedKBs []string
@@ -178,7 +177,7 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 		if err := validateKnowledgeBaseIDsInSearchTargets(t.searchTargets, userSpecifiedKBs); err != nil {
 			return &types.ToolResult{Success: false, Error: err.Error()}, err
 		}
-		logger.Infof(ctx, "[Tool][KnowledgeSearch] User specified %d knowledge bases: %v", len(userSpecifiedKBs), userSpecifiedKBs)
+		logger.Infof(ctx, "[Tool][KnowledgeSearch] User specified %d knowledge bases", len(userSpecifiedKBs))
 	}
 
 	// Use pre-computed search targets, optionally filtered by user-specified KBs
@@ -225,7 +224,7 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 		}, fmt.Errorf("no queries provided")
 	}
 
-	logger.Infof(ctx, "[Tool][KnowledgeSearch] Queries: %v", queries)
+	logKnowledgeSearchQueries(ctx, queries)
 
 	// Search parameters: fall back to global config, then to hardcoded defaults.
 	// We used to read tenant.ConversationConfig here as the first source of
@@ -299,8 +298,8 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 	var filteredResults []*searchResultWithMeta
 
 	if t.rerankModel != nil && len(deduplicatedBeforeRerank) > 0 && rerankQuery != "" {
-		logger.Infof(ctx, "[Tool][KnowledgeSearch] Applying rerank, input: %d results, threshold: %.2f, queries: %v",
-			len(deduplicatedBeforeRerank), t.rerankThreshold(), queries)
+		logger.Infof(ctx, "[Tool][KnowledgeSearch] Applying rerank, input: %d results, threshold: %.2f, queries: %d",
+			len(deduplicatedBeforeRerank), t.rerankThreshold(), len(queries))
 		rerankedResults, err := t.rerankResults(ctx, rerankQuery, deduplicatedBeforeRerank)
 		if err != nil {
 			logger.Warnf(ctx, "[Tool][KnowledgeSearch] Rerank failed, using original results: %v", err)
@@ -392,8 +391,25 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 		logger.Errorf(ctx, "[Tool][KnowledgeSearch] Failed to format output: %v", err)
 		return result, err
 	}
-	logger.Infof(ctx, "[Tool][KnowledgeSearch] Output: %s", result.Output)
+	logKnowledgeSearchOutput(ctx, result)
 	return result, nil
+}
+
+func logKnowledgeSearchQueries(ctx context.Context, queries []string) {
+	queryBytes := 0
+	for _, query := range queries {
+		queryBytes += len(query)
+	}
+	logger.Infof(ctx, "[Tool][KnowledgeSearch] Queries: count=%d bytes=%d", len(queries), queryBytes)
+}
+
+func logKnowledgeSearchOutput(ctx context.Context, result *types.ToolResult) {
+	if result == nil {
+		logger.Infof(ctx, "[Tool][KnowledgeSearch] Output: present=false")
+		return
+	}
+	logger.Infof(ctx, "[Tool][KnowledgeSearch] Output: present=true success=%v bytes=%d",
+		result.Success, len(result.Output))
 }
 
 // getKnowledgeBaseTypes fetches knowledge base types for the given IDs

@@ -621,7 +621,7 @@ func (q *qdrantRepository) KeywordsRetrieve(ctx context.Context,
 	params types.RetrieveParams,
 ) ([]*types.RetrieveResult, error) {
 	log := logger.GetLogger(ctx)
-	log.Infof("[Qdrant] Performing keywords retrieval with query: %s, topK: %d", params.Query, params.TopK)
+	log.Infof("[Qdrant] Performing keywords retrieval with query_bytes=%d, topK=%d", len(params.Query), params.TopK)
 
 	// Get all collections that match our base name pattern
 	collections, err := q.client.ListCollections(ctx)
@@ -637,7 +637,7 @@ func (q *qdrantRepository) KeywordsRetrieve(ctx context.Context,
 
 	// Tokenize query for OR-based search (better for Chinese and multi-word queries)
 	queryTokens := tokenizeQuery(params.Query)
-	log.Debugf("[Qdrant] Tokenized query into %d tokens: %v", len(queryTokens), queryTokens)
+	log.Debugf("[Qdrant] Tokenized query into %d tokens", len(queryTokens))
 
 	// Search in all matching collections
 	for _, collectionName := range collections {
@@ -705,7 +705,7 @@ func (q *qdrantRepository) KeywordsRetrieve(ctx context.Context,
 	}
 
 	if len(allResults) == 0 {
-		log.Warnf("[Qdrant] No keyword matches found for query: %s", params.Query)
+		log.Warnf("[Qdrant] No keyword matches found for query_bytes=%d", len(params.Query))
 	} else {
 		log.Infof("[Qdrant] Keywords retrieval found %d results", len(allResults))
 	}

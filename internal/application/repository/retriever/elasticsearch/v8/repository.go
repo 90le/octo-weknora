@@ -486,7 +486,7 @@ func (e *elasticsearchRepository) KeywordsRetrieve(ctx context.Context,
 	params typesLocal.RetrieveParams,
 ) ([]*typesLocal.RetrieveResult, error) {
 	log := logger.GetLogger(ctx)
-	log.Infof("[Elasticsearch] Performing keywords retrieval with query: %s, topK: %d", params.Query, params.TopK)
+	log.Infof("[Elasticsearch] Performing keywords retrieval with query_bytes=%d, topK=%d", len(params.Query), params.TopK)
 
 	filter := e.getBaseConds(params)
 	// Build must conditions for content matching
@@ -524,7 +524,7 @@ func (e *elasticsearchRepository) KeywordsRetrieve(ctx context.Context,
 	}
 
 	if len(results) == 0 {
-		log.Warnf("[Elasticsearch] No keyword matches found for query: %s", params.Query)
+		log.Warnf("[Elasticsearch] No keyword matches found for query_bytes=%d", len(params.Query))
 	} else {
 		log.Infof("[Elasticsearch] Keywords retrieval found %d results", len(results))
 		log.Debugf("[Elasticsearch] Top result score: %.4f", results[0].Score)

@@ -2,12 +2,12 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/answerevidence"
+	"github.com/Tencent/WeKnora/internal/common"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
@@ -28,12 +28,6 @@ func (s *sessionService) AgentQA(
 	// Propagate the session ID so stateful sandbox backends (CubeSandbox) can
 	// bind script execution to a per-session MicroVM instance.
 	ctx = types.WithSessionID(ctx, sessionID)
-	sessionJSON, err := json.Marshal(req.Session)
-	if err != nil {
-		logger.Errorf(ctx, "Failed to marshal session, session ID: %s, error: %v", sessionID, err)
-		return fmt.Errorf("failed to marshal session: %w", err)
-	}
-
 	// customAgent is required for AgentQA (handler has already done permission check for shared agent)
 	if req.CustomAgent == nil {
 		logger.Warnf(ctx, "Custom agent not provided for session: %s", sessionID)
@@ -42,8 +36,7 @@ func (s *sessionService) AgentQA(
 
 	// Resolve retrieval tenant using shared helper
 	agentTenantID := s.resolveRetrievalTenantID(ctx, req)
-	logger.Infof(ctx, "Start agent-based question answering, session ID: %s, agent tenant ID: %d, query: %s, session: %s",
-		sessionID, agentTenantID, req.Query, string(sessionJSON))
+	logAgentQAStart(ctx, req, agentTenantID)
 
 	var tenantInfo *types.Tenant
 	if v := ctx.Value(types.TenantInfoContextKey); v != nil {
@@ -255,7 +248,7 @@ func (s *sessionService) AgentQA(
 	// Events will be emitted to EventBus and handled by the Handler layer
 	logger.Info(ctx, "Executing agent with streaming")
 	if _, err := engine.Execute(ctx, sessionID, req.AssistantMessageID, agentQuery, llmContext, agentImageURLs); err != nil {
-		logger.Errorf(ctx, "Agent execution failed: %v", err)
+		logger.Errorf(ctx, "Agent execution failed: error_type=%T", err)
 		// Emit error event to the EventBus used by this agent
 		eventBus.Emit(ctx, event.Event{
 			Type:      event.EventError,
@@ -269,6 +262,20 @@ func (s *sessionService) AgentQA(
 	}
 	// Return empty - events will be handled by Handler via EventBus subscription
 	return nil
+}
+
+// logAgentQAStart keeps the request correlated without copying the question,
+// quoted message, attachments or serialized session into routine server logs.
+func logAgentQAStart(ctx context.Context, req *types.QARequest, agentTenantID uint64) {
+	requestID, _ := types.RequestIDFromContext(ctx)
+	common.PipelineInfo(ctx, "AgentQA", "start", map[string]interface{}{
+		"request_id":         requestID,
+		"session_id":         req.Session.ID,
+		"tenant_id":          agentTenantID,
+		"query_len":          len(req.Query),
+		"quoted_context_len": len(req.QuotedContext),
+		"attachment_count":   len(req.Attachments),
+	})
 }
 
 // buildAgentModelInput fixes the evidence policy from the original user turn,

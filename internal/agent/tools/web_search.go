@@ -130,7 +130,7 @@ func (t *WebSearchTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 		}, fmt.Errorf("query parameter is required")
 	}
 
-	logger.Infof(ctx, "[Tool][WebSearch] Searching with query: %s, max_results: %d", query, t.maxResults)
+	logger.Infof(ctx, "[Tool][WebSearch] Searching with query_bytes=%d, max_results=%d", len(query), t.maxResults)
 
 	// Get tenant ID from context
 	tenantID := uint64(0)
@@ -174,7 +174,7 @@ func (t *WebSearchTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 	)
 	webResults, err := t.webSearchService.Search(ctx, resolvedProviderID, searchConfig, query)
 	if err != nil {
-		logger.Errorf(ctx, "[Tool][WebSearch] Web search failed: %v", err)
+		logger.Errorf(ctx, "[Tool][WebSearch] Web search failed: error_type=%T", err)
 		return &types.ToolResult{
 			Success: false,
 			Error:   fmt.Sprintf("web search failed: %v", err),

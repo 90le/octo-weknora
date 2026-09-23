@@ -505,22 +505,14 @@ func (e *AgentEngine) callLLMWithRetry(
 	for i := startIdx; i < len(messages); i++ {
 		msg := messages[i]
 		if msg.Role == "tool" {
-			logger.Debugf(ctx, "[Agent][Round-%d] msg[%d]: role=tool, name=%s, len=%d",
-				round, i, msg.Name, len(msg.Content))
+			logger.Debugf(ctx, "[Agent][Round-%d] msg[%d]: role=tool, len=%d",
+				round, i, len(msg.Content))
 		} else if len(msg.ToolCalls) > 0 {
-			tcNames := make([]string, len(msg.ToolCalls))
-			for j, tc := range msg.ToolCalls {
-				tcNames[j] = tc.Function.Name
-			}
-			logger.Debugf(ctx, "[Agent][Round-%d] msg[%d]: role=%s, len=%d, tool_calls=%v",
-				round, i, msg.Role, len(msg.Content), tcNames)
+			logger.Debugf(ctx, "[Agent][Round-%d] msg[%d]: role=%s, len=%d, tool_calls=%d",
+				round, i, msg.Role, len(msg.Content), len(msg.ToolCalls))
 		} else {
-			preview := msg.Content
-			if len(preview) > 100 {
-				preview = preview[:100] + "..."
-			}
-			logger.Debugf(ctx, "[Agent][Round-%d] msg[%d]: role=%s, len=%d, content=%s",
-				round, i, msg.Role, len(msg.Content), preview)
+			logger.Debugf(ctx, "[Agent][Round-%d] msg[%d]: role=%s, len=%d",
+				round, i, msg.Role, len(msg.Content))
 		}
 	}
 	common.PipelineInfo(ctx, "Agent", "think_start", map[string]interface{}{
@@ -606,12 +598,8 @@ func (e *AgentEngine) callLLMWithRetry(
 
 	// Log LLM response summary
 	if len(response.ToolCalls) > 0 {
-		tcNames := make([]string, len(response.ToolCalls))
-		for i, tc := range response.ToolCalls {
-			tcNames[i] = tc.Function.Name
-		}
-		logger.Infof(ctx, "[Agent][Round-%d] LLM responded: finish=%s, content=%d chars, tools=%v",
-			round, response.FinishReason, len(response.Content), tcNames)
+		logger.Infof(ctx, "[Agent][Round-%d] LLM responded: finish=%s, content=%d chars, tool_calls=%d",
+			round, response.FinishReason, len(response.Content), len(response.ToolCalls))
 	} else {
 		logger.Infof(ctx, "[Agent][Round-%d] LLM responded: finish=%s, content=%d chars, tool_calls=0",
 			round, response.FinishReason, len(response.Content))
@@ -623,11 +611,7 @@ func (e *AgentEngine) callLLMWithRetry(
 		}
 	}
 	if response.Content != "" {
-		preview := response.Content
-		if len(preview) > 300 {
-			preview = preview[:300] + "..."
-		}
-		logger.Debugf(ctx, "[Agent][Round-%d] LLM content preview:\n%s", round, preview)
+		logger.Debugf(ctx, "[Agent][Round-%d] LLM content: bytes=%d", round, len(response.Content))
 	}
 
 	return response, nil
