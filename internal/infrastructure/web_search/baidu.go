@@ -77,14 +77,14 @@ func (p *BaiduProvider) Search(
 		maxResults = maxBaiduResults
 	}
 
-	logger.Infof(ctx, "[WebSearch][Baidu] query=%q maxResults=%d url=%s", preparedQuery, maxResults, p.baseURL)
+	logger.Infof(ctx, "[WebSearch][Baidu] query_bytes=%d maxResults=%d", len(preparedQuery), maxResults)
 	req, err := p.buildRequest(ctx, preparedQuery, maxResults)
 	if err != nil {
 		return nil, err
 	}
 	results, err := p.doSearch(ctx, req, includeDate)
 	if err != nil {
-		logger.Warnf(ctx, "[WebSearch][Baidu] failed: %v", err)
+		logger.Warnf(ctx, "[WebSearch][Baidu] failed: error_type=%T", err)
 		return nil, err
 	}
 	logger.Infof(ctx, "[WebSearch][Baidu] returned %d results", len(results))
@@ -131,7 +131,7 @@ func (p *BaiduProvider) doSearch(ctx context.Context, req *http.Request, include
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		logger.Warnf(ctx, "[WebSearch][Baidu] API returned status %d: %s", resp.StatusCode, string(body))
+		logger.Warnf(ctx, "[WebSearch][Baidu] API returned status %d, response_bytes=%d", resp.StatusCode, len(body))
 		return nil, fmt.Errorf("baidu API returned status %d: %s", resp.StatusCode, string(body))
 	}
 

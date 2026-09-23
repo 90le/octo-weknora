@@ -127,8 +127,8 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	receivedAt := time.Now()
 	ctx := logger.CloneContext(c.Request.Context())
 	requestID := secutils.SanitizeForLog(c.GetString(types.RequestIDContextKey.String()))
-	logger.Infof(ctx, "[%s] TTFB:start request_id=%s received_at=%d",
-		logPrefix, requestID, receivedAt.UnixMilli())
+	logger.Infof(ctx, "[%s] TTFB:start received_at=%d",
+		logPrefix, receivedAt.UnixMilli())
 
 	// Get session ID from URL parameter
 	sessionID := secutils.SanitizeForLog(c.Param("session_id"))
@@ -171,11 +171,10 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		request.Images[i].Caption = ""
 	}
 
-	// Log request details
-	if requestJSON, err := json.Marshal(request); err == nil {
-		logger.Infof(ctx, "[%s] Request: session_id=%s, request=%s",
-			logPrefix, sessionID, secutils.SanitizeForLog(secutils.CompactImageDataURLForLog(string(requestJSON))))
-	}
+	// Keep only request metadata in routine logs. The query, quoted messages,
+	// attachment content and image data belong to the conversation, not logs.
+	logger.Infof(ctx, "[%s] Request: session_id=%s, query_bytes=%d, images=%d, attachment_uploads=%d, attachment_ids=%d",
+		logPrefix, sessionID, len(request.Query), len(request.Images), len(request.AttachmentUploads), len(request.AttachmentIDs))
 
 	// Get session. QA writes new messages into the session, so use the strict
 	// owner scope: a tenant admin may read an API-key session but must not be
@@ -852,11 +851,11 @@ func (h *Handler) SearchKnowledge(c *gin.Context) {
 
 	logger.Infof(
 		ctx,
-		"Knowledge search request, knowledge base IDs: %v, knowledge IDs: %v, tag scopes: %d, query: %s",
+		"Knowledge search request, knowledge base IDs: %v, knowledge IDs: %v, tag scopes: %d, query_bytes: %d",
 		secutils.SanitizeForLogArray(knowledgeBaseIDs),
 		secutils.SanitizeForLogArray(request.KnowledgeIDs),
 		len(tagScopes),
-		secutils.SanitizeForLog(request.Query),
+		len(request.Query),
 	)
 
 	// Directly call knowledge retrieval service without LLM summarization

@@ -112,7 +112,7 @@ func (p *SearxngProvider) Search(
 	q.Set("language", "all")
 
 	reqURL := p.baseURL + "/search?" + q.Encode()
-	logger.Infof(ctx, "[WebSearch][SearXNG] query=%q maxResults=%d url=%s", query, maxResults, p.baseURL)
+	logger.Infof(ctx, "[WebSearch][SearXNG] query_bytes=%d maxResults=%d", len(query), maxResults)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
@@ -163,7 +163,7 @@ func (p *SearxngProvider) Search(
 		results = append(results, item)
 	}
 	if len(results) == 0 && len(data.UnresponsiveEngines) > 0 {
-		logger.Warnf(ctx, "[WebSearch][SearXNG] empty results, unresponsive_engines=%v", data.UnresponsiveEngines)
+		logger.Warnf(ctx, "[WebSearch][SearXNG] empty results, unresponsive_engine_count=%d", len(data.UnresponsiveEngines))
 	}
 	logger.Infof(ctx, "[WebSearch][SearXNG] returned %d results", len(results))
 	return results, nil

@@ -10,7 +10,6 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
-	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
 // maxRetrievalPoolSize bounds every retrieval depth derived from MatchCount:
@@ -38,7 +37,7 @@ func (s *knowledgeBaseService) GetQueryEmbedding(ctx context.Context, kbID strin
 		embeddingModel, err = s.modelService.GetEmbeddingModel(ctx, kb.EmbeddingModelID)
 	}
 	if err != nil {
-		logger.Errorf(ctx, "GetQueryEmbedding: failed to get embedding model %s: %v", kb.EmbeddingModelID, err)
+		logger.Errorf(ctx, "GetQueryEmbedding: failed to get embedding model %s, error_type=%T", kb.EmbeddingModelID, err)
 		return nil, err
 	}
 
@@ -136,11 +135,9 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 		searchKBIDs = []string{id}
 	}
 
-	// QueryText is user-controlled; sanitize before logging to prevent
-	// CR/LF/tab log injection. Matches the handler-layer sanitization at
-	// handler/knowledgebase.go.
-	logger.Infof(ctx, "Hybrid search parameters, knowledge base IDs: %v, query text: %s",
-		searchKBIDs, secutils.SanitizeForLog(params.QueryText))
+	// QueryText is user content; only its size belongs in routine logs.
+	logger.Infof(ctx, "Hybrid search parameters, knowledge base IDs: %v, query_bytes: %d",
+		searchKBIDs, len(params.QueryText))
 
 	tenantInfo, _ := types.TenantInfoFromContext(ctx)
 
@@ -255,10 +252,8 @@ func (s *knowledgeBaseService) HybridSearch(ctx context.Context,
 	retrieveResults, err := s.retrieveFromStores(retrieveCtx, groups, retriever.EngineAwareNormalizer{})
 	retrieveSpan.Finish(langfuse.SummarizeRetrieveOutput(retrieveResults), nil, err)
 	if err != nil {
-		logger.ErrorWithFields(ctx, err, map[string]interface{}{
-			"knowledge_base_ids": searchKBIDs,
-			"query_text":         params.QueryText,
-		})
+		logger.Errorf(ctx, "Multi-store retrieval failed for %d knowledge bases, error_type=%T",
+			len(searchKBIDs), err)
 		return nil, err
 	}
 
@@ -523,7 +518,7 @@ func (s *knowledgeBaseService) resolveQueryEmbedding(
 	logger.Info(ctx, "Starting to generate query embedding")
 	queryEmbedding, err := embeddingModel.Embed(ctx, params.QueryText)
 	if err != nil {
-		logger.Errorf(ctx, "Failed to embed query text, query text: %s, error: %v", params.QueryText, err)
+		logger.Errorf(ctx, "Failed to embed query, query_bytes=%d, error_type=%T", len(params.QueryText), err)
 		return nil, err
 	}
 	if err := validateQueryEmbeddingDimension(embeddingModel, len(queryEmbedding)); err != nil {

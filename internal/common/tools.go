@@ -227,7 +227,7 @@ var pipelineLogIdentifier = regexp.MustCompile(`^[A-Za-z0-9_./:@-]{1,128}$`)
 
 func safePipelineStringField(key string) bool {
 	switch key {
-	case "request_id", "session_id", "message_id", "user_message_id",
+	case "session_id", "message_id", "user_message_id",
 		"kb_id", "knowledge_base_id", "knowledge_id", "chunk_id",
 		"chat_model", "model_id", "rerank_model", "rerank_model_id",
 		"vlm_model_id", "query_understand_model_id", "provider_id",
@@ -287,6 +287,12 @@ func PipelineError(ctx context.Context, stage, action string, fields map[string]
 }
 
 func formatPipelineLogValue(key string, value interface{}) string {
+	if key == "request_id" {
+		if requestID, ok := value.(string); ok {
+			return strconv.Quote(secutils.HashRequestIDForLog(requestID))
+		}
+		return strconv.Quote("[redacted]")
+	}
 	v := reflect.ValueOf(value)
 	if !v.IsValid() {
 		return "nil"

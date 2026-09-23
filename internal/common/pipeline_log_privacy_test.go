@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
 func TestPipelineLogRedactsContentAndKeepsDiagnostics(t *testing.T) {
@@ -11,7 +13,7 @@ func TestPipelineLogRedactsContentAndKeepsDiagnostics(t *testing.T) {
 	const token = "SECRETABC123"
 	line := PipelineLog("AgentTool", "execute_done", map[string]interface{}{
 		"request_id":   "01234567-89ab-cdef-0123-456789abcdef",
-		"session_id":   "01234567-89ab-cdef-0123-456789abcdef",
+		"session_id":   "abcdef01-2345-6789-abcd-ef0123456789",
 		"tool":         token,
 		"reason":       token,
 		"status":       "failed",
@@ -33,7 +35,7 @@ func TestPipelineLogRedactsContentAndKeepsDiagnostics(t *testing.T) {
 		t.Fatalf("private content appeared in pipeline log: %s", line)
 	}
 	for _, want := range []string{
-		"stage=AgentTool action=execute_done", "request_id=\"01234567-89ab-cdef-0123-456789abcdef\"",
+		"stage=AgentTool action=execute_done", "request_id=\"" + secutils.HashRequestIDForLog("01234567-89ab-cdef-0123-456789abcdef") + "\"",
 		"tool=\"[redacted len=12]\"", "reason=\"[redacted len=12]\"",
 		"status=\"failed\"", "error_code=\"timeout\"",
 		"duration_ms=125", "result_count=3", "success=false", "query=\"[redacted len=59]\"",
@@ -42,5 +44,8 @@ func TestPipelineLogRedactsContentAndKeepsDiagnostics(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Fatalf("missing diagnostic %q in %s", want, line)
 		}
+	}
+	if strings.Contains(line, "01234567-89ab-cdef-0123-456789abcdef") {
+		t.Fatal("pipeline log exposed client-controlled request ID")
 	}
 }

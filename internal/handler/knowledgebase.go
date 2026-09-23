@@ -330,7 +330,7 @@ func (h *KnowledgeBaseHandler) HybridSearch(c *gin.Context) {
 	// Parse request body
 	var req types.SearchParams
 	if err := c.ShouldBindJSON(&req); err != nil {
-		logger.Error(ctx, "Failed to parse request parameters", err)
+		logger.Warnf(ctx, "Failed to parse hybrid search parameters: error_type=%T", err)
 		c.Error(apperrors.NewBadRequestError("Invalid request parameters").WithDetails(err.Error()))
 		return
 	}
@@ -340,8 +340,8 @@ func (h *KnowledgeBaseHandler) HybridSearch(c *gin.Context) {
 		return
 	}
 
-	logger.Infof(ctx, "Executing hybrid search, knowledge base ID: %s, query: %s, effectiveTenantID: %d",
-		secutils.SanitizeForLog(id), secutils.SanitizeForLog(req.QueryText), effectiveTenantID)
+	logger.Infof(ctx, "Executing hybrid search, knowledge base ID: %s, query_bytes: %d, effectiveTenantID: %d",
+		secutils.SanitizeForLog(id), len(req.QueryText), effectiveTenantID)
 
 	// Resolve before retrieving so a typo or a rejected scope costs nothing.
 	rewriter, err := h.resolveResourceRewriter(c)
