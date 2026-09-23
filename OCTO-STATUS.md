@@ -2,7 +2,17 @@
 
 更新：2026-09-23。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-23 13:29 后）
+## 当前状态（2026-09-23 15:16 CST，隐私修复发布中）
+
+**代码与线上分开看：**[PR #41](https://github.com/90le/octo-weknora/pull/41)、[#42](https://github.com/90le/octo-weknora/pull/42)、[#43](https://github.com/90le/octo-weknora/pull/43) 已依次合并到 `main`，当前代码为 `b0740b68b999e1ca6ae17d141d3d6572e09aff19`，分别收窄 Agent／检索、HTTP 问答／搜索及可选 SQL 工具的例行日志内容。三项 GitHub Go 测试／构建与 lint 检查均通过。**生产后端仍运行 `4b2e84f8`，不能把已合并代码视作线上隐私修复。**早先 `e9b3f826` 隔离候选的合成隐私哨兵未通过，未部署；本轮改以完整 `b0740b68` 做新的候选和发布。
+
+`b0740b68` 候选 app Image ID 为 `sha256:fdddfefd21cd051358188b4bfeae57e50ab56b6ec3f999cd44982fd7b0ce3c0d`。隔离候选已核对健康 200、未认证知识 API 401、认证系统信息完整提交 SHA、4 个知识库、Anydoc 可用，合成 session 创建／读回及 AgentQA 入口通过。候选未接生产 Milvus／模型，知识检索调用返回 500，**不构成真实检索或群问答验收**；脱敏哨兵和生产切换仍在进行。发布前备份位于服务器私有 `/home/mlclaw/agent-data/operations/privacy-log-release-b0740b68-20260923T070516Z/backup`。生产目前 app Image ID 仍为 `sha256:861b0f3d…`，UI 为 `sha256:1406a7f1…`。
+
+**OpenClaw 收口：**五个旧公共 Agent 已经通过原生 Gateway 停用并核对备份；现仅私人 `xiaoqiu` Agent 运行。计划任务从 13 条收敛到 3 条，六个 Bot account 恢复为启用／运行且原私聊绑定等值，并显式核对路由；旧插件停用。12 个旧 AgentDir 仍有 38 个打开文件句柄及 12 个活跃 lease，且 `main` 使用 `authInheritance`，因此保留目录及所需凭据；**停用 Agent 不等于可删除它的文件**。本轮未改变公开 Octo 小丘的 WeKnora 接入边界。
+
+**清理与空间：**服务器仅执行已核验的低风险清理，释放 `1,890,164,209` 字节数据盘空间及 `554,033,152` 字节根盘旧镜像空间；运行容器挂载、知识库数据、私人 OpenClaw 运行目录和发布回退材料保留。根盘 `containerd` 仍是需单独监控的容量风险，不能直接删除其数据目录或向当前不兼容的 XFS 数据盘强迁。
+
+## 历史发布：4b（2026-09-23 13:29 后）
 
 生产后端已从 `3d58f986` 切换到合并提交 `4b2e84f882c8ba0e74619ba49c4bca348c31d484`，运行容器的不可变 app Image ID 为 `sha256:861b0f3d…`；前端代码未变，继续使用已验证的 `3d58f986` UI Image ID `sha256:1406a7f1…`。本轮一次发布包含已合并的 [PR #35](https://github.com/90le/octo-weknora/pull/35)（文档 blob 断流诊断与有限重试）、[#37](https://github.com/90le/octo-weknora/pull/37)（Octo 回答的来源传递）和 [#38](https://github.com/90le/octo-weknora/pull/38)（OpenAI 兼容模型通道的常规日志脱敏与分段计时）。三项均已通过 Linux 定向测试和 GitHub Go CI／lint；上线后健康 200、前端 200、未认证知识 API 401，登录管理页仍可见 4 个知识库。PostgreSQL migration `105` 非 dirty，4 个活动知识库、60 条活动来源和 4 条问题保持不变，切换时运行中同步及解析均为 0；Octo 小丘通道已在新 app 初始化。
 
