@@ -146,3 +146,38 @@ func TestGitHubDocumentLegacyPartialWithNilCursorPlansCandidates(t *testing.T) {
 	require.Len(t, plan.Upserts, 1)
 	require.Equal(t, "docs/guide.md", plan.Upserts[0].Path)
 }
+
+func TestGitHubDocumentPlanSharesExclusionFingerprintAndRetainsOldIndex(t *testing.T) {
+	_, _, cfg, commit := documentGitFixture(t, map[string]string{
+		"docs/keep.md": "keep\n", "docs/skip.md": "skip\n",
+	})
+	cfg.Settings["paths"] = []string{"docs"}
+	oldSelection, err := DocumentSelection(cfg)
+	require.NoError(t, err)
+	c, _ := fastPathHeadConnector(t, commit)
+	oldPlan, err := c.PlanDocuments(context.Background(), cfg, nil, false, "")
+	require.NoError(t, err)
+	require.Len(t, oldPlan.Upserts, 2)
+	oldCursor := oldPlan.Cursor()
+	cfg.Settings["exclude"] = []string{"docs/skip.md"}
+	newSelection, err := DocumentSelection(cfg)
+	require.NoError(t, err)
+	require.NotEqual(t, oldSelection, newSelection)
+	plan, err := c.PlanDocuments(context.Background(), cfg, oldCursor, false, "")
+	require.NoError(t, err)
+	require.Equal(t, newSelection, plan.Selection)
+	require.Len(t, plan.Upserts, 1)
+	require.Equal(t, "docs/keep.md", plan.Upserts[0].Path)
+	require.Empty(t, plan.Deletions)
+	require.Equal(t, 1, cfg.SkippedExcluded)
+	encoded, err := plan.Cursor().ToJSON()
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), "docs/skip.md", "excluded historical index requires explicit review, not silent retirement")
+	cfg.Settings["exclude"] = []string{}
+	legacyKey, err := DocumentSelection(cfg)
+	require.NoError(t, err)
+	require.Equal(t, oldSelection, legacyKey, "empty excludes must retain existing 60-source cursor identity")
+	cfg.Settings["exclude"] = []string{"docs/["}
+	_, err = DocumentSelection(cfg)
+	require.Error(t, err, "invalid glob cannot silently remove documents")
+}

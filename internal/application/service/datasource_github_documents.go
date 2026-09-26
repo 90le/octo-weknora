@@ -318,8 +318,8 @@ func validateGitHubDocumentRunItems(plan *githubConnector.DocumentPlan, syncDele
 	return nil
 }
 
-func githubDocumentProgressResult(items []types.GitHubDocumentSyncItem, skippedSensitive int) *types.SyncResult {
-	result := &types.SyncResult{Total: len(items), SkippedSensitive: skippedSensitive}
+func githubDocumentProgressResult(items []types.GitHubDocumentSyncItem, skippedSensitive, skippedExcluded int) *types.SyncResult {
+	result := &types.SyncResult{Total: len(items), SkippedSensitive: skippedSensitive, SkippedExcluded: skippedExcluded}
 	for _, item := range items {
 		switch item.Status {
 		case types.GitHubDocumentItemReady:
@@ -354,9 +354,9 @@ func githubDocumentProgressResult(items []types.GitHubDocumentSyncItem, skippedS
 }
 
 func (s *DataSourceService) checkpointGitHubDocumentProgress(
-	ctx context.Context, syncLog *types.SyncLog, items []types.GitHubDocumentSyncItem, skippedSensitive int,
+	ctx context.Context, syncLog *types.SyncLog, items []types.GitHubDocumentSyncItem, skippedSensitive, skippedExcluded int,
 ) error {
-	result := githubDocumentProgressResult(items, skippedSensitive)
+	result := githubDocumentProgressResult(items, skippedSensitive, skippedExcluded)
 	syncLog.ItemsTotal, syncLog.ItemsCreated, syncLog.ItemsUpdated = result.Total, result.Created, result.Updated
 	syncLog.ItemsDeleted, syncLog.ItemsSkipped, syncLog.ItemsFailed = result.Deleted, result.Skipped, result.Failed
 	syncLog.Result, _ = result.ToJSON()
@@ -527,13 +527,13 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 			break
 		}
 		if err := ensureSyncRunActive(ctx, runGuard); err != nil {
-			return s.finishSyncRunGuardError(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive), wasPaused, err)
+			return s.finishSyncRunGuardError(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive, cfg.SkippedExcluded), wasPaused, err)
 		}
 		if err := accessGuard.check(ctx); err != nil {
-			return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive), wasPaused, err)
+			return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive, cfg.SkippedExcluded), wasPaused, err)
 		}
 		if err := s.verifyGitHubDocumentKB(ctx, ds); err != nil {
-			return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive), wasPaused, err)
+			return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive, cfg.SkippedExcluded), wasPaused, err)
 		}
 		var outcome, errorCode string
 		if item.Operation == types.GitHubDocumentItemUpsert {
@@ -584,18 +584,18 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 		}
 		item.Status, item.Outcome, item.ErrorCode = status, outcome, errorCode
 		processed++
-		if err := s.checkpointGitHubDocumentProgress(ctx, syncLog, items, cfg.SkippedSensitive); err != nil {
+		if err := s.checkpointGitHubDocumentProgress(ctx, syncLog, items, cfg.SkippedSensitive, cfg.SkippedExcluded); err != nil {
 			return s.githubDocumentRunFailure(ctx, ds, syncLog, wasPaused, err)
 		}
 	}
 	if err := ensureSyncRunActive(ctx, runGuard); err != nil {
-		return s.finishSyncRunGuardError(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive), wasPaused, err)
+		return s.finishSyncRunGuardError(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive, cfg.SkippedExcluded), wasPaused, err)
 	}
 	if err := accessGuard.check(ctx); err != nil {
-		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive), wasPaused, err)
+		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive, cfg.SkippedExcluded), wasPaused, err)
 	}
 	if err := s.verifyGitHubDocumentKB(ctx, ds); err != nil {
-		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive), wasPaused, err)
+		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive, cfg.SkippedExcluded), wasPaused, err)
 	}
 	pending, failed, pendingUpserts, failedUpserts := 0, 0, 0, 0
 	for _, item := range items {
@@ -615,7 +615,7 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 	// pending for the next scheduled/manual retry instead of queueing an
 	// endless continuation solely because deletions cannot yet be authorized.
 	if pendingUpserts == 0 && failedUpserts > 0 {
-		result := githubDocumentProgressResult(items, cfg.SkippedSensitive)
+		result := githubDocumentProgressResult(items, cfg.SkippedSensitive, cfg.SkippedExcluded)
 		return s.finishGitHubDocumentIncomplete(ctx, ds, syncLog, result, wasPaused,
 			fmt.Sprintf("%d GitHub document(s) still need attention; deletion is deferred", failedUpserts))
 	}
@@ -628,7 +628,7 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 		}
 		return nil // same running SyncLog continues in the queued bounded chunk
 	}
-	result := githubDocumentProgressResult(items, cfg.SkippedSensitive)
+	result := githubDocumentProgressResult(items, cfg.SkippedSensitive, cfg.SkippedExcluded)
 	if failed > 0 {
 		return s.finishGitHubDocumentIncomplete(ctx, ds, syncLog, result, wasPaused,
 			fmt.Sprintf("%d GitHub document(s) still need attention", failed))

@@ -43,9 +43,11 @@ func DocumentSelection(cfg *types.DataSourceConfig) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, _ := json.Marshal(s)
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	excludes, err := documentExcludes(cfg)
+	if err != nil {
+		return "", err
+	}
+	return documentSelectionKey(s, excludes), nil
 }
 
 // PlanDocuments uses the same allowedDocument + selected predicates as the
@@ -72,6 +74,7 @@ func (c *Connector) planDocuments(
 ) (*DocumentPlan, error) {
 	if cfg != nil {
 		cfg.SkippedSensitive = 0
+		cfg.SkippedExcluded = 0
 	}
 	if snapshot.IsSource(cfg) || cfg == nil || cfg.SyncSource == nil {
 		return nil, fmt.Errorf("%w: document plan requires a trusted document source", datasource.ErrInvalidConfig)
@@ -80,9 +83,11 @@ func (c *Connector) planDocuments(
 	if err != nil {
 		return nil, err
 	}
-	selectionJSON, _ := json.Marshal(s)
-	selectionHash := sha256.Sum256(selectionJSON)
-	key := hex.EncodeToString(selectionHash[:])
+	excludes, err := documentExcludes(cfg)
+	if err != nil {
+		return nil, err
+	}
+	key := documentSelectionKey(s, excludes)
 	prev := cursor{}
 	if published != nil {
 		b, _ := json.Marshal(published.ConnectorCursor)
@@ -102,7 +107,7 @@ func (c *Connector) planDocuments(
 		commit = pinCommit
 	}
 	plan := &DocumentPlan{Selection: key, Commit: commit, selection: s}
-	if !forceFull && prev.Selection == key && prev.Commit == commit {
+	if !forceFull && documentCursorReusable(cfg, prev, key, commit) {
 		plan.Complete = true
 		plan.files = prev.Files
 		plan.Digest = documentPlanDigest(key, commit, prev.Files)
@@ -124,22 +129,26 @@ func (c *Connector) planDocuments(
 			cfg.SkippedSensitive++
 			continue
 		}
+		if !documentInCurrentScope(e, s, excludes) {
+			cfg.SkippedExcluded++
+			continue
+		}
 		plan.files[e.Path] = e
 	}
 	if len(plan.files) > 2000 {
 		return nil, &Error{Code: "github_documents_limit", Message: "GitHub document source exceeds 2000 files; narrow the selected paths or use read-only source mode"}
 	}
-	// Old sensitive documents need a separately reviewed retirement. Retain
-	// their published cursor lineage even if the selection changed; do not read
-	// their blobs, enqueue them or infer deletion from the new safety policy.
+	// Old documents outside the selected path or explicit/mandatory exclusion
+	// need a separately reviewed retirement. Retain their cursor lineage even
+	// if the scope changed; never infer deletion from a policy edit.
 	for path, previous := range prev.Files {
-		if snapshot.Excluded(path, nil) {
+		if documentHistoricalOutOfScope(path, s, excludes) {
 			plan.files[path] = previous
 		}
 	}
 	paths := make([]string, 0, len(plan.files))
 	for path := range plan.files {
-		if snapshot.Excluded(path, nil) {
+		if documentHistoricalOutOfScope(path, s, excludes) {
 			continue
 		}
 		paths = append(paths, path)
@@ -159,7 +168,7 @@ func (c *Connector) planDocuments(
 	// Git tree is authoritative only for the same selection as the old cursor.
 	if prev.Selection == key {
 		for path := range prev.Files {
-			if snapshot.Excluded(path, nil) {
+			if documentHistoricalOutOfScope(path, s, excludes) {
 				continue
 			}
 			if _, exists := all[path]; !exists {
