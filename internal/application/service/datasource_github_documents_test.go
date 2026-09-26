@@ -220,3 +220,72 @@ func TestGitHubDocumentRunRetriesOnlyFailedFileAfterRestart(t *testing.T) {
 	require.Equal(t, 2, knowledge.createdBy["docs/a.md"])
 	require.Equal(t, 1, knowledge.createdBy["docs/b.md"], "already ACKed file must not be re-ingested")
 }
+
+type githubDocumentDeleteRepo struct {
+	*preparedRepo
+	tombstone map[string]bool
+	failHard  bool
+}
+
+func (r *githubDocumentDeleteRepo) FindByDataSourceExternalID(ctx context.Context, tenant uint64, kb, ds, external string) (*types.Knowledge, error) {
+	row, err := r.preparedRepo.FindByDataSourceExternalID(ctx, tenant, kb, ds, external)
+	if row != nil && r.tombstone[row.ID] {
+		return nil, err
+	}
+	return row, err
+}
+
+func (r *githubDocumentDeleteRepo) ListByDataSourceIDIncludingDeleted(
+	_ context.Context, tenant uint64, kb, ds string,
+) ([]*types.Knowledge, error) {
+	var out []*types.Knowledge
+	for _, row := range r.rows {
+		if row.TenantID == tenant && row.KnowledgeBaseID == kb && row.GetMetadata()["datasource_id"] == ds {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+func (r *githubDocumentDeleteRepo) HardDeleteKnowledge(ctx context.Context, tenant uint64, id string) error {
+	if r.failHard {
+		r.failHard = false
+		return errors.New("test hard-delete outage")
+	}
+	return r.preparedRepo.HardDeleteKnowledge(ctx, tenant, id)
+}
+
+type githubDocumentDeleteService struct {
+	interfaces.KnowledgeService
+	repo *githubDocumentDeleteRepo
+}
+
+func (s *githubDocumentDeleteService) GetRepository() interfaces.KnowledgeRepository { return s.repo }
+func (s *githubDocumentDeleteService) DeleteKnowledge(_ context.Context, id string) error {
+	s.repo.tombstone[id] = true
+	return nil
+}
+
+func TestGitHubDocumentDeleteRetriesSoftTombstoneBeforeAck(t *testing.T) {
+	id := uuid.NewString()
+	metadata, _ := json.Marshal(map[string]string{
+		"external_id": "github:test/docs:main:removed.md", "datasource_id": "ds", "github_blob_sha": "old",
+	})
+	repo := &githubDocumentDeleteRepo{
+		preparedRepo: &preparedRepo{rows: map[string]*types.Knowledge{
+			id: {ID: id, TenantID: 7, KnowledgeBaseID: "kb", Metadata: metadata},
+		}},
+		tombstone: map[string]bool{}, failHard: true,
+	}
+	svc := &DataSourceService{knowledgeService: &githubDocumentDeleteService{repo: repo}}
+	ds := &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb"}
+	item := types.FetchedItem{ExternalID: "github:test/docs:main:removed.md", IsDeleted: true}
+	_, err := svc.deleteGitHubDocumentItem(context.Background(), ds, item)
+	require.Error(t, err)
+	require.True(t, repo.tombstone[id])
+	require.Contains(t, repo.rows, id)
+	outcome, err := svc.deleteGitHubDocumentItem(context.Background(), ds, item)
+	require.NoError(t, err)
+	require.Equal(t, types.GitHubDocumentOutcomeDeleted, outcome)
+	require.NotContains(t, repo.rows, id)
+}

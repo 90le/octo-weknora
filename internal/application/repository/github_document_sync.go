@@ -175,9 +175,9 @@ func (r *DataSourceRepository) ReleaseGitHubDocumentRunLease(ctx context.Context
 // planned item is ready. Config equality fences a concurrent credential or
 // selection change between the service's access check and this transaction.
 func (r *DataSourceRepository) PublishGitHubDocumentRun(
-	ctx context.Context, run *types.GitHubDocumentRun, leaseID string, ds *types.DataSource,
+	ctx context.Context, run *types.GitHubDocumentRun, leaseID string, ds *types.DataSource, syncLogID string,
 ) error {
-	if run == nil || leaseID == "" || ds == nil || run.TenantID != ds.TenantID || run.KnowledgeBaseID != ds.KnowledgeBaseID || run.DataSourceID != ds.ID {
+	if run == nil || leaseID == "" || syncLogID == "" || ds == nil || run.TenantID != ds.TenantID || run.KnowledgeBaseID != ds.KnowledgeBaseID || run.DataSourceID != ds.ID {
 		return ErrGitHubDocumentRunChanged
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -211,6 +211,16 @@ func (r *DataSourceRepository) PublishGitHubDocumentRun(
 			return updated.Error
 		}
 		if updated.RowsAffected != 1 {
+			return ErrGitHubDocumentRunChanged
+		}
+		// A cancellation that races with the final access check must roll back
+		// this datasource cursor update. Lock in the same datasource -> sync-log
+		// order used by the normal atomic sync outcome finalizer.
+		var liveLog types.SyncLog
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
+			"id = ? AND data_source_id = ? AND tenant_id = ? AND status = ?",
+			syncLogID, ds.ID, ds.TenantID, types.SyncLogStatusRunning,
+		).First(&liveLog).Error; err != nil {
 			return ErrGitHubDocumentRunChanged
 		}
 		result := tx.Model(&types.GitHubDocumentRun{}).

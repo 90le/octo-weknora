@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
 	githubConnector "github.com/Tencent/WeKnora/internal/datasource/connector/github"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -38,7 +39,7 @@ type githubDocumentProgressStore interface {
 	AcquireGitHubDocumentRunLease(context.Context, *types.GitHubDocumentRun, string, time.Time) (bool, error)
 	RenewGitHubDocumentRunLease(context.Context, *types.GitHubDocumentRun, string, time.Time) (bool, error)
 	ReleaseGitHubDocumentRunLease(context.Context, *types.GitHubDocumentRun, string) error
-	PublishGitHubDocumentRun(context.Context, *types.GitHubDocumentRun, string, *types.DataSource) error
+	PublishGitHubDocumentRun(context.Context, *types.GitHubDocumentRun, string, *types.DataSource, string) error
 }
 
 // The HMAC scope is only an opaque equality marker for a configured token.
@@ -337,6 +338,10 @@ func (s *DataSourceService) githubDocumentRunFailure(
 	if cause == nil {
 		return nil
 	}
+	if errors.Is(cause, apprepo.ErrGitHubDocumentRunChanged) {
+		return s.stopSyncAfterAccessChange(ctx, ds, log, nil, wasPaused,
+			fmt.Errorf("%w: GitHub document checkpoint was superseded or lost its lease", errSyncAccessChanged))
+	}
 	// The GitHub-specific permanent/transient policy is added by the separate
 	// scheduler retry PR. Until it is rebased, keep errors visible and retryable.
 	logger.Warnf(ctx, "GitHub document sync failed: %v", cause)
@@ -363,6 +368,50 @@ func (s *DataSourceService) enqueueGitHubDocumentContinuation(
 		return nil // a retry of the previous chunk already queued this ordinal
 	}
 	return err
+}
+
+// A failed hard-delete may leave a soft-deleted row hidden from the ordinary
+// external-ID lookup. A retry must finish that tombstone before ACKing the
+// remote deletion; otherwise LastSyncCursor would move past residual content.
+func (s *DataSourceService) deleteGitHubDocumentItem(
+	ctx context.Context, ds *types.DataSource, item types.FetchedItem,
+) (string, error) {
+	repo := s.knowledgeService.GetRepository()
+	lister, ok := repo.(dataSourceKnowledgeLister)
+	if !ok {
+		return "", errors.New("GitHub document deletion verification is unavailable")
+	}
+	existing, err := repo.FindByDataSourceExternalID(ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID, item.ExternalID)
+	if err != nil {
+		return "", err
+	}
+	if existing != nil {
+		if err := s.knowledgeService.DeleteKnowledge(ctx, existing.ID); err != nil {
+			return "", err
+		}
+		if err := repo.HardDeleteKnowledge(ctx, ds.TenantID, existing.ID); err != nil {
+			return "", err
+		}
+		return types.GitHubDocumentOutcomeDeleted, nil
+	}
+	rows, err := lister.ListByDataSourceIDIncludingDeleted(ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID)
+	if err != nil {
+		return "", err
+	}
+	removed := false
+	for _, row := range rows {
+		if row == nil || row.GetMetadata()["external_id"] != item.ExternalID {
+			continue
+		}
+		if err := repo.HardDeleteKnowledge(ctx, ds.TenantID, row.ID); err != nil {
+			return "", err
+		}
+		removed = true
+	}
+	if removed {
+		return types.GitHubDocumentOutcomeDeleted, nil
+	}
+	return types.GitHubDocumentOutcomeSkipped, nil
 }
 
 func (s *DataSourceService) processGitHubDocumentChunk(
@@ -450,15 +499,12 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 			}
 			bytesRead += plannedItem.Size
 		} else {
-			before := &types.SyncResult{}
 			deleted := plan.DeletedItem(planned[item.PathHash])
-			s.applyFetchedItem(withKBActivitySuppressed(ctx), ds, &deleted, tagIDs, before)
-			if before.Failed > 0 {
+			deleteOutcome, deleteErr := s.deleteGitHubDocumentItem(withKBActivitySuppressed(ctx), ds, deleted)
+			if deleteErr != nil {
 				errorCode = "deletion_failed"
-			} else if before.Deleted > 0 {
-				outcome = types.GitHubDocumentOutcomeDeleted
 			} else {
-				outcome = types.GitHubDocumentOutcomeSkipped
+				outcome = deleteOutcome
 			}
 		}
 		status := types.GitHubDocumentItemReady
@@ -518,7 +564,7 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 		return s.updateSyncRunResult(ctx, ds, syncLog, result, data, types.SyncLogStatusPartial,
 			fmt.Sprintf("%d GitHub document(s) still need attention", failed), wasPaused, false)
 	}
-	if err := store.PublishGitHubDocumentRun(ctx, run, leaseID, ds); err != nil {
+	if err := store.PublishGitHubDocumentRun(ctx, run, leaseID, ds, syncLog.ID); err != nil {
 		return s.githubDocumentRunFailure(ctx, ds, syncLog, wasPaused, err)
 	}
 	return s.updateSyncRunResult(ctx, ds, syncLog, result, data, types.SyncLogStatusSuccess, "", wasPaused, false)
