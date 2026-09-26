@@ -70,6 +70,9 @@ func (c *Connector) planDocuments(
 	ctx context.Context, cfg *types.DataSourceConfig, published *types.SyncCursor,
 	forceFull bool, pinCommit string,
 ) (*DocumentPlan, error) {
+	if cfg != nil {
+		cfg.SkippedSensitive = 0
+	}
 	if snapshot.IsSource(cfg) || cfg == nil || cfg.SyncSource == nil {
 		return nil, fmt.Errorf("%w: document plan requires a trusted document source", datasource.ErrInvalidConfig)
 	}
@@ -114,15 +117,31 @@ func (c *Connector) planDocuments(
 	plan.files = make(map[string]entry)
 	for _, e := range entries {
 		all[e.Path] = e
-		if allowedDocument(e) && selected(e.Path, s.Paths) {
-			plan.files[e.Path] = e
+		if !selected(e.Path, s.Paths) || !allowedDocument(e) {
+			continue
 		}
+		if !allowedGitHubDocument(e) {
+			cfg.SkippedSensitive++
+			continue
+		}
+		plan.files[e.Path] = e
 	}
 	if len(plan.files) > 2000 {
 		return nil, &Error{Code: "github_documents_limit", Message: "GitHub document source exceeds 2000 files; narrow the selected paths or use read-only source mode"}
 	}
+	// Old sensitive documents need a separately reviewed retirement. Retain
+	// their published cursor lineage even if the selection changed; do not read
+	// their blobs, enqueue them or infer deletion from the new safety policy.
+	for path, previous := range prev.Files {
+		if snapshot.Excluded(path, nil) {
+			plan.files[path] = previous
+		}
+	}
 	paths := make([]string, 0, len(plan.files))
 	for path := range plan.files {
+		if snapshot.Excluded(path, nil) {
+			continue
+		}
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
@@ -140,6 +159,9 @@ func (c *Connector) planDocuments(
 	// Git tree is authoritative only for the same selection as the old cursor.
 	if prev.Selection == key {
 		for path := range prev.Files {
+			if snapshot.Excluded(path, nil) {
+				continue
+			}
 			if _, exists := all[path]; !exists {
 				plan.Deletions = append(plan.Deletions, DocumentPlanItem{Path: path, Delete: true})
 			}

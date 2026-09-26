@@ -63,13 +63,31 @@ func TestGitHubDocumentProgressDistinguishesReadyAndFailedDeletion(t *testing.T)
 		{Path: "removed.md", Operation: types.GitHubDocumentItemDelete, Status: types.GitHubDocumentItemFailed, ErrorCode: "deletion_failed"},
 		{Path: "pending.md", Operation: types.GitHubDocumentItemUpsert, Status: types.GitHubDocumentItemPending},
 	}
-	result := githubDocumentProgressResult(items)
+	result := githubDocumentProgressResult(items, 0)
 	require.Equal(t, 3, result.Total)
 	require.Equal(t, 1, result.Created)
 	require.Equal(t, 1, result.Failed)
 	require.Equal(t, 1, result.DeletionFailed)
 	require.Len(t, result.Errors, 1)
 	require.Equal(t, "deletion_failed", result.Errors[0].Code)
+}
+
+func TestGitHubDocumentCheckpointCountsDeterministicFailuresBeyondSamples(t *testing.T) {
+	items := make([]types.GitHubDocumentSyncItem, 125)
+	for i := range items {
+		items[i] = types.GitHubDocumentSyncItem{
+			Path: fmt.Sprintf("docs/%03d.mdx", i), Operation: types.GitHubDocumentItemUpsert,
+			Status: types.GitHubDocumentItemFailed, ErrorCode: "unsupported_file_type",
+		}
+	}
+	result := githubDocumentProgressResult(items, 0)
+	require.Equal(t, 125, result.Failed)
+	require.Len(t, result.Errors, maxSyncResultErrors)
+	require.Equal(t, 125, result.FailureCodes["unsupported_file_type"])
+	require.False(t, allFetchedItemsRetryable(types.ConnectorTypeGitHub, result))
+	items[0].ErrorCode = "ingest_failed"
+	mixed := githubDocumentProgressResult(items, 0)
+	require.True(t, allFetchedItemsRetryable(types.ConnectorTypeGitHub, mixed))
 }
 
 type githubDocumentQueueCapture struct {

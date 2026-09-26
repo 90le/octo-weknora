@@ -80,3 +80,39 @@ func TestGitHubDocumentPlanCanSpanMoreThanOneBoundedWorkerChunk(t *testing.T) {
 	}
 	require.Greater(t, bytes, int64(64<<20))
 }
+
+func TestGitHubDocumentPlanSkipsSensitiveBlobWithoutLosingLegacyCursor(t *testing.T) {
+	_, _, cfg, commit := documentGitFixture(t, map[string]string{
+		"docs/guide.md": "safe\n", "secrets/notes.md": "do-not-ingest\n",
+	})
+	cfg.Settings["paths"] = []string{""}
+	selection, err := DocumentSelection(cfg)
+	require.NoError(t, err)
+	legacy := &types.SyncCursor{ConnectorCursor: map[string]interface{}{
+		"selection": selection, "commit": strings.Repeat("a", 40),
+		"files": map[string]entry{"secrets/notes.md": {
+			Path: "secrets/notes.md", SHA: strings.Repeat("b", 40), Size: 14, Type: "blob", Mode: "100644",
+		}},
+	}}
+	c, requests := fastPathHeadConnector(t, commit)
+	plan, err := c.PlanDocuments(context.Background(), cfg, legacy, false, "")
+	require.NoError(t, err)
+	require.Len(t, plan.Upserts, 1)
+	require.Equal(t, "docs/guide.md", plan.Upserts[0].Path)
+	require.Empty(t, plan.Deletions)
+	require.Equal(t, 1, cfg.SkippedSensitive)
+	encoded, err := plan.Cursor().ToJSON()
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), "secrets/notes.md", "historical sensitive cursor lineage is retained")
+	require.Equal(t, []string{"/repos/test/docs", "/repos/test/docs/commits/main"}, *requests,
+		"planning must never fetch a sensitive blob over REST")
+	// Changing the selection to docs must not silently retire the old sensitive
+	// canonical or drop its cursor lineage.
+	cfg.Settings["paths"] = []string{"docs"}
+	plan, err = c.PlanDocuments(context.Background(), cfg, legacy, false, "")
+	require.NoError(t, err)
+	require.Empty(t, plan.Deletions)
+	encoded, err = plan.Cursor().ToJSON()
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), "secrets/notes.md")
+}

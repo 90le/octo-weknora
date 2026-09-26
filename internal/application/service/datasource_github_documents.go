@@ -308,8 +308,8 @@ func validateGitHubDocumentRunItems(plan *githubConnector.DocumentPlan, syncDele
 	return nil
 }
 
-func githubDocumentProgressResult(items []types.GitHubDocumentSyncItem) *types.SyncResult {
-	result := &types.SyncResult{Total: len(items)}
+func githubDocumentProgressResult(items []types.GitHubDocumentSyncItem, skippedSensitive int) *types.SyncResult {
+	result := &types.SyncResult{Total: len(items), SkippedSensitive: skippedSensitive}
 	for _, item := range items {
 		switch item.Status {
 		case types.GitHubDocumentItemReady:
@@ -332,16 +332,21 @@ func githubDocumentProgressResult(items []types.GitHubDocumentSyncItem) *types.S
 			if code == "" {
 				code = "ingest_failed"
 			}
-			recordSyncError(result, types.SyncItemError{Title: item.Path, Code: code, Message: "GitHub document did not sync; the previous version remains available"})
+			sample := types.SyncItemError{Title: item.Path, Code: code, Message: "GitHub document did not sync; the previous version remains available"}
+			if code == "unsupported_file_type" || code == "duplicate_other_source" {
+				recordDeterministicSyncError(result, sample)
+			} else {
+				recordSyncError(result, sample)
+			}
 		}
 	}
 	return result
 }
 
 func (s *DataSourceService) checkpointGitHubDocumentProgress(
-	ctx context.Context, syncLog *types.SyncLog, items []types.GitHubDocumentSyncItem,
+	ctx context.Context, syncLog *types.SyncLog, items []types.GitHubDocumentSyncItem, skippedSensitive int,
 ) error {
-	result := githubDocumentProgressResult(items)
+	result := githubDocumentProgressResult(items, skippedSensitive)
 	syncLog.ItemsTotal, syncLog.ItemsCreated, syncLog.ItemsUpdated = result.Total, result.Created, result.Updated
 	syncLog.ItemsDeleted, syncLog.ItemsSkipped, syncLog.ItemsFailed = result.Deleted, result.Skipped, result.Failed
 	syncLog.Result, _ = result.ToJSON()
@@ -365,10 +370,31 @@ func (s *DataSourceService) githubDocumentRunFailure(
 		return s.stopSyncAfterAccessChange(ctx, ds, log, nil, wasPaused,
 			fmt.Errorf("%w: GitHub document checkpoint was superseded or lost its lease", errSyncAccessChanged))
 	}
-	// The GitHub-specific permanent/transient policy is added by the separate
-	// scheduler retry PR. Until it is rebased, keep errors visible and retryable.
+	// failSyncRun applies the shared githubSyncFailureDecisionForExecution once:
+	// short transient failures use queue retry, long provider hints persist a
+	// cooldown, and permanent failures do not consume repeated queue attempts.
 	logger.Warnf(ctx, "GitHub document sync failed: %v", cause)
 	return s.failSyncRun(ctx, ds, log, nil, "GitHub document sync failed; see source sync details", wasPaused, cause, true)
+}
+
+func (s *DataSourceService) finishGitHubDocumentIncomplete(
+	ctx context.Context, ds *types.DataSource, log *types.SyncLog,
+	result *types.SyncResult, wasPaused bool, message string,
+) error {
+	data, _ := result.ToJSON()
+	if allFailed := allFetchedItemsFailedError(result); allFailed != nil {
+		retryable := allFetchedItemsRetryable(ds.Type, result)
+		if err := s.updateSyncRunResult(ctx, ds, log, result, data, types.SyncLogStatusFailed,
+			allFailed.Error(), wasPaused, retryable); err != nil {
+			return err
+		}
+		if !retryable {
+			return fmt.Errorf("%w: %w", asynq.SkipRetry, allFailed)
+		}
+		return allFailed
+	}
+	return s.updateSyncRunResult(ctx, ds, log, result, data, types.SyncLogStatusPartial,
+		message, wasPaused, false)
 }
 
 func (s *DataSourceService) enqueueGitHubDocumentContinuation(
@@ -489,13 +515,13 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 			break
 		}
 		if err := ensureSyncRunActive(ctx, runGuard); err != nil {
-			return s.finishSyncRunGuardError(ctx, ds, syncLog, githubDocumentProgressResult(items), wasPaused, err)
+			return s.finishSyncRunGuardError(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive), wasPaused, err)
 		}
 		if err := accessGuard.check(ctx); err != nil {
-			return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items), wasPaused, err)
+			return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive), wasPaused, err)
 		}
 		if err := s.verifyGitHubDocumentKB(ctx, ds); err != nil {
-			return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items), wasPaused, err)
+			return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive), wasPaused, err)
 		}
 		var outcome, errorCode string
 		if item.Operation == types.GitHubDocumentItemUpsert {
@@ -546,18 +572,18 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 		}
 		item.Status, item.Outcome, item.ErrorCode = status, outcome, errorCode
 		processed++
-		if err := s.checkpointGitHubDocumentProgress(ctx, syncLog, items); err != nil {
+		if err := s.checkpointGitHubDocumentProgress(ctx, syncLog, items, cfg.SkippedSensitive); err != nil {
 			return s.githubDocumentRunFailure(ctx, ds, syncLog, wasPaused, err)
 		}
 	}
 	if err := ensureSyncRunActive(ctx, runGuard); err != nil {
-		return s.finishSyncRunGuardError(ctx, ds, syncLog, githubDocumentProgressResult(items), wasPaused, err)
+		return s.finishSyncRunGuardError(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive), wasPaused, err)
 	}
 	if err := accessGuard.check(ctx); err != nil {
-		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items), wasPaused, err)
+		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive), wasPaused, err)
 	}
 	if err := s.verifyGitHubDocumentKB(ctx, ds); err != nil {
-		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items), wasPaused, err)
+		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items, cfg.SkippedSensitive), wasPaused, err)
 	}
 	pending, failed, pendingUpserts, failedUpserts := 0, 0, 0, 0
 	for _, item := range items {
@@ -577,10 +603,9 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 	// pending for the next scheduled/manual retry instead of queueing an
 	// endless continuation solely because deletions cannot yet be authorized.
 	if pendingUpserts == 0 && failedUpserts > 0 {
-		result := githubDocumentProgressResult(items)
-		data, _ := result.ToJSON()
-		return s.updateSyncRunResult(ctx, ds, syncLog, result, data, types.SyncLogStatusPartial,
-			fmt.Sprintf("%d GitHub document(s) still need attention; deletion is deferred", failedUpserts), wasPaused, false)
+		result := githubDocumentProgressResult(items, cfg.SkippedSensitive)
+		return s.finishGitHubDocumentIncomplete(ctx, ds, syncLog, result, wasPaused,
+			fmt.Sprintf("%d GitHub document(s) still need attention; deletion is deferred", failedUpserts))
 	}
 	if pending > 0 {
 		if processed == 0 {
@@ -591,14 +616,14 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 		}
 		return nil // same running SyncLog continues in the queued bounded chunk
 	}
-	result := githubDocumentProgressResult(items)
-	data, _ := result.ToJSON()
+	result := githubDocumentProgressResult(items, cfg.SkippedSensitive)
 	if failed > 0 {
-		return s.updateSyncRunResult(ctx, ds, syncLog, result, data, types.SyncLogStatusPartial,
-			fmt.Sprintf("%d GitHub document(s) still need attention", failed), wasPaused, false)
+		return s.finishGitHubDocumentIncomplete(ctx, ds, syncLog, result, wasPaused,
+			fmt.Sprintf("%d GitHub document(s) still need attention", failed))
 	}
 	if err := store.PublishGitHubDocumentRun(ctx, run, leaseID, ds, syncLog.ID); err != nil {
 		return s.githubDocumentRunFailure(ctx, ds, syncLog, wasPaused, err)
 	}
+	data, _ := result.ToJSON()
 	return s.updateSyncRunResult(ctx, ds, syncLog, result, data, types.SyncLogStatusSuccess, "", wasPaused, false)
 }
