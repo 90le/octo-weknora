@@ -264,7 +264,7 @@ func TestGitHubBatchReviewAllowsMoreThanOneDocumentSyncChunk(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "complete", preview.TreeState)
 	require.Equal(t, 5, preview.Summary.EligibleFiles)
-	require.Greater(t, preview.Summary.EligibleBytes, githubconnector.DocumentBatchLimitBytes)
+	require.Greater(t, preview.Summary.EligibleBytes, int64(githubconnector.DocumentBatchLimitBytes))
 	require.Empty(t, preview.ErrorCode)
 	require.NotEmpty(t, preview.PreviewToken, "more than one future sync chunk is a warning, not a creation blocker")
 	batch := &types.GitHubBatchRequest{TenantID: 7, KnowledgeBaseID: "kb-one", Owner: "example", Mode: "documents",
