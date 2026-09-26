@@ -103,7 +103,7 @@ export interface GitHubDiscoveryResponse {
 }
 
 export type GitHubBulkMode = 'source' | 'documents'
-export type GitHubBatchSyncPolicy = 'manual' | 'scheduled'
+export type GitHubBatchSyncPolicy = 'manual' | 'scheduled' | 'staggered'
 
 export interface GitHubBatchResultItem {
   repository: string

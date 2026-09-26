@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"strings"
 
 	githubConnector "github.com/Tencent/WeKnora/internal/datasource/connector/github"
@@ -118,7 +119,7 @@ func (s *DataSourceService) CreateGitHubBatch(ctx context.Context, req *types.Gi
 		ds := &types.DataSource{
 			TenantID: req.TenantID, KnowledgeBaseID: req.KnowledgeBaseID,
 			Name: "GitHub · " + repository, Type: types.ConnectorTypeGitHub, Config: blob,
-			SyncSchedule: syncPlan.Schedule, SyncMode: types.SyncModeIncremental,
+			SyncSchedule: syncPlan.scheduleFor(repository, mode), SyncMode: types.SyncModeIncremental,
 			Status: types.DataSourceStatusActive, ConflictStrategy: types.ConflictStrategyOverwrite,
 		}
 		created, createErr := s.CreateDataSource(ctx, ds)
@@ -144,6 +145,92 @@ func (s *DataSourceService) CreateGitHubBatch(ctx context.Context, req *types.Gi
 type githubBatchSyncPlan struct {
 	Schedule  string
 	StartSync bool
+	Staggered bool
+}
+
+// scheduleFor deterministically spreads a repository usage across the 360
+// minutes in each six-hour window. The persisted value remains an ordinary
+// six-field cron expression, so existing scheduler/runtime code is unchanged.
+// Including mode prevents a document import and a source snapshot of the same
+// repository from competing at the same instant.
+func (p githubBatchSyncPlan) scheduleFor(repository, mode string) string {
+	if !p.Staggered {
+		return p.Schedule
+	}
+	return githubStaggeredSixHourSchedule(repository, mode)
+}
+
+func githubStaggeredSixHourSchedule(repository, mode string) string {
+	key, ok := canonicalGitHubDataSourcePair(repository, mode)
+	if !ok {
+		return ""
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	// Avalanche the FNV hash before reducing it to 360 slots. Otherwise names
+	// with sequential numeric suffixes disproportionately hit a few minutes.
+	v := h.Sum32()
+	v ^= v >> 16
+	v *= 0x85ebca6b
+	v ^= v >> 13
+	v *= 0xc2b2ae35
+	v ^= v >> 16
+	slot := int(v % 360)
+	hour, minute := slot/60, slot%60
+	return fmt.Sprintf("0 %d %d,%d,%d,%d * * *", minute, hour, hour+6, hour+12, hour+18)
+}
+
+// GitHubLegacySchedulePreview is a read-only migration candidate. Operators
+// can inspect the old and proposed cron expressions before any explicit
+// update. This helper intentionally does not write data source rows.
+type GitHubLegacySchedulePreview struct {
+	DataSourceID string
+	Repository   string
+	Mode         string
+	Status       string
+	Current      string
+	Proposed     string
+	Eligible     bool
+	Reason       string
+}
+
+// PreviewGitHubLegacySchedules never guesses that an operator's custom cron
+// should be moved. Only active GitHub sources with the exact old six-hour
+// default are eligible; paused/error/manual/custom rows remain untouched.
+func PreviewGitHubLegacySchedules(rows []*types.DataSource) []GitHubLegacySchedulePreview {
+	previews := make([]GitHubLegacySchedulePreview, 0, len(rows))
+	for _, ds := range rows {
+		if ds == nil || ds.Type != types.ConnectorTypeGitHub {
+			continue
+		}
+		p := GitHubLegacySchedulePreview{DataSourceID: ds.ID, Status: ds.Status, Current: ds.SyncSchedule}
+		config, err := ds.ParseConfig()
+		if err != nil || config == nil {
+			p.Reason = "invalid_config"
+			previews = append(previews, p)
+			continue
+		}
+		repository, _ := config.Settings["repository"].(string)
+		mode, _ := config.Settings["mode"].(string)
+		p.Repository = canonicalGitHubRepository(repository)
+		p.Mode = storedGitHubDataSourceMode(mode)
+		switch {
+		case p.Repository == "" || p.Mode == "":
+			p.Reason = "invalid_selection"
+		case ds.Status != types.DataSourceStatusActive:
+			p.Reason = "not_active"
+		case ds.SyncSchedule == "":
+			p.Reason = "manual_schedule"
+		case ds.SyncSchedule != defaultGitHubBatchSchedule:
+			p.Reason = "custom_schedule"
+		default:
+			p.Proposed = githubStaggeredSixHourSchedule(p.Repository, p.Mode)
+			p.Eligible = true
+			p.Reason = "eligible"
+		}
+		previews = append(previews, p)
+	}
+	return previews
 }
 
 // resolveGitHubBatchSyncPlan deliberately treats an omitted policy as a
@@ -172,6 +259,11 @@ func resolveGitHubBatchSyncPlan(req *types.GitHubBatchRequest) (githubBatchSyncP
 			return githubBatchSyncPlan{}, errors.New("manual GitHub batch sync policy cannot queue an initial sync")
 		}
 		return githubBatchSyncPlan{}, nil
+	case "staggered":
+		if schedule != "" {
+			return githubBatchSyncPlan{}, errors.New("staggered GitHub batch sync policy cannot include a schedule")
+		}
+		return githubBatchSyncPlan{StartSync: req.StartSync, Staggered: true}, nil
 	case "scheduled":
 		if schedule == "" {
 			return githubBatchSyncPlan{}, errors.New("scheduled GitHub batch sync policy requires a schedule")

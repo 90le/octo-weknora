@@ -7,6 +7,8 @@ import {
   filterGitHubRepositories,
   githubRepositoryModePresence,
   githubBatchSyncPayload,
+  githubStaggeredScheduleChoice,
+  githubStaggeredSyncSchedule,
   hasGitHubRepositoryMode,
   mergeGitHubRepositoryPresence,
   normalizeGitHubRepository,
@@ -82,6 +84,17 @@ test('GitHub bulk treats no schedule as an explicit dormant manual source', () =
     sync_schedule: '0 0 */6 * * *',
     start_sync: true,
   })
+  assert.deepEqual(githubBatchSyncPayload(githubStaggeredScheduleChoice, false), {
+    sync_policy: 'staggered',
+    start_sync: false,
+  })
+})
+
+test('GitHub bulk preview matches persisted six-hour slots and keeps modes apart', () => {
+  assert.equal(githubStaggeredSyncSchedule('Mininglamp-OSS/octo-cli', 'source'), '0 54 5,11,17,23 * * *')
+  assert.equal(githubStaggeredSyncSchedule('MININGLAMP-OSS/OCTO-CLI.git', 'source'), '0 54 5,11,17,23 * * *')
+  assert.equal(githubStaggeredSyncSchedule('Mininglamp-OSS/octo-cli', 'documents'), '0 33 2,8,14,20 * * *')
+  assert.equal(githubStaggeredSyncSchedule('Mininglamp-OSS/octo-cli/tree/main', 'source'), '')
 })
 
 test('GitHub bulk tracks source and document ingestion independently', () => {
