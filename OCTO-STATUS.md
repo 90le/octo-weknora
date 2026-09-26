@@ -1,8 +1,32 @@
 # 项目进度
 
-更新：2026-09-23。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
+更新：2026-09-27。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-23 15:58 CST）
+## 当前状态（2026-09-27；来源回读于 05:4x CST）
+
+**代码、主线与运行版本：**PR #46–#58 已合并并通过对应 CI；主线提交为 [`ff60725ed985cd0977eadf19c7630c13d4e75f94`](https://github.com/90le/octo-weknora/commit/ff60725ed985cd0977eadf19c7630c13d4e75f94)。生产回读的 app Image ID 为 `sha256:851910cbd0d5142644baaa7ae1d89cb40a2e6dab836ef15f2c3869d3fb171203`，UI Image ID 为 `sha256:33fa85acef00c767ca2fdcaab69487046b65ada7a5963a56007d9bcf58ea1734`；API／UI 健康检查均为 200，PostgreSQL migration `106` 非 dirty。代码合并、镜像回读和业务验收是不同层次：本轮来源同步已完成回读，下述一个真实群问答场景通过，其他场景仍待验收。此段依据 2026-09-27 的发布／运维交接记录，后续状态变化须重新回读。
+
+**资产与恢复基线：**切换时有 1269 条活动知识；本次恢复后，活动知识库「Octo官方项目知识库」（ID `40b39914-b200-4daa-ba3c-1dd666729ce7`）有 1447 条活动知识，全部 `completed`。60 条来源全部 active（30 条文档、30 条源码），每条来源的最新同步日志均为 `success`；旧六小时整点 Cron 数为 0，运行中的 GitHub 文档同步为 0。该库当前 `graph=false`，不能沿用下文 2026-09-16 的“图谱已启用”历史结论推断其当前配置。2 TB 数据盘上的私有发布备份包含 PostgreSQL 一致性导出、应用文件和 Compose；恢复时仍须核对备份覆盖范围及恢复点之后的写入。
+
+**GitHub 文档来源恢复：**五条旧 `error` 来源都已通过正式同步，不能把此前只修复代码、尚未重跑的阶段误写成已恢复。
+
+| 来源 | 本次同步与范围处理 | 最新结果 |
+|---|---|---|
+| Android | 11 个文档创建 | `success` |
+| Chrome | 8 个文件跳过 | `success` |
+| iOS | 首轮 59 个候选中 33 个 Xcode `.xcassets` PDF 失败；排除资源目录后再同步，跳过 26 个；首轮已创建 6 个、跳过 20 个保留 | `success` |
+| Server | 84 个文档创建 | `success` |
+| Web | 首轮 227 个候选中 `apps/web/e2e-kit/fixtures/html-attachment.html` 解析失败；排除该 fixtures 目录后预览 219 个，再同步跳过 219 个；首轮已创建 32 个、更新 2 个、跳过 192 个保留 | `success` |
+
+另五条最新原为旧版 `partial` 的活动文档来源已在新版重跑，最新均为 `success`：speech 创建 6／跳过 4，cli 创建 27／跳过 6，adapters 创建 8／跳过 6，admin 创建 9／跳过 5，lib 创建 7／跳过 6。排除规则只作用于后续同步，初次成功导入的内容不会因为修改范围而自动下架；如需清理旧索引，应另行审阅精确归属与影响。上述成功状态证明这一时点的来源同步和知识完成状态，不单独证明真实群问答质量。
+
+**真实群问答验收（单例）：**「Octo 小测」（UID `28896t9kvbl1fbd86fb_bot`）在「Steward 联调群」（`group_no=f242768884694ce89e86bdc236f525f7`）以消息 `seq 522`、ID `2103963709519859712` 询问 Octo Server 的构建准备及固定来源。「Octo 小丘」（UID `286wbc0bphb6af78382_bot`）以相邻消息 `seq 523`、ID `2103963761822830592` 回复相关 Go、`replace` 和构建步骤，并附[官方固定提交 BUILDING.md](https://github.com/Mininglamp-OSS/octo-server/blob/d72384470cb72188af4f99c2576f92d2a0e39738/BUILDING.md)；已核对该页直接支持回答。原生 reply 指向原提问，mention UID 精确指向测试 Bot。内部 channel `892c8469-c005-49a3-b783-abe796ffff9c` 的 inbox 复合消息 ID `octo:286wbc0bphb6af78382_bot:2103963709519859712` 为 `delivered`、`attempts=1`。此例只覆盖该构建问答与对应出站路径，版本、多仓及其他文档问答仍需分别验证。
+
+**容量与清理：**先前定点清理旧 `/tmp/gopath` 567 MiB、`node-compile-cache` 421 MiB、`/tmp/go` 238 MiB；随后把约 2.47 GB Go 模块缓存复制到 2 TB 数据盘，`rsync --checksum --dry-run` 差异为 0，原路径改为符号链接并验证 Docker bind mount 可读，最后定点移除根盘旧副本。验收后停止并移除 4 个隔离候选容器和候选网络，确认无挂载及打开文件后，定点清理候选克隆目录约 871 MiB、旧范围预览测试缓存约 4.0 GiB、`ff60725e` 发布暂存的源码／包／UI／npm 产物约 1.4 GiB。另移除两个确认未使用的旧镜像标签；共享镜像层使根盘空间未立即变化。生产应用未重启。根盘可用约 15 GiB，根盘上的 `containerd` 仍约 58 GB；2 TB 数据盘已用约 37 GiB，为 XFS `ftype=0`，不能作为当前 overlay 存储目录。PostgreSQL／Milvus 数据和来源快照仍在数据盘；现行 `backup-final`（PostgreSQL 导出、应用文件、Compose）、`source.tar`、`ff60725e` 不可变镜像以及一组回退镜像和备份目录均保留。需要时可由备份重建隔离候选。下一次构建须继续把 `TMPDIR`、`GOTMPDIR` 和重型构建缓存指向数据盘，不执行宽范围 prune。
+
+**未完成事项：**文档与源码仍按数据源各持一份物理 Git 传输缓存；按仓库共享缓存、明确的 GitHub API 速率预算和 webhook 均未实现。下一步按 [实施计划](OCTO-PLAN.md) 扩展真实群问答、审阅来源范围并监测后续周期健康。
+
+## 历史发布：隐私修复（2026-09-23 15:58 CST）
 
 **隐私修复已发布。**[PR #41](https://github.com/90le/octo-weknora/pull/41)、[#42](https://github.com/90le/octo-weknora/pull/42)、[#43](https://github.com/90le/octo-weknora/pull/43)、[#45](https://github.com/90le/octo-weknora/pull/45) 已合并；最后的 #45 修复 QA 错误路径与 GORM SQL 警告泄露。生产 app 的不可变 Image ID 已回读为 `sha256:64e8489264404dc9d507efa544edbf4db9753d502775ca17d275be2ab90601bd`，对应合并提交 `43030dd1c2cdb2b75c82d28380c0c3d109369eea`，构建源归档校验值前缀 `7723ce70`；UI 仍为 `sha256:1406a7f1…`。四项 PR 的 Go 测试／构建与 lint 检查通过，#45 的 scope 检查也通过。生产后端健康 200、未认证知识 API 401、前端 200；认证系统信息返回完整 `43030dd1` 与 migration `105`、4 个知识库、Anydoc 可用。PostgreSQL migration `105` 非 dirty，4 个活动知识库、60 条活动来源、4 条问题，运行中的同步／解析均为 0；IM 通道启用 1 条、inbox 处理中 0 条，Octo 小丘 WebSocket 运行时已初始化。私人 OpenClaw Gateway 与 Octo daemon 保持 active。
 
