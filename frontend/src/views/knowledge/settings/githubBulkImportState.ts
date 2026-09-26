@@ -25,14 +25,14 @@ export const githubStaggeredScheduleChoice = 'staggered'
 
 /**
  * Exact preview of the server's six-hour GitHub batch schedule. Both sides
- * hash canonical repository + usage mode (with a NUL separator) using FNV-1a
- * and the same avalanche finalizer. The server persists the resulting cron;
+ * hash the canonical repository using FNV-1a and the same avalanche finalizer,
+ * then place source mode exactly 180 minutes after document mode. The server persists the resulting cron;
  * this client never sends the per-repository cron as an instruction.
  */
 export function githubStaggeredSyncSchedule(repository: string, mode: GitHubBulkMode): string {
   const canonical = normalizeGitHubRepository(repository)
   if (!canonical) return ''
-  const key = `${canonical}\0${mode}`
+  const key = canonical
   let hash = 2166136261
   for (let index = 0; index < key.length; index += 1) {
     hash = Math.imul(hash ^ key.charCodeAt(index), 16777619)
@@ -42,7 +42,8 @@ export function githubStaggeredSyncSchedule(repository: string, mode: GitHubBulk
   hash ^= hash >>> 13
   hash = Math.imul(hash, 0xc2b2ae35)
   hash ^= hash >>> 16
-  const slot = (hash >>> 0) % 360
+  const baseSlot = (hash >>> 0) % 360
+  const slot = mode === 'source' ? (baseSlot + 180) % 360 : baseSlot
   const hour = Math.floor(slot / 60)
   const minute = slot % 60
   return `0 ${minute} ${hour},${hour + 6},${hour + 12},${hour + 18} * * *`

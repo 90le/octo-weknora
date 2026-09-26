@@ -91,9 +91,9 @@ test('GitHub bulk treats no schedule as an explicit dormant manual source', () =
 })
 
 test('GitHub bulk preview matches persisted six-hour slots and keeps modes apart', () => {
-  assert.equal(githubStaggeredSyncSchedule('Mininglamp-OSS/octo-cli', 'source'), '0 54 5,11,17,23 * * *')
-  assert.equal(githubStaggeredSyncSchedule('MININGLAMP-OSS/OCTO-CLI.git', 'source'), '0 54 5,11,17,23 * * *')
-  assert.equal(githubStaggeredSyncSchedule('Mininglamp-OSS/octo-cli', 'documents'), '0 33 2,8,14,20 * * *')
+  assert.equal(githubStaggeredSyncSchedule('Mininglamp-OSS/octo-cli', 'source'), '0 55 2,8,14,20 * * *')
+  assert.equal(githubStaggeredSyncSchedule('MININGLAMP-OSS/OCTO-CLI.git', 'source'), '0 55 2,8,14,20 * * *')
+  assert.equal(githubStaggeredSyncSchedule('Mininglamp-OSS/octo-cli', 'documents'), '0 55 5,11,17,23 * * *')
   assert.equal(githubStaggeredSyncSchedule('Mininglamp-OSS/octo-cli/tree/main', 'source'), '')
 })
 

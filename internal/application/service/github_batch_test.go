@@ -191,9 +191,9 @@ func TestGitHubStaggeredScheduleStableAcrossBatchesAndModes(t *testing.T) {
 	plan, err := resolveGitHubBatchSyncPlan(&types.GitHubBatchRequest{SyncPolicy: "staggered"})
 	require.NoError(t, err)
 	require.True(t, plan.Staggered)
-	require.Equal(t, "0 54 5,11,17,23 * * *", plan.scheduleFor("Mininglamp-OSS/octo-cli", "source"))
+	require.Equal(t, "0 55 2,8,14,20 * * *", plan.scheduleFor("Mininglamp-OSS/octo-cli", "source"))
 	require.Equal(t, plan.scheduleFor("Mininglamp-OSS/octo-cli", "source"), plan.scheduleFor("MININGLAMP-OSS/OCTO-CLI.git", "source"))
-	require.Equal(t, "0 33 2,8,14,20 * * *", plan.scheduleFor("Mininglamp-OSS/octo-cli", "documents"))
+	require.Equal(t, "0 55 5,11,17,23 * * *", plan.scheduleFor("Mininglamp-OSS/octo-cli", "documents"))
 	require.NotEqual(t, plan.scheduleFor("Mininglamp-OSS/octo-cli", "source"), plan.scheduleFor("Mininglamp-OSS/octo-cli", "documents"))
 	require.NoError(t, validateGitHubBatchSchedule(plan.scheduleFor("Mininglamp-OSS/octo-cli", "source")))
 	_, err = resolveGitHubBatchSyncPlan(&types.GitHubBatchRequest{SyncPolicy: "staggered", SyncSchedule: defaultGitHubBatchSchedule})
@@ -203,8 +203,10 @@ func TestGitHubStaggeredScheduleStableAcrossBatchesAndModes(t *testing.T) {
 func TestGitHubStaggeredScheduleDistributesSixtySourcesAcrossWindow(t *testing.T) {
 	seen := map[string]struct{}{}
 	for index := 0; index < 60; index++ {
-		schedule := githubStaggeredSixHourSchedule(fmt.Sprintf("Mininglamp-OSS/repo-%02d", index), "source")
+		repository := fmt.Sprintf("Mininglamp-OSS/repo-%02d", index)
+		schedule := githubStaggeredSixHourSchedule(repository, "source")
 		require.NoError(t, validateGitHubBatchSchedule(schedule))
+		require.NotEqual(t, schedule, githubStaggeredSixHourSchedule(repository, "documents"))
 		seen[schedule] = struct{}{}
 	}
 	require.GreaterOrEqual(t, len(seen), 50, "stable hash must not concentrate sequential repositories")
@@ -229,7 +231,7 @@ func TestPreviewGitHubLegacySchedulesOnlyExactActiveDefault(t *testing.T) {
 	preview := PreviewGitHubLegacySchedules(rows)
 	require.Len(t, preview, 5)
 	require.True(t, preview[0].Eligible)
-	require.Equal(t, "0 54 5,11,17,23 * * *", preview[0].Proposed)
+	require.Equal(t, "0 55 2,8,14,20 * * *", preview[0].Proposed)
 	for index, reason := range []string{"custom_schedule", "manual_schedule", "not_active", "not_active"} {
 		require.False(t, preview[index+1].Eligible)
 		require.Empty(t, preview[index+1].Proposed)

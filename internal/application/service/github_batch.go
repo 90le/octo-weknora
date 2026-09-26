@@ -151,8 +151,8 @@ type githubBatchSyncPlan struct {
 // scheduleFor deterministically spreads a repository usage across the 360
 // minutes in each six-hour window. The persisted value remains an ordinary
 // six-field cron expression, so existing scheduler/runtime code is unchanged.
-// Including mode prevents a document import and a source snapshot of the same
-// repository from competing at the same instant.
+// Source mode is placed 180 minutes after document mode, so the same
+// repository's two usages provably never compete at the same instant.
 func (p githubBatchSyncPlan) scheduleFor(repository, mode string) string {
 	if !p.Staggered {
 		return p.Schedule
@@ -161,12 +161,13 @@ func (p githubBatchSyncPlan) scheduleFor(repository, mode string) string {
 }
 
 func githubStaggeredSixHourSchedule(repository, mode string) string {
-	key, ok := canonicalGitHubDataSourcePair(repository, mode)
-	if !ok {
+	repository = canonicalGitHubRepository(repository)
+	mode = requestedGitHubBatchMode(mode)
+	if repository == "" || mode == "" {
 		return ""
 	}
 	h := fnv.New32a()
-	_, _ = h.Write([]byte(key))
+	_, _ = h.Write([]byte(repository))
 	// Avalanche the FNV hash before reducing it to 360 slots. Otherwise names
 	// with sequential numeric suffixes disproportionately hit a few minutes.
 	v := h.Sum32()
@@ -176,6 +177,9 @@ func githubStaggeredSixHourSchedule(repository, mode string) string {
 	v *= 0xc2b2ae35
 	v ^= v >> 16
 	slot := int(v % 360)
+	if mode == "source" {
+		slot = (slot + 180) % 360
+	}
 	hour, minute := slot/60, slot%60
 	return fmt.Sprintf("0 %d %d,%d,%d,%d * * *", minute, hour, hour+6, hour+12, hour+18)
 }
