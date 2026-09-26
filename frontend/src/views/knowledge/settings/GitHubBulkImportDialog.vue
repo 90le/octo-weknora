@@ -20,6 +20,8 @@ import {
   githubRepositoryModePresence,
   githubBulkRequestLimit,
   githubBatchSyncPayload,
+  githubStaggeredScheduleChoice,
+  githubStaggeredSyncSchedule,
   hasGitHubRepositoryMode,
   mergeGitHubRepositoryPresence,
   parseGitHubPaths,
@@ -53,7 +55,7 @@ const search = ref('')
 const includeArchived = ref(false)
 const mode = ref<GitHubBulkMode>('source')
 const pathsText = ref('')
-const syncSchedule = ref('0 0 */6 * * *')
+const syncSchedule = ref(githubStaggeredScheduleChoice)
 const startSync = ref(false)
 const discovering = ref(false)
 const submitting = ref(false)
@@ -72,6 +74,7 @@ const stepTitles = computed(() => [
 
 const scheduleOptions = computed(() => [
   { value: '', label: t('datasource.githubBulk.schedule.none') },
+  { value: githubStaggeredScheduleChoice, label: t('datasource.githubBulk.schedule.staggered') },
   { value: '0 0 */6 * * *', label: t('datasource.githubBulk.schedule.sixHours') },
   { value: '0 0 0 * * *', label: t('datasource.githubBulk.schedule.daily') },
   { value: '0 0 0 * * 1', label: t('datasource.githubBulk.schedule.weekly') },
@@ -96,6 +99,12 @@ const requestBatchCount = computed(() => Math.ceil(selectedCount.value / batchLi
 const selectionRequiresMultipleRequests = computed(() => requestBatchCount.value > 1)
 const resultSummary = computed(() => summarizeGitHubBulkResults(results.value))
 const isManualSyncPolicy = computed(() => !syncSchedule.value.trim())
+const staggeredPreview = computed(() => selectedRepositories.value
+  .filter((repository) => !hasGitHubRepositoryMode(repository.repository, mode.value, repositoryPresence.value))
+  .map((repository) => ({
+    repository: repository.repository,
+    cron: githubStaggeredSyncSchedule(repository.repository, mode.value),
+  })))
 
 const drawerDescription = computed(() => {
   if (step.value === 0) return t('datasource.githubBulk.description')
@@ -149,7 +158,7 @@ function reset() {
   includeArchived.value = false
   mode.value = 'source'
   pathsText.value = ''
-  syncSchedule.value = '0 0 */6 * * *'
+  syncSchedule.value = githubStaggeredScheduleChoice
   startSync.value = false
   discovering.value = false
   submitting.value = false
@@ -561,8 +570,20 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
           <t-select v-model="syncSchedule">
             <t-option v-for="option in scheduleOptions" :key="option.value" :value="option.value" :label="option.label" />
           </t-select>
+          <p v-if="syncSchedule === githubStaggeredScheduleChoice" class="github-bulk-field-hint">
+            {{ t('datasource.githubBulk.schedule.staggeredHint') }}
+          </p>
         </div>
       </div>
+      <details v-if="syncSchedule === githubStaggeredScheduleChoice && staggeredPreview.length" class="github-bulk-schedule-preview">
+        <summary>{{ t('datasource.githubBulk.schedule.preview', { count: staggeredPreview.length }) }}</summary>
+        <p class="github-bulk-field-hint">{{ t('datasource.githubBulk.schedule.previewHint') }}</p>
+        <ul>
+          <li v-for="item in staggeredPreview" :key="item.repository">
+            <span>{{ item.repository }}</span><code>{{ item.cron }}</code>
+          </li>
+        </ul>
+      </details>
       <div>
         <label class="github-bulk-label">{{ t('datasource.gitlab.paths') }}</label>
         <t-textarea
@@ -680,6 +701,11 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
 .github-bulk-repository-row__meta { color: var(--td-text-color-placeholder); font-size: 11px; }
 
 .github-bulk-config-grid { display: grid; grid-template-columns: minmax(0, 1fr) 210px; gap: 16px; }
+.github-bulk-schedule-preview { color: var(--td-text-color-secondary); font-size: 12px; }
+.github-bulk-schedule-preview summary { cursor: pointer; }
+.github-bulk-schedule-preview ul { max-height: 180px; overflow: auto; margin: 8px 0 0; padding: 0; list-style: none; }
+.github-bulk-schedule-preview li { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--td-component-stroke); }
+.github-bulk-schedule-preview code { flex-shrink: 0; }
 
 .github-bulk-result-summary { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; }
 .github-bulk-result-summary span { padding: 4px 8px; border-radius: 5px; background: var(--td-bg-color-secondarycontainer); }

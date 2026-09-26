@@ -62,7 +62,14 @@ export const githubBulkMessages = {
     completedWithFailures: 'Bulk creation completed; some repositories need attention before retrying.',
     noResults: 'The server returned no per-repository result. Refresh the data-source list to confirm what was created.',
     status: { created: 'Created', existing: 'Already exists', failed: 'Failed', skipped: 'Skipped' },
-    schedule: { none: 'No scheduled sync', sixHours: 'Every 6 hours', daily: 'Daily', weekly: 'Weekly' },
+    schedule: {
+      none: 'No scheduled sync',
+      staggered: 'Every 6 hours, spread across repositories (recommended)',
+      staggeredHint: 'Each repository and usage gets a stable time slot. This avoids starting the whole batch together; manual custom schedules remain unchanged.',
+      preview: 'Preview schedules for {count} new sources',
+      previewHint: 'Exact six-field cron expressions in the server time zone. Already configured sources keep their current schedule.',
+      sixHours: 'Every 6 hours at the same time', daily: 'Daily', weekly: 'Weekly',
+    },
   },
   zh: {
     add: '批量添加 GitHub 仓库',
@@ -121,6 +128,13 @@ export const githubBulkMessages = {
     completedWithFailures: '批量创建已完成，部分仓库需要处理后重试。',
     noResults: '服务端没有返回逐仓结果。请刷新数据源列表核对实际创建情况。',
     status: { created: '已创建', existing: '已存在', failed: '失败', skipped: '已跳过' },
-    schedule: { none: '不设定时同步', sixHours: '每 6 小时', daily: '每天', weekly: '每周' },
+    schedule: {
+      none: '不设定时同步',
+      staggered: '每 6 小时错峰同步（推荐）',
+      staggeredHint: '按仓库和用途分配稳定时段，避免整批同时启动；手动选择的计划保持不变。',
+      preview: '预览 {count} 个新来源的同步计划',
+      previewHint: '显示服务器时区的六字段 Cron 表达式。已配置来源继续使用原计划。',
+      sixHours: '每 6 小时同一时刻', daily: '每天', weekly: '每周',
+    },
   },
 } as const

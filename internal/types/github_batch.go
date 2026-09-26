@@ -44,7 +44,9 @@ type GitHubBatchRequest struct {
 	// SyncPolicy makes an explicit batch choice distinguishable from an
 	// omitted legacy request. "manual" persists no cron and never queues an
 	// initial sync; "scheduled" requires a valid SyncSchedule. An omitted
-	// policy preserves the legacy six-hour schedule behaviour.
+	// policy preserves the legacy six-hour schedule behaviour. "staggered"
+	// assigns each repository+mode a stable six-hour slot and rejects an
+	// explicit SyncSchedule, so hand-picked cron expressions are never changed.
 	SyncPolicy   string `json:"sync_policy,omitempty"`
 	SyncSchedule string `json:"sync_schedule,omitempty"`
 	StartSync    bool   `json:"start_sync"`

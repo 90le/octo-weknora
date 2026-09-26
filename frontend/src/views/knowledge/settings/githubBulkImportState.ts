@@ -21,6 +21,33 @@ const emptyModePresence = (): GitHubRepositoryModePresence => ({ source: false, 
 // several of these requests sequentially when the user explicitly selected
 // more repositories.
 export const githubBulkRequestLimit = 20
+export const githubStaggeredScheduleChoice = 'staggered'
+
+/**
+ * Exact preview of the server's six-hour GitHub batch schedule. Both sides
+ * hash the canonical repository using FNV-1a and the same avalanche finalizer,
+ * then place source mode exactly 180 minutes after document mode. The server persists the resulting cron;
+ * this client never sends the per-repository cron as an instruction.
+ */
+export function githubStaggeredSyncSchedule(repository: string, mode: GitHubBulkMode): string {
+  const canonical = normalizeGitHubRepository(repository)
+  if (!canonical) return ''
+  const key = canonical
+  let hash = 2166136261
+  for (let index = 0; index < key.length; index += 1) {
+    hash = Math.imul(hash ^ key.charCodeAt(index), 16777619)
+  }
+  hash ^= hash >>> 16
+  hash = Math.imul(hash, 0x85ebca6b)
+  hash ^= hash >>> 13
+  hash = Math.imul(hash, 0xc2b2ae35)
+  hash ^= hash >>> 16
+  const baseSlot = (hash >>> 0) % 360
+  const slot = mode === 'source' ? (baseSlot + 180) % 360 : baseSlot
+  const hour = Math.floor(slot / 60)
+  const minute = slot % 60
+  return `0 ${minute} ${hour},${hour + 6},${hour + 12},${hour + 18} * * *`
+}
 
 /**
  * GitHub treats owner/repository names case-insensitively. Existing normal
@@ -214,6 +241,9 @@ export function githubBatchSyncPayload(schedule: string, startSync: boolean): Gi
   const normalizedSchedule = schedule.trim()
   if (!normalizedSchedule) {
     return { sync_policy: 'manual', start_sync: false }
+  }
+  if (normalizedSchedule === githubStaggeredScheduleChoice) {
+    return { sync_policy: 'staggered', start_sync: startSync }
   }
   return {
     sync_policy: 'scheduled',

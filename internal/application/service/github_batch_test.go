@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -184,4 +185,57 @@ func TestResolveGitHubBatchSyncPlanLegacyRequestsKeepSixHourDefault(t *testing.T
 	require.NoError(t, err)
 	require.Equal(t, defaultGitHubBatchSchedule, plan.Schedule)
 	require.False(t, plan.StartSync)
+}
+
+func TestGitHubStaggeredScheduleStableAcrossBatchesAndModes(t *testing.T) {
+	plan, err := resolveGitHubBatchSyncPlan(&types.GitHubBatchRequest{SyncPolicy: "staggered"})
+	require.NoError(t, err)
+	require.True(t, plan.Staggered)
+	require.Equal(t, "0 55 2,8,14,20 * * *", plan.scheduleFor("Mininglamp-OSS/octo-cli", "source"))
+	require.Equal(t, plan.scheduleFor("Mininglamp-OSS/octo-cli", "source"), plan.scheduleFor("MININGLAMP-OSS/OCTO-CLI.git", "source"))
+	require.Equal(t, "0 55 5,11,17,23 * * *", plan.scheduleFor("Mininglamp-OSS/octo-cli", "documents"))
+	require.NotEqual(t, plan.scheduleFor("Mininglamp-OSS/octo-cli", "source"), plan.scheduleFor("Mininglamp-OSS/octo-cli", "documents"))
+	require.NoError(t, validateGitHubBatchSchedule(plan.scheduleFor("Mininglamp-OSS/octo-cli", "source")))
+	_, err = resolveGitHubBatchSyncPlan(&types.GitHubBatchRequest{SyncPolicy: "staggered", SyncSchedule: defaultGitHubBatchSchedule})
+	require.EqualError(t, err, "staggered GitHub batch sync policy cannot include a schedule")
+}
+
+func TestGitHubStaggeredScheduleDistributesSixtySourcesAcrossWindow(t *testing.T) {
+	seen := map[string]struct{}{}
+	for index := 0; index < 60; index++ {
+		repository := fmt.Sprintf("Mininglamp-OSS/repo-%02d", index)
+		schedule := githubStaggeredSixHourSchedule(repository, "source")
+		require.NoError(t, validateGitHubBatchSchedule(schedule))
+		require.NotEqual(t, schedule, githubStaggeredSixHourSchedule(repository, "documents"))
+		seen[schedule] = struct{}{}
+	}
+	require.GreaterOrEqual(t, len(seen), 50, "stable hash must not concentrate sequential repositories")
+}
+
+func TestPreviewGitHubLegacySchedulesOnlyExactActiveDefault(t *testing.T) {
+	makeSource := func(id, schedule, status, repository, mode string) *types.DataSource {
+		blob, err := (&types.DataSourceConfig{Type: types.ConnectorTypeGitHub, Settings: map[string]interface{}{
+			"repository": repository, "mode": mode,
+		}}).ToJSON()
+		require.NoError(t, err)
+		return &types.DataSource{ID: id, Type: types.ConnectorTypeGitHub, Status: status, SyncSchedule: schedule, Config: blob}
+	}
+	rows := []*types.DataSource{
+		makeSource("eligible", defaultGitHubBatchSchedule, types.DataSourceStatusActive, "Mininglamp-OSS/octo-cli", "source"),
+		makeSource("custom", "0 30 */6 * * *", types.DataSourceStatusActive, "Mininglamp-OSS/octo-web", "documents"),
+		makeSource("manual", "", types.DataSourceStatusActive, "Mininglamp-OSS/octo-im", "source"),
+		makeSource("paused", defaultGitHubBatchSchedule, types.DataSourceStatusPaused, "Mininglamp-OSS/octo-server", "source"),
+		makeSource("error", defaultGitHubBatchSchedule, types.DataSourceStatusError, "Mininglamp-OSS/octo-android", "documents"),
+	}
+	rows = append(rows, &types.DataSource{ID: "other", Type: "local_folder", Status: types.DataSourceStatusActive})
+	preview := PreviewGitHubLegacySchedules(rows)
+	require.Len(t, preview, 5)
+	require.True(t, preview[0].Eligible)
+	require.Equal(t, "0 55 2,8,14,20 * * *", preview[0].Proposed)
+	for index, reason := range []string{"custom_schedule", "manual_schedule", "not_active", "not_active"} {
+		require.False(t, preview[index+1].Eligible)
+		require.Empty(t, preview[index+1].Proposed)
+		require.Equal(t, reason, preview[index+1].Reason)
+	}
+	require.Equal(t, defaultGitHubBatchSchedule, rows[0].SyncSchedule, "preview must not write an existing source")
 }
