@@ -35,7 +35,7 @@ import {
   normalizeGitHubRepository,
 } from './githubBulkImportState'
 import {
-  effectiveGitHubBulkScope, githubBulkReviewKey, mapGitHubPreviewsBounded, validGitHubBulkReview,
+  effectiveGitHubBulkScope, githubBulkReviewKey, isGitHubPreviewRateLimit, mapGitHubPreviewsBounded, validGitHubBulkReview,
   type GitHubBulkRowOverride, type GitHubBulkReview,
 } from './githubBulkScopeReviewState'
 import type { DataSource } from '@/api/datasource'
@@ -248,11 +248,11 @@ function warningText(code: string): string {
   return localized === key ? t('datasource.githubBulk.batchReview.warning.other') : localized
 }
 
-async function previewOne(repository: GitHubRepository, force = false) {
+async function previewOne(repository: GitHubRepository, force = false): Promise<'ready' | 'rate_limited' | 'failed'> {
   const key = repositoryKey(repository)
   const selectionKey = scopeKey(repository)
-  if (!force && rowReady(repository)) return
-  if (loadingRows.value[key]) return
+  if (!force && rowReady(repository)) return 'ready'
+  if (loadingRows.value[key]) return 'failed'
   loadingRows.value = { ...loadingRows.value, [key]: true }
   const scope = scopeFor(repository)
   try {
@@ -266,16 +266,19 @@ async function previewOne(repository: GitHubRepository, force = false) {
       exclude: scope.exclude,
       credentials: credentials(),
     }))
-    if (scopeKey(repository) !== selectionKey || !visible.value) return
+    if (scopeKey(repository) !== selectionKey || !visible.value) return 'failed'
     rowReviews.value = { ...rowReviews.value, [key]: {
       key: selectionKey, preview: response,
       error: response.preview_token && response.tree_state === 'complete' && !response.error_code
         ? '' : response.error_message || t('datasource.githubBulk.batchReview.previewFailed'),
       allowEmpty: false,
     } }
+    return isGitHubPreviewRateLimit(response.error_code) ? 'rate_limited' : response.preview_token ? 'ready' : 'failed'
   } catch (error) {
-    if (scopeKey(repository) !== selectionKey || !visible.value) return
+    if (scopeKey(repository) !== selectionKey || !visible.value) return 'failed'
     rowReviews.value = { ...rowReviews.value, [key]: { key: selectionKey, error: readError(error), allowEmpty: false } }
+    const status = (error as { response?: { status?: number; data?: { error_code?: string } } })?.response
+    return isGitHubPreviewRateLimit(status?.data?.error_code, status?.status) ? 'rate_limited' : 'failed'
   } finally {
     loadingRows.value = { ...loadingRows.value, [key]: false }
   }
@@ -288,11 +291,22 @@ async function previewSelected() {
   previewDone.value = 0
   previewTotal.value = pending.length
   try {
-    await mapGitHubPreviewsBounded(pending, async repository => {
-      await previewOne(repository)
+    const outcomes = await mapGitHubPreviewsBounded(pending, async repository => {
+      const outcome = await previewOne(repository)
       previewDone.value += 1
-      return repository.repository
-    })
+      return outcome
+    }, 2, outcome => outcome === 'rate_limited')
+    if (outcomes.includes('rate_limited')) {
+      for (let index = 0; index < pending.length; index += 1) {
+        if (outcomes[index] !== undefined) continue
+        const repository = pending[index]
+        const key = repositoryKey(repository)
+        rowReviews.value = { ...rowReviews.value, [key]: {
+          key: scopeKey(repository), error: t('datasource.githubBulk.batchReview.rateLimitedDeferred'), allowEmpty: false,
+        } }
+      }
+      MessagePlugin.warning(t('datasource.githubBulk.batchReview.rateLimitedDeferred'))
+    }
   } finally {
     previewing.value = false
   }

@@ -225,8 +225,10 @@ func TestGitHubBatchReviewedDocumentExclusionMatchesPersistedScope(t *testing.T)
 
 	badGlob := []string{"docs/["}
 	request.Exclude = &badGlob
-	_, err = service.PreviewGitHubBatchScope(ctx, request)
-	require.Error(t, err)
+	invalid, err := service.PreviewGitHubBatchScope(ctx, request)
+	require.NoError(t, err)
+	require.Equal(t, "github_exclusion_invalid", invalid.ErrorCode)
+	require.Empty(t, invalid.PreviewToken)
 }
 
 func TestGitHubBatchReviewedSourceRejectsInvalidExclusionGlob(t *testing.T) {

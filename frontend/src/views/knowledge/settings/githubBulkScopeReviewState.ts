@@ -51,22 +51,27 @@ export function validGitHubBulkReview(review: GitHubBulkReview | undefined, key:
   return review.preview.summary.eligible_files > 0 || review.allowEmpty
 }
 
+export function isGitHubPreviewRateLimit(code?: string, httpStatus?: number): boolean {
+  return code === 'github_rate_limit' || code === 'github_secondary_rate_limit' || httpStatus === 429
+}
+
 // Explicit batch preview may contain many selected rows, but never opens more
 // than two GitHub tree requests at once. A worker handles one repository per
 // call, preserving per-row success/error results and original selection order.
 export async function mapGitHubPreviewsBounded<T, R>(
   items: readonly T[], worker: (item: T) => Promise<R>, concurrency = 2,
-): Promise<R[]> {
+  stopAfterWave?: (result: R) => boolean,
+): Promise<Array<R | undefined>> {
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 2) {
     throw new RangeError('GitHub preview concurrency must be 1 or 2')
   }
-  const results = new Array<R>(items.length)
-  let next = 0
-  await Promise.all(Array.from({ length: Math.min(items.length, concurrency) }, async () => {
-    while (next < items.length) {
-      const index = next++
-      results[index] = await worker(items[index])
-    }
-  }))
+  const results = new Array<R | undefined>(items.length)
+  // Work in waves, not an always-full pool: if either of the first two calls
+  // is rate limited, no third request starts while its peer is still pending.
+  for (let offset = 0; offset < items.length; offset += concurrency) {
+    const wave = await Promise.all(items.slice(offset, offset + concurrency).map(worker))
+    wave.forEach((result, index) => { results[offset + index] = result })
+    if (stopAfterWave && wave.some(stopAfterWave)) break
+  }
   return results
 }

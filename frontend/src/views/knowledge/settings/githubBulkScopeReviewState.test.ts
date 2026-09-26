@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import type { GitHubBatchScopePreview, GitHubRepository } from '@/api/datasource'
 import {
-  effectiveGitHubBulkScope, githubBulkReviewKey, mapGitHubPreviewsBounded, validGitHubBulkReview,
+  effectiveGitHubBulkScope, githubBulkReviewKey, isGitHubPreviewRateLimit, mapGitHubPreviewsBounded, validGitHubBulkReview,
 } from './githubBulkScopeReviewState'
 
 const repository: GitHubRepository = { repository: 'Example/Repo', default_branch: 'main', archived: false, description: '' }
@@ -12,6 +12,7 @@ const preview = (eligible: number, expires: string): GitHubBatchScopePreview => 
   paths: ['docs'], exclude: [], estimated: false, warnings: [], preview_token: 'signed', expires_at: expires,
   summary: { candidate_files: eligible, candidate_bytes: 100, eligible_files: eligible, eligible_bytes: 100,
     image_files: 0, image_bytes: 0, sensitive_candidate_files: 0, sensitive_candidate_bytes: 0,
+    user_excluded_files: 0, user_excluded_bytes: 0,
     parser_unsupported_files: 0, parser_unsupported_bytes: 0, too_large_files: 0, too_large_bytes: 0,
     extensions: [], top_directories: [], sample_paths: [], warnings: [] },
 })
@@ -59,4 +60,20 @@ test('explicit many-repository preview keeps concurrency at two and preserves or
   assert.equal(peak, 2)
   assert.deepEqual(values, Array.from({ length: 30 }, (_, index) => index * 2))
   await assert.rejects(mapGitHubPreviewsBounded([1], async value => value, 3), /1 or 2/)
+})
+
+test('a rate-limited first wave defers every later repository without another request', async () => {
+  const requested: number[] = []
+  const results = await mapGitHubPreviewsBounded(Array.from({ length: 30 }, (_, index) => index), async value => {
+    requested.push(value)
+    await new Promise(resolve => setTimeout(resolve, value === 0 ? 2 : 1))
+    return value === 0 ? 'rate_limited' : 'ready'
+  }, 2, result => result === 'rate_limited')
+  assert.deepEqual(requested, [0, 1])
+  assert.deepEqual(results.slice(0, 2), ['rate_limited', 'ready'])
+  assert.equal(results.slice(2).every(result => result === undefined), true)
+  assert.equal(isGitHubPreviewRateLimit('github_rate_limit'), true)
+  assert.equal(isGitHubPreviewRateLimit('github_secondary_rate_limit'), true)
+  assert.equal(isGitHubPreviewRateLimit(undefined, 429), true)
+  assert.equal(isGitHubPreviewRateLimit('github_auth', 403), false)
 })
