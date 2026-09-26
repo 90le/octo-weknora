@@ -57,6 +57,19 @@ func (c *Connector) PlanDocuments(
 	ctx context.Context, cfg *types.DataSourceConfig, published *types.SyncCursor,
 	forceFull bool, pinCommit string,
 ) (*DocumentPlan, error) {
+	var plan *DocumentPlan
+	err := c.withSyncGate(ctx, func() error {
+		var inner error
+		plan, inner = c.planDocuments(ctx, cfg, published, forceFull, pinCommit)
+		return inner
+	})
+	return plan, err
+}
+
+func (c *Connector) planDocuments(
+	ctx context.Context, cfg *types.DataSourceConfig, published *types.SyncCursor,
+	forceFull bool, pinCommit string,
+) (*DocumentPlan, error) {
 	if snapshot.IsSource(cfg) || cfg == nil || cfg.SyncSource == nil {
 		return nil, fmt.Errorf("%w: document plan requires a trusted document source", datasource.ErrInvalidConfig)
 	}

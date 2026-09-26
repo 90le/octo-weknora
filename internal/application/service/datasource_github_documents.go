@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -53,8 +52,15 @@ func githubDocumentCredentialScope(ds *types.DataSource, cfg *types.DataSourceCo
 	token = strings.TrimSpace(token)
 	key := secutils.GetAESKey()
 	if token == "" {
-		if key == nil && bytes.Contains(ds.Config, []byte(secutils.EncPrefix)) {
-			return "", errors.New("GitHub document credentials cannot be decrypted without SYSTEM_AES_KEY")
+		var persisted struct {
+			Credentials map[string]interface{} `json:"credentials"`
+		}
+		if err := json.Unmarshal(ds.Config, &persisted); err != nil {
+			return "", errors.New("GitHub document credential configuration is invalid")
+		}
+		storedToken, _ := persisted.Credentials["access_token"].(string)
+		if strings.HasPrefix(storedToken, secutils.EncPrefix) {
+			return "", errors.New("GitHub document credentials cannot be decrypted; check SYSTEM_AES_KEY")
 		}
 		return "public", nil
 	}
@@ -474,13 +480,28 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 	if err := accessGuard.check(ctx); err != nil {
 		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items), wasPaused, err)
 	}
-	pending, failed := 0, 0
+	pending, failed, pendingUpserts, failedUpserts := 0, 0, 0, 0
 	for _, item := range items {
 		if item.Status == types.GitHubDocumentItemPending {
 			pending++
+			if item.Operation == types.GitHubDocumentItemUpsert {
+				pendingUpserts++
+			}
 		} else if item.Status == types.GitHubDocumentItemFailed {
 			failed++
+			if item.Operation == types.GitHubDocumentItemUpsert {
+				failedUpserts++
+			}
 		}
+	}
+	// A failed replacement blocks destructive deletion. Leave those rows
+	// pending for the next scheduled/manual retry instead of queueing an
+	// endless continuation solely because deletions cannot yet be authorized.
+	if pendingUpserts == 0 && failedUpserts > 0 {
+		result := githubDocumentProgressResult(items)
+		data, _ := result.ToJSON()
+		return s.updateSyncRunResult(ctx, ds, syncLog, result, data, types.SyncLogStatusPartial,
+			fmt.Sprintf("%d GitHub document(s) still need attention; deletion is deferred", failedUpserts), wasPaused, false)
 	}
 	if pending > 0 {
 		if processed == 0 {
