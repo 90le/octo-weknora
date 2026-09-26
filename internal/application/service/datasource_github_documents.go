@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	githubDocumentChunkItems = 24
-	githubDocumentChunkBytes = 64 << 20
-	githubDocumentLeaseTime  = 90 * time.Second
+	githubDocumentChunkItems    = 24
+	githubDocumentChunkBytes    = 64 << 20
+	githubDocumentChunkWallTime = 45 * time.Minute
+	githubDocumentLeaseTime     = 90 * time.Second
 )
 
 // GitHub document progress is an optional extension of the established data
@@ -175,7 +176,20 @@ func (s *DataSourceService) processGitHubDocumentRun(
 	}
 	if plan.Complete && run == nil {
 		// This is the previous fully published cursor. Even if the generated Git
-		// cache was cleaned, unchanged remote content needs no re-indexing.
+		// cache was cleaned, unchanged remote content needs no re-indexing. A
+		// historical partial result at this same revision is an exception: its
+		// failed documents have not been reverified. Do not erase that warning
+		// or silently reprocess a whole repository; an explicit full sync can
+		// rebuild candidates after an operator reviews the source scope.
+		prior, parseErr := ds.ParseSyncResult()
+		if parseErr != nil {
+			return s.githubDocumentRunFailure(ctx, ds, syncLog, wasPaused, parseErr)
+		}
+		if prior != nil && prior.Failed > 0 {
+			data, _ := prior.ToJSON()
+			return s.updateSyncRunResult(ctx, ds, syncLog, prior, data, types.SyncLogStatusPartial,
+				"Previous GitHub document failures were not reverified; review scope before a full sync", wasPaused, false)
+		}
 		ds.LastSyncAt = timePtr(time.Now().UTC())
 		result := &types.SyncResult{}
 		data, _ := result.ToJSON()
@@ -415,9 +429,10 @@ func (s *DataSourceService) enqueueGitHubDocumentContinuation(
 	return err
 }
 
-func githubDocumentChunkFull(processed int, bytesRead int64, operation string, nextSize int64) bool {
+func githubDocumentChunkFull(processed int, bytesRead int64, operation string, nextSize int64, elapsed time.Duration) bool {
 	return processed >= githubDocumentChunkItems ||
-		(operation == types.GitHubDocumentItemUpsert && processed > 0 && bytesRead+nextSize > githubDocumentChunkBytes)
+		(operation == types.GitHubDocumentItemUpsert && processed > 0 && bytesRead+nextSize > githubDocumentChunkBytes) ||
+		(processed > 0 && elapsed >= githubDocumentChunkWallTime)
 }
 
 // A failed hard-delete may leave a soft-deleted row hidden from the ordinary
@@ -490,6 +505,7 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 		return items[i].Path < items[j].Path
 	})
 	processed, bytesRead := 0, int64(0)
+	started := time.Now()
 	for index := range items {
 		item := &items[index]
 		if item.Status == types.GitHubDocumentItemReady {
@@ -507,7 +523,7 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 				break
 			}
 		}
-		if githubDocumentChunkFull(processed, bytesRead, item.Operation, planned[item.PathHash].Size) {
+		if githubDocumentChunkFull(processed, bytesRead, item.Operation, planned[item.PathHash].Size, time.Since(started)) {
 			break
 		}
 		if err := ensureSyncRunActive(ctx, runGuard); err != nil {

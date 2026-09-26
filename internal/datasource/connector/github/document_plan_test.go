@@ -133,3 +133,16 @@ func TestGitHubDocumentCheckpointCacheLossKeepsOldCursor(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, string(encoded), string(after), "cache failure cannot alter the previous complete cursor")
 }
+
+// Existing partial GitHub imports never acknowledged a next cursor when any
+// file failed. Production's partial sources therefore enter this nil-cursor
+// branch and must plan candidates even when the remote commit is unchanged.
+func TestGitHubDocumentLegacyPartialWithNilCursorPlansCandidates(t *testing.T) {
+	_, _, cfg, commit := documentGitFixture(t, map[string]string{"docs/guide.md": "needs-index\n"})
+	c, _ := fastPathHeadConnector(t, commit)
+	plan, err := c.PlanDocuments(context.Background(), cfg, nil, false, "")
+	require.NoError(t, err)
+	require.False(t, plan.Complete)
+	require.Len(t, plan.Upserts, 1)
+	require.Equal(t, "docs/guide.md", plan.Upserts[0].Path)
+}

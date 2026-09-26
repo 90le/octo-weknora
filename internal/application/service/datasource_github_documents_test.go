@@ -103,7 +103,7 @@ func (q *githubDocumentQueueCapture) Enqueue(task *asynq.Task, opts ...asynq.Opt
 func TestGitHubDocumentLargeBatchQueuesBoundedContinuation(t *testing.T) {
 	processed, bytesRead := 0, int64(0)
 	for i := 0; i < 5; i++ {
-		if githubDocumentChunkFull(processed, bytesRead, types.GitHubDocumentItemUpsert, 14<<20) {
+		if githubDocumentChunkFull(processed, bytesRead, types.GitHubDocumentItemUpsert, 14<<20, time.Minute) {
 			break
 		}
 		processed++
@@ -111,6 +111,8 @@ func TestGitHubDocumentLargeBatchQueuesBoundedContinuation(t *testing.T) {
 	}
 	require.Equal(t, 4, processed)
 	require.Equal(t, int64(56<<20), bytesRead)
+	require.True(t, githubDocumentChunkFull(1, 1, types.GitHubDocumentItemUpsert, 1, 46*time.Minute),
+		"a healthy long run must checkpoint and queue continuation before the two-hour task lease")
 	q := &githubDocumentQueueCapture{}
 	svc := &DataSourceService{taskEnqueuer: q}
 	run := &types.GitHubDocumentRun{ID: uuid.NewString()}
@@ -165,6 +167,59 @@ func TestGitHubDocumentChunkRejectsKnowledgeBaseRevocation(t *testing.T) {
 	require.ErrorIs(t, svc.verifyGitHubDocumentKB(context.Background(), ds), errSyncAccessChanged)
 	svc.kbService = &processSyncKBService{getErr: errors.New("knowledge base removed")}
 	require.ErrorIs(t, svc.verifyGitHubDocumentKB(context.Background(), ds), errSyncAccessChanged)
+}
+
+func TestGitHubDocumentSameCommitDoesNotEraseHistoricalPartialWarning(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "github-old-partial.db")), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&types.DataSource{}, &types.SyncLog{}, &types.GitHubDocumentRun{}, &types.GitHubDocumentSyncItem{}))
+	ctx := context.Background()
+	cfg := &types.DataSourceConfig{Settings: map[string]interface{}{"repository": "test/docs", "ref": "main", "mode": "documents"}}
+	selection, err := githubConnector.DocumentSelection(cfg)
+	require.NoError(t, err)
+	commit := strings.Repeat("a", 40)
+	cursor, err := (&types.SyncCursor{ConnectorCursor: map[string]interface{}{
+		"selection": selection, "commit": commit, "files": map[string]interface{}{},
+	}}).ToJSON()
+	require.NoError(t, err)
+	encodedCfg, err := cfg.ToJSON()
+	require.NoError(t, err)
+	ds := &types.DataSource{ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: "kb", Type: types.ConnectorTypeGitHub,
+		Status: types.DataSourceStatusActive, Config: encodedCfg, LastSyncCursor: cursor,
+		LastSyncResult: types.JSON(`{"total":1,"failed":1}`)}
+	cfg.SyncSource = &types.DataSourceSyncSource{TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: ds.ID}
+	dsRepo := apprepo.NewDataSourceRepository(db)
+	require.NoError(t, dsRepo.Create(ctx, ds))
+	logs := apprepo.NewSyncLogRepository(db)
+	log := &types.SyncLog{ID: uuid.NewString(), TenantID: 7, DataSourceID: ds.ID, Status: types.SyncLogStatusRunning}
+	require.NoError(t, logs.Create(ctx, log))
+	client := &http.Client{Transport: githubDocumentRoundTrip(func(r *http.Request) (*http.Response, error) {
+		var data any
+		switch r.URL.Path {
+		case "/repos/test/docs":
+			data = map[string]string{"full_name": "test/docs", "default_branch": "main"}
+		case "/repos/test/docs/commits/main":
+			data = map[string]any{"sha": commit, "commit": map[string]any{"tree": map[string]string{"sha": strings.Repeat("b", 40)}}}
+		default:
+			t.Fatalf("same-commit check must not fetch tree/blob: %s", r.URL.Path)
+		}
+		encoded, _ := json.Marshal(data)
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(encoded))), Request: r}, nil
+	})}
+	connector := githubConnector.NewConnectorWithHTTPClient(client, "https://api.github.com")
+	svc := &DataSourceService{dsRepo: dsRepo, syncLogRepo: logs}
+	require.NoError(t, svc.processGitHubDocumentRun(ctx, connector, ds, cfg, log,
+		types.DataSourceSyncPayload{DataSourceID: ds.ID, TenantID: 7, SyncLogID: log.ID}, false, nil, nil))
+	stored, err := dsRepo.FindByID(ctx, ds.ID)
+	require.NoError(t, err)
+	require.Equal(t, string(cursor), string(stored.LastSyncCursor))
+	require.Nil(t, stored.LastSyncAt)
+	prior, err := stored.ParseSyncResult()
+	require.NoError(t, err)
+	require.Equal(t, 1, prior.Failed)
+	latest, err := logs.FindByID(ctx, log.ID)
+	require.NoError(t, err)
+	require.Equal(t, types.SyncLogStatusPartial, latest.Status)
 }
 
 type githubDocumentTestKnowledgeService struct {
