@@ -204,7 +204,9 @@ func (r *DataSourceRepository) PublishGitHubDocumentRun(
 		if tx.Dialector.Name() == "postgres" {
 			query = query.Where("config = ?::jsonb", ds.Config.ToString())
 		} else {
-			query = query.Where("config = ?", ds.Config.ToString())
+			// types.JSON is stored as a BLOB by SQLite's driver. Comparing it
+			// with a Go string (TEXT) would miss despite identical bytes.
+			query = query.Where("config = ?", ds.Config)
 		}
 		updated := query.Updates(map[string]interface{}{"last_sync_cursor": run.TargetCursor, "last_sync_at": now, "updated_at": now})
 		if updated.Error != nil {

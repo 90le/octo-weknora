@@ -89,7 +89,7 @@ func TestGitHubDocumentProgressSQLiteAckAndCursorRollback(t *testing.T) {
 	var sourceMatch, logMatch int64
 	require.NoError(t, db.Model(&types.DataSource{}).Where(
 		"id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND deleted_at IS NULL AND sync_deletions = ? AND config = ?",
-		ds.ID, ds.TenantID, ds.KnowledgeBaseID, types.ConnectorTypeGitHub, ds.SyncDeletions, ds.Config.ToString(),
+		ds.ID, ds.TenantID, ds.KnowledgeBaseID, types.ConnectorTypeGitHub, ds.SyncDeletions, ds.Config,
 	).Count(&sourceMatch).Error)
 	require.EqualValues(t, 1, sourceMatch, "the final cursor compare-and-set must still match source configuration")
 	require.NoError(t, db.Model(&types.SyncLog{}).Where("id = ? AND data_source_id = ? AND tenant_id = ? AND status = ?",
