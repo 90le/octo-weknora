@@ -39,7 +39,7 @@ func ValidateSettings(config *types.DataSourceConfig) error {
 			return errors.New("exclusions must be a list of at most 100 paths")
 		}
 		for _, rule := range rules {
-			if len(rule) > 1024 || strings.ContainsAny(rule, "\\\x00\r\n") {
+			if len(rule) > 1024 || strings.ContainsAny(rule, "\\\x00\r\n") || rule == "**/" {
 				return errors.New("invalid exclusion rule")
 			}
 		}
@@ -70,11 +70,40 @@ func Excluded(p string, excludes []string) bool {
 		}
 	}
 	for _, rule := range excludes {
+		if strings.HasPrefix(rule, "**/") {
+			if recursivelyMatches(p, strings.TrimPrefix(rule, "**/")) {
+				return true
+			}
+			continue
+		}
 		if rule != "" && (p == rule || strings.HasPrefix(p, strings.TrimSuffix(rule, "/")+"/")) {
 			return true
 		}
 		if ok, _ := path.Match(rule, p); ok {
 			return true
+		}
+	}
+	return false
+}
+
+// recursivelyMatches gives only an explicit **/ prefix recursive semantics.
+// Existing rules still use path.Match, where * never crosses a directory
+// boundary. Test each path suffix (including the root-level path) and each
+// ancestor so **/assets also excludes files inside nested assets directories.
+func recursivelyMatches(p, rule string) bool {
+	if rule == "" {
+		return false
+	}
+	for ancestor := p; ancestor != "."; ancestor = path.Dir(ancestor) {
+		for suffix := ancestor; ; {
+			if matched, _ := path.Match(rule, suffix); matched {
+				return true
+			}
+			separator := strings.IndexByte(suffix, '/')
+			if separator < 0 {
+				break
+			}
+			suffix = suffix[separator+1:]
 		}
 	}
 	return false

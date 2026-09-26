@@ -136,7 +136,7 @@ async function loadPreview() {
         <span><b>{{ formatBytes(preview.actual_sync.candidate_bytes) }}</b>{{ t('datasource.githubBulk.scopePreview.bytes') }}</span>
         <span><b>{{ formatCount(preview.actual_sync.image_files) }}</b>{{ t('datasource.githubBulk.scopePreview.images') }} · {{ formatBytes(preview.actual_sync.image_bytes) }}</span>
         <span v-if="preview.actual_sync.sensitive_candidate_files"><b>{{ formatCount(preview.actual_sync.sensitive_candidate_files) }}</b>{{ t('datasource.githubBulk.scopePreview.sensitiveCandidate') }} · {{ formatBytes(preview.actual_sync.sensitive_candidate_bytes) }}</span>
-        <span v-if="preview.actual_sync.user_excluded_files"><b>{{ formatCount(preview.actual_sync.user_excluded_files) }}</b>{{ t('datasource.githubBulk.scopePreview.excluded') }} · {{ formatBytes(preview.actual_sync.user_excluded_bytes) }}</span>
+        <span><b>{{ formatCount(preview.actual_sync.user_excluded_files) }}</b>{{ t('datasource.githubBulk.scopePreview.excluded') }} · {{ formatBytes(preview.actual_sync.user_excluded_bytes) }}</span>
         <span><b>{{ formatCount(preview.actual_sync.parser_unsupported_files) }}</b>{{ t('datasource.githubBulk.scopePreview.unsupported') }}</span>
         <span><b>{{ formatCount(preview.actual_sync.too_large_files) }}</b>{{ t('datasource.githubBulk.scopePreview.tooLarge') }}</span>
       </div>
@@ -151,7 +151,8 @@ async function loadPreview() {
       </p>
       <div v-if="preview.proposed_after_exclude" class="github-preview-proposed">
         <strong>{{ t('datasource.githubBulk.scopePreview.proposedScope') }}</strong>
-        <span>{{ formatCount(preview.proposed_after_exclude.candidate_files) }} · {{ formatBytes(preview.proposed_after_exclude.candidate_bytes) }}</span>
+        <span>{{ t('datasource.githubBulk.scopePreview.candidate') }} {{ formatCount(preview.proposed_after_exclude.candidate_files) }} · {{ formatBytes(preview.proposed_after_exclude.candidate_bytes) }}</span>
+        <span>{{ t('datasource.githubBulk.scopePreview.excluded') }} {{ formatCount(preview.proposed_after_exclude.user_excluded_files) }} · {{ formatBytes(preview.proposed_after_exclude.user_excluded_bytes) }}</span>
       </div>
       <t-alert v-if="warningMessages.length" theme="warning" :message="warningMessages.join(' ')" class="github-preview-alert" />
     </div>

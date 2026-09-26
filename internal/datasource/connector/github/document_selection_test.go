@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
 )
@@ -49,6 +50,13 @@ func TestDocumentExclusionsKeepLegacyNilCursorAndInvalidateOnChange(t *testing.T
 	require.ErrorAs(t, err, &githubErr)
 	require.Equal(t, "github_exclusion_invalid", githubErr.Code)
 	require.NotContains(t, githubErr.Error(), "docs/[", "invalid rule must not leak into a public error")
+	base.Settings["exclude"] = []string{"**/assets/["}
+	_, err = documentExcludes(base)
+	require.ErrorAs(t, err, &githubErr)
+	require.Equal(t, "github_exclusion_invalid", githubErr.Code)
+	base.Settings["exclude"] = []string{"**/"}
+	_, err = documentExcludes(base)
+	require.EqualError(t, err, "invalid exclusion rule")
 }
 
 func TestInvalidDocumentExclusionRejectedBeforeRemoteValidationOrPreview(t *testing.T) {
@@ -87,13 +95,13 @@ func TestDocumentScopeAppliesDirectoryGlobImageAndMandatorySafety(t *testing.T) 
 func TestGitHubDocumentExcludePreservesOldIndexAndCursorOnRemoteRemoval(t *testing.T) {
 	sha := strings.Repeat("c", 40)
 	draft := entry{Path: "docs/drafts/old.md", Type: "blob", Mode: "100644", SHA: sha, Size: 100}
-	image := entry{Path: "images/logo.png", Type: "blob", Mode: "100644", SHA: sha, Size: 200}
+	image := entry{Path: "images/icons/logo.png", Type: "blob", Mode: "100644", SHA: sha, Size: 200}
 	directory := entry{Path: "docs/drafts", Type: "tree", Mode: "040000", SHA: sha}
 	entries := []entry{directory, draft, image}
 	c, blobs, closeServer := githubPreviewFixture(t, entries, false)
 	defer closeServer()
 	config := &types.DataSourceConfig{Settings: map[string]interface{}{
-		"repository": "example/repo", "paths": []string{"docs/drafts", "images/logo.png"},
+		"repository": "example/repo", "paths": []string{"docs/drafts", "images/icons/logo.png"},
 	}}
 	s, err := parseSelection(config)
 	require.NoError(t, err)
@@ -101,7 +109,7 @@ func TestGitHubDocumentExcludePreservesOldIndexAndCursorOnRemoteRemoval(t *testi
 		"selection": documentSelectionKey(s, nil), "commit": strings.Repeat("d", 40),
 		"files": map[string]entry{draft.Path: draft, image.Path: image},
 	}}
-	config.Settings["exclude"] = []string{"docs/drafts", "images/*.png"}
+	config.Settings["exclude"] = []string{"docs/drafts", "**/*.png"}
 	items, next, err := c.FetchIncremental(context.Background(), config, old)
 	require.NoError(t, err)
 	require.Empty(t, items, "excluded old files must not be fetched or deleted")
@@ -111,7 +119,7 @@ func TestGitHubDocumentExcludePreservesOldIndexAndCursorOnRemoteRemoval(t *testi
 	b, err := json.Marshal(next.ConnectorCursor)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(b, &parsed))
-	require.Equal(t, documentSelectionKey(s, []string{"docs/drafts", "images/*.png"}), parsed.Selection)
+	require.Equal(t, documentSelectionKey(s, []string{"**/*.png", "docs/drafts"}), parsed.Selection)
 	require.Contains(t, parsed.Files, draft.Path)
 	require.Contains(t, parsed.Files, image.Path)
 
@@ -129,4 +137,29 @@ func TestGitHubDocumentExcludePreservesOldIndexAndCursorOnRemoteRemoval(t *testi
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(b, &parsed))
 	require.Contains(t, parsed.Files, draft.Path)
+}
+
+func TestRecursiveDocumentRuleAgreesWithPreviewAndSync(t *testing.T) {
+	sha := strings.Repeat("c", 40)
+	entries := []entry{
+		{Path: "root.png", Type: "blob", Mode: "100644", SHA: sha, Size: 10},
+		{Path: "docs/assets/icons/nested.png", Type: "blob", Mode: "100644", SHA: sha, Size: 20},
+	}
+	c, blobs, closeServer := githubPreviewFixture(t, entries, false)
+	defer closeServer()
+	rule := "**/*.png"
+	config := &types.DataSourceConfig{Settings: map[string]interface{}{
+		"repository": "example/repo", "exclude": []string{rule},
+	}}
+	preview, err := c.PreviewDocumentTree(context.Background(), config)
+	require.NoError(t, err)
+	require.Len(t, preview.Files, 2)
+	for _, file := range preview.Files {
+		require.True(t, snapshot.Excluded(file.Path, []string{rule}), file.Path)
+	}
+	items, _, err := c.FetchIncremental(context.Background(), config, nil)
+	require.NoError(t, err)
+	require.Empty(t, items)
+	require.Equal(t, 2, config.SkippedExcluded)
+	require.Zero(t, blobs.Load(), "neither preview nor sync should read excluded blobs")
 }

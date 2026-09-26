@@ -803,6 +803,7 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
               <p>{{ t('datasource.githubBulk.scopePreview.commit') }}: <code>{{ reviewFor(repository)?.preview?.commit?.slice(0, 12) || '—' }}</code>
                 · {{ t('datasource.githubBulk.scopePreview.candidate') }} {{ formatCount(reviewFor(repository)?.preview?.summary.candidate_files || 0) }}
                 · {{ t('datasource.githubBulk.scopePreview.eligible') }} {{ formatCount(reviewFor(repository)?.preview?.summary.eligible_files || 0) }}
+                · {{ t('datasource.githubBulk.scopePreview.excluded') }} {{ formatCount(reviewFor(repository)?.preview?.summary.user_excluded_files || 0) }}
                 · {{ formatBytes(reviewFor(repository)?.preview?.summary.candidate_bytes || 0) }}
               </p>
               <p>{{ t('datasource.githubBulk.scopePreview.extensions') }}:

@@ -6355,7 +6355,7 @@ export default {
       "sourceHint": "Preserve directories and read text source code in any language. Search and cite lines without executing or embedding code.",
       "documentHint": "Use the existing KB parser and indexes. Changing usage keeps imported documents; separate document and read-only sources can coexist.",
       "excludes": "Excluded directories or files (one per line)",
-      "excludesHint": "Dependency and build directories are excluded by default. Known secret files, VCS internals and symlinks are never read.",
+      "excludesHint": "Dependency and build directories are excluded by default. **/*.png excludes PNGs at any depth; images/*.png matches only that directory. Known secret files, VCS internals and symlinks are never read.",
       "root": "Server directory",
       "chooseRoot": "Choose an authorized server directory",
       "directory": "Subdirectory",

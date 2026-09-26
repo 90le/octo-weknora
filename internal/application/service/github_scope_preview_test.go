@@ -164,6 +164,25 @@ func TestGitHubDocumentScopePreviewSeparatesSavedAndUnsavedExcludes(t *testing.T
 	require.Zero(t, blobs.Load())
 }
 
+func TestGitHubDocumentScopePreviewRecursiveExcludeRootAndNested(t *testing.T) {
+	entries := []map[string]any{
+		previewFile("root.png", 10), previewFile("docs/assets/icons/nested.png", 20),
+		previewFile("docs/README.md", 30), previewFile("docs/photo.png.txt", 40),
+	}
+	svc, _, blobs, closeServer := githubPreviewServiceFixture(t, entries, false)
+	defer closeServer()
+	rules := []string{"**/*.png"}
+	resp, err := svc.PreviewGitHubDocumentScope(context.Background(), 7, "kb-a", &types.GitHubDocumentScopePreviewRequest{
+		SourceID: "source-a", Exclude: &rules,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 4, resp.ActualSync.CandidateFiles)
+	require.NotNil(t, resp.ProposedAfterExclude)
+	require.Equal(t, 2, resp.ProposedAfterExclude.UserExcludedFiles)
+	require.Equal(t, 2, resp.ProposedAfterExclude.CandidateFiles)
+	require.Zero(t, blobs.Load())
+}
+
 func TestGitHubDocumentScopePreviewFullRepoLimitsTruncationAndNoBlob(t *testing.T) {
 	entries := make([]map[string]any, 0, 2001)
 	for i := range 2001 {
