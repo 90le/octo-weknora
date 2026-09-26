@@ -461,8 +461,8 @@ func allowedDocument(e entry) bool {
 
 // allowedGitHubDocument applies the mandatory sensitive-path denylist on top
 // of the connector's document format selector. It must be shared by every
-// document planner before reading a Git blob. User exclude rules are separate
-// and currently remain preview-only for document mode.
+// document planner before reading a Git blob. Explicit user exclusions are
+// then applied by documentInCurrentScope; neither rule is model-controlled.
 func allowedGitHubDocument(e entry) bool {
 	return allowedDocument(e) && !snapshot.Excluded(e.Path, nil)
 }
