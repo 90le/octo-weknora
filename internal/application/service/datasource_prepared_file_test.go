@@ -98,6 +98,17 @@ func TestPreparedSyncKeepsOldOnCreateFailure(t *testing.T) {
 	require.Contains(t, ks.r.rows, "old")
 	require.Equal(t, []string{"create:new"}, ks.r.events)
 }
+
+func TestPreparedSyncNeverAdoptsCrossSourceDuplicate(t *testing.T) {
+	s, ks, ds, item := preparedFixture()
+	foreign := &types.Knowledge{ID: "foreign", TenantID: 7, KnowledgeBaseID: "kb"}
+	ks.createErr = types.NewDuplicateFileError(foreign)
+	_, err := s.ingestItem(context.Background(), ds, item, nil)
+	require.ErrorIs(t, err, errPreparedFileOwnedByAnotherSource)
+	require.Contains(t, ks.r.rows, "old", "the previous version must remain searchable")
+	require.NotContains(t, ks.r.events, "delete:old")
+	require.NotContains(t, ks.r.rows, "foreign", "foreign source must not be adopted")
+}
 func TestPreparedSyncKeepsOldOnParseFailure(t *testing.T) {
 	s, ks, ds, item := preparedFixture()
 	ks.failed = true

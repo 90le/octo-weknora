@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/datasource/connector/localfolder"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/hibiken/asynq"
@@ -18,9 +19,12 @@ import (
 type createKnowledgeFileRepoStub struct {
 	interfaces.KnowledgeRepository
 
-	createCalls      int
-	createErr        error
-	createdKnowledge *types.Knowledge
+	createCalls       int
+	checkCalls        int
+	checkDuplicate    *types.Knowledge
+	createErr         error
+	createdKnowledge  *types.Knowledge
+	createdKnowledges []*types.Knowledge
 }
 
 func (r *createKnowledgeFileRepoStub) CheckKnowledgeExists(
@@ -29,14 +33,79 @@ func (r *createKnowledgeFileRepoStub) CheckKnowledgeExists(
 	kbID string,
 	params *types.KnowledgeCheckParams,
 ) (bool, *types.Knowledge, error) {
+	r.checkCalls++
+	if r.checkDuplicate != nil {
+		return true, r.checkDuplicate, nil
+	}
 	return false, nil, nil
+}
+
+func (r *createKnowledgeFileRepoStub) UpdateKnowledgeColumn(context.Context, string, string, interface{}) error {
+	return nil
 }
 
 func (r *createKnowledgeFileRepoStub) CreateKnowledge(ctx context.Context, knowledge *types.Knowledge) error {
 	r.createCalls++
 	copied := *knowledge
 	r.createdKnowledge = &copied
+	r.createdKnowledges = append(r.createdKnowledges, &copied)
 	return r.createErr
+}
+
+func TestPreparedFileImportKeepsIndependentSourceAndPathIdentity(t *testing.T) {
+	repo := &createKnowledgeFileRepoStub{checkDuplicate: &types.Knowledge{ID: "previous-manual-upload"}}
+	svc := &knowledgeService{
+		repo: repo, kbService: &createKnowledgeFileKBServiceStub{kb: &types.KnowledgeBase{ID: "kb-1"}},
+		fileSvc: &createKnowledgeFileServiceStub{}, task: &createKnowledgeTaskEnqueuerStub{},
+	}
+	base := newCreateKnowledgeFileContext()
+	create := func(sourceID, candidate, sourceType string) *types.Knowledge {
+		t.Helper()
+		ds := &types.DataSource{ID: sourceID, TenantID: 1, KnowledgeBaseID: "kb-1", Type: sourceType}
+		metadata := map[string]string{"datasource_id": sourceID, "external_id": candidate}
+		if sourceType == types.ConnectorTypeGitHub {
+			metadata["github_url"] = "https://github.com/test/" + sourceID + "/blob/0123456789012345678901234567890123456789/guide.mdx"
+		}
+		k, err := svc.CreateKnowledgeFromFile(
+			withPreparedFileImport(base, ds, candidate), "kb-1",
+			newMultipartFileHeader(t, "guide.mdx", "# Same bytes\nContent"), metadata,
+			nil, "guide.mdx", nil, sourceType, nil,
+		)
+		require.NoError(t, err)
+		return k
+	}
+	first := create("repo-a", "a/guide.mdx:pending:v1", types.ConnectorTypeGitHub)
+	second := create("repo-b", "b/guide.mdx:pending:v1", types.ConnectorTypeGitHub)
+	third := create("repo-a", "a/other.mdx:pending:v1", types.ConnectorTypeGitHub)
+	fourth := create("folder-a", "other/guide.mdx:pending:v1", localfolder.Type)
+	require.Len(t, repo.createdKnowledges, 4)
+	require.Zero(t, repo.checkCalls, "prepared imports must not use KB-wide content dedupe")
+	require.NotEqual(t, first.ID, second.ID)
+	require.NotEqual(t, first.ID, third.ID)
+	require.NotEqual(t, first.ID, fourth.ID)
+	require.Equal(t, "repo-b", second.GetMetadata()["datasource_id"])
+	require.Equal(t, "a/other.mdx:pending:v1", third.GetMetadata()["external_id"])
+	require.Equal(t, "mdx", fourth.FileType)
+	require.Equal(t, "guide.mdx", first.FileName)
+	require.Equal(t, "https://github.com/test/repo-a/blob/0123456789012345678901234567890123456789/guide.mdx", first.Source)
+
+	// Metadata and channel are both controlled by an upload client. Neither can
+	// grant the internal exception without a matching private context scope.
+	spoof := map[string]string{"datasource_id": "repo-a", "external_id": "spoof:pending:v1"}
+	_, err := svc.CreateKnowledgeFromFile(base, "kb-1", newMultipartFileHeader(t, "guide.mdx", "# Same bytes\nContent"),
+		spoof, nil, "guide.mdx", nil, types.ConnectorTypeGitHub, nil)
+	require.Error(t, err)
+	var duplicate *types.DuplicateKnowledgeError
+	require.ErrorAs(t, err, &duplicate)
+	require.Equal(t, 1, repo.checkCalls)
+	require.Len(t, repo.createdKnowledges, 4)
+
+	wrongScope := withPreparedFileImport(base, &types.DataSource{ID: "repo-a", TenantID: 1, KnowledgeBaseID: "kb-1", Type: types.ConnectorTypeGitHub}, "expected:pending:v1")
+	_, err = svc.CreateKnowledgeFromFile(wrongScope, "kb-1", newMultipartFileHeader(t, "guide.mdx", "# Same bytes\nContent"),
+		spoof, nil, "guide.mdx", nil, types.ConnectorTypeGitHub, nil)
+	require.ErrorAs(t, err, &duplicate)
+	require.Equal(t, 2, repo.checkCalls)
+	require.Len(t, repo.createdKnowledges, 4)
 }
 
 // GetKnowledgeTags is invoked by setAndAttachKnowledgeTags after create even

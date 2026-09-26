@@ -4,6 +4,7 @@ from docreader.models.document import Document
 from docreader.parser.base_parser import BaseParser
 from docreader.parser.parser import Parser, detect_effective_file_type
 from docreader.parser.markitdown_parser import MarkitdownParser
+from docreader.parser.markdown_parser import MarkdownParser
 from docreader.parser.pdf_parser import PDFParser
 from docreader.parser.registry import BUILTIN_ENGINE, ParserEngineRegistry, registry
 from docreader.parser.xmind_parser import XMindParser
@@ -33,6 +34,34 @@ class _RecordingRegistry:
 
 
 class ParserRoutingTest(unittest.TestCase):
+    def test_real_shape_mdx_routes_to_markdown_and_retains_body(self):
+        # Octo docs use frontmatter, Mermaid fences and JSX components. The
+        # parser treats them as source text; it never executes JSX or drops the
+        # answer-bearing prose nested inside a component.
+        sample = b'''---
+title: "Architecture overview"
+---
+# Service map
+
+Octo meets at **octo-server**.
+
+```mermaid
+graph LR
+  web --> server
+```
+
+<Note>
+The runtime view routes requests through the server.
+</Note>
+<Steps><Step title="Authenticate">Check the caller.</Step></Steps>
+'''
+        self.assertIs(registry.get_parser_class(BUILTIN_ENGINE, "mdx"), MarkdownParser)
+        result = Parser().parse_file("architecture-overview.mdx", "mdx", sample)
+        self.assertIn("Octo meets at **octo-server**", result.content)
+        self.assertIn("The runtime view routes requests", result.content)
+        self.assertIn("Check the caller", result.content)
+        self.assertIn("web --> server", result.content)
+
     def test_builtin_registry_routes_xmind_to_xmind_parser(self):
         parser_class = registry.get_parser_class(BUILTIN_ENGINE, "xmind")
 

@@ -36,6 +36,7 @@ func TestIsSupportedImportExtension(t *testing.T) {
 		{name: "uppercase", ext: "XLSX", want: true},
 		{name: "surrounding space", ext: " xlsx ", want: true},
 		{name: "pdf", ext: "pdf", want: true},
+		{name: "mdx", ext: ".MDX", want: true},
 		{name: "unsupported", ext: "exe", want: false},
 		{name: "video", ext: "mp4", want: false},
 		{name: "empty", ext: "", want: false},

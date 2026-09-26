@@ -164,6 +164,7 @@ def _build_default_registry() -> ParserEngineRegistry:
             "pdf": PDFParser,
             "md": MarkdownParser,
             "markdown": MarkdownParser,
+            "mdx": MarkdownParser,
             "xlsx": ExcelParser,
             "xls": ExcelParser,
             "pptx": MarkitdownParser,

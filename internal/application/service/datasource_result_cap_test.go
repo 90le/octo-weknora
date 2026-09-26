@@ -2,11 +2,38 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestApplyFetchedItemClassifiesKnownIngestFailures(t *testing.T) {
+	ds := &types.DataSource{ID: "ds", Type: "feishu", TenantID: 7, KnowledgeBaseID: "kb"}
+	for _, tc := range []struct {
+		name string
+		err  error
+		code string
+	}{
+		{"unsupported file", ErrInvalidFileType, "unsupported_file_type"},
+		{"duplicate owned elsewhere", errPreparedFileOwnedByAnotherSource, "duplicate_other_source"},
+		{"unknown storage error", errors.New("private storage detail"), "ingest_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &DataSourceService{knowledgeService: &sweepFakeKS{repo: &sweepFakeRepo{}, createErr: tc.err}}
+			result := &types.SyncResult{}
+			s.applyFetchedItem(context.Background(), ds, &types.FetchedItem{
+				ExternalID: "doc", Title: "guide.md", FileName: "guide.md", Content: []byte("# Guide"),
+			}, nil, result)
+			assert.Equal(t, 1, result.Failed)
+			if assert.Len(t, result.Errors, 1) {
+				assert.Equal(t, tc.code, result.Errors[0].Code)
+				assert.NotContains(t, result.Errors[0].Message, "private storage detail")
+			}
+		})
+	}
+}
 
 // A sync that fails thousands of documents must not accumulate an unbounded
 // result.Errors slice: that slice is persisted as jsonb and shipped in every

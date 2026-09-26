@@ -1021,6 +1021,16 @@ func (s *DataSourceService) applyFetchedItem(
 			// Duplicate file/URL is not a failure — count as skipped.
 			logger.Infof(ctx, "item %q (external_id=%s) already exists, skipping", item.Title, item.ExternalID)
 			result.Skipped++
+		case errors.Is(err, ErrInvalidFileType):
+			result.Failed++
+			recordSyncError(result, types.SyncItemError{
+				Title: item.Title, Code: "unsupported_file_type", Message: "Document file type is not supported",
+			})
+		case errors.Is(err, errPreparedFileOwnedByAnotherSource):
+			result.Failed++
+			recordSyncError(result, types.SyncItemError{
+				Title: item.Title, Code: "duplicate_other_source", Message: "Identical content belongs to another source; existing document was preserved",
+			})
 		case item.Metadata["embedded_image"] == "true":
 			// An image extracted from a document for OCR is a best-effort
 			// enrichment, not the document itself. If the KB cannot ingest it
