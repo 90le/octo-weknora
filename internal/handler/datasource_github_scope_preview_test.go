@@ -84,6 +84,12 @@ func TestGitHubScopePreviewHandlerReturnsBoundedStructuredResult(t *testing.T) {
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	service.response.TreeState, service.response.ErrorCode = "error", "github_exclusion_invalid"
+	req = httptest.NewRequest(http.MethodPost, "/knowledge-bases/kb-a/github-document-scope-preview", strings.NewReader(`{"source_id":"source-a"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestGitHubScopePreviewHandlerRejectsOversizedRequestBeforeService(t *testing.T) {

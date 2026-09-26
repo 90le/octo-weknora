@@ -43,6 +43,9 @@ type DocumentTreePreviewer interface {
 }
 
 func (c *Connector) PreviewDocumentTree(ctx context.Context, cfg *types.DataSourceConfig) (*DocumentPreviewTree, error) {
+	if _, err := documentExcludes(cfg); err != nil {
+		return nil, err
+	}
 	s, err := parseSelection(cfg)
 	if err != nil {
 		return nil, err

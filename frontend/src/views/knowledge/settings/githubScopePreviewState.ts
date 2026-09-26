@@ -11,6 +11,7 @@ export function canShowGitHubScopePreview(preview: { tree_state: string }): bool
 }
 
 export function githubScopePreviewErrorKey(value: { tree_state?: string; error_code?: string }): string {
+  if (value.error_code === 'github_exclusion_invalid') return 'datasource.githubBulk.scopePreview.invalidExclude'
   return value.tree_state === 'missing_path' || value.error_code === 'github_selected_path_missing'
     ? 'datasource.githubBulk.scopePreview.missingPath'
     : 'datasource.githubBulk.scopePreview.failed'

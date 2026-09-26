@@ -144,6 +144,8 @@ export interface GitHubDocumentScopePreviewSummary {
   image_bytes: number
   sensitive_candidate_files: number
   sensitive_candidate_bytes: number
+  user_excluded_files: number
+  user_excluded_bytes: number
   parser_unsupported_files: number
   parser_unsupported_bytes: number
   too_large_files: number
@@ -168,7 +170,7 @@ export interface GitHubDocumentScopePreview {
   proposed_exclude: string[] | null
   redacted_selection_paths: number
   exclude_overridden: boolean
-  exclusions_applied_by_sync: false
+  exclusions_applied_by_sync: boolean
   actual_sync: GitHubDocumentScopePreviewSummary
   proposed_after_exclude?: GitHubDocumentScopePreviewSummary
   warnings: string[]

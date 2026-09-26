@@ -24,4 +24,5 @@ test('only complete and clearly partial trees can display count cards', () => {
   assert.equal(canShowGitHubScopePreview({ tree_state: 'error' }), false)
   assert.equal(githubScopePreviewErrorKey({ tree_state: 'missing_path' }), 'datasource.githubBulk.scopePreview.missingPath')
   assert.equal(githubScopePreviewErrorKey({ tree_state: 'error', error_code: 'github_rate_limit' }), 'datasource.githubBulk.scopePreview.failed')
+  assert.equal(githubScopePreviewErrorKey({ tree_state: 'error', error_code: 'github_exclusion_invalid' }), 'datasource.githubBulk.scopePreview.invalidExclude')
 })
