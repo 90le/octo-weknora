@@ -18,6 +18,10 @@ type SourceSnapshotReader interface {
 
 // DataSourceService defines the interface for data source management operations
 type DataSourceService interface {
+	// PreviewGitHubDocumentScope inspects only GitHub tree metadata for one
+	// authorized KB/source. It never persists selection, fetches blobs or syncs.
+	PreviewGitHubDocumentScope(context.Context, uint64, string, *types.GitHubDocumentScopePreviewRequest) (*types.GitHubDocumentScopePreview, error)
+
 	// DiscoverGitHubRepositories returns one safe, paginated page of candidate
 	// repositories. It does not persist credentials, sources, or sync tasks.
 	DiscoverGitHubRepositories(ctx context.Context, req *types.GitHubDiscoveryRequest) (*types.GitHubDiscoveryResponse, error)
