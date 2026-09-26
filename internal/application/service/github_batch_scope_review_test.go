@@ -42,7 +42,8 @@ func reviewedBatchFixtureWithFiles(t *testing.T, truncated bool, files []map[str
 	treeSHA := strings.Repeat("b", 40)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if len(statuses) > 0 && r.URL.Path == "/repos/example/repo" {
+		requestPath := strings.ToLower(r.URL.Path)
+		if len(statuses) > 0 && requestPath == "/repos/example/repo" {
 			if statuses[0] == http.StatusForbidden {
 				w.Header().Set("X-RateLimit-Remaining", "0")
 				w.Header().Set("X-RateLimit-Reset", fmt.Sprint(time.Now().UTC().Add(time.Hour).Unix()))
@@ -52,7 +53,7 @@ func reviewedBatchFixtureWithFiles(t *testing.T, truncated bool, files []map[str
 			w.WriteHeader(statuses[0])
 			return
 		}
-		switch r.URL.Path {
+		switch requestPath {
 		case "/repos/example/repo":
 			_ = json.NewEncoder(w).Encode(map[string]string{"full_name": "example/repo", "default_branch": "main"})
 		case "/repos/example/repo/commits/main":
@@ -161,6 +162,28 @@ func TestGitHubBatchRequestOnlyPreviewRequiresCompleteMatchingScope(t *testing.T
 	privateBody, err := base64.RawURLEncoding.DecodeString(strings.Split(privatePreview.PreviewToken, ".")[0])
 	require.NoError(t, err)
 	require.NotContains(t, string(privateBody), "private-gh-token-not-for-ticket")
+}
+
+func TestGitHubBatchPreviewTicketAcceptsMixedCaseRepositoryIdentity(t *testing.T) {
+	t.Setenv("SYSTEM_AES_KEY", "weknora-test-aes-key-32bytes!!!")
+	service, closeServer := reviewedBatchFixture(t, false)
+	defer closeServer()
+	ctx := reviewedBatchContext()
+	paths := []string{"README.md"}
+	request := &types.GitHubBatchScopePreviewRequest{TenantID: 7, KnowledgeBaseID: "kb-one",
+		Owner: "Example", Repository: "Example/Repo", Ref: "main", Mode: "documents", Paths: &paths}
+	preview, err := service.PreviewGitHubBatchScope(ctx, request)
+	require.NoError(t, err)
+	require.Equal(t, "Example/Repo", preview.Repository)
+	require.NotEmpty(t, preview.PreviewToken)
+	batch := &types.GitHubBatchRequest{TenantID: 7, KnowledgeBaseID: "kb-one", Owner: "Example", Mode: "documents",
+		SyncPolicy: "manual", ScopeReviewRequired: true,
+		Repositories: []types.GitHubRepositoryCandidate{{Repository: "Example/Repo", DefaultBranch: "main",
+			Paths: &paths, PreviewToken: preview.PreviewToken}},
+	}
+	created, err := service.CreateGitHubBatch(ctx, batch)
+	require.NoError(t, err)
+	require.Equal(t, "created", created.Results[0].Status)
 }
 
 func TestGitHubBatchPreviewRejectsUnknownButAllowsExplicitEmpty(t *testing.T) {

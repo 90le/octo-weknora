@@ -48,8 +48,11 @@ func (s *DataSourceService) PreviewGitHubBatchScope(
 		!githubconnector.ValidOwner(req.Owner) || requestedGitHubBatchMode(req.Mode) == "" {
 		return nil, datasource.ErrInvalidConfig
 	}
-	repository := canonicalGitHubRepository(req.Repository)
-	if repository == "" || !belongsToOwner(repository, req.Owner) || strings.TrimSpace(req.Ref) == "" {
+	// Keep GitHub's display casing in settings: the reviewed create path stores
+	// the candidate's casing, and the signed selection must match those bytes.
+	// Identity comparisons below still use the canonical case-insensitive form.
+	repository := strings.TrimSuffix(strings.TrimSpace(req.Repository), ".git")
+	if canonicalGitHubRepository(repository) == "" || !belongsToOwner(repository, req.Owner) || strings.TrimSpace(req.Ref) == "" {
 		return nil, datasource.ErrInvalidConfig
 	}
 	kb, err := s.kbService.GetKnowledgeBaseByID(ctx, req.KnowledgeBaseID)
