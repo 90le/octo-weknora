@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -40,6 +41,70 @@ const (
 // reads a blob, creates a cache, or advances a source cursor.
 type DocumentTreePreviewer interface {
 	PreviewDocumentTree(context.Context, *types.DataSourceConfig) (*DocumentPreviewTree, error)
+}
+
+// SourcePreviewTree is the same read-only REST metadata shape for a future
+// source snapshot. It does not clone, download blobs or claim to know whether
+// a candidate's bytes are valid UTF-8 text; that remains an estimate until
+// the normal source-sync policy inspects the actual file content.
+type SourcePreviewTree struct {
+	Repository   string
+	Ref          string
+	Commit       string
+	Paths        []string
+	TreeEntries  int
+	Truncated    bool
+	MissingPaths []string
+	Files        []SourcePreviewFile
+}
+
+type SourcePreviewFile struct {
+	Path      string
+	Size      int64
+	Mode      string
+	Sensitive bool
+}
+
+func (c *Connector) PreviewSourceTree(ctx context.Context, cfg *types.DataSourceConfig) (*SourcePreviewTree, error) {
+	s, err := parseSelection(cfg)
+	if err != nil {
+		return nil, err
+	}
+	commit, treeSHA, err := c.head(ctx, cfg, s)
+	if err != nil {
+		return nil, err
+	}
+	var response tree
+	if err := c.get(ctx, cfg, "/repos/"+s.Repository+"/git/trees/"+treeSHA+"?recursive=1", &response, 8<<20); err != nil {
+		return nil, err
+	}
+	result := &SourcePreviewTree{Repository: s.Repository, Ref: s.Ref, Commit: commit,
+		Paths: append([]string(nil), s.Paths...), TreeEntries: len(response.Tree), Truncated: response.Truncated,
+		Files: make([]SourcePreviewFile, 0)}
+	found := make(map[string]bool, len(s.Paths))
+	for _, entry := range response.Tree {
+		if !safePath(entry.Path) || !shaPattern.MatchString(entry.SHA) {
+			return nil, &Error{Code: "github_tree_invalid", Message: "GitHub repository tree contains an invalid path or object ID"}
+		}
+		for _, root := range s.Paths {
+			if entry.Path == root || strings.HasPrefix(entry.Path, root+"/") {
+				found[root] = true
+			}
+		}
+		if entry.Type != "blob" || !selected(entry.Path, s.Paths) {
+			continue
+		}
+		result.Files = append(result.Files, SourcePreviewFile{Path: entry.Path, Size: entry.Size,
+			Mode: entry.Mode, Sensitive: snapshot.Excluded(entry.Path, nil)})
+	}
+	if !response.Truncated {
+		for _, root := range s.Paths {
+			if root != "" && !found[root] {
+				result.MissingPaths = append(result.MissingPaths, root)
+			}
+		}
+	}
+	return result, nil
 }
 
 func (c *Connector) PreviewDocumentTree(ctx context.Context, cfg *types.DataSourceConfig) (*DocumentPreviewTree, error) {

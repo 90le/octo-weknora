@@ -61,6 +61,9 @@ func (s *DataSourceService) CreateGitHubBatch(ctx context.Context, req *types.Gi
 	if len(req.Exclude) > maxGitHubBatchExclusions {
 		return nil, fmt.Errorf("GitHub batch exclusions must contain at most %d paths", maxGitHubBatchExclusions)
 	}
+	if req.ScopeReviewRequired && req.StartSync {
+		return nil, errors.New("reviewed GitHub batch creation does not start a sync")
+	}
 	syncPlan, err := resolveGitHubBatchSyncPlan(req)
 	if err != nil {
 		return nil, err
@@ -107,9 +110,16 @@ func (s *DataSourceService) CreateGitHubBatch(ctx context.Context, req *types.Gi
 			continue
 		}
 		ref := strings.TrimSpace(candidate.DefaultBranch)
-		settings := githubBatchSettings(repository, ref, mode, req.Paths, req.Exclude)
+		settings := githubBatchEffectiveSettings(repository, ref, mode, req.Paths, req.Exclude, candidate, req.ScopeReviewRequired)
 		config := &types.DataSourceConfig{Type: types.ConnectorTypeGitHub, Credentials: req.Credentials, Settings: settings}
 		config.StripNonSecretCredentials(types.ConnectorTypeGitHub)
+		if req.ScopeReviewRequired {
+			if verifyErr := verifyGitHubBatchScopeReview(ctx, req, candidate, config); verifyErr != nil {
+				result.Status, result.Message = "failed", "Scope preview is missing, stale, or does not match this repository; preview it again"
+				response.Results = append(response.Results, result)
+				continue
+			}
+		}
 		blob, configErr := config.ToJSON()
 		if configErr != nil {
 			result.Status, result.Message = "failed", "GitHub configuration could not be secured"
@@ -294,6 +304,31 @@ func githubBatchSettings(repository, ref, mode string, paths, excludes []string)
 	}
 	if len(excludes) > 0 {
 		settings["exclude"] = append([]string(nil), excludes...)
+	}
+	return settings
+}
+
+// Reviewed batch rows may override the shared defaults independently. The
+// compatibility path intentionally ignores these new row fields so existing
+// API clients retain their original uniform-scope behavior.
+func githubBatchEffectiveSettings(
+	repository, ref, mode string, defaultPaths, defaultExclude []string,
+	candidate types.GitHubRepositoryCandidate, reviewed bool,
+) map[string]interface{} {
+	paths, excludes := defaultPaths, defaultExclude
+	if reviewed {
+		if candidate.Paths != nil {
+			paths = *candidate.Paths
+		}
+		if candidate.Exclude != nil {
+			excludes = *candidate.Exclude
+		}
+	}
+	settings := githubBatchSettings(repository, ref, mode, paths, excludes)
+	if reviewed && candidate.Exclude != nil && len(excludes) == 0 {
+		// Explicit per-repository empty override differs from an omitted source
+		// exclusion setting, which inherits the source-mode default exclusions.
+		settings["exclude"] = []string{}
 	}
 	return settings
 }

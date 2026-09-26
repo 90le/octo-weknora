@@ -85,6 +85,26 @@ func TestPreviewDocumentTreeFullAndSelectedPathsNeverReadBlobs(t *testing.T) {
 	require.Zero(t, blobs.Load())
 }
 
+func TestPreviewSourceTreeIncludesCodeWithoutReadingBlobs(t *testing.T) {
+	c, blobs, closeServer := githubPreviewFixture(t, previewEntries(), false)
+	defer closeServer()
+	config := &types.DataSourceConfig{Settings: map[string]interface{}{
+		"repository": "example/repo", "ref": "main", "paths": []string{"src", "README.md"}, "mode": "source",
+	}}
+	tree, err := c.PreviewSourceTree(context.Background(), config)
+	require.NoError(t, err)
+	require.Equal(t, strings.Repeat("a", 40), tree.Commit)
+	require.Empty(t, tree.MissingPaths)
+	require.Len(t, tree.Files, 2)
+	require.Equal(t, "README.md", tree.Files[0].Path)
+	require.Equal(t, "src/app.js", tree.Files[1].Path)
+	require.Zero(t, blobs.Load())
+	config.Settings["paths"] = []string{"missing"}
+	missing, err := c.PreviewSourceTree(context.Background(), config)
+	require.NoError(t, err)
+	require.Equal(t, []string{"missing"}, missing.MissingPaths)
+}
+
 func TestFetchIncrementalSkipsSensitiveBeforeBlobReadAndPreservesOldCursor(t *testing.T) {
 	entries := previewEntries()
 	c, blobs, closeServer := githubPreviewFixture(t, entries, false)

@@ -14,6 +14,13 @@ type GitHubRepositoryCandidate struct {
 	Fork          bool      `json:"fork"`
 	SizeKiB       int       `json:"size_kib"`
 	UpdatedAt     time.Time `json:"updated_at"`
+	// Optional per-repository overrides for the batch flow. Nil means inherit
+	// batch defaults; a non-nil empty list explicitly selects the repository
+	// root or clears user exclusions, respectively.
+	Paths        *[]string `json:"paths,omitempty"`
+	Exclude      *[]string `json:"exclude,omitempty"`
+	PreviewToken string    `json:"preview_token,omitempty"`
+	AllowEmpty   bool      `json:"allow_empty,omitempty"`
 }
 
 type GitHubDiscoveryRequest struct {
@@ -50,6 +57,40 @@ type GitHubBatchRequest struct {
 	SyncPolicy   string `json:"sync_policy,omitempty"`
 	SyncSchedule string `json:"sync_schedule,omitempty"`
 	StartSync    bool   `json:"start_sync"`
+	// Reviewed flows require one valid, signed preview per selected repository.
+	// Legacy callers omitting this field retain their established API behavior.
+	ScopeReviewRequired bool `json:"scope_review_required,omitempty"`
+}
+
+// GitHubBatchScopePreviewRequest is read-only and contains exactly one
+// candidate. No source_id is needed, so it can be used before batch creation.
+type GitHubBatchScopePreviewRequest struct {
+	TenantID        uint64                 `json:"-"`
+	KnowledgeBaseID string                 `json:"knowledge_base_id"`
+	Owner           string                 `json:"owner"`
+	Repository      string                 `json:"repository"`
+	Ref             string                 `json:"ref,omitempty"`
+	Mode            string                 `json:"mode"`
+	Paths           *[]string              `json:"paths,omitempty"`
+	Exclude         *[]string              `json:"exclude,omitempty"`
+	Credentials     map[string]interface{} `json:"credentials,omitempty"`
+}
+
+type GitHubBatchScopePreviewResponse struct {
+	Repository   string                       `json:"repository"`
+	Ref          string                       `json:"ref"`
+	Mode         string                       `json:"mode"`
+	Commit       string                       `json:"commit,omitempty"`
+	TreeState    string                       `json:"tree_state"` // complete, truncated, missing_path, error
+	Paths        []string                     `json:"paths"`
+	Exclude      []string                     `json:"exclude"`
+	Summary      GitHubDocumentPreviewSummary `json:"summary"`
+	Estimated    bool                         `json:"estimated"`
+	Warnings     []string                     `json:"warnings"`
+	ErrorCode    string                       `json:"error_code,omitempty"`
+	ErrorMessage string                       `json:"error_message,omitempty"`
+	PreviewToken string                       `json:"preview_token,omitempty"`
+	ExpiresAt    string                       `json:"expires_at,omitempty"`
 }
 
 type GitHubBatchItemResult struct {

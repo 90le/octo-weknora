@@ -111,6 +111,11 @@ export interface GitHubRepository {
   fork?: boolean
   size_kib?: number
   description: string
+  /** Reviewed batch creation only: independent overrides and signed preview. */
+  paths?: string[]
+  exclude?: string[]
+  preview_token?: string
+  allow_empty?: boolean
 }
 
 export interface GitHubDiscoveryResponse {
@@ -154,6 +159,23 @@ export interface GitHubDocumentScopePreviewSummary {
   top_directories: Array<{ name: string; files: number; bytes: number }>
   sample_paths: string[]
   warnings: string[]
+}
+
+export interface GitHubBatchScopePreview {
+  repository: string
+  ref: string
+  mode: GitHubBulkMode
+  commit?: string
+  tree_state: 'complete' | 'truncated' | 'missing_path' | 'error'
+  paths: string[] | null
+  exclude: string[] | null
+  summary: GitHubDocumentScopePreviewSummary
+  estimated: boolean
+  warnings: string[]
+  error_code?: string
+  error_message?: string
+  preview_token?: string
+  expires_at?: string
 }
 
 export interface GitHubDocumentScopePreview {
@@ -400,11 +422,27 @@ export function createGitHubDataSourceBatch(data: {
   credentials?: Record<string, unknown>
   mode: GitHubBulkMode
   paths?: string[]
+  exclude?: string[]
+  scope_review_required?: boolean
   sync_policy?: GitHubBatchSyncPolicy
   sync_schedule?: string
   start_sync?: boolean
 }) {
   return post('/api/v1/datasource/github/batch', data)
+}
+
+/** Explicit read-only preview for exactly one new batch repository. */
+export function previewGitHubBatchScope(data: {
+  knowledge_base_id: string
+  owner: string
+  repository: string
+  ref: string
+  mode: GitHubBulkMode
+  paths?: string[]
+  exclude?: string[]
+  credentials?: Record<string, unknown>
+}) {
+  return post<GitHubBatchScopePreview>('/api/v1/datasource/github/batch/scope-preview', data, { timeout: 20000 })
 }
 
 /** Read-only tree-metadata preview for one existing KB-owned GitHub source. */

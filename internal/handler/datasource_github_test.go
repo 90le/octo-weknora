@@ -19,6 +19,7 @@ type githubDataSourceServiceStub struct {
 	batch    func(context.Context, *types.GitHubBatchRequest) (*types.GitHubBatchResponse, error)
 	preview  func(context.Context, *types.GitHubScheduleMigrationPreviewRequest) (*types.GitHubScheduleMigrationPreviewResponse, error)
 	apply    func(context.Context, *types.GitHubScheduleMigrationApplyRequest) (*types.GitHubScheduleMigrationApplyResponse, error)
+	scope    func(context.Context, *types.GitHubBatchScopePreviewRequest) (*types.GitHubBatchScopePreviewResponse, error)
 }
 
 func (s *githubDataSourceServiceStub) DiscoverGitHubRepositories(ctx context.Context, req *types.GitHubDiscoveryRequest) (*types.GitHubDiscoveryResponse, error) {
@@ -37,6 +38,10 @@ func (s *githubDataSourceServiceStub) ApplyGitHubScheduleMigration(ctx context.C
 	return s.apply(ctx, req)
 }
 
+func (s *githubDataSourceServiceStub) PreviewGitHubBatchScope(ctx context.Context, req *types.GitHubBatchScopePreviewRequest) (*types.GitHubBatchScopePreviewResponse, error) {
+	return s.scope(ctx, req)
+}
+
 func githubHandlerRouter(h *DataSourceHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -48,9 +53,45 @@ func githubHandlerRouter(h *DataSourceHandler) *gin.Engine {
 	})
 	r.POST("/datasource/github/discover", h.DiscoverGitHubRepositories)
 	r.POST("/datasource/github/batch", h.CreateGitHubBatch)
+	r.POST("/datasource/github/batch/scope-preview", h.PreviewGitHubBatchScope)
 	r.POST("/datasource/github/schedule-migration/preview", h.PreviewGitHubScheduleMigration)
 	r.POST("/datasource/github/schedule-migration/apply", h.ApplyGitHubScheduleMigration)
 	return r
+}
+
+func TestGitHubBatchScopePreviewEnforcesOwnedKnowledgeBase(t *testing.T) {
+	called := false
+	service := &githubDataSourceServiceStub{scope: func(_ context.Context, req *types.GitHubBatchScopePreviewRequest) (*types.GitHubBatchScopePreviewResponse, error) {
+		called = true
+		require.Equal(t, uint64(7), req.TenantID)
+		return &types.GitHubBatchScopePreviewResponse{Repository: req.Repository, TreeState: "complete"}, nil
+	}}
+	kb := &stubKBServiceForDS{getByID: func(_ context.Context, id string) (*types.KnowledgeBase, error) {
+		owner := uint64(7)
+		if id == "foreign" {
+			owner = 8
+		}
+		return &types.KnowledgeBase{ID: id, TenantID: owner}, nil
+	}}
+	router := githubHandlerRouter(NewDataSourceHandler(service, kb))
+	for _, testCase := range []struct {
+		kbID       string
+		wantStatus int
+	}{
+		{"foreign", http.StatusForbidden},
+		{"owned", http.StatusOK},
+	} {
+		body := `{"knowledge_base_id":"` + testCase.kbID + `","owner":"example","repository":"example/repo","ref":"main","mode":"documents"}`
+		request := httptest.NewRequest(http.MethodPost, "/datasource/github/batch/scope-preview", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, withDSCtx(request, 7))
+		require.Equal(t, testCase.wantStatus, response.Code)
+		if testCase.kbID == "foreign" {
+			require.False(t, called)
+		}
+	}
+	require.True(t, called)
 }
 
 func TestGitHubScheduleMigrationHandlerEnforcesOwnedKBForPreviewAndApply(t *testing.T) {
