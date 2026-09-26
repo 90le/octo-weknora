@@ -28,6 +28,16 @@ func reviewedBatchContext() context.Context {
 func reviewedBatchFixture(t *testing.T, truncated bool, statuses ...int) (*DataSourceService, func()) {
 	t.Helper()
 	sha := strings.Repeat("c", 40)
+	return reviewedBatchFixtureWithFiles(t, truncated, []map[string]any{
+		{"path": "README.md", "type": "blob", "mode": "100644", "sha": sha, "size": 100},
+		{"path": "src/app.go", "type": "blob", "mode": "100644", "sha": sha, "size": 200},
+		{"path": "images/logo.webp", "type": "blob", "mode": "100644", "sha": sha, "size": 300},
+		{"path": "secrets/passwords.md", "type": "blob", "mode": "100644", "sha": sha, "size": 400},
+	}, statuses...)
+}
+
+func reviewedBatchFixtureWithFiles(t *testing.T, truncated bool, files []map[string]any, statuses ...int) (*DataSourceService, func()) {
+	t.Helper()
 	commit := strings.Repeat("a", 40)
 	treeSHA := strings.Repeat("b", 40)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,12 +59,7 @@ func reviewedBatchFixture(t *testing.T, truncated bool, statuses ...int) (*DataS
 			_ = json.NewEncoder(w).Encode(map[string]any{"sha": commit, "commit": map[string]any{"tree": map[string]string{"sha": treeSHA}}})
 		case "/repos/example/repo/git/trees/" + treeSHA:
 			require.Equal(t, "1", r.URL.Query().Get("recursive"))
-			_ = json.NewEncoder(w).Encode(map[string]any{"truncated": truncated, "tree": []map[string]any{
-				{"path": "README.md", "type": "blob", "mode": "100644", "sha": sha, "size": 100},
-				{"path": "src/app.go", "type": "blob", "mode": "100644", "sha": sha, "size": 200},
-				{"path": "images/logo.webp", "type": "blob", "mode": "100644", "sha": sha, "size": 300},
-				{"path": "secrets/passwords.md", "type": "blob", "mode": "100644", "sha": sha, "size": 400},
-			}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"truncated": truncated, "tree": files})
 		default:
 			http.NotFound(w, r)
 		}
@@ -240,6 +245,36 @@ func TestGitHubBatchReviewedSourceRejectsInvalidExclusionGlob(t *testing.T) {
 		Repository: "example/repo", Ref: "main", Mode: "source", Exclude: &badGlob}
 	_, err := service.PreviewGitHubBatchScope(reviewedBatchContext(), request)
 	require.ErrorIs(t, err, datasource.ErrInvalidConfig)
+}
+
+func TestGitHubBatchReviewAllowsMoreThanOneDocumentSyncChunk(t *testing.T) {
+	t.Setenv("SYSTEM_AES_KEY", "weknora-test-aes-key-32bytes!!!")
+	sha := strings.Repeat("c", 40)
+	files := make([]map[string]any, 5)
+	for index := range files {
+		files[index] = map[string]any{"path": fmt.Sprintf("docs/part-%d.md", index), "type": "blob",
+			"mode": "100644", "sha": sha, "size": 15 << 20}
+	}
+	service, closeServer := reviewedBatchFixtureWithFiles(t, false, files)
+	defer closeServer()
+	ctx := reviewedBatchContext()
+	request := &types.GitHubBatchScopePreviewRequest{TenantID: 7, KnowledgeBaseID: "kb-one", Owner: "example",
+		Repository: "example/repo", Ref: "main", Mode: "documents"}
+	preview, err := service.PreviewGitHubBatchScope(ctx, request)
+	require.NoError(t, err)
+	require.Equal(t, "complete", preview.TreeState)
+	require.Equal(t, 5, preview.Summary.EligibleFiles)
+	require.Greater(t, preview.Summary.EligibleBytes, githubconnector.DocumentBatchLimitBytes)
+	require.Empty(t, preview.ErrorCode)
+	require.NotEmpty(t, preview.PreviewToken, "more than one future sync chunk is a warning, not a creation blocker")
+	batch := &types.GitHubBatchRequest{TenantID: 7, KnowledgeBaseID: "kb-one", Owner: "example", Mode: "documents",
+		SyncPolicy: "manual", ScopeReviewRequired: true,
+		Repositories: []types.GitHubRepositoryCandidate{{Repository: "example/repo", DefaultBranch: "main",
+			PreviewToken: preview.PreviewToken}},
+	}
+	created, err := service.CreateGitHubBatch(ctx, batch)
+	require.NoError(t, err)
+	require.Equal(t, "created", created.Results[0].Status)
 }
 
 func TestGitHubBatchSourcePreviewIsEstimatedAndTruncatedTreeCannotAuthorize(t *testing.T) {

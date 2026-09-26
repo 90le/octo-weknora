@@ -56,8 +56,8 @@ export function isGitHubPreviewRateLimit(code?: string, httpStatus?: number): bo
 }
 
 // Explicit batch preview may contain many selected rows, but never opens more
-// than two GitHub tree requests at once. A worker handles one repository per
-// call, preserving per-row success/error results and original selection order.
+// than two GitHub tree requests at once. Each wave preserves result order and
+// can stop before starting the next wave when a rate limit is observed.
 export async function mapGitHubPreviewsBounded<T, R>(
   items: readonly T[], worker: (item: T) => Promise<R>, concurrency = 2,
   stopAfterWave?: (result: R) => boolean,

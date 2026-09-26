@@ -117,10 +117,9 @@ func (s *DataSourceService) PreviewGitHubBatchScope(
 		response.TreeState = reviewedGitHubTreeState(tree.Truncated, tree.MissingPaths)
 		response.Warnings = append(response.Warnings, response.Summary.Warnings...)
 		if response.Summary.ParserUnsupportedFiles > 0 || response.Summary.TooLargeFiles > 0 ||
-			response.Summary.CandidateFiles > githubconnector.DocumentFileCountLimit ||
-			response.Summary.EligibleBytes > githubconnector.DocumentBatchLimitBytes {
+			response.Summary.CandidateFiles > githubconnector.DocumentFileCountLimit {
 			response.ErrorCode = "github_scope_exceeds_import_policy"
-			response.ErrorMessage = "Selected documents include unsupported or oversized files; narrow paths or exclusions before creation"
+			response.ErrorMessage = "Selected documents include unsupported, oversized, or too many files; narrow paths or exclusions before creation"
 		}
 	} else {
 		tree, fetchErr := github.PreviewSourceTree(previewCtx, config)
