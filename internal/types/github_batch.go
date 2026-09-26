@@ -107,7 +107,7 @@ type GitHubScheduleMigrationApplyRequest struct {
 
 type GitHubScheduleMigrationApplyItem struct {
 	DataSourceID string `json:"data_source_id"`
-	Status       string `json:"status"` // applied or skipped
+	Status       string `json:"status"` // applied, applied_with_warning or skipped
 	Reason       string `json:"reason"`
 	Schedule     string `json:"schedule,omitempty"`
 }

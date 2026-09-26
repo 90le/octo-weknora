@@ -34,11 +34,16 @@ type DataSourceService struct {
 	kbService         interfaces.KnowledgeBaseService
 	taskEnqueuer      interfaces.TaskEnqueuer
 	connectorRegistry *datasource.ConnectorRegistry
-	scheduler         *datasource.Scheduler
+	scheduler         dataSourceScheduler
 	tenantRepo        interfaces.TenantRepository
 	tagService        interfaces.KnowledgeTagService
 	audit             interfaces.AuditLogService
 	manualSyncMu      sync.Mutex
+}
+
+type dataSourceScheduler interface {
+	AddOrUpdate(*types.DataSource) error
+	Remove(string)
 }
 
 // syncRunAtomicFinalizer is intentionally optional so lightweight test and
