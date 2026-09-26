@@ -32,6 +32,35 @@ func (e *Error) Error() string {
 	return e.Message
 }
 
+// Retryable distinguishes transport/rate-limit failures from source settings
+// which need an operator change. Unknown GitHub errors fail closed instead of
+// repeating the entire repository fetch five times.
+func (e *Error) Retryable() bool {
+	if e == nil {
+		return false
+	}
+	switch e.Code {
+	case "github_rate_limit", "github_secondary_rate_limit", "github_connection",
+		"github_response_incomplete", "github_unavailable", "github_archive_connection",
+		"github_archive_incomplete", "github_archive_file_incomplete", "github_git_fetch",
+		"github_git_clone", "github_blob_incomplete", "github_snapshot_cache":
+		return true
+	case "github_http":
+		return e.StatusCode == http.StatusRequestTimeout || e.StatusCode == http.StatusTooManyRequests || e.StatusCode >= 500
+	default:
+		return false
+	}
+}
+
+// RetryAfterAt is consumed by the queue's generic retry-delay interface. It
+// exposes only a safe absolute time, never a response header or credential.
+func (e *Error) RetryAfterAt() (time.Time, bool) {
+	if e == nil || !e.Retryable() || e.RetryAfter == nil {
+		return time.Time{}, false
+	}
+	return e.RetryAfter.UTC(), true
+}
+
 var errGitUnavailable = errors.New("git executable is unavailable")
 
 func githubHTTPError(resp *http.Response) error {

@@ -498,13 +498,22 @@ func (s *DataSourceService) ManualSync(ctx context.Context, dsID string) (*types
 	if ds.HasActiveRestartRecoveryLease(time.Now().UTC()) {
 		return nil, datasource.ErrRestartRecoveryInProgress
 	}
+	if retryAt, cooldownErr := ds.ActiveGitHubRetryCooldown(time.Now().UTC()); cooldownErr != nil {
+		return nil, errors.New("cannot verify GitHub sync cooldown; retry later")
+	} else if retryAt != nil {
+		return nil, fmt.Errorf("GitHub sync is deferred until %s", retryAt.UTC().Format(time.RFC3339))
+	}
 
 	if ds.Status != types.DataSourceStatusActive &&
 		ds.Status != types.DataSourceStatusError &&
 		ds.Status != types.DataSourceStatusPaused {
 		return nil, datasource.ErrDataSourceNotActive
 	}
-	if running, err := s.syncLogRepo.HasRunningSync(ctx, dsID); err == nil && running {
+	running, stateErr := s.syncLogRepo.HasRunningSync(ctx, dsID)
+	if stateErr != nil {
+		return nil, errors.New("cannot verify active sync state; retry later")
+	}
+	if running {
 		return nil, datasource.ErrSyncAlreadyRunning
 	}
 
@@ -799,7 +808,7 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		}
 		logger.Errorf(ctx, "fetch operation failed: %v", fetchErr)
 		return s.failSyncRun(ctx, ds, syncLog, nil,
-			fmt.Sprintf("Fetch failed: %v", fetchErr), wasPaused, fetchErr, true)
+			fmt.Sprintf("Fetch failed: %v", fetchErr), wasPaused, fetchErr, githubSyncFailurePolicy(ds.Type, fetchErr))
 	}
 
 	// Process fetched items and write to knowledge base
@@ -844,9 +853,13 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	resultJSON, _ := result.ToJSON()
 	if err := allFetchedItemsFailedError(result); err != nil {
 		logger.Errorf(ctx, "data source sync failed while processing fetched items: %v", err)
+		retryable := allFetchedItemsRetryable(ds.Type, result)
 		if updateErr := s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
-			types.SyncLogStatusFailed, err.Error(), wasPaused, true); updateErr != nil {
+			types.SyncLogStatusFailed, err.Error(), wasPaused, retryable); updateErr != nil {
 			return updateErr
+		}
+		if !retryable {
+			return fmt.Errorf("%w: %w", asynq.SkipRetry, err)
 		}
 		return err
 	}
@@ -919,6 +932,24 @@ const maxSyncResultErrors = 100
 // recordSyncError appends an error sample to result.Errors, capped at
 // maxSyncResultErrors. Callers still increment result.Failed for the exact count.
 func recordSyncError(result *types.SyncResult, item types.SyncItemError) {
+	recordSyncErrorWithClass(result, item, "other")
+}
+
+// Only internally proven ingest outcomes may contribute deterministic counts.
+// A connector's error_reason_code is presentation data, not authority to
+// disable retries for a failed import.
+func recordDeterministicSyncError(result *types.SyncResult, item types.SyncItemError) {
+	recordSyncErrorWithClass(result, item, item.Code)
+}
+
+func recordSyncErrorWithClass(result *types.SyncResult, item types.SyncItemError, code string) {
+	if result.FailureCodes == nil {
+		result.FailureCodes = map[string]int{}
+	}
+	if code != "unsupported_file_type" && code != "duplicate_other_source" {
+		code = "other"
+	}
+	result.FailureCodes[code]++
 	if len(result.Errors) < maxSyncResultErrors {
 		result.Errors = append(result.Errors, item)
 	}
@@ -1040,12 +1071,12 @@ func (s *DataSourceService) applyFetchedItem(
 			result.Skipped++
 		case errors.Is(err, ErrInvalidFileType):
 			result.Failed++
-			recordSyncError(result, types.SyncItemError{
+			recordDeterministicSyncError(result, types.SyncItemError{
 				Title: item.Title, Code: "unsupported_file_type", Message: "Document file type is not supported",
 			})
 		case errors.Is(err, errPreparedFileOwnedByAnotherSource):
 			result.Failed++
-			recordSyncError(result, types.SyncItemError{
+			recordDeterministicSyncError(result, types.SyncItemError{
 				Title: item.Title, Code: "duplicate_other_source", Message: "Identical content belongs to another source; existing document was preserved",
 			})
 		case item.Metadata["embedded_image"] == "true":
@@ -1225,10 +1256,16 @@ func (s *DataSourceService) processSyncStreaming(
 		// Progress so far is already checkpointed onto ds.LastSyncCursor; leave
 		// it in place so the Asynq retry resumes from there. Persist counts.
 		logger.Errorf(ctx, "streaming fetch failed: %v", fetchErr)
+		policy := githubSyncFailureDecisionForExecution(ctx, ds.Type, fetchErr, time.Now().UTC())
+		result.RetryNotBefore = policy.DeferUntil
 		resultJSON, _ := result.ToJSON()
 		if updateErr := s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
-			types.SyncLogStatusFailed, fmt.Sprintf("Fetch failed: %v", fetchErr), wasPaused, true); updateErr != nil {
+			types.SyncLogStatusFailed, fmt.Sprintf("Fetch failed: %v", fetchErr), wasPaused,
+			policy.QueueRetry); updateErr != nil {
 			return updateErr
+		}
+		if !policy.QueueRetry {
+			return fmt.Errorf("%w: %w", asynq.SkipRetry, fetchErr)
 		}
 		return fetchErr
 	}
@@ -1236,9 +1273,13 @@ func (s *DataSourceService) processSyncStreaming(
 	resultJSON, _ := result.ToJSON()
 	if err := allFetchedItemsFailedError(result); err != nil {
 		logger.Errorf(ctx, "streaming sync failed while processing fetched items: %v", err)
+		retryable := allFetchedItemsRetryable(ds.Type, result)
 		if updateErr := s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
-			types.SyncLogStatusFailed, err.Error(), wasPaused, true); updateErr != nil {
+			types.SyncLogStatusFailed, err.Error(), wasPaused, retryable); updateErr != nil {
 			return updateErr
+		}
+		if !retryable {
+			return fmt.Errorf("%w: %w", asynq.SkipRetry, err)
 		}
 		return err
 	}
@@ -1319,7 +1360,15 @@ func (s *DataSourceService) updateSyncRunResult(
 	previousStatus := ds.Status
 	if effectiveStatus == types.SyncLogStatusFailed {
 		if !wasPaused {
-			ds.Status = types.DataSourceStatusError
+			// A remote GitHub outage is a failed *run*, not a broken source
+			// configuration. Once queue retries are exhausted, leave the source
+			// active so its next scheduled window can recover. Auth/config/size
+			// failures still require operator action and become Error.
+			if ds.Type == types.ConnectorTypeGitHub && (retryable || result.RetryNotBefore != nil) {
+				ds.Status = types.DataSourceStatusActive
+			} else {
+				ds.Status = types.DataSourceStatusError
+			}
 		}
 	} else if wasPaused {
 		ds.Status = types.DataSourceStatusPaused
@@ -1356,8 +1405,9 @@ func (s *DataSourceService) updateSyncRunResult(
 		return nil
 	}
 	// A failed source was omitted when the scheduler loaded active rows at
-	// startup. A later successful manual sync reactivates it durably, but that
-	// alone does not create its in-memory cron entry until another restart.
+	// startup. A later manual run can reactivate it after success or an
+	// exhausted transient GitHub failure, but persistence alone does not
+	// create its in-memory cron entry until another restart.
 	// Re-register only this error -> active transition after persistence; a
 	// paused source must remain unscheduled.
 	if previousStatus == types.DataSourceStatusError && ds.Status == types.DataSourceStatusActive &&
@@ -1404,6 +1454,11 @@ func (s *DataSourceService) failSyncRun(
 ) error {
 	if result == nil {
 		result = &types.SyncResult{}
+	}
+	if ds.Type == types.ConnectorTypeGitHub {
+		policy := githubSyncFailureDecisionForExecution(ctx, ds.Type, cause, time.Now().UTC())
+		retryable = policy.QueueRetry
+		result.RetryNotBefore = policy.DeferUntil
 	}
 	resultJSON, _ := result.ToJSON()
 	if err := s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,

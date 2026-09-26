@@ -119,6 +119,10 @@ func (e *SyncTaskExecutor) Enqueue(task *asynq.Task, opts ...asynq.Option) (*asy
 		var lastErr error
 		for attempt := 0; attempt <= maxRetry; attempt++ {
 			if attempt > 0 {
+				// Lite has only this short in-process backoff. Explicit future
+				// GitHub Retry-After hints are terminated by DataSourceService as
+				// durable source cooldowns (SkipRetry), so they never sleep here
+				// for 5–30 seconds and rapidly reissue the provider request.
 				backoff := time.Duration(attempt) * 5 * time.Second
 				if backoff > 30*time.Second {
 					backoff = 30 * time.Second

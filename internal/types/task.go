@@ -7,6 +7,12 @@ import "time"
 // running log stale before its worker timeout can race a valid long sync.
 const DataSourceSyncTaskTimeout = 2 * time.Hour
 
+// A queued GitHub retry may wait up to this long within the existing
+// datasource running-log recovery window. Longer upstream hints are persisted
+// as a source cooldown instead of keeping the same SyncLog running for hours.
+const GitHubQueuedRetryHintMax = 90 * time.Minute
+const GitHubDeferredRetryHintMax = 24 * time.Hour
+
 // Worker-pool names are part of the runtime observability API. Each pool is
 // backed by an independent asynq.Server, so concurrency is hard-isolated
 // between pools instead of being only a weighted dequeue preference.

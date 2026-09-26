@@ -149,9 +149,23 @@ func (s *Scheduler) triggerSync(dataSourceID string, tenantID uint64) {
 		logger.Infof(ctx, "[Scheduler] skipping sync for ds=%s (restart recovery owns source)", dataSourceID)
 		return
 	}
+	if retryAt, cooldownErr := ds.ActiveGitHubRetryCooldown(time.Now().UTC()); cooldownErr != nil {
+		logger.Errorf(ctx, "[Scheduler] skipping sync for ds=%s (cooldown state cannot be read): %v", dataSourceID, cooldownErr)
+		return
+	} else if retryAt != nil {
+		logger.Infof(ctx, "[Scheduler] skipping sync for ds=%s (GitHub retry deferred until %s)", dataSourceID, retryAt.UTC().Format(time.RFC3339))
+		return
+	}
 
 	// Layer 1: prevent overlap with a still-running sync
-	if running, _ := s.syncLogRepo.HasRunningSync(ctx, dataSourceID); running {
+	running, readErr := s.syncLogRepo.HasRunningSync(ctx, dataSourceID)
+	if readErr != nil {
+		// Failing open here creates a second task and running log when the DB is
+		// degraded, which can race the original sync's cursor and ingestion.
+		logger.Errorf(ctx, "[Scheduler] skipping sync for ds=%s (running-state check failed): %v", dataSourceID, readErr)
+		return
+	}
+	if running {
 		logger.Infof(ctx, "[Scheduler] skipping sync for ds=%s (previous sync still running)", dataSourceID)
 		return
 	}
