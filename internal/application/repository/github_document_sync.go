@@ -55,9 +55,11 @@ func (r *DataSourceRepository) CreateGitHubDocumentRun(
 				(items[i].Operation != types.GitHubDocumentItemUpsert && items[i].Operation != types.GitHubDocumentItemDelete) {
 				return errors.New("GitHub document item is invalid")
 			}
-			if err := tx.Create(&items[i]).Error; err != nil {
-				return err
-			}
+		}
+		// Fifty rows stay below SQLite's conservative bound-variable limits and
+		// avoid thousands of round trips for a large but allowed repository.
+		if len(items) > 0 {
+			return tx.CreateInBatches(&items, 50).Error
 		}
 		return nil
 	})
