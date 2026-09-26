@@ -51,8 +51,8 @@ and use a fixed-commit GitHub URL in native knowledge references.
 The connector imports supported document formats only. Source code, hidden
 files, dependencies, symlinks and submodules are excluded. Limits are 2000
 documents, 16 MiB per file and 64 MiB per batch. A truncated API tree fails
-explicitly; it never provides evidence for deletion. Source-code browsing and
-server folder connectors are separate, unfinished work.
+explicitly; it never provides evidence for deletion. Read-only source browsing
+and server-folder connectors use their own source projections.
 
 GitHub imports stage a deterministic document candidate and wait for native
 processing to finish before retiring the previous document. Failures retain
