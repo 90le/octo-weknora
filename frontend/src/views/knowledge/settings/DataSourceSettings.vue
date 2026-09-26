@@ -12,6 +12,7 @@ import {
 import { humanizeCron, relativeTime } from '@/utils/cronHumanize'
 import DataSourceEditorDialog from './DataSourceEditorDialog.vue'
 import GitHubBulkImportDialog from './GitHubBulkImportDialog.vue'
+import GitHubScheduleMigrationDialog from './GitHubScheduleMigrationDialog.vue'
 import DataSourceSyncLogs from './DataSourceSyncLogs.vue'
 import DataSourceTypeIcon from './DataSourceTypeIcon.vue'
 import SourceBrowserDrawer from './SourceBrowserDrawer.vue'
@@ -34,6 +35,7 @@ const dataSources = ref<DataSource[]>([])
 const loading = ref(false)
 const editorVisible = ref(false)
 const githubBulkVisible = ref(false)
+const githubMigrationVisible = ref(false)
 const editingDs = ref<DataSource | null>(null)
 const logsVisible = ref(false)
 const sourceVisible = ref(false)
@@ -87,6 +89,10 @@ function openCreate() {
 
 function openGitHubBulk() {
   githubBulkVisible.value = true
+}
+
+function openGitHubMigration() {
+  githubMigrationVisible.value = true
 }
 
 function openEdit(ds: DataSource) {
@@ -387,6 +393,19 @@ onBeforeUnmount(stopPolling)
           <span class="ds-card--add__label">{{ t('datasource.githubBulk.add') }}</span>
           <span class="ds-card--add__hint">{{ t('datasource.githubBulk.addHint') }}</span>
         </button>
+
+        <button
+          v-if="canManageDataSource && dataSources.some(ds => ds.type === 'github')"
+          type="button"
+          class="ds-card ds-card--add ds-card--github-bulk"
+          @click="openGitHubMigration"
+        >
+          <span class="ds-card--add__icon ds-card--github-bulk__icon" aria-hidden="true">
+            <DataSourceTypeIcon type="github" :size="18" />
+          </span>
+          <span class="ds-card--add__label">{{ t('datasource.githubBulk.migration.title') }}</span>
+          <span class="ds-card--add__hint">{{ t('datasource.githubBulk.migration.cardHint') }}</span>
+        </button>
       </div>
     </t-loading>
 
@@ -402,6 +421,12 @@ onBeforeUnmount(stopPolling)
       :kb-id="kbId"
       :data-sources="dataSources"
       @saved="onGitHubBulkSaved"
+    />
+
+    <GitHubScheduleMigrationDialog
+      v-model:visible="githubMigrationVisible"
+      :kb-id="kbId"
+      @applied="loadList(true)"
     />
 
     <DataSourceSyncLogs
