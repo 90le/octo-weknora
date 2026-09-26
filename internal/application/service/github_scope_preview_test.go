@@ -109,7 +109,7 @@ func TestGitHubDocumentScopePreviewUsesCurrentPathsAndShowsProposedOnlyExclude(t
 	require.Equal(t, []string{"README.md", "docs"}, resp.PreviewPaths)
 	require.True(t, resp.PathsOverridden)
 	require.False(t, resp.FullRepository)
-	require.False(t, resp.ExclusionsAppliedBySync)
+	require.True(t, resp.ExclusionsAppliedBySync)
 	require.Equal(t, 8, resp.ActualSync.CandidateFiles)
 	require.Equal(t, 1, resp.ActualSync.ImageFiles)
 	require.Equal(t, int64(300), resp.ActualSync.ImageBytes)
@@ -118,13 +118,50 @@ func TestGitHubDocumentScopePreviewUsesCurrentPathsAndShowsProposedOnlyExclude(t
 	require.Contains(t, resp.ActualSync.Warnings, "batch_limit_if_all_changed")
 	require.NotNil(t, resp.ProposedAfterExclude)
 	require.Equal(t, 3, resp.ProposedAfterExclude.CandidateFiles)
-	require.Contains(t, resp.Warnings, "exclude_not_applied_by_current_sync")
+	require.Equal(t, 5, resp.ProposedAfterExclude.UserExcludedFiles)
+	require.Contains(t, resp.Warnings, "exclude_change_pending_save")
 	require.Equal(t, int32(3), calls.Load(), "preview must only request repo, commit and tree")
 	require.Zero(t, blobs.Load())
 	require.Equal(t, stored, []byte(svc.dsRepo.(*githubPreviewSourceRepo).source.Config), "preview cannot persist selection")
 	encoded, err := json.Marshal(resp)
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "test-private-token")
+}
+
+func TestGitHubDocumentScopePreviewSeparatesSavedAndUnsavedExcludes(t *testing.T) {
+	entries := []map[string]any{
+		previewFile("README.md", 100), previewFile("docs/drafts/old.md", 200), previewFile("docs/live.md", 300),
+	}
+	svc, _, blobs, closeServer := githubPreviewServiceFixture(t, entries, false)
+	defer closeServer()
+	source := svc.dsRepo.(*githubPreviewSourceRepo).source
+	var stored types.DataSourceConfig
+	require.NoError(t, json.Unmarshal(source.Config, &stored))
+	stored.Settings["exclude"] = []string{"docs/drafts"}
+	configJSON, err := json.Marshal(stored)
+	require.NoError(t, err)
+	source.Config = configJSON
+	actual, err := svc.PreviewGitHubDocumentScope(context.Background(), 7, "kb-a", &types.GitHubDocumentScopePreviewRequest{SourceID: "source-a"})
+	require.NoError(t, err)
+	require.True(t, actual.ExclusionsAppliedBySync)
+	require.Equal(t, 2, actual.ActualSync.CandidateFiles)
+	require.Equal(t, 1, actual.ActualSync.UserExcludedFiles)
+	require.Nil(t, actual.ProposedAfterExclude)
+	require.NotContains(t, actual.Warnings, "exclude_not_applied_by_current_sync")
+
+	formRules := []string{"README.md"}
+	proposed, err := svc.PreviewGitHubDocumentScope(context.Background(), 7, "kb-a", &types.GitHubDocumentScopePreviewRequest{
+		SourceID: "source-a", Exclude: &formRules,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, proposed.ActualSync.CandidateFiles, "actual keeps saved rules")
+	require.Equal(t, 1, proposed.ActualSync.UserExcludedFiles)
+	require.True(t, proposed.ExcludeOverridden)
+	require.NotNil(t, proposed.ProposedAfterExclude)
+	require.Equal(t, 2, proposed.ProposedAfterExclude.CandidateFiles)
+	require.Equal(t, []string{"docs/drafts/old.md", "docs/live.md"}, proposed.ProposedAfterExclude.SamplePaths)
+	require.Contains(t, proposed.Warnings, "exclude_change_pending_save")
+	require.Zero(t, blobs.Load())
 }
 
 func TestGitHubDocumentScopePreviewFullRepoLimitsTruncationAndNoBlob(t *testing.T) {

@@ -24,6 +24,10 @@ const paths = computed({
   get: () => Array.isArray(settings.value.paths) ? settings.value.paths.join('\n') : '',
   set: value => { settings.value = { ...settings.value, paths: value.split('\n').map(p => p.trim()).filter(Boolean) } },
 })
+const excludes = computed({
+  get: () => Array.isArray(settings.value.exclude) ? settings.value.exclude.join('\n') : '',
+  set: value => { settings.value = { ...settings.value, exclude: value.split('\n').map(p => p.trim()).filter(Boolean) } },
+})
 
 const loadingPreview = ref(false)
 const previewError = ref('')
@@ -68,7 +72,7 @@ const warningMessages = computed(() => {
     bytes: formatBytes(data.actual_sync.sensitive_candidate_bytes),
   }))
   if (data.actual_sync.too_large_files > 0) warnings.push(t(key + 'fileLimit'))
-  if (data.proposed_after_exclude) warnings.push(t(key + 'excludeIgnored'))
+  if (data.proposed_after_exclude) warnings.push(t(key + (data.exclusions_applied_by_sync ? 'excludeApplied' : 'excludeIgnored')))
   return warnings
 })
 
@@ -107,6 +111,10 @@ async function loadPreview() {
     <t-form-item :label="t('datasource.gitlab.paths')">
       <t-textarea v-model="paths" :placeholder="t('datasource.github.pathsHint')" :autosize="{ minRows: 3, maxRows: 7 }" />
     </t-form-item>
+    <t-form-item v-if="settings.mode !== 'source'" :label="t('datasource.githubBulk.scopePreview.excludeLabel')">
+      <t-textarea v-model="excludes" :placeholder="t('datasource.githubBulk.scopePreview.excludeHint')" :autosize="{ minRows: 2, maxRows: 6 }" />
+      <p class="github-source-hint">{{ t('datasource.githubBulk.scopePreview.excludeHint') }}</p>
+    </t-form-item>
   </t-form>
   <section v-if="settings.mode !== 'source'" class="github-scope-preview">
     <h5>{{ t('datasource.githubBulk.scopePreview.title') }}</h5>
@@ -128,6 +136,7 @@ async function loadPreview() {
         <span><b>{{ formatBytes(preview.actual_sync.candidate_bytes) }}</b>{{ t('datasource.githubBulk.scopePreview.bytes') }}</span>
         <span><b>{{ formatCount(preview.actual_sync.image_files) }}</b>{{ t('datasource.githubBulk.scopePreview.images') }} · {{ formatBytes(preview.actual_sync.image_bytes) }}</span>
         <span v-if="preview.actual_sync.sensitive_candidate_files"><b>{{ formatCount(preview.actual_sync.sensitive_candidate_files) }}</b>{{ t('datasource.githubBulk.scopePreview.sensitiveCandidate') }} · {{ formatBytes(preview.actual_sync.sensitive_candidate_bytes) }}</span>
+        <span v-if="preview.actual_sync.user_excluded_files"><b>{{ formatCount(preview.actual_sync.user_excluded_files) }}</b>{{ t('datasource.githubBulk.scopePreview.excluded') }} · {{ formatBytes(preview.actual_sync.user_excluded_bytes) }}</span>
         <span><b>{{ formatCount(preview.actual_sync.parser_unsupported_files) }}</b>{{ t('datasource.githubBulk.scopePreview.unsupported') }}</span>
         <span><b>{{ formatCount(preview.actual_sync.too_large_files) }}</b>{{ t('datasource.githubBulk.scopePreview.tooLarge') }}</span>
       </div>

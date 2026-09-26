@@ -4,9 +4,7 @@ package github
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -493,6 +491,7 @@ func (c *Connector) FetchIncremental(ctx context.Context, cfg *types.DataSourceC
 func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceConfig, old *types.SyncCursor) ([]types.FetchedItem, *types.SyncCursor, error) {
 	if cfg != nil {
 		cfg.SkippedSensitive = 0
+		cfg.SkippedExcluded = 0
 	}
 	if snapshot.IsSource(cfg) {
 		return nil, nil, fmt.Errorf("%w: source mode must use the snapshot pipeline", datasource.ErrInvalidConfig)
@@ -501,9 +500,11 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 	if err != nil {
 		return nil, nil, err
 	}
-	selectionJSON, _ := json.Marshal(s)
-	h := sha256.Sum256(selectionJSON)
-	key := hex.EncodeToString(h[:])
+	excludes, err := documentExcludes(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: invalid GitHub document exclusions", datasource.ErrInvalidConfig)
+	}
+	key := documentSelectionKey(s, excludes)
 	prev := cursor{}
 	if old != nil {
 		b, _ := json.Marshal(old.ConnectorCursor)
@@ -517,7 +518,7 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 	}
 	// LastSyncCursor is acknowledged only after every selected document was
 	// indexed. A matching remote commit therefore needs no tree or blob read.
-	if cfg.SyncSource != nil && prev.Selection == key && prev.Commit == commit {
+	if documentCursorReusable(cfg, prev, key, commit) {
 		return []types.FetchedItem{}, old, nil
 	}
 	var es []entry
@@ -544,6 +545,10 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 			cfg.SkippedSensitive++
 			continue
 		}
+		if !documentInCurrentScope(e, s, excludes) {
+			cfg.SkippedExcluded++
+			continue
+		}
 		files[e.Path] = e
 	}
 	for _, root := range s.Paths {
@@ -559,19 +564,18 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 	if len(files) > 2000 {
 		return nil, nil, &Error{Code: "github_documents_limit", Message: "GitHub document source exceeds 2000 files; narrow the selected paths or use read-only source mode"}
 	}
-	// A sensitive file imported by an older connector remains an auditable
-	// historical row. Preserve its cursor lineage and never infer deletion from
-	// this safety-policy change (or a later remote removal). Review/downrank it
-	// separately; this sync must neither re-read nor implicitly purge it.
+	// A previously indexed file that is now outside the selected path or an
+	// explicit/mandatory exclusion remains auditable. Changing selection is not
+	// evidence of remote deletion and must not silently retire published rows.
 	for p, oldEntry := range prev.Files {
-		if snapshot.Excluded(p, nil) {
+		if documentHistoricalOutOfScope(p, s, excludes) {
 			files[p] = oldEntry
 		}
 	}
 	next := cursor{Selection: key, Commit: commit, Files: files}
 	paths := make([]string, 0, len(files))
 	for p := range files {
-		if snapshot.Excluded(p, nil) {
+		if documentHistoricalOutOfScope(p, s, excludes) {
 			continue
 		}
 		paths = append(paths, p)
@@ -630,7 +634,7 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 	if prev.Selection == key {
 		deleted := []string{}
 		for p := range prev.Files {
-			if snapshot.Excluded(p, nil) {
+			if documentHistoricalOutOfScope(p, s, excludes) {
 				continue
 			}
 			if _, exists := all[p]; !exists {

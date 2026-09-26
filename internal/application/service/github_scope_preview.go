@@ -92,8 +92,8 @@ func (s *DataSourceService) PreviewGitHubDocumentScope(
 		SourceID: req.SourceID, TreeState: "error", StoredPaths: storedPaths,
 		PreviewPaths: paths, PathsOverridden: req.Paths != nil && !slices.Equal(paths, storedPaths),
 		FullRepository:  len(paths) == 0 || (len(paths) == 1 && paths[0] == ""),
-		ProposedExclude: proposedExclude, ExcludeOverridden: req.Exclude != nil && !slices.Equal(proposedExclude, storedExclude),
-		ExclusionsAppliedBySync: false, Warnings: []string{},
+		ProposedExclude: proposedExclude, ExcludeOverridden: req.Exclude != nil && !samePreviewExclusions(proposedExclude, storedExclude),
+		ExclusionsAppliedBySync: true, Warnings: []string{},
 	}
 	resp.StoredPaths, resp.PreviewPaths, resp.ProposedExclude, resp.RedactedSelectionPaths =
 		redactGitHubPreviewPaths(storedPaths, paths, proposedExclude)
@@ -121,16 +121,23 @@ func (s *DataSourceService) PreviewGitHubDocumentScope(
 		resp.ErrorCode, resp.ErrorMessage = "github_selected_path_missing", "Selected GitHub path no longer exists; review source selection"
 		resp.Warnings = append(resp.Warnings, "selected_path_missing")
 	}
-	resp.ActualSync = summarizeGitHubDocumentScope(tree.Files, nil)
+	resp.ActualSync = summarizeGitHubDocumentScope(tree.Files, storedExclude)
 	if resp.ActualSync.SensitiveCandidateFiles > 0 {
 		resp.Warnings = append(resp.Warnings, "sensitive_candidate")
 	}
-	if len(proposedExclude) > 0 || req.Exclude != nil {
+	if resp.ExcludeOverridden {
 		proposed := summarizeGitHubDocumentScope(tree.Files, proposedExclude)
 		resp.ProposedAfterExclude = &proposed
-		resp.Warnings = append(resp.Warnings, "exclude_not_applied_by_current_sync")
+		resp.Warnings = append(resp.Warnings, "exclude_change_pending_save")
 	}
 	return resp, nil
+}
+
+func samePreviewExclusions(a, b []string) bool {
+	a, b = slices.Clone(a), slices.Clone(b)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(a, b)
 }
 
 func redactGitHubPreviewPaths(stored, preview, excludes []string) ([]string, []string, []string, int) {
@@ -211,14 +218,16 @@ func summarizeGitHubDocumentScope(files []github.DocumentPreviewFile, exclude []
 	directories := make(map[string]types.GitHubPreviewGroup)
 	overflow := false
 	for _, file := range files {
-		if len(exclude) > 0 && snapshot.Excluded(file.Path, exclude) {
-			continue
-		}
 		bytes := max(file.Size, 0)
 		if file.Sensitive {
 			result.SensitiveCandidateFiles++
 			overflow = addPreviewBytes(&result.SensitiveCandidateBytes, bytes) || overflow
 			continue // no sensitive name in samples, directory or extension groups
+		}
+		if len(exclude) > 0 && snapshot.Excluded(file.Path, exclude) {
+			result.UserExcludedFiles++
+			overflow = addPreviewBytes(&result.UserExcludedBytes, bytes) || overflow
+			continue
 		}
 		result.CandidateFiles++
 		overflow = addPreviewBytes(&result.CandidateBytes, bytes) || overflow
@@ -276,6 +285,9 @@ func summarizeGitHubDocumentScope(files []github.DocumentPreviewFile, exclude []
 	}
 	if result.SensitiveCandidateFiles > 0 {
 		result.Warnings = append(result.Warnings, "sensitive_candidate")
+	}
+	if result.UserExcludedFiles > 0 {
+		result.Warnings = append(result.Warnings, "user_excluded")
 	}
 	if overflow {
 		result.Warnings = append(result.Warnings, "size_overflow")

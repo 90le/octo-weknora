@@ -31,6 +31,8 @@ type GitHubDocumentPreviewSummary struct {
 	ImageBytes              int64                `json:"image_bytes"`
 	SensitiveCandidateFiles int                  `json:"sensitive_candidate_files"`
 	SensitiveCandidateBytes int64                `json:"sensitive_candidate_bytes"`
+	UserExcludedFiles       int                  `json:"user_excluded_files"`
+	UserExcludedBytes       int64                `json:"user_excluded_bytes"`
 	ParserUnsupportedFiles  int                  `json:"parser_unsupported_files"`
 	ParserUnsupportedBytes  int64                `json:"parser_unsupported_bytes"`
 	TooLargeFiles           int                  `json:"too_large_files"`
@@ -42,9 +44,9 @@ type GitHubDocumentPreviewSummary struct {
 }
 
 // GitHubDocumentScopePreview is an authorization-scoped, read-only dry run.
-// ActualSync reflects today's document connector: paths are applied, exclude
-// rules are not. ProposedAfterExclude is planning information only and must
-// never be presented as an active sync policy until the connector supports it.
+// ActualSync applies the saved exclusion rules to the paths supplied for this
+// preview. ProposedAfterExclude, when present, applies unsaved form exclusions
+// to those same paths. No preview saves settings or retires old indexed rows.
 type GitHubDocumentScopePreview struct {
 	SourceID                string                        `json:"source_id"`
 	Repository              string                        `json:"repository,omitempty"`
