@@ -3,6 +3,7 @@ package dto
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/assert"
@@ -109,4 +110,26 @@ func TestDataSourceResponse_NoConfig(t *testing.T) {
 	assert.NoError(t, err)
 	// No config jsonb stored → no config object in the response.
 	assert.NotContains(t, string(body), `"config":`)
+}
+
+func TestDataSourceResponse_AdditiveCardSummaryOmitsRawFailureDetail(t *testing.T) {
+	success := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	ds := &types.DataSource{ID: "github-card", Type: types.ConnectorTypeGitHub,
+		LastSuccessfulSyncAt: &success,
+		LatestSyncLog: &types.SyncLog{
+			ID: "partial-log", Status: types.SyncLogStatusPartial, ItemsTotal: 500, ItemsFailed: 212,
+			ErrorMessage: "private provider response", Result: types.JSON(`{"errors":[{"message":"private detail"}]}`),
+		},
+	}
+	response := NewDataSourceResponse(ds)
+	assert.NotNil(t, response.LatestSyncSummary)
+	assert.Equal(t, types.SyncLogStatusPartial, response.LatestSyncSummary.Status)
+	assert.Equal(t, 212, response.LatestSyncSummary.ItemsFailed)
+	assert.True(t, response.LastSuccessfulSyncAt.Equal(success))
+	body, err := json.Marshal(response.LatestSyncSummary)
+	assert.NoError(t, err)
+	assert.NotContains(t, string(body), "private provider response")
+	assert.NotContains(t, string(body), "private detail")
+	assert.NotContains(t, string(body), "error_message")
+	assert.NotContains(t, string(body), "result")
 }

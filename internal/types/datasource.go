@@ -134,6 +134,11 @@ type DataSource struct {
 
 	// Latest sync log (not stored in DB, populated on query)
 	LatestSyncLog *SyncLog `json:"latest_sync_log" gorm:"-"`
+
+	// Most recent fully successful run among retained sync logs. A partial run
+	// never advances this timestamp; nil means the retained history cannot
+	// establish a complete success.
+	LastSuccessfulSyncAt *time.Time `json:"last_successful_sync_at,omitempty" gorm:"-"`
 }
 
 // HasActiveRestartRecoveryLease reports whether a restart-recovery worker owns

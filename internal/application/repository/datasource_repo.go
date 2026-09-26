@@ -261,6 +261,53 @@ func (r *SyncLogRepository) FindLatest(ctx context.Context, dsID string) (*types
 	return &log, nil
 }
 
+// FindCardSummaries reads the latest attempt and last complete success for a
+// list of source cards without one sync-log query per source. Window ranking
+// bounds the returned latest rows even when a source has years of history;
+// the second grouped query exposes only a timestamp, never error bodies.
+func (r *SyncLogRepository) FindCardSummaries(
+	ctx context.Context, ids []string,
+) (map[string]*types.SyncLog, map[string]*time.Time, error) {
+	latest := make(map[string]*types.SyncLog, len(ids))
+	successful := make(map[string]*time.Time, len(ids))
+	const chunkSize = 500
+	for start := 0; start < len(ids); start += chunkSize {
+		end := start + chunkSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunk := ids[start:end]
+		var rows []types.SyncLog
+		if err := r.db.WithContext(ctx).Raw(`
+			SELECT * FROM (
+				SELECT sync_logs.*, ROW_NUMBER() OVER (
+					PARTITION BY data_source_id ORDER BY started_at DESC, created_at DESC, id DESC
+				) AS card_rank
+				FROM sync_logs WHERE data_source_id IN ?
+			) AS ranked WHERE card_rank = 1`, chunk).Scan(&rows).Error; err != nil {
+			return nil, nil, err
+		}
+		for index := range rows {
+			log := rows[index]
+			latest[log.DataSourceID] = &log
+		}
+		var successRows []struct {
+			DataSourceID string     `gorm:"column:data_source_id"`
+			FinishedAt   *time.Time `gorm:"column:last_successful_sync_at"`
+		}
+		if err := r.db.WithContext(ctx).Model(&types.SyncLog{}).
+			Select("data_source_id, MAX(finished_at) AS last_successful_sync_at").
+			Where("data_source_id IN ? AND status = ? AND finished_at IS NOT NULL", chunk, types.SyncLogStatusSuccess).
+			Group("data_source_id").Scan(&successRows).Error; err != nil {
+			return nil, nil, err
+		}
+		for _, row := range successRows {
+			successful[row.DataSourceID] = row.FinishedAt
+		}
+	}
+	return latest, successful, nil
+}
+
 // HasRunningSync checks if a data source has any sync currently in "running" status.
 func (r *SyncLogRepository) HasRunningSync(ctx context.Context, dsID string) (bool, error) {
 	if dsID == "" {

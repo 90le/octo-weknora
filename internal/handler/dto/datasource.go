@@ -39,9 +39,38 @@ type DataSourceResponse struct {
 	UpdatedAt            time.Time            `json:"updated_at"`
 	TotalItemsSynced     int64                `json:"total_items_synced"`
 	LatestSyncLog        *types.SyncLog       `json:"latest_sync_log,omitempty"`
+	LatestSyncSummary    *SyncLogCardSummary  `json:"latest_sync_summary,omitempty"`
+	LastSuccessfulSyncAt *time.Time           `json:"last_successful_sync_at,omitempty"`
 	// Single logical credential field — DataSource credentials are a
 	// per-connector atomic map, so "configured?" applies to the whole set.
 	Credentials map[string]CredentialFieldMetadata `json:"credentials,omitempty"`
+}
+
+// SyncLogCardSummary is additive to the established latest_sync_log field.
+// Source cards need status, timestamps and counts; the new summary never
+// carries per-file errors, raw provider responses, results or credentials.
+type SyncLogCardSummary struct {
+	ID           string     `json:"id"`
+	Status       string     `json:"status"`
+	StartedAt    time.Time  `json:"started_at"`
+	FinishedAt   *time.Time `json:"finished_at"`
+	ItemsTotal   int        `json:"items_total"`
+	ItemsCreated int        `json:"items_created"`
+	ItemsUpdated int        `json:"items_updated"`
+	ItemsDeleted int        `json:"items_deleted"`
+	ItemsSkipped int        `json:"items_skipped"`
+	ItemsFailed  int        `json:"items_failed"`
+}
+
+func newSyncLogCardSummary(log *types.SyncLog) *SyncLogCardSummary {
+	if log == nil {
+		return nil
+	}
+	return &SyncLogCardSummary{
+		ID: log.ID, Status: log.Status, StartedAt: log.StartedAt, FinishedAt: log.FinishedAt,
+		ItemsTotal: log.ItemsTotal, ItemsCreated: log.ItemsCreated, ItemsUpdated: log.ItemsUpdated,
+		ItemsDeleted: log.ItemsDeleted, ItemsSkipped: log.ItemsSkipped, ItemsFailed: log.ItemsFailed,
+	}
 }
 
 // DataSourceConfigDTO is types.DataSourceConfig with the Credentials map
@@ -90,6 +119,8 @@ func NewDataSourceResponse(ds *types.DataSource) *DataSourceResponse {
 		UpdatedAt:            ds.UpdatedAt,
 		TotalItemsSynced:     ds.TotalItemsSynced,
 		LatestSyncLog:        ds.LatestSyncLog,
+		LatestSyncSummary:    newSyncLogCardSummary(ds.LatestSyncLog),
+		LastSuccessfulSyncAt: ds.LastSuccessfulSyncAt,
 		Credentials: map[string]CredentialFieldMetadata{
 			"credentials": {Configured: configured},
 		},

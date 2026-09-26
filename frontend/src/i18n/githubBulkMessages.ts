@@ -128,6 +128,21 @@ export const githubBulkMessages = {
         scheduler_unavailable: 'Stored schedule changed; live scheduler is unavailable. A service restart reloads it.',
       },
     },
+    health: {
+      enabled: 'Source enabled',
+      kind: {
+        running: 'Syncing now', error: 'Source needs attention', paused: 'Paused',
+        partial: 'Latest sync incomplete', failed_attempt: 'Latest attempt failed',
+        cooldown: 'Waiting for GitHub', healthy: 'Latest sync complete',
+        stale: 'Sync overdue', unknown: 'Sync health unknown',
+      },
+      lastAttempt: 'Last attempt',
+      lastSuccess: 'Last complete success',
+      retryAfter: 'Retry after',
+      failedOfTotal: '{failed}/{total} failed',
+      failedCount: '{failed} failed',
+      logs: 'View sync logs',
+    },
   },
   zh: {
     add: '批量添加 GitHub 仓库',
@@ -251,6 +266,21 @@ export const githubBulkMessages = {
         scheduler_refresh_failed: '计划已保存，实时调度刷新失败；服务重启会重新加载',
         scheduler_unavailable: '计划已保存，实时调度不可用；服务重启会重新加载',
       },
+    },
+    health: {
+      enabled: '来源已启用',
+      kind: {
+        running: '正在同步', error: '来源需要处理', paused: '已暂停',
+        partial: '最近同步不完整', failed_attempt: '最近一次同步失败',
+        cooldown: '等待 GitHub 限流结束', healthy: '最近同步完整成功',
+        stale: '同步已超过预期时间', unknown: '同步状态待核对',
+      },
+      lastAttempt: '最近尝试',
+      lastSuccess: '上次完整成功',
+      retryAfter: '最早再试',
+      failedOfTotal: '失败 {failed}/{total}',
+      failedCount: '失败 {failed}',
+      logs: '查看同步日志',
     },
   },
 } as const
