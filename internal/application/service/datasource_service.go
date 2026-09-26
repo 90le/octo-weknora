@@ -258,6 +258,11 @@ func (s *DataSourceService) UpdateDataSource(ctx context.Context, ds *types.Data
 		logger.Errorf(ctx, "failed to update data source: %v", err)
 		return nil, err
 	}
+	if existing.Type == types.ConnectorTypeGitHub && configActuallyChanged {
+		if err := cleanupGitHubSharedCache(ctx, s.dsRepo, existing); err != nil {
+			logger.Warnf(ctx, "failed to release old GitHub shared cache after settings update: %v", err)
+		}
+	}
 
 	// Update cron schedule
 	if err := s.scheduler.AddOrUpdate(ds); err != nil {
@@ -286,6 +291,7 @@ func (s *DataSourceService) UpdateDataSourceCredentials(
 	if err != nil {
 		return nil, err
 	}
+	oldSource := *existing
 	parsed, err := existing.ParseConfig()
 	if err != nil {
 		return nil, err
@@ -316,6 +322,9 @@ func (s *DataSourceService) UpdateDataSourceCredentials(
 				logger.Warnf(ctx, "failed to clear GitHub transport cache after credential update: %v", clearErr)
 			}
 		}
+		if err := cleanupGitHubSharedCache(ctx, s.dsRepo, &oldSource); err != nil {
+			logger.Warnf(ctx, "failed to release old GitHub shared cache after credential update: %v", err)
+		}
 	}
 	logger.Infof(ctx, "DataSource credentials updated: id=%s", secutils.SanitizeForLog(id))
 	recordKBActivity(ctx, s.audit, existing.TenantID, existing.KnowledgeBaseID, types.AuditActionDataSourceUpdated,
@@ -334,6 +343,7 @@ func (s *DataSourceService) ClearDataSourceCredentials(ctx context.Context, id s
 	if err != nil {
 		return err
 	}
+	oldSource := *existing
 	parsed, err := existing.ParseConfig()
 	if err != nil {
 		return err
@@ -365,6 +375,9 @@ func (s *DataSourceService) ClearDataSourceCredentials(ctx context.Context, id s
 				logger.Warnf(ctx, "failed to clear GitHub transport cache after credential removal: %v", clearErr)
 			}
 		}
+		if err := cleanupGitHubSharedCache(ctx, s.dsRepo, &oldSource); err != nil {
+			logger.Warnf(ctx, "failed to release old GitHub shared cache after credential removal: %v", err)
+		}
 	}
 	logger.Infof(ctx, "DataSource credentials cleared by user: id=%s", secutils.SanitizeForLog(id))
 	recordKBActivity(ctx, s.audit, existing.TenantID, existing.KnowledgeBaseID, types.AuditActionDataSourceUpdated,
@@ -388,6 +401,9 @@ func (s *DataSourceService) DeleteDataSource(ctx context.Context, id string) err
 
 	// Remove only generated source snapshots, never the input folder.
 	removeSourceCache(existing)
+	if err := cleanupGitHubSharedCache(ctx, s.dsRepo, existing); err != nil {
+		logger.Warnf(ctx, "failed to release GitHub shared cache after source deletion: %v", err)
+	}
 	// Remove cron schedule
 	s.scheduler.Remove(id)
 
@@ -772,6 +788,14 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	// embedded images for OCR when the KB can actually ingest them (never persisted).
 	config.MultimodalEnabled = kb.IsMultimodalEnabled()
 	guard := &syncAccessGuard{svc: s, ds: ds, config: config, allowPaused: wasPaused && payload.Trigger == "manual"}
+	if ds.Type == types.ConnectorTypeGitHub && githubConnector.SharedGitCacheEnabled() {
+		credentialScope, scopeErr := githubDocumentCredentialScope(ds, config)
+		if scopeErr != nil {
+			return s.failSyncRun(ctx, ds, syncLog, nil, "GitHub shared cache credential identity is unavailable", wasPaused, scopeErr, false)
+		}
+		config.SyncSource.CredentialScope = credentialScope
+		config.SyncSource.CheckAccess = guard.check
+	}
 	if err := ensureSyncRunActive(ctx, runGuard); err != nil {
 		return s.finishSyncRunGuardError(ctx, ds, syncLog, nil, wasPaused, err)
 	}

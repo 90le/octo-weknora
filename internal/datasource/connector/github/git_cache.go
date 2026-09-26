@@ -30,9 +30,15 @@ type gitTreeEntry struct {
 }
 
 type gitCache struct {
-	dir    string
-	remote string
-	token  string
+	dir                string
+	remote             string
+	token              string
+	lockPath           string
+	identity           sharedGitIdentity
+	checkAccess        func(context.Context) error
+	allowFileTransport bool // only set by package-local Git integration tests
+	networkGitObserved func()
+	strictAuth         bool
 }
 
 type cacheOutput struct {
@@ -77,23 +83,27 @@ func (c *Connector) buildGitSnapshot(ctx context.Context, cfg *types.DataSourceC
 	if _, err := exec.LookPath("git"); err != nil {
 		return errGitUnavailable
 	}
-	cacheRoot, err := b.PrivateDirectory("git")
+	var cache *gitCache
+	if SharedGitCacheEnabled() {
+		cache, err = c.sharedGitCache(ctx, cfg, s, commit)
+	} else {
+		cacheRoot, cacheErr := b.PrivateDirectory("git")
+		if cacheErr != nil {
+			return cacheErr
+		}
+		cache = &gitCache{dir: filepath.Join(cacheRoot, repositoryCacheKey(s.Repository)), remote: "https://github.com/" + s.Repository + ".git", token: token(cfg)}
+		if err = cache.fetchCommit(ctx, commit); err != nil {
+			return err
+		}
+		if size, sizeErr := directorySize(cache.dir, githubGitCacheLimit()+1); sizeErr != nil {
+			return &Error{Code: "github_cache_unavailable", Message: "GitHub source cache cannot be inspected"}
+		} else if size > githubGitCacheLimit() {
+			_ = os.RemoveAll(cache.dir)
+			return &Error{Code: "github_cache_limit", Message: "GitHub source cache exceeds its per-source limit; narrow the repository selection"}
+		}
+	}
 	if err != nil {
 		return err
-	}
-	cache := gitCache{
-		dir:    filepath.Join(cacheRoot, repositoryCacheKey(s.Repository)),
-		remote: "https://github.com/" + s.Repository + ".git",
-		token:  token(cfg),
-	}
-	if err = cache.fetchCommit(ctx, commit); err != nil {
-		return err
-	}
-	if size, sizeErr := directorySize(cache.dir, githubGitCacheLimit()+1); sizeErr != nil {
-		return &Error{Code: "github_cache_unavailable", Message: "GitHub source cache cannot be inspected"}
-	} else if size > githubGitCacheLimit() {
-		_ = os.RemoveAll(cache.dir)
-		return &Error{Code: "github_cache_limit", Message: "GitHub source cache exceeds its per-source limit; narrow the repository selection"}
 	}
 	entries, err := cache.tree(ctx, commit)
 	if err != nil {
@@ -219,6 +229,9 @@ func (g *gitCache) fetchCommit(ctx context.Context, commit string) error {
 	if _, err = g.run(ctx, "cat-file", "-e", commit+"^{commit}"); err == nil {
 		return nil
 	}
+	if g.networkGitObserved != nil {
+		g.networkGitObserved()
+	}
 	if _, err = g.run(ctx, "fetch", "--no-tags", "--depth=1", "origin", "+"+commit+":refs/weknora/"+commit); err != nil {
 		return &Error{Code: "github_git_fetch", Message: "GitHub Git cache could not fetch this commit; retry later or narrow the source"}
 	}
@@ -229,6 +242,9 @@ func (g *gitCache) fetchCommit(ctx context.Context, commit string) error {
 }
 
 func (g *gitCache) cloneShallow(ctx context.Context) error {
+	if g.networkGitObserved != nil {
+		g.networkGitObserved()
+	}
 	cmd, cleanup, err := g.commandIn(ctx, "", "clone", "--bare", "--depth=1", "--no-tags", "--", g.remote, g.dir)
 	if err != nil {
 		return err
@@ -244,6 +260,16 @@ func (g *gitCache) cloneShallow(ctx context.Context) error {
 }
 
 func (g *gitCache) tree(ctx context.Context, commit string, roots ...string) ([]gitTreeEntry, error) {
+	var entries []gitTreeEntry
+	err := g.withReadLock(ctx, func() error {
+		var inner error
+		entries, inner = g.treeUnlocked(ctx, commit, roots...)
+		return inner
+	})
+	return entries, err
+}
+
+func (g *gitCache) treeUnlocked(ctx context.Context, commit string, roots ...string) ([]gitTreeEntry, error) {
 	args := []string{"ls-tree", "--full-tree", "-r", "-z", "-l", commit}
 	if len(roots) > 0 {
 		args = append(args, "--")
@@ -279,6 +305,10 @@ func (g *gitCache) tree(ctx context.Context, commit string, roots ...string) ([]
 }
 
 func (g *gitCache) readBlobs(ctx context.Context, entries []gitTreeEntry, maxFileBytes int64, emit func(gitTreeEntry, []byte) error) error {
+	return g.withReadLock(ctx, func() error { return g.readBlobsUnlocked(ctx, entries, maxFileBytes, emit) })
+}
+
+func (g *gitCache) readBlobsUnlocked(ctx context.Context, entries []gitTreeEntry, maxFileBytes int64, emit func(gitTreeEntry, []byte) error) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -350,6 +380,27 @@ func (g *gitCache) readBlobs(ctx context.Context, entries []gitTreeEntry, maxFil
 	return nil
 }
 
+func (g *gitCache) withReadLock(ctx context.Context, fn func() error) error {
+	if g.lockPath == "" {
+		return fn()
+	}
+	unlock, err := mirrorLock(ctx, g.lockPath, false)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if err := verifySharedGitMarker(g.identity); err != nil {
+		return err
+	}
+	if g.checkAccess == nil {
+		return &Error{Code: "github_cache_identity", Message: "GitHub shared cache access cannot be verified"}
+	}
+	if err := g.checkAccess(ctx); err != nil {
+		return err
+	}
+	return fn()
+}
+
 func (g *gitCache) run(ctx context.Context, args ...string) ([]byte, error) {
 	return g.runLimit(ctx, 16<<20, args...)
 }
@@ -379,7 +430,14 @@ func (g *gitCache) command(ctx context.Context, args ...string) (*exec.Cmd, func
 }
 
 func (g *gitCache) commandIn(ctx context.Context, directory string, args ...string) (*exec.Cmd, func(), error) {
-	base := []string{"--no-pager", "--no-optional-locks", "-c", "core.hooksPath=" + os.DevNull, "-c", "credential.helper=", "-c", "protocol.file.allow=never"}
+	filePolicy, protocols := "never", "https"
+	if g.allowFileTransport {
+		filePolicy, protocols = "always", "https:file"
+	}
+	base := []string{"--no-pager", "--no-optional-locks", "-c", "core.hooksPath=" + os.DevNull, "-c", "credential.helper=", "-c", "protocol.file.allow=" + filePolicy}
+	if g.strictAuth {
+		base = append(base, "-c", "http.followRedirects=false", "-c", "gc.auto=0")
+	}
 	if directory != "" {
 		base = append(base, "-C", directory)
 	}
@@ -389,9 +447,9 @@ func (g *gitCache) commandIn(ctx context.Context, directory string, args ...stri
 			cmd.Env = append(cmd.Env, value)
 		}
 	}
-	cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=https")
+	cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL="+protocols)
 	cleanup := func() {}
-	if g.token != "" {
+	if g.token != "" && !g.allowFileTransport && (!g.strictAuth || len(args) > 0 && (args[0] == "clone" || args[0] == "fetch")) {
 		// `git clone` creates g.dir itself, so an initial private-repository
 		// sync cannot place the askpass helper inside that directory. Keep the
 		// short-lived helper in its already-private parent instead. This also
@@ -400,7 +458,7 @@ func (g *gitCache) commandIn(ctx context.Context, directory string, args ...stri
 		if err != nil {
 			return nil, cleanup, err
 		}
-		askPass, remove, err := createAskPass(askPassDir)
+		askPass, remove, err := createAskPass(askPassDir, g.strictAuth)
 		if err != nil {
 			// Never expose the private cache path or an OS-specific failure through
 			// the sync result/UI.
@@ -424,13 +482,17 @@ func (g *gitCache) askPassDirectory() (string, error) {
 	return dir, nil
 }
 
-func createAskPass(dir string) (string, func(), error) {
+func createAskPass(dir string, strict bool) (string, func(), error) {
 	if runtime.GOOS == "windows" {
 		f, err := os.CreateTemp(dir, "askpass-*.cmd")
 		if err != nil {
 			return "", nil, err
 		}
-		if _, err = f.WriteString("@echo off\r\nif /I \"%~1\"==\"Username for 'https://github.com':\" (echo x-access-token) else (echo %WEKNORA_GITHUB_TOKEN%)\r\n"); err != nil {
+		script := "@echo off\r\nif /I \"%~1\"==\"Username for 'https://github.com':\" (echo x-access-token) else (echo %WEKNORA_GITHUB_TOKEN%)\r\n"
+		if strict {
+			script = "@echo off\r\nif /I \"%~1\"==\"Username for 'https://github.com':\" (echo x-access-token & exit /b 0)\r\nif /I \"%~1\"==\"Username for 'https://github.com': \" (echo x-access-token & exit /b 0)\r\nif /I \"%~1\"==\"Password for 'https://x-access-token@github.com':\" (echo %WEKNORA_GITHUB_TOKEN% & exit /b 0)\r\nif /I \"%~1\"==\"Password for 'https://x-access-token@github.com': \" (echo %WEKNORA_GITHUB_TOKEN% & exit /b 0)\r\nexit /b 1\r\n"
+		}
+		if _, err = f.WriteString(script); err != nil {
 			f.Close()
 			_ = os.Remove(f.Name())
 			return "", nil, err
@@ -445,7 +507,11 @@ func createAskPass(dir string) (string, func(), error) {
 	if err != nil {
 		return "", nil, err
 	}
-	if _, err = f.WriteString("#!/bin/sh\ncase \"$1\" in\n  *Username*) printf '%s\\n' x-access-token ;;\n  *) printf '%s\\n' \"$WEKNORA_GITHUB_TOKEN\" ;;\nesac\n"); err != nil {
+	script := "#!/bin/sh\ncase \"$1\" in\n  *Username*) printf '%s\\n' x-access-token ;;\n  *) printf '%s\\n' \"$WEKNORA_GITHUB_TOKEN\" ;;\nesac\n"
+	if strict {
+		script = "#!/bin/sh\ncase \"$1\" in\n  \"Username for 'https://github.com':\"|\"Username for 'https://github.com': \") printf '%s\\n' x-access-token ;;\n  \"Password for 'https://x-access-token@github.com':\"|\"Password for 'https://x-access-token@github.com': \") printf '%s\\n' \"$WEKNORA_GITHUB_TOKEN\" ;;\n  *) exit 1 ;;\nesac\n"
+	}
+	if _, err = f.WriteString(script); err != nil {
 		f.Close()
 		_ = os.Remove(f.Name())
 		return "", nil, err

@@ -36,6 +36,9 @@ type Connector struct {
 	apiBase     string
 	syncGate    chan struct{}
 	useGitCache bool
+	// Test-only local Git transport seam. Production always uses github.com.
+	testGitRemote          string
+	testNetworkGitObserved func()
 }
 
 func NewConnector() *Connector {

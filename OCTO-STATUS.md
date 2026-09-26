@@ -4,9 +4,13 @@
 
 ## 当前状态（2026-09-27；来源回读于 05:4x CST）
 
-**代码、主线与运行版本：**PR #46–#58 已合并并通过对应 CI；主线提交为 [`ff60725ed985cd0977eadf19c7630c13d4e75f94`](https://github.com/90le/octo-weknora/commit/ff60725ed985cd0977eadf19c7630c13d4e75f94)。生产回读的 app Image ID 为 `sha256:851910cbd0d5142644baaa7ae1d89cb40a2e6dab836ef15f2c3869d3fb171203`，UI Image ID 为 `sha256:33fa85acef00c767ca2fdcaab69487046b65ada7a5963a56007d9bcf58ea1734`；API／UI 健康检查均为 200，PostgreSQL migration `106` 非 dirty。代码合并、镜像回读和业务验收是不同层次：本轮来源同步已完成回读，下述一个真实群问答场景通过，其他场景仍待验收。此段依据 2026-09-27 的发布／运维交接记录，后续状态变化须重新回读。
+**代码与生产边界：**PR #60 提供默认关闭的共享 Git 物理缓存选项；本页回读的 `ff60725e` 生产镜像不含这项代码，生产未启用，也未改变当前 60 条来源各自同步的运行事实。仓库级 HEAD 查询合并、全局速率预算及安全自动回收仍是后续工作。
+
+**代码、主线与运行版本：**PR #46–#58 已合并并通过对应 CI；生产运行代码对应提交为 [`ff60725ed985cd0977eadf19c7630c13d4e75f94`](https://github.com/90le/octo-weknora/commit/ff60725ed985cd0977eadf19c7630c13d4e75f94)；主线随后合并仅文档更新的 PR #59（`a33d0e3c`），未更换生产镜像。生产回读的 app Image ID 为 `sha256:851910cbd0d5142644baaa7ae1d89cb40a2e6dab836ef15f2c3869d3fb171203`，UI Image ID 为 `sha256:33fa85acef00c767ca2fdcaab69487046b65ada7a5963a56007d9bcf58ea1734`；API／UI 健康检查均为 200，PostgreSQL migration `106` 非 dirty。代码合并、镜像回读和业务验收是不同层次：本轮来源同步已完成回读，下述一个真实群问答场景通过，其他场景仍待验收。此段依据 2026-09-27 的发布／运维交接记录，后续状态变化须重新回读。
 
 **资产与恢复基线：**切换时有 1269 条活动知识；本次恢复后，活动知识库「Octo官方项目知识库」（ID `40b39914-b200-4daa-ba3c-1dd666729ce7`）有 1447 条活动知识，全部 `completed`。60 条来源全部 active（30 条文档、30 条源码），每条来源的最新同步日志均为 `success`；旧六小时整点 Cron 数为 0，运行中的 GitHub 文档同步为 0。该库当前 `graph=false`，不能沿用下文 2026-09-16 的“图谱已启用”历史结论推断其当前配置。2 TB 数据盘上的私有发布备份包含 PostgreSQL 一致性导出、应用文件和 Compose；恢复时仍须核对备份覆盖范围及恢复点之后的写入。
+
+**后续错峰周期的局部回读（06:04–06:06 CST）：**目标 KB 的 60 条来源最新日志均为 `success`，旧整点 Cron 为 0，活跃文档运行为 0，1447 条活动知识均 `completed`，app／UI 健康均为 200。其中 `octo-ios` 在 06:04 定时成功、`total=0`；`.github` 在 06:06 定时成功、`total=42`、`failed=0`。这些是本次时点和两条定时样本，不推断以后每轮结果。
 
 **GitHub 文档来源恢复：**五条旧 `error` 来源都已通过正式同步，不能把此前只修复代码、尚未重跑的阶段误写成已恢复。
 
@@ -22,9 +26,9 @@
 
 **真实群问答验收（单例）：**「Octo 小测」（UID `28896t9kvbl1fbd86fb_bot`）在「Steward 联调群」（`group_no=f242768884694ce89e86bdc236f525f7`）以消息 `seq 522`、ID `2103963709519859712` 询问 Octo Server 的构建准备及固定来源。「Octo 小丘」（UID `286wbc0bphb6af78382_bot`）以相邻消息 `seq 523`、ID `2103963761822830592` 回复相关 Go、`replace` 和构建步骤，并附[官方固定提交 BUILDING.md](https://github.com/Mininglamp-OSS/octo-server/blob/d72384470cb72188af4f99c2576f92d2a0e39738/BUILDING.md)；已核对该页直接支持回答。原生 reply 指向原提问，mention UID 精确指向测试 Bot。内部 channel `892c8469-c005-49a3-b783-abe796ffff9c` 的 inbox 复合消息 ID `octo:286wbc0bphb6af78382_bot:2103963709519859712` 为 `delivered`、`attempts=1`。此例只覆盖该构建问答与对应出站路径，版本、多仓及其他文档问答仍需分别验证。
 
-**容量与清理：**先前定点清理旧 `/tmp/gopath` 567 MiB、`node-compile-cache` 421 MiB、`/tmp/go` 238 MiB；随后把约 2.47 GB Go 模块缓存复制到 2 TB 数据盘，`rsync --checksum --dry-run` 差异为 0，原路径改为符号链接并验证 Docker bind mount 可读，最后定点移除根盘旧副本。验收后停止并移除 4 个隔离候选容器和候选网络，确认无挂载及打开文件后，定点清理候选克隆目录约 871 MiB、旧范围预览测试缓存约 4.0 GiB、`ff60725e` 发布暂存的源码／包／UI／npm 产物约 1.4 GiB。另移除两个确认未使用的旧镜像标签；共享镜像层使根盘空间未立即变化。生产应用未重启。根盘可用约 15 GiB，根盘上的 `containerd` 仍约 58 GB；2 TB 数据盘已用约 37 GiB，为 XFS `ftype=0`，不能作为当前 overlay 存储目录。PostgreSQL／Milvus 数据和来源快照仍在数据盘；现行 `backup-final`（PostgreSQL 导出、应用文件、Compose）、`source.tar`、`ff60725e` 不可变镜像以及一组回退镜像和备份目录均保留。需要时可由备份重建隔离候选。下一次构建须继续把 `TMPDIR`、`GOTMPDIR` 和重型构建缓存指向数据盘，不执行宽范围 prune。
+**容量与清理：**先前定点清理旧 `/tmp/gopath` 567 MiB、`node-compile-cache` 421 MiB、`/tmp/go` 238 MiB；随后把约 2.47 GB Go 模块缓存复制到 2 TB 数据盘，`rsync --checksum --dry-run` 差异为 0，原路径改为符号链接并验证 Docker bind mount 可读，最后定点移除根盘旧副本。验收后停止并移除 4 个隔离候选容器和候选网络，确认无挂载及打开文件后，定点清理候选克隆目录约 871 MiB、旧范围预览测试缓存约 4.0 GiB、`ff60725e` 发布暂存的源码／包／UI／npm 产物约 1.4 GiB。另移除两个确认未使用的旧镜像标签；共享镜像层使根盘空间未立即变化。生产应用未重启。其后用现有 mlclaw Docker CLI 插件分两次定点清理 BuildKit 缓存（`--max-used-space`／`--reserved-space` 先 8GB／8GB、再 4GB／4GB），逻辑缓存约回收 6.5 GB；本次回读的根盘可用约 18 GiB、使用率 83%（时点值），未做宽范围镜像或卷清理，生产应用未重启。根盘上的 `containerd` 仍约 58 GB；2 TB 数据盘已用约 37 GiB，为 XFS `ftype=0`，不能作为当前 overlay 存储目录。PostgreSQL／Milvus 数据和来源快照仍在数据盘；现行 `backup-final`（PostgreSQL 导出、应用文件、Compose）、`source.tar`、`ff60725e` 不可变镜像以及一组回退镜像和备份目录均保留。需要时可由备份重建隔离候选。下一次构建须继续把 `TMPDIR`、`GOTMPDIR` 和重型构建缓存指向数据盘，不执行宽范围 prune。
 
-**未完成事项：**文档与源码仍按数据源各持一份物理 Git 传输缓存；按仓库共享缓存、明确的 GitHub API 速率预算和 webhook 均未实现。下一步按 [实施计划](OCTO-PLAN.md) 扩展真实群问答、审阅来源范围并监测后续周期健康。
+**待启用与未完成事项：**本次生产文档与源码仍按数据源各持一份物理 Git 传输缓存；PR #60 的可选共享镜像代码默认关闭，尚无生产启用与双用途共享获取验收。仓库级 HEAD 合并、明确的 GitHub API 速率预算、安全自动回收和 webhook 尚未实现。下一步按 [实施计划](OCTO-PLAN.md) 扩展真实群问答、审阅来源范围并监测后续周期健康。
 
 ## 历史发布：隐私修复（2026-09-23 15:58 CST）
 
