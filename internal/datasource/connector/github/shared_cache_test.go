@@ -180,18 +180,22 @@ func TestSharedGitCleanupRetainsTwinAndRejectsCorruptCache(t *testing.T) {
 	require.NotContains(t, err.Error(), strings.TrimSpace(cfg.Credentials["access_token"].(string)))
 }
 
-func TestSharedGitRecoversAbandonedStageAndAccumulatedCache(t *testing.T) {
+func TestSharedGitCapPreservesPinnedObjectsAndOrphanStage(t *testing.T) {
 	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
+	t.Setenv("DATASOURCE_GITHUB_SHARED_GIT_CACHE", "1")
 	t.Setenv("DATASOURCE_SNAPSHOT_DIR", t.TempDir())
 	t.Setenv("DATASOURCE_GITHUB_GIT_CACHE_MAX_BYTES", "67108864")
 	repo, commit := sharedGitFixture(t)
-	c := NewConnector()
+	c, _ := fastPathHeadConnector(t, commit)
 	c.testGitRemote = localGitURL(repo)
 	var network atomic.Int32
 	c.testNetworkGitObserved = func() { network.Add(1) }
 	cfg := sharedGitConfig(t, "a", "documents", "same-token", 7)
-	_, err := c.sharedGitCache(context.Background(), cfg, selection{Repository: "test/docs"}, commit)
+	cache, err := c.sharedGitCache(context.Background(), cfg, selection{Repository: "test/docs"}, commit)
 	require.NoError(t, err)
+	plan, err := c.PlanDocuments(context.Background(), cfg, nil, false, "")
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Upserts)
 	identity, err := sharedGitIdentityFor(7, "test/docs", cfg.SyncSource.CredentialScope)
 	require.NoError(t, err)
 	abandoned := identity.dir + ".stage-" + uuid.NewString()
@@ -199,25 +203,27 @@ func TestSharedGitRecoversAbandonedStageAndAccumulatedCache(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(abandoned, "partial-pack"), []byte("interrupted clone"), 0o600))
 	_, err = c.sharedGitCache(context.Background(), cfg, selection{Repository: "test/docs"}, commit)
 	require.NoError(t, err)
-	_, err = os.Stat(abandoned)
-	require.True(t, os.IsNotExist(err), "next locked acquisition removes only its own abandoned stage")
+	require.DirExists(t, abandoned, "a Git child can outlive its parent; an old stage is not automatically safe to delete")
 	require.EqualValues(t, 1, network.Load())
-	// Simulate retained packs crossing the per-mirror cap. Rebuild a clean
-	// shallow mirror under the exclusive lock instead of permanently failing.
+	// Simulate retained packs crossing the per-mirror cap. Stop new syncs
+	// without evicting objects still needed by an active fixed-commit plan.
 	padding := filepath.Join(identity.dir, "old-unreachable-pack")
 	require.NoError(t, os.WriteFile(padding, nil, 0o600))
 	require.NoError(t, os.Truncate(padding, 65<<20))
-	cache, err := c.sharedGitCache(context.Background(), cfg, selection{Repository: "test/docs"}, commit)
-	require.NoError(t, err)
-	require.EqualValues(t, 2, network.Load())
-	_, err = os.Stat(padding)
-	require.True(t, os.IsNotExist(err))
+	_, err = c.sharedGitCache(context.Background(), cfg, selection{Repository: "test/docs"}, commit)
+	require.ErrorContains(t, err, "exceeds its limit")
+	require.EqualValues(t, 1, network.Load())
+	require.FileExists(t, padding)
 	_, err = cache.tree(context.Background(), commit)
 	require.NoError(t, err)
-	// A cache with its identity marker intact but a missing bare HEAD is
-	// incomplete. Replace it from the verified remote under the same lock.
+	item, err := c.ReadPlannedDocument(context.Background(), plan, plan.Upserts[0])
+	require.NoError(t, err, "an older fixed-commit plan must remain readable after capacity failure")
+	require.NotEmpty(t, item.Content)
+	// Structural corruption also fails closed rather than silently replacing
+	// the mirror while a different source holds a fixed-commit plan.
+	require.NoError(t, os.Remove(padding))
 	require.NoError(t, os.Remove(filepath.Join(identity.dir, "HEAD")))
 	_, err = c.sharedGitCache(context.Background(), cfg, selection{Repository: "test/docs"}, commit)
-	require.NoError(t, err)
-	require.EqualValues(t, 3, network.Load())
+	require.Error(t, err)
+	require.EqualValues(t, 1, network.Load())
 }

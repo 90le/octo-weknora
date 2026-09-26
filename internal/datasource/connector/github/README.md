@@ -31,16 +31,17 @@ that no other source in the tenant still subscribes. If that check fails, the
 mirror is retained for review. This switch does not combine HEAD checks,
 schedule runs or API rate budgets; it is not evidence of production rollout.
 Each mirror keeps Git's fetched commit refs until it reaches the configured
-per-cache size cap (2 GiB by default). Under its exclusive lock, an oversized
-mirror is replaced with a fresh shallow mirror for the requested commit. A
-concurrent plan that still needs an older object then fails safely and retries
-from its fixed commit; published content and cursors stay intact. A single
-fresh repository above the cap still needs operator action. Interrupted clone
-stages are removed under the same lock on the next acquisition or source
-cleanup. There is no global orphan sweeper: after a crash with no subsequent
-access, or after installation-key rotation, operators must inspect the private
-`github-shared-git-v1` directory with sync workers stopped before removing
-unreferenced stages or mirrors.
+per-cache size cap (2 GiB by default). An oversized mirror fails new sync
+attempts without evicting old objects: another running document plan may still
+need an older fixed commit. Automated commit-pin-aware recovery is a separate
+change. A fresh repository above the cap also fails explicitly. A process
+crash may leave a `.stage-<UUID>` directory and a Git child that briefly
+outlives its parent. The parent file lock alone cannot prove that stage is
+idle, so no automatic stale-stage deletion runs. Before enabling this option,
+operators need to monitor the private `github-shared-git-v1` directory and
+reserve a stopped-worker maintenance window to verify active runs, inspect
+the exact cache scope, and remove confirmed abandoned stages or mirrors.
+Installation-key rotation can also leave an inaccessible orphan mirror.
 
 Each fetch resolves a commit and reads its tree/blobs. The file list is compared
 with the last acknowledged manifest. Unchanged blobs are skipped. Returned

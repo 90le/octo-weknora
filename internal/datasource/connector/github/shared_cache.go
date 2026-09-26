@@ -19,7 +19,6 @@ import (
 
 const sharedGitCacheDirectory = "github-shared-git-v1"
 const sharedGitCacheMarker = "weknora-cache-identity"
-const staleStageCleanupLimit = 16
 
 // SharedGitCacheEnabled is opt-in while the physical transport is rolled out.
 // Disabling it leaves the established per-source transport intact.
@@ -122,44 +121,10 @@ func verifySharedGitMarker(identity sharedGitIdentity) error {
 	return nil
 }
 
-// Every stage for this identity is created only while holding its exclusive
-// lock. Once that lock is acquired again, matching UUID stages are necessarily
-// abandoned by a crashed process. Limit work per attempt and reject links or
-// unexpected objects rather than recursively deleting an ambiguous path.
-func cleanupStaleSharedStages(identity sharedGitIdentity) error {
-	root := filepath.Dir(identity.dir)
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return errors.New("GitHub shared cache stages cannot be inspected")
-	}
-	prefix := filepath.Base(identity.dir) + ".stage-"
-	cleaned := 0
-	for _, item := range entries {
-		if !strings.HasPrefix(item.Name(), prefix) {
-			continue
-		}
-		if _, err := uuid.Parse(strings.TrimPrefix(item.Name(), prefix)); err != nil {
-			return errors.New("GitHub shared cache stage identity is invalid")
-		}
-		path := filepath.Join(root, item.Name())
-		info, err := os.Lstat(path)
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("GitHub shared cache stage is invalid")
-		}
-		if cleaned == staleStageCleanupLimit {
-			return errors.New("GitHub shared cache has too many abandoned stages; retry cleanup")
-		}
-		if err := os.RemoveAll(path); err != nil {
-			return errors.New("GitHub shared cache stage cleanup failed")
-		}
-		cleaned++
-	}
-	return nil
-}
-
-// prepareSharedStage validates an entire new shallow mirror before publishing
-// it. The old mirror remains available if Git, access validation, or size
-// inspection fails. Caller holds the exclusive lock and removes stage on exit.
+// prepareSharedStage validates an initial shallow mirror before publishing it.
+// A normal error waits for Git to exit before removing the stage. A process
+// crash can leave an orphaned Git child, so subsequent acquisitions do not
+// automatically remove stages merely because the parent lock was released.
 func prepareSharedStage(ctx context.Context, cache *gitCache, identity sharedGitIdentity, commit string, check func(context.Context) error) (string, error) {
 	stage := identity.dir + ".stage-" + uuid.NewString()
 	staged := *cache
@@ -186,25 +151,11 @@ func prepareSharedStage(ctx context.Context, cache *gitCache, identity sharedGit
 	return stage, nil
 }
 
-func publishSharedStage(identity sharedGitIdentity, stage string, replace bool) error {
-	if replace {
-		if err := os.RemoveAll(identity.dir); err != nil {
-			return &Error{Code: "github_cache_unavailable", Message: "GitHub shared cache cannot be replaced"}
-		}
-	}
+func publishSharedStage(identity sharedGitIdentity, stage string) error {
 	if err := os.Rename(stage, identity.dir); err != nil {
 		return &Error{Code: "github_cache_unavailable", Message: "GitHub shared cache cannot be published"}
 	}
 	return nil
-}
-
-func rebuildSharedGitCache(ctx context.Context, cache *gitCache, identity sharedGitIdentity, commit string, check func(context.Context) error) error {
-	stage, err := prepareSharedStage(ctx, cache, identity, commit, check)
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(stage)
-	return publishSharedStage(identity, stage, true)
 }
 
 func (c *Connector) sharedGitCache(ctx context.Context, cfg *types.DataSourceConfig, s selection, commit string) (*gitCache, error) {
@@ -228,9 +179,6 @@ func (c *Connector) sharedGitCache(ctx context.Context, cfg *types.DataSourceCon
 	if err := owner.CheckAccess(ctx); err != nil {
 		return nil, err
 	}
-	if err := cleanupStaleSharedStages(identity); err != nil {
-		return nil, &Error{Code: "github_cache_unavailable", Message: err.Error()}
-	}
 	remote := "https://github.com/" + strings.ToLower(s.Repository) + ".git"
 	allowFile := false
 	if c.testGitRemote != "" {
@@ -243,36 +191,32 @@ func (c *Connector) sharedGitCache(ctx context.Context, cfg *types.DataSourceCon
 			return nil, err
 		}
 		defer os.RemoveAll(stage)
-		if err := publishSharedStage(identity, stage, false); err != nil {
+		if err := publishSharedStage(identity, stage); err != nil {
 			return nil, err
 		}
 	} else {
 		if statErr != nil {
 			return nil, &Error{Code: "github_cache_unavailable", Message: "GitHub shared cache cannot be inspected"}
 		}
-		if verifyErr := verifySharedGitMarker(identity); verifyErr != nil {
-			var cacheErr *Error
-			if !errors.As(verifyErr, &cacheErr) || cacheErr.Code != "github_cache_unavailable" {
-				return nil, verifyErr // mismatched identity is never rebuilt
-			}
-			if err := rebuildSharedGitCache(ctx, cache, identity, commit, owner.CheckAccess); err != nil {
-				return nil, err
-			}
-		} else {
-			if err := cache.fetchCommit(ctx, commit); err != nil {
-				return nil, err
-			}
-			if size, sizeErr := directorySize(cache.dir, githubGitCacheLimit()+1); sizeErr != nil {
-				return nil, &Error{Code: "github_cache_unavailable", Message: "GitHub shared cache size cannot be inspected"}
-			} else if size > githubGitCacheLimit() {
-				// Old pinned commits can accumulate across runs. Rebuild a bounded
-				// shallow mirror while readers are excluded; an already planned
-				// document whose object disappears fails safely and replans later.
-				if err := rebuildSharedGitCache(ctx, cache, identity, commit, owner.CheckAccess); err != nil {
-					return nil, err
-				}
-			}
+		if err := verifySharedGitMarker(identity); err != nil {
+			return nil, err
 		}
+		if size, sizeErr := directorySize(cache.dir, githubGitCacheLimit()+1); sizeErr != nil {
+			return nil, &Error{Code: "github_cache_unavailable", Message: "GitHub shared cache size cannot be inspected"}
+		} else if size > githubGitCacheLimit() {
+			return nil, &Error{Code: "github_cache_limit", Message: "GitHub shared cache exceeds its limit; keep existing commits and review maintenance"}
+		}
+		if err := cache.fetchCommit(ctx, commit); err != nil {
+			return nil, err
+		}
+	}
+	// Never discard existing objects here: a different document run may hold
+	// a fixed-commit plan across per-file reads. Without durable commit pins,
+	// capacity recovery must be a separate stopped-worker maintenance action.
+	if size, sizeErr := directorySize(cache.dir, githubGitCacheLimit()+1); sizeErr != nil {
+		return nil, &Error{Code: "github_cache_unavailable", Message: "GitHub shared cache size cannot be inspected"}
+	} else if size > githubGitCacheLimit() {
+		return nil, &Error{Code: "github_cache_limit", Message: "GitHub shared cache exceeds its limit; keep existing commits and review maintenance"}
 	}
 	if err := owner.CheckAccess(ctx); err != nil {
 		return nil, err
@@ -299,9 +243,6 @@ func CleanupSharedGitCache(ctx context.Context, tenantID uint64, repository, sco
 		return err
 	}
 	defer unlock()
-	if err := cleanupStaleSharedStages(identity); err != nil {
-		return err
-	}
 	active, err := hasSubscribers(ctx)
 	if err != nil || active {
 		return err
