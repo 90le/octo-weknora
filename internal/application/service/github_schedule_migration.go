@@ -138,17 +138,27 @@ func (s *DataSourceService) ApplyGitHubScheduleMigration(
 					result.Schedule = proposed
 					current, readErr := s.dsRepo.FindByID(ctx, ds.ID)
 					if readErr != nil || current == nil {
+						result.Status = "applied_with_warning"
 						result.Reason = "readback_failed"
 					} else if current.SyncSchedule != proposed {
+						result.Status = "applied_with_warning"
 						result.Reason = "changed_after_apply"
 						result.Schedule = current.SyncSchedule
-					} else if s.scheduler != nil {
+					} else if s.scheduler == nil {
+						result.Status = "applied_with_warning"
+						result.Reason = "scheduler_unavailable"
+					} else {
 						if err := s.scheduler.AddOrUpdate(current); err != nil {
+							result.Status = "applied_with_warning"
 							result.Reason = "scheduler_refresh_failed"
 						}
 					}
+					outcome := types.AuditOutcomeSuccess
+					if result.Status == "applied_with_warning" {
+						outcome = types.AuditOutcomePartial
+					}
 					recordKBActivity(ctx, s.audit, req.TenantID, req.KnowledgeBaseID,
-						types.AuditActionDataSourceUpdated, "data_source", ds.ID, types.AuditOutcomeSuccess,
+						types.AuditActionDataSourceUpdated, "data_source", ds.ID, outcome,
 						map[string]any{"name": ds.Name, "type": ds.Type, "changed_fields": []string{"sync_schedule"},
 							"previous_schedule": choice.ExpectedSchedule, "new_schedule": proposed, "trigger": "github_schedule_migration"})
 				}

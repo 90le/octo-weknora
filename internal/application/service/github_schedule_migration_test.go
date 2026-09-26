@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -14,6 +15,13 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+type failingMigrationScheduler struct{}
+
+func (failingMigrationScheduler) AddOrUpdate(*types.DataSource) error {
+	return errors.New("scheduler unavailable")
+}
+func (failingMigrationScheduler) Remove(string) {}
 
 type migrationKBService struct {
 	interfaces.KnowledgeBaseService
@@ -206,6 +214,28 @@ func TestGitHubScheduleMigrationRepositoryCASProtectsRunningSyncAndSourceScope(t
 	current, err := f.repo.FindByID(context.Background(), ds.ID)
 	require.NoError(t, err)
 	require.Equal(t, defaultGitHubBatchSchedule, current.SyncSchedule)
+}
+
+func TestGitHubScheduleMigrationRefreshFailureWarnsAndRestartRecovers(t *testing.T) {
+	f := newMigrationFixture(t)
+	f.source(t, "recovery", "kb-one", defaultGitHubBatchSchedule, types.DataSourceStatusActive, 1)
+	preview, err := f.service.PreviewGitHubScheduleMigration(context.Background(), &types.GitHubScheduleMigrationPreviewRequest{TenantID: 1, KnowledgeBaseID: "kb-one"})
+	require.NoError(t, err)
+	f.service.scheduler = failingMigrationScheduler{}
+	response, err := f.service.ApplyGitHubScheduleMigration(context.Background(), &types.GitHubScheduleMigrationApplyRequest{
+		TenantID: 1, KnowledgeBaseID: "kb-one", Selections: []types.GitHubScheduleMigrationSelection{migrationSelection(preview.Items[0])},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "applied_with_warning", response.Results[0].Status)
+	require.Equal(t, "scheduler_refresh_failed", response.Results[0].Reason)
+	stored, err := f.repo.FindByID(context.Background(), "recovery")
+	require.NoError(t, err)
+	require.Equal(t, preview.Items[0].Proposed, stored.SyncSchedule)
+	// A process restart rebuilds the cron entry from the durable source row.
+	restarted := datasource.NewScheduler(f.repo, f.logs, kbDeleteTaskEnqueuer{})
+	require.NoError(t, restarted.Start(context.Background()))
+	defer restarted.Stop()
+	require.Equal(t, 1, restarted.EntryCount())
 }
 
 func TestSuccessfulErrorSourceManualSyncRestoresSchedulerEntry(t *testing.T) {

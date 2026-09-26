@@ -29,7 +29,7 @@ let generation = 0
 const eligible = computed(() => preview.value?.items.filter(item => item.eligible) || [])
 const selected = computed(() => eligible.value.filter(item => selectedIDs.value.includes(item.data_source_id)))
 const canApply = computed(() => !loading.value && !applying.value && selected.value.length > 0)
-const appliedCount = computed(() => result.value?.results.filter(item => item.status === 'applied').length || 0)
+const appliedCount = computed(() => result.value?.results.filter(item => item.status !== 'skipped').length || 0)
 
 function unwrap<T>(response: unknown): T {
   const wrapped = response as { data?: unknown } | undefined
@@ -90,7 +90,7 @@ async function applySelected() {
     result.value = unwrap<GitHubScheduleMigrationApplyResponse>(await applyGitHubScheduleMigration(props.kbId, selections))
     selectedIDs.value = []
     emit('applied')
-    if (result.value.results.some(item => item.status === 'skipped' || item.reason)) {
+    if (result.value.results.some(item => item.status !== 'applied')) {
       MessagePlugin.warning(t('datasource.githubBulk.migration.partial'))
     } else {
       MessagePlugin.success(t('datasource.githubBulk.migration.applied', { count: appliedCount.value }))
@@ -145,8 +145,8 @@ async function applySelected() {
       </template>
       <div v-if="result" class="migration-result">
         <strong>{{ t('datasource.githubBulk.migration.applied', { count: appliedCount }) }}</strong>
-        <p v-for="item in result.results.filter(row => row.status === 'skipped')" :key="item.data_source_id">
-          {{ item.data_source_id }} · {{ t('datasource.githubBulk.migration.skipped') }} · {{ reasonCode(item.reason) }}
+        <p v-for="item in result.results.filter(row => row.status !== 'applied')" :key="item.data_source_id">
+          {{ item.data_source_id }} · {{ item.status === 'skipped' ? t('datasource.githubBulk.migration.skipped') : t('datasource.githubBulk.migration.appliedWarning') }} · {{ reasonCode(item.reason) }}
         </p>
       </div>
     </t-loading>

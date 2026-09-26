@@ -147,7 +147,7 @@ export interface GitHubScheduleMigrationApplyResponse {
   knowledge_base_id: string
   results: Array<{
     data_source_id: string
-    status: 'applied' | 'skipped'
+    status: 'applied' | 'applied_with_warning' | 'skipped'
     reason: string
     schedule?: string
   }>
