@@ -490,14 +490,6 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 	if err != nil {
 		return nil, nil, err
 	}
-	commit, treeSHA, err := c.head(ctx, cfg, s)
-	if err != nil {
-		return nil, nil, err
-	}
-	es, err := c.entries(ctx, cfg, s.Repository, treeSHA)
-	if err != nil {
-		return nil, nil, err
-	}
 	selectionJSON, _ := json.Marshal(s)
 	h := sha256.Sum256(selectionJSON)
 	key := hex.EncodeToString(h[:])
@@ -508,6 +500,28 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 			return nil, nil, fmt.Errorf("GitHub sync cursor is invalid")
 		}
 	}
+	commit, treeSHA, err := c.head(ctx, cfg, s)
+	if err != nil {
+		return nil, nil, err
+	}
+	// LastSyncCursor is acknowledged only after every selected document was
+	// indexed. A matching remote commit therefore needs no tree or blob read.
+	if cfg.SyncSource != nil && prev.Selection == key && prev.Commit == commit {
+		return []types.FetchedItem{}, old, nil
+	}
+	var es []entry
+	var documentCache *gitCache
+	if cfg.SyncSource != nil {
+		documentCache, es, err = c.documentGitCache(ctx, cfg, s, commit)
+	} else {
+		// Direct connector callers without a trusted sync identity retain the
+		// legacy REST implementation. Production sync always supplies identity;
+		// a broken private cache never silently causes a REST blob storm.
+		es, err = c.entries(ctx, cfg, s.Repository, treeSHA)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
 	all := map[string]entry{}
 	files := map[string]entry{}
 	for _, e := range es {
@@ -517,6 +531,9 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 		}
 	}
 	for _, root := range s.Paths {
+		if documentCache != nil {
+			continue // documentGitCache already verified selected Git paths
+		}
 		if root != "" {
 			if _, ok := all[root]; !ok {
 				return nil, nil, &Error{Code: "github_selected_path_missing", Message: "Selected GitHub path no longer exists; review source selection"}
@@ -533,7 +550,8 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 	}
 	sort.Strings(paths)
 	items := []types.FetchedItem{}
-	bytesRead := 0
+	bytesRead := int64(0)
+	need := make([]gitTreeEntry, 0)
 	for _, p := range paths {
 		e := files[p]
 		if prev.Selection == key && prev.Files[p].SHA == e.SHA {
@@ -541,6 +559,14 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 		}
 		if e.Size < 0 || e.Size > maxFileBytes {
 			return nil, nil, &Error{Code: "github_document_file_limit", Message: "A GitHub document exceeds the 16 MiB file limit; narrow the selected paths"}
+		}
+		if documentCache != nil {
+			bytesRead += e.Size
+			if bytesRead > maxBatchBytes {
+				return nil, nil, &Error{Code: "github_documents_batch_limit", Message: "GitHub document sync exceeds the 64 MiB batch limit; narrow the selected paths"}
+			}
+			need = append(need, gitTreeEntry{Path: e.Path, SHA: e.SHA, Size: e.Size, Mode: e.Mode})
+			continue
 		}
 		var blob struct {
 			Encoding string `json:"encoding"`
@@ -557,17 +583,19 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 		if err != nil || len(body) > maxFileBytes {
 			return nil, nil, &Error{Code: "github_document_invalid", Message: "GitHub document content is invalid or incomplete"}
 		}
-		bytesRead += len(body)
+		bytesRead += int64(len(body))
 		if bytesRead > maxBatchBytes {
 			return nil, nil, &Error{Code: "github_documents_batch_limit", Message: "GitHub document sync exceeds the 64 MiB batch limit; narrow the selected paths"}
 		}
-		parts := strings.Split(p, "/")
-		for i := range parts {
-			parts[i] = url.PathEscape(parts[i])
+		items = append(items, githubDocumentItem(s, commit, e, body))
+	}
+	if documentCache != nil {
+		if err := documentCache.readBlobs(ctx, need, maxFileBytes, func(gitEntry gitTreeEntry, body []byte) error {
+			items = append(items, githubDocumentItem(s, commit, files[gitEntry.Path], body))
+			return nil
+		}); err != nil {
+			return nil, nil, err
 		}
-		id := "github:" + strings.ToLower(s.Repository) + ":" + s.Ref + ":" + p
-		items = append(items, types.FetchedItem{ExternalID: id, Title: p, FileName: path.Join(s.Repository, p), Content: body, SourceResourceID: s.Repository,
-			Metadata: map[string]string{"channel": "github", "source_type": "github", "github_repository": s.Repository, "github_ref": s.Ref, "github_commit": commit, "github_blob_sha": e.SHA, "github_path": p, "github_url": "https://github.com/" + s.Repository + "/blob/" + commit + "/" + strings.Join(parts, "/")}})
 	}
 	// A changed selection is not proof of remote deletion. Only a complete
 	// same-selection tree can report a previously imported path as deleted.
@@ -584,4 +612,20 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 		}
 	}
 	return items, &types.SyncCursor{ConnectorCursor: map[string]interface{}{"selection": next.Selection, "commit": next.Commit, "files": next.Files}}, nil
+}
+
+func githubDocumentItem(s selection, commit string, e entry, body []byte) types.FetchedItem {
+	parts := strings.Split(e.Path, "/")
+	for i := range parts {
+		parts[i] = url.PathEscape(parts[i])
+	}
+	return types.FetchedItem{
+		ExternalID: "github:" + strings.ToLower(s.Repository) + ":" + s.Ref + ":" + e.Path,
+		Title:      e.Path, FileName: path.Join(s.Repository, e.Path), Content: body, SourceResourceID: s.Repository,
+		Metadata: map[string]string{
+			"channel": "github", "source_type": "github", "github_repository": s.Repository,
+			"github_ref": s.Ref, "github_commit": commit, "github_blob_sha": e.SHA,
+			"github_path": e.Path, "github_url": "https://github.com/" + s.Repository + "/blob/" + commit + "/" + strings.Join(parts, "/"),
+		},
+	}
 }

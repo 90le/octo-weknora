@@ -252,6 +252,18 @@ type DataSourceConfig struct {
 	// ingesting an image into a KB without VLM is rejected, so image extraction is
 	// skipped when this is false.
 	MultimodalEnabled bool `json:"-"`
+
+	// SyncSource is supplied only by the trusted sync service after loading the
+	// data source. It lets connectors place generated transport caches under the
+	// exact tenant/knowledge-base/data-source namespace. It is never accepted
+	// from, or written to, a persisted configuration.
+	SyncSource *DataSourceSyncSource `json:"-"`
+}
+
+type DataSourceSyncSource struct {
+	TenantID        uint64
+	KnowledgeBaseID string
+	DataSourceID    string
 }
 
 // HasCredentials reports whether the credentials map carries any value at
