@@ -311,7 +311,7 @@ func testGitHubDocumentRunResume(t *testing.T, scenario string) {
 	serviceGitRun(t, gitRepo, "add", ".")
 	serviceGitRun(t, gitRepo, "commit", "-qm", "old")
 	oldCommit := serviceGitRun(t, gitRepo, "rev-parse", "HEAD")
-	sourceRepo := apprepo.NewDataSourceRepository(db)
+	sourceRepo := apprepo.NewDataSourceRepository(db).(*apprepo.DataSourceRepository)
 	ds := &types.DataSource{ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: "kb", Name: "GitHub docs",
 		Type: types.ConnectorTypeGitHub, Status: types.DataSourceStatusActive, SyncDeletions: true}
 	if scenario == "full-to-incremental" {
