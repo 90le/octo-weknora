@@ -295,6 +295,12 @@ func RegisterDataSourceRoutes(
 	credHandler *handler.DataSourceCredentialsHandler,
 	g *rbacGuards,
 ) {
+	// A KB owner or tenant Admin can inspect a GitHub source's proposed
+	// document scope without changing settings or launching a sync. The source
+	// itself is checked against this exact KB before its credential is used.
+	preview := g.apiKeyGroup(r.Group("/knowledge-bases/:id/github-document-scope-preview"), apiKeyManageDataSources(apiKeyFullAccess()))
+	preview.POST("", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.PreviewGitHubDocumentScope)
+
 	read := g.apiKeyGroup(r.Group("/knowledge-bases/:id/sources"), apiKeyRetrieve(apiKeyFullAccess()))
 	read.GET("", g.Viewer(), g.KBAccessRead("id"), handler.SourceSnapshots)
 	read.GET("/:source_id/tree", g.Viewer(), g.KBAccessRead("id"), handler.SourceSnapshotTree)

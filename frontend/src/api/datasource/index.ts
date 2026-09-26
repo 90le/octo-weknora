@@ -118,6 +118,47 @@ export interface GitHubBatchResponse {
   results: GitHubBatchResultItem[]
 }
 
+export interface GitHubDocumentScopePreviewSummary {
+  candidate_files: number
+  candidate_bytes: number
+  eligible_files: number
+  eligible_bytes: number
+  image_files: number
+  image_bytes: number
+  sensitive_candidate_files: number
+  sensitive_candidate_bytes: number
+  parser_unsupported_files: number
+  parser_unsupported_bytes: number
+  too_large_files: number
+  too_large_bytes: number
+  extensions: Array<{ name: string; files: number; bytes: number }>
+  top_directories: Array<{ name: string; files: number; bytes: number }>
+  sample_paths: string[]
+  warnings: string[]
+}
+
+export interface GitHubDocumentScopePreview {
+  source_id: string
+  repository?: string
+  ref?: string
+  commit?: string
+  tree_state: 'complete' | 'truncated' | 'missing_path' | 'error'
+  tree_entries: number
+  stored_paths: string[] | null
+  preview_paths: string[] | null
+  paths_overridden: boolean
+  full_repository: boolean
+  proposed_exclude: string[] | null
+  redacted_selection_paths: number
+  exclude_overridden: boolean
+  exclusions_applied_by_sync: false
+  actual_sync: GitHubDocumentScopePreviewSummary
+  proposed_after_exclude?: GitHubDocumentScopePreviewSummary
+  warnings: string[]
+  error_code?: string
+  error_message?: string
+}
+
 export interface GitHubScheduleMigrationPreviewItem {
   data_source_id: string
   repository?: string
@@ -345,6 +386,19 @@ export function createGitHubDataSourceBatch(data: {
   start_sync?: boolean
 }) {
   return post('/api/v1/datasource/github/batch', data)
+}
+
+/** Read-only tree-metadata preview for one existing KB-owned GitHub source. */
+export function previewGitHubDocumentScope(knowledgeBaseId: string, data: {
+  source_id: string
+  paths?: string[]
+  exclude?: string[]
+}) {
+  return post<GitHubDocumentScopePreview>(
+    `/api/v1/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/github-document-scope-preview`,
+    data,
+    { timeout: 20000 },
+  )
 }
 
 export function previewGitHubScheduleMigration(knowledgeBaseId: string) {
