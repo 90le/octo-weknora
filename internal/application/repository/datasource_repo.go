@@ -291,14 +291,17 @@ func (r *SyncLogRepository) FindCardSummaries(
 			log := rows[index]
 			latest[log.DataSourceID] = &log
 		}
-		var successRows []struct {
-			DataSourceID string     `gorm:"column:data_source_id"`
-			FinishedAt   *time.Time `gorm:"column:last_successful_sync_at"`
-		}
-		if err := r.db.WithContext(ctx).Model(&types.SyncLog{}).
-			Select("data_source_id, MAX(finished_at) AS last_successful_sync_at").
-			Where("data_source_id IN ? AND status = ? AND finished_at IS NOT NULL", chunk, types.SyncLogStatusSuccess).
-			Group("data_source_id").Scan(&successRows).Error; err != nil {
+		// SQLite returns MAX(timestamp) as an untyped string; ranking a real
+		// SyncLog row preserves the declared finished_at type for both SQLite
+		// and PostgreSQL without parsing locale-dependent timestamp text.
+		var successRows []types.SyncLog
+		if err := r.db.WithContext(ctx).Raw(`
+			SELECT * FROM (
+				SELECT sync_logs.*, ROW_NUMBER() OVER (
+					PARTITION BY data_source_id ORDER BY finished_at DESC, started_at DESC, id DESC
+				) AS card_rank
+				FROM sync_logs WHERE data_source_id IN ? AND status = ? AND finished_at IS NOT NULL
+			) AS ranked WHERE card_rank = 1`, chunk, types.SyncLogStatusSuccess).Scan(&successRows).Error; err != nil {
 			return nil, nil, err
 		}
 		for _, row := range successRows {
