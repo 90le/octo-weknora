@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"hash/fnv"
 	"log"
 	"os"
 	"strconv"
@@ -109,6 +110,55 @@ func NewAsyncqClient() (*asynq.Client, error) {
 // burning through retries; but short enough that users don't feel the stall.
 const wikiIngestRetryDelay = 15 * time.Second
 
+type sourceRetryHint interface {
+	Retryable() bool
+	RetryAfterAt() (time.Time, bool)
+}
+
+// A short, deterministic per-task jitter spreads sources that received the
+// same upstream reset time. Explicit hints are never shortened. Long hints
+// are handled by the datasource's persisted cooldown before reaching Asynq;
+// no worker goroutine sleeps while a retry is delayed in the queue.
+func sourceRetryDelay(n int, e error, t *asynq.Task, now time.Time) (time.Duration, bool) {
+	if t == nil || t.Type() != types.TypeDataSourceSync {
+		return 0, false
+	}
+	var hint sourceRetryHint
+	if !errors.As(e, &hint) || !hint.Retryable() {
+		return 0, false
+	}
+	wait := asynq.DefaultRetryDelayFunc(n, e, t)
+	explicit := false
+	if retryAt, ok := hint.RetryAfterAt(); ok {
+		if remaining := retryAt.Sub(now); remaining > 0 {
+			explicit = true
+			if remaining > wait {
+				wait = remaining
+			}
+		}
+	}
+	const floor = 5 * time.Second
+	const maxFallback = 20 * time.Minute
+	if wait < floor {
+		wait = floor
+	}
+	if !explicit && wait > maxFallback {
+		wait = maxFallback
+	}
+	h := fnv.New32a()
+	_, _ = h.Write(t.Payload())
+	_, _ = h.Write([]byte{byte(n), byte(n >> 8), byte(n >> 16), byte(n >> 24)})
+	maxJitter := wait / 20
+	if maxJitter > 30*time.Second {
+		maxJitter = 30 * time.Second
+	}
+	if maxJitter < time.Millisecond {
+		maxJitter = time.Millisecond
+	}
+	jitter := time.Duration(uint64(h.Sum32())%uint64(maxJitter)) + time.Millisecond
+	return wait + jitter, true
+}
+
 // asynqRetryDelayFunc customizes per-task retry backoff.
 //
 // Default asynq backoff is exponential (≈10s, 40s, 90s, 2.5m, ...), which
@@ -122,6 +172,9 @@ const wikiIngestRetryDelay = 15 * time.Second
 func asynqRetryDelayFunc(n int, e error, t *asynq.Task) time.Duration {
 	if errors.Is(e, service.ErrWikiIngestConcurrent) {
 		return wikiIngestRetryDelay
+	}
+	if wait, ok := sourceRetryDelay(n, e, t, time.Now().UTC()); ok {
+		return wait
 	}
 	return asynq.DefaultRetryDelayFunc(n, e, t)
 }

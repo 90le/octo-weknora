@@ -470,6 +470,15 @@ type SyncResult struct {
 	// Per-item failure samples (capped), shown in the sync-log UI.
 	Errors []SyncItemError `json:"errors,omitempty"`
 
+	// Exact aggregate counts survive the bounded user-facing error sample.
+	// Sync policy uses these stable codes to avoid retrying an all-deterministic
+	// import (for example 136 unsupported MDX files with only 100 samples).
+	FailureCodes map[string]int `json:"failure_codes,omitempty"`
+
+	// A long, explicit GitHub rate-limit hint pauses admission without keeping
+	// a worker or running SyncLog alive. The next successful run clears it.
+	RetryNotBefore *time.Time `json:"retry_not_before,omitempty"`
+
 	// Updated cursor for next incremental sync
 	NextCursor *SyncCursor `json:"next_cursor,omitempty"`
 }
@@ -669,6 +678,23 @@ func (d *DataSource) ParseSyncResult() (*SyncResult, error) {
 		return nil, err
 	}
 	return &result, nil
+}
+
+// ActiveGitHubRetryCooldown reads the durable source result so scheduler and
+// manual admission enforce the same long upstream retry hint after restarts.
+// A corrupt result fails closed instead of silently bypassing the cooldown.
+func (d *DataSource) ActiveGitHubRetryCooldown(now time.Time) (*time.Time, error) {
+	if d == nil || d.Type != ConnectorTypeGitHub {
+		return nil, nil
+	}
+	result, err := d.ParseSyncResult()
+	if err != nil || result == nil || result.RetryNotBefore == nil {
+		return nil, err
+	}
+	if now.Before(*result.RetryNotBefore) {
+		return result.RetryNotBefore, nil
+	}
+	return nil, nil
 }
 
 // ParseSyncLogResult parses the result JSON from sync log

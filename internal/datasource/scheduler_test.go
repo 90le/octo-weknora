@@ -2,6 +2,7 @@ package datasource
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -78,8 +79,9 @@ func (r *fakeDataSourceRepo) FindActive(_ context.Context) ([]*types.DataSource,
 
 // fakeSyncLogRepo is an in-memory SyncLogRepository.
 type fakeSyncLogRepo struct {
-	mu   sync.Mutex
-	logs map[string]*types.SyncLog
+	mu         sync.Mutex
+	logs       map[string]*types.SyncLog
+	runningErr error
 }
 
 func newFakeSyncLogRepo() *fakeSyncLogRepo {
@@ -145,6 +147,9 @@ func (r *fakeSyncLogRepo) CleanupOldLogs(_ context.Context, retentionDays int) e
 }
 
 func (r *fakeSyncLogRepo) HasRunningSync(_ context.Context, dsID string) (bool, error) {
+	if r.runningErr != nil {
+		return false, r.runningErr
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, log := range r.logs {
@@ -153,6 +158,61 @@ func (r *fakeSyncLogRepo) HasRunningSync(_ context.Context, dsID string) (bool, 
 		}
 	}
 	return false, nil
+}
+
+func TestSchedulerRunningStateReadFailureDoesNotEnqueueDuplicate(t *testing.T) {
+	repo := newFakeDataSourceRepo()
+	ds := &types.DataSource{ID: "ds-read-failed", TenantID: 1, Status: types.DataSourceStatusActive,
+		SyncSchedule: "0 0 */6 * * *"}
+	_ = repo.Create(context.Background(), ds)
+	logs := newFakeSyncLogRepo()
+	logs.runningErr = errors.New("database temporarily unavailable")
+	enqueuer := &fakeTaskEnqueuer{}
+	scheduler := NewScheduler(repo, logs, enqueuer)
+	scheduler.triggerSync(ds.ID, ds.TenantID)
+	if got := enqueuer.count.Load(); got != 0 {
+		t.Fatalf("enqueue count = %d, want 0 after running-state DB failure", got)
+	}
+	if len(logs.logs) != 0 {
+		t.Fatalf("created %d running sync logs after state read failed", len(logs.logs))
+	}
+}
+
+func TestSchedulerLongGitHubCooldownSurvivesRestartAndExpires(t *testing.T) {
+	repo := newFakeDataSourceRepo()
+	future := time.Now().UTC().Add(6 * time.Hour)
+	result := &types.SyncResult{RetryNotBefore: &future}
+	resultJSON, err := result.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds := &types.DataSource{ID: "ds-cooldown", TenantID: 1, Type: types.ConnectorTypeGitHub,
+		Status: types.DataSourceStatusActive, SyncSchedule: "0 0 */6 * * *", LastSyncResult: resultJSON}
+	_ = repo.Create(context.Background(), ds)
+	logs := newFakeSyncLogRepo()
+	enqueuer := &fakeTaskEnqueuer{}
+	scheduler := NewScheduler(repo, logs, enqueuer)
+	if err := scheduler.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer scheduler.Stop()
+	if scheduler.EntryCount() != 1 {
+		t.Fatal("active source must retain its cron registration across restart")
+	}
+	scheduler.triggerSync(ds.ID, ds.TenantID)
+	if enqueuer.count.Load() != 0 || len(logs.logs) != 0 {
+		t.Fatal("cooldown must suppress scheduled queue admission without a running log")
+	}
+	past := time.Now().UTC().Add(-time.Minute)
+	result.RetryNotBefore = &past
+	ds.LastSyncResult, err = result.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler.triggerSync(ds.ID, ds.TenantID)
+	if enqueuer.count.Load() != 1 || len(logs.logs) != 1 {
+		t.Fatal("scheduled sync should resume after durable cooldown expires")
+	}
 }
 
 // fakeTaskEnqueuer counts how many tasks are enqueued.

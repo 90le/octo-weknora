@@ -16,6 +16,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/datasource/connector/localfolder"
 	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/hibiken/asynq"
 )
 
 func (s *DataSourceService) processSourceSnapshot(
@@ -106,14 +107,20 @@ func (s *DataSourceService) processSourceSnapshot(
 	}
 	status := types.SyncLogStatusSuccess
 	errorMessage := ""
+	policy := githubSyncDecision{}
 	if err != nil {
 		status = types.SyncLogStatusFailed
 		errorMessage = err.Error()
+		policy = githubSyncFailureDecisionForExecution(ctx, ds.Type, err, time.Now().UTC())
+		result.RetryNotBefore = policy.DeferUntil
 	}
 	resultJSON, _ := result.ToJSON()
 	if updateErr := s.updateSyncRunResult(ctx, ds, log, result, resultJSON,
-		status, errorMessage, paused, status == types.SyncLogStatusFailed); updateErr != nil {
+		status, errorMessage, paused, policy.QueueRetry); updateErr != nil {
 		return updateErr
+	}
+	if err != nil && !policy.QueueRetry {
+		return fmt.Errorf("%w: %w", asynq.SkipRetry, err)
 	}
 	return err
 }
