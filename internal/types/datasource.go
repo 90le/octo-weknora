@@ -252,6 +252,9 @@ type DataSourceConfig struct {
 	// ingesting an image into a KB without VLM is rejected, so image extraction is
 	// skipped when this is false.
 	MultimodalEnabled bool `json:"-"`
+	// SkippedSensitive is an in-process observation from GitHub document
+	// selection. It is never stored in source settings or sent to connectors.
+	SkippedSensitive int `json:"-"`
 
 	// SyncSource is supplied only by the trusted sync service after loading the
 	// data source. It lets connectors place generated transport caches under the
@@ -459,6 +462,10 @@ type SyncResult struct {
 
 	// Items skipped (no changes)
 	Skipped int `json:"skipped"`
+
+	// GitHub document candidates skipped by the mandatory sensitive-path rule.
+	// No path names or content are included in the sync result.
+	SkippedSensitive int `json:"skipped_sensitive,omitempty"`
 
 	// Items that failed
 	Failed int `json:"failed"`

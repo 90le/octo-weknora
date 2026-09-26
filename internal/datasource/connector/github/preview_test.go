@@ -2,6 +2,8 @@ package github
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -49,6 +51,8 @@ func previewEntries() []entry {
 		{Path: "docs/large.pdf", Type: "blob", Mode: "100644", SHA: sha, Size: 17 << 20},
 		{Path: "images/logo.webp", Type: "blob", Mode: "100644", SHA: sha, Size: 300},
 		{Path: "src/app.js", Type: "blob", Mode: "100644", SHA: sha, Size: 400},
+		{Path: "secrets/notes.md", Type: "blob", Mode: "100644", SHA: sha, Size: 500},
+		{Path: ".env", Type: "blob", Mode: "100644", SHA: sha, Size: 50},
 		{Path: ".github/workflows/release.md", Type: "blob", Mode: "100644", SHA: sha, Size: 50},
 	}
 }
@@ -62,7 +66,15 @@ func TestPreviewDocumentTreeFullAndSelectedPathsNeverReadBlobs(t *testing.T) {
 	require.False(t, full.Truncated)
 	require.Empty(t, full.MissingPaths)
 	require.Equal(t, strings.Repeat("a", 40), full.Commit)
-	require.Len(t, full.Files, 4) // source code and hidden paths are not document candidates
+	require.Len(t, full.Files, 5) // source code and dotfiles are not document candidates
+	sensitive := 0
+	for _, file := range full.Files {
+		if file.Sensitive {
+			sensitive++
+			require.Equal(t, "secrets/notes.md", file.Path)
+		}
+	}
+	require.Equal(t, 1, sensitive)
 	require.Zero(t, blobs.Load())
 
 	config.Settings["paths"] = []string{"docs", "README.md"}
@@ -71,6 +83,91 @@ func TestPreviewDocumentTreeFullAndSelectedPathsNeverReadBlobs(t *testing.T) {
 	require.Len(t, selected.Files, 3)
 	require.Equal(t, []string{"README.md", "docs"}, selected.Paths)
 	require.Zero(t, blobs.Load())
+}
+
+func TestFetchIncrementalSkipsSensitiveBeforeBlobReadAndPreservesOldCursor(t *testing.T) {
+	entries := previewEntries()
+	c, blobs, closeServer := githubPreviewFixture(t, entries, false)
+	defer closeServer()
+	config := &types.DataSourceConfig{Settings: map[string]interface{}{"repository": "example/repo"}}
+	selection, err := parseSelection(config)
+	require.NoError(t, err)
+	encoded, err := json.Marshal(selection)
+	require.NoError(t, err)
+	hash := sha256.Sum256(encoded)
+	key := hex.EncodeToString(hash[:])
+	oldFiles := map[string]entry{"secrets/notes.md": entries[6]}
+	for _, e := range entries {
+		if allowedGitHubDocument(e) {
+			oldFiles[e.Path] = e
+		}
+	}
+	old := &types.SyncCursor{ConnectorCursor: map[string]interface{}{
+		"selection": key, "commit": strings.Repeat("d", 40), "files": oldFiles,
+	}}
+	items, next, err := c.FetchIncremental(context.Background(), config, old)
+	require.NoError(t, err)
+	require.Empty(t, items, "neither unchanged README nor sensitive file may be read or deleted")
+	require.Equal(t, 1, config.SkippedSensitive)
+	require.Zero(t, blobs.Load())
+	var parsed cursor
+	encoded, err = json.Marshal(next.ConnectorCursor)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encoded, &parsed))
+	require.Contains(t, parsed.Files, "secrets/notes.md", "old sensitive row must retain cursor lineage for later review")
+
+	// Even if the remote file disappears, this safety-policy run cannot silently
+	// delete an older indexed document; that requires a separate audited action.
+	withoutSensitive := append([]entry(nil), entries[:6]...)
+	withoutSensitive = append(withoutSensitive, entries[7:]...)
+	removedConnector, removedBlobs, closeRemoved := githubPreviewFixture(t, withoutSensitive, false)
+	defer closeRemoved()
+	items, next, err = removedConnector.FetchIncremental(context.Background(), config, old)
+	require.NoError(t, err)
+	require.Empty(t, items)
+	require.Zero(t, config.SkippedSensitive)
+	require.Zero(t, removedBlobs.Load())
+	encoded, err = json.Marshal(next.ConnectorCursor)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encoded, &parsed))
+	require.Contains(t, parsed.Files, "secrets/notes.md")
+}
+
+func TestFetchIncrementalUnchangedTrustedCursorDoesNotReadSensitiveTreeOrBlob(t *testing.T) {
+	commit, treeSHA := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/example/repo":
+			_ = json.NewEncoder(w).Encode(map[string]string{"full_name": "example/repo", "default_branch": "main"})
+		case "/repos/example/repo/commits/main":
+			_ = json.NewEncoder(w).Encode(map[string]any{"sha": commit, "commit": map[string]any{"tree": map[string]string{"sha": treeSHA}}})
+		default:
+			http.Error(w, "unexpected tree/blob read", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+	c := NewConnectorWithHTTPClient(server.Client(), server.URL)
+	config := &types.DataSourceConfig{
+		Settings:   map[string]interface{}{"repository": "example/repo"},
+		SyncSource: &types.DataSourceSyncSource{TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: "ds"},
+	}
+	selection, err := parseSelection(config)
+	require.NoError(t, err)
+	encoded, err := json.Marshal(selection)
+	require.NoError(t, err)
+	hash := sha256.Sum256(encoded)
+	old := &types.SyncCursor{ConnectorCursor: map[string]interface{}{
+		"selection": hex.EncodeToString(hash[:]), "commit": commit,
+		"files": map[string]entry{"secrets/notes.md": {Path: "secrets/notes.md", Type: "blob", Mode: "100644", SHA: strings.Repeat("c", 40), Size: 100}},
+	}}
+	items, next, err := c.FetchIncremental(context.Background(), config, old)
+	require.NoError(t, err)
+	require.Empty(t, items)
+	require.Same(t, old, next)
+	require.Equal(t, int32(2), calls.Load(), "unchanged trusted commit only needs repo and commit metadata")
 }
 
 func TestPreviewDocumentTreeMissingInvalidAndTruncated(t *testing.T) {

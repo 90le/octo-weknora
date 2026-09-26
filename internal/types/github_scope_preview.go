@@ -19,22 +19,26 @@ type GitHubPreviewGroup struct {
 // GitHubDocumentPreviewSummary counts repository-tree metadata only. Bytes are
 // Git blob sizes, not downloaded bytes; actual incremental sync may skip
 // unchanged files. CandidateFiles uses the connector's current document
-// selector, including files the downstream parser cannot yet import.
+// selector after the mandatory sensitive-path rule, including files the
+// downstream parser cannot yet import. Sensitive candidates appear only as
+// aggregate count/bytes; no sensitive path is serialized.
 type GitHubDocumentPreviewSummary struct {
-	CandidateFiles         int                  `json:"candidate_files"`
-	CandidateBytes         int64                `json:"candidate_bytes"`
-	EligibleFiles          int                  `json:"eligible_files"`
-	EligibleBytes          int64                `json:"eligible_bytes"`
-	ImageFiles             int                  `json:"image_files"`
-	ImageBytes             int64                `json:"image_bytes"`
-	ParserUnsupportedFiles int                  `json:"parser_unsupported_files"`
-	ParserUnsupportedBytes int64                `json:"parser_unsupported_bytes"`
-	TooLargeFiles          int                  `json:"too_large_files"`
-	TooLargeBytes          int64                `json:"too_large_bytes"`
-	Extensions             []GitHubPreviewGroup `json:"extensions"`
-	TopDirectories         []GitHubPreviewGroup `json:"top_directories"`
-	SamplePaths            []string             `json:"sample_paths"`
-	Warnings               []string             `json:"warnings"`
+	CandidateFiles          int                  `json:"candidate_files"`
+	CandidateBytes          int64                `json:"candidate_bytes"`
+	EligibleFiles           int                  `json:"eligible_files"`
+	EligibleBytes           int64                `json:"eligible_bytes"`
+	ImageFiles              int                  `json:"image_files"`
+	ImageBytes              int64                `json:"image_bytes"`
+	SensitiveCandidateFiles int                  `json:"sensitive_candidate_files"`
+	SensitiveCandidateBytes int64                `json:"sensitive_candidate_bytes"`
+	ParserUnsupportedFiles  int                  `json:"parser_unsupported_files"`
+	ParserUnsupportedBytes  int64                `json:"parser_unsupported_bytes"`
+	TooLargeFiles           int                  `json:"too_large_files"`
+	TooLargeBytes           int64                `json:"too_large_bytes"`
+	Extensions              []GitHubPreviewGroup `json:"extensions"`
+	TopDirectories          []GitHubPreviewGroup `json:"top_directories"`
+	SamplePaths             []string             `json:"sample_paths"`
+	Warnings                []string             `json:"warnings"`
 }
 
 // GitHubDocumentScopePreview is an authorization-scoped, read-only dry run.
@@ -53,6 +57,7 @@ type GitHubDocumentScopePreview struct {
 	PathsOverridden         bool                          `json:"paths_overridden"`
 	FullRepository          bool                          `json:"full_repository"`
 	ProposedExclude         []string                      `json:"proposed_exclude"`
+	RedactedSelectionPaths  int                           `json:"redacted_selection_paths"`
 	ExcludeOverridden       bool                          `json:"exclude_overridden"`
 	ExclusionsAppliedBySync bool                          `json:"exclusions_applied_by_sync"`
 	ActualSync              GitHubDocumentPreviewSummary  `json:"actual_sync"`

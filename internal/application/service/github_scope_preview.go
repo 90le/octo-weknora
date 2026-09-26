@@ -95,6 +95,8 @@ func (s *DataSourceService) PreviewGitHubDocumentScope(
 		ProposedExclude: proposedExclude, ExcludeOverridden: req.Exclude != nil && !slices.Equal(proposedExclude, storedExclude),
 		ExclusionsAppliedBySync: false, Warnings: []string{},
 	}
+	resp.StoredPaths, resp.PreviewPaths, resp.ProposedExclude, resp.RedactedSelectionPaths =
+		redactGitHubPreviewPaths(storedPaths, paths, proposedExclude)
 	previewCtx, cancel := context.WithTimeout(ctx, githubScopePreviewTimeout)
 	defer cancel()
 	tree, err := previewer.PreviewDocumentTree(previewCtx, config)
@@ -104,7 +106,7 @@ func (s *DataSourceService) PreviewGitHubDocumentScope(
 	}
 	resp.Repository, resp.Ref, resp.Commit = tree.Repository, tree.Ref, tree.Commit
 	resp.TreeEntries = tree.TreeEntries
-	resp.PreviewPaths = tree.Paths // normalized and sorted by the connector
+	resp.PreviewPaths, _, _, _ = redactGitHubPreviewPaths(tree.Paths, nil, nil) // normalized and sorted; never echo sensitive paths
 	resp.FullRepository = len(tree.Paths) == 0 || (len(tree.Paths) == 1 && tree.Paths[0] == "")
 	resp.TreeState = "complete"
 	if tree.Truncated {
@@ -120,12 +122,34 @@ func (s *DataSourceService) PreviewGitHubDocumentScope(
 		resp.Warnings = append(resp.Warnings, "selected_path_missing")
 	}
 	resp.ActualSync = summarizeGitHubDocumentScope(tree.Files, nil)
+	if resp.ActualSync.SensitiveCandidateFiles > 0 {
+		resp.Warnings = append(resp.Warnings, "sensitive_candidate")
+	}
 	if len(proposedExclude) > 0 || req.Exclude != nil {
 		proposed := summarizeGitHubDocumentScope(tree.Files, proposedExclude)
 		resp.ProposedAfterExclude = &proposed
 		resp.Warnings = append(resp.Warnings, "exclude_not_applied_by_current_sync")
 	}
 	return resp, nil
+}
+
+func redactGitHubPreviewPaths(stored, preview, excludes []string) ([]string, []string, []string, int) {
+	redacted := 0
+	filter := func(paths []string) []string {
+		if paths == nil {
+			return nil
+		}
+		out := make([]string, 0, len(paths))
+		for _, p := range paths {
+			if p != "" && snapshot.Excluded(strings.Trim(p, "/"), nil) {
+				redacted++
+				continue
+			}
+			out = append(out, p)
+		}
+		return out
+	}
+	return filter(stored), filter(preview), filter(excludes), redacted
 }
 
 func previewStringList(settings map[string]interface{}, key string) ([]string, error) {
@@ -191,6 +215,11 @@ func summarizeGitHubDocumentScope(files []github.DocumentPreviewFile, exclude []
 			continue
 		}
 		bytes := max(file.Size, 0)
+		if file.Sensitive {
+			result.SensitiveCandidateFiles++
+			overflow = addPreviewBytes(&result.SensitiveCandidateBytes, bytes) || overflow
+			continue // no sensitive name in samples, directory or extension groups
+		}
 		result.CandidateFiles++
 		overflow = addPreviewBytes(&result.CandidateBytes, bytes) || overflow
 		ext := strings.TrimPrefix(strings.ToLower(path.Ext(file.Path)), ".")
@@ -244,6 +273,9 @@ func summarizeGitHubDocumentScope(files []github.DocumentPreviewFile, exclude []
 	}
 	if result.ParserUnsupportedFiles > 0 {
 		result.Warnings = append(result.Warnings, "parser_unsupported", "current_sync_will_fail_unsupported")
+	}
+	if result.SensitiveCandidateFiles > 0 {
+		result.Warnings = append(result.Warnings, "sensitive_candidate")
 	}
 	if overflow {
 		result.Warnings = append(result.Warnings, "size_overflow")

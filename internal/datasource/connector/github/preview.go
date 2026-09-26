@@ -21,8 +21,9 @@ type DocumentPreviewTree struct {
 }
 
 type DocumentPreviewFile struct {
-	Path string
-	Size int64
+	Path      string
+	Size      int64
+	Sensitive bool
 }
 
 // These are the current document-sync product limits. Preview reports them as
@@ -70,7 +71,9 @@ func (c *Connector) PreviewDocumentTree(ctx context.Context, cfg *types.DataSour
 			}
 		}
 		if allowedDocument(e) && selected(e.Path, s.Paths) {
-			result.Files = append(result.Files, DocumentPreviewFile{Path: e.Path, Size: e.Size})
+			result.Files = append(result.Files, DocumentPreviewFile{
+				Path: e.Path, Size: e.Size, Sensitive: !allowedGitHubDocument(e),
+			})
 		}
 	}
 	// A truncated tree cannot prove absence. The result remains visibly partial;

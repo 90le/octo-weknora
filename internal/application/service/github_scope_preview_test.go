@@ -147,6 +147,45 @@ func TestGitHubDocumentScopePreviewFullRepoLimitsTruncationAndNoBlob(t *testing.
 	require.Zero(t, blobs.Load())
 }
 
+func TestGitHubDocumentScopePreviewRedactsMandatorySensitivePaths(t *testing.T) {
+	entries := []map[string]any{
+		previewFile("README.md", 100),
+		previewFile("secrets/notes.md", 500), // connector format allows MD, safety policy must deny it
+		previewFile(".env", 50),              // already rejected by the connector's format/path selector
+		previewFile("keys/private.key", 60),  // unsupported extension
+	}
+	svc, calls, blobs, closeServer := githubPreviewServiceFixture(t, entries, false)
+	defer closeServer()
+	full, err := svc.PreviewGitHubDocumentScope(context.Background(), 7, "kb-a", &types.GitHubDocumentScopePreviewRequest{SourceID: "source-a"})
+	require.NoError(t, err)
+	require.Equal(t, 1, full.ActualSync.CandidateFiles)
+	require.Equal(t, 1, full.ActualSync.SensitiveCandidateFiles)
+	require.Equal(t, int64(500), full.ActualSync.SensitiveCandidateBytes)
+	require.Contains(t, full.Warnings, "sensitive_candidate")
+	require.Equal(t, []string{"README.md"}, full.ActualSync.SamplePaths)
+	require.Equal(t, "(root)", full.ActualSync.TopDirectories[0].Name)
+	encoded, err := json.Marshal(full)
+	require.NoError(t, err)
+	for _, path := range []string{"secrets/notes.md", "secrets", ".env", "keys/private.key"} {
+		require.NotContains(t, string(encoded), path)
+	}
+
+	sensitiveRoot := []string{"secrets"}
+	selected, err := svc.PreviewGitHubDocumentScope(context.Background(), 7, "kb-a", &types.GitHubDocumentScopePreviewRequest{
+		SourceID: "source-a", Paths: &sensitiveRoot, Exclude: &sensitiveRoot,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, selected.ActualSync.SensitiveCandidateFiles)
+	require.Zero(t, selected.ActualSync.CandidateFiles)
+	require.Empty(t, selected.PreviewPaths)
+	require.Positive(t, selected.RedactedSelectionPaths)
+	encoded, err = json.Marshal(selected)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "secrets")
+	require.GreaterOrEqual(t, calls.Load(), int32(3))
+	require.Zero(t, blobs.Load())
+}
+
 func TestGitHubDocumentScopePreviewDeniesCrossTenantAndOtherKBWithoutGitHubCall(t *testing.T) {
 	svc, calls, blobs, closeServer := githubPreviewServiceFixture(t, []map[string]any{previewFile("README.md", 1)}, false)
 	defer closeServer()

@@ -63,6 +63,10 @@ const warningMessages = computed(() => {
   if (data.actual_sync.warnings.includes('document_count_limit')) warnings.push(t(key + 'countLimit'))
   if (data.actual_sync.warnings.includes('batch_limit_if_all_changed')) warnings.push(t(key + 'batchLimit'))
   if (data.actual_sync.parser_unsupported_files > 0) warnings.push(t(key + 'unsupportedWarning'))
+  if (data.actual_sync.sensitive_candidate_files > 0) warnings.push(t(key + 'sensitiveSkipped', {
+    count: formatCount(data.actual_sync.sensitive_candidate_files),
+    bytes: formatBytes(data.actual_sync.sensitive_candidate_bytes),
+  }))
   if (data.actual_sync.too_large_files > 0) warnings.push(t(key + 'fileLimit'))
   if (data.proposed_after_exclude) warnings.push(t(key + 'excludeIgnored'))
   return warnings
@@ -123,6 +127,7 @@ async function loadPreview() {
         <span><b>{{ formatCount(preview.actual_sync.candidate_files) }}</b>{{ t('datasource.githubBulk.scopePreview.candidate') }}</span>
         <span><b>{{ formatBytes(preview.actual_sync.candidate_bytes) }}</b>{{ t('datasource.githubBulk.scopePreview.bytes') }}</span>
         <span><b>{{ formatCount(preview.actual_sync.image_files) }}</b>{{ t('datasource.githubBulk.scopePreview.images') }} · {{ formatBytes(preview.actual_sync.image_bytes) }}</span>
+        <span v-if="preview.actual_sync.sensitive_candidate_files"><b>{{ formatCount(preview.actual_sync.sensitive_candidate_files) }}</b>{{ t('datasource.githubBulk.scopePreview.sensitiveCandidate') }} · {{ formatBytes(preview.actual_sync.sensitive_candidate_bytes) }}</span>
         <span><b>{{ formatCount(preview.actual_sync.parser_unsupported_files) }}</b>{{ t('datasource.githubBulk.scopePreview.unsupported') }}</span>
         <span><b>{{ formatCount(preview.actual_sync.too_large_files) }}</b>{{ t('datasource.githubBulk.scopePreview.tooLarge') }}</span>
       </div>

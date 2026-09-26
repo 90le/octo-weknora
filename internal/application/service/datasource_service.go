@@ -813,7 +813,10 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 
 	// Process fetched items and write to knowledge base
 	result := &types.SyncResult{
-		Total: len(items),
+		Total: len(items), SkippedSensitive: config.SkippedSensitive,
+	}
+	if result.SkippedSensitive > 0 {
+		logger.Warnf(ctx, "GitHub document sync skipped %d mandatory-sensitive candidate(s); historical indexed rows were not purged", result.SkippedSensitive)
 	}
 
 	// Set tenant context so KnowledgeService can resolve tenant info correctly

@@ -460,6 +460,14 @@ func allowedDocument(e entry) bool {
 	}
 	return false
 }
+
+// allowedGitHubDocument applies the mandatory sensitive-path denylist on top
+// of the connector's document format selector. It must be shared by every
+// document planner before reading a Git blob. User exclude rules are separate
+// and currently remain preview-only for document mode.
+func allowedGitHubDocument(e entry) bool {
+	return allowedDocument(e) && !snapshot.Excluded(e.Path, nil)
+}
 func selected(p string, roots []string) bool {
 	if len(roots) == 0 {
 		return true
@@ -483,6 +491,9 @@ func (c *Connector) FetchIncremental(ctx context.Context, cfg *types.DataSourceC
 }
 
 func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceConfig, old *types.SyncCursor) ([]types.FetchedItem, *types.SyncCursor, error) {
+	if cfg != nil {
+		cfg.SkippedSensitive = 0
+	}
 	if snapshot.IsSource(cfg) {
 		return nil, nil, fmt.Errorf("%w: source mode must use the snapshot pipeline", datasource.ErrInvalidConfig)
 	}
@@ -526,9 +537,14 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 	files := map[string]entry{}
 	for _, e := range es {
 		all[e.Path] = e
-		if allowedDocument(e) && selected(e.Path, s.Paths) {
-			files[e.Path] = e
+		if !selected(e.Path, s.Paths) || !allowedDocument(e) {
+			continue
 		}
+		if !allowedGitHubDocument(e) {
+			cfg.SkippedSensitive++
+			continue
+		}
+		files[e.Path] = e
 	}
 	for _, root := range s.Paths {
 		if documentCache != nil {
@@ -543,9 +559,23 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 	if len(files) > 2000 {
 		return nil, nil, &Error{Code: "github_documents_limit", Message: "GitHub document source exceeds 2000 files; narrow the selected paths or use read-only source mode"}
 	}
+	// A sensitive file imported by an older connector remains an auditable
+	// historical row. Preserve its cursor lineage and never infer deletion from
+	// this safety-policy change (or a later remote removal). Review/downrank it
+	// separately; this sync must neither re-read nor implicitly purge it.
+	if prev.Selection == key {
+		for p, oldEntry := range prev.Files {
+			if snapshot.Excluded(p, nil) {
+				files[p] = oldEntry
+			}
+		}
+	}
 	next := cursor{Selection: key, Commit: commit, Files: files}
 	paths := make([]string, 0, len(files))
 	for p := range files {
+		if snapshot.Excluded(p, nil) {
+			continue
+		}
 		paths = append(paths, p)
 	}
 	sort.Strings(paths)
@@ -602,6 +632,9 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 	if prev.Selection == key {
 		deleted := []string{}
 		for p := range prev.Files {
+			if snapshot.Excluded(p, nil) {
+				continue
+			}
 			if _, exists := all[p]; !exists {
 				deleted = append(deleted, p)
 			}
