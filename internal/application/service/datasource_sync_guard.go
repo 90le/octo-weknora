@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -232,6 +233,9 @@ func (g *syncAccessGuard) check(ctx context.Context) error {
 	cfg, err := current.ParseConfig()
 	if err != nil || cfg == nil || g.config == nil || snapshot.Selection(cfg) != snapshot.Selection(g.config) || !slices.Equal(cfg.ResourceIDs, g.config.ResourceIDs) || current.SyncDeletions != g.ds.SyncDeletions {
 		return fmt.Errorf("%w: source settings changed; start a new sync", errSyncAccessChanged)
+	}
+	if current.Type == types.ConnectorTypeGitHub && !reflect.DeepEqual(cfg.Credentials, g.config.Credentials) {
+		return fmt.Errorf("%w: GitHub credentials changed; start a new sync", errSyncAccessChanged)
 	}
 	if current.Type == localfolder.Type {
 		if g.svc.connectorRegistry == nil {

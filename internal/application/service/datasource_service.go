@@ -16,6 +16,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/datasource"
+	githubConnector "github.com/Tencent/WeKnora/internal/datasource/connector/github"
 	"github.com/Tencent/WeKnora/internal/datasource/connector/localfolder"
 	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -779,6 +780,14 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	}
 	if snapshot.IsSource(config) {
 		return s.processSourceSnapshot(ctx, ds, config, connector, syncLog, wasPaused, runGuard)
+	}
+	if ds.Type == types.ConnectorTypeGitHub {
+		github, ok := connector.(*githubConnector.Connector)
+		if !ok {
+			return s.failSyncRun(ctx, ds, syncLog, nil, "GitHub document connector is unavailable", wasPaused,
+				errors.New("GitHub document connector is unavailable"), false)
+		}
+		return s.processGitHubDocumentRun(ctx, github, ds, config, syncLog, payload, wasPaused, runGuard, guard)
 	}
 
 	// Streaming path: connectors that support it interleave fetch→ingest→
