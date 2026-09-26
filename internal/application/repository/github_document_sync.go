@@ -233,6 +233,15 @@ func (r *DataSourceRepository) PublishGitHubDocumentRun(
 		if result.RowsAffected != 1 {
 			return ErrGitHubDocumentRunChanged
 		}
+		// Completed progress is derivable from the newly published cursor and
+		// SyncLog result. Keep durable rows only while a run is incomplete.
+		if err := tx.Where("run_id = ?", run.ID).Delete(&types.GitHubDocumentSyncItem{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ? AND status = ?", run.ID, types.GitHubDocumentRunComplete).
+			Delete(&types.GitHubDocumentRun{}).Error; err != nil {
+			return err
+		}
 		ds.LastSyncCursor = append(types.JSON(nil), run.TargetCursor...)
 		ds.LastSyncAt = &now
 		return nil

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -68,6 +70,51 @@ func TestGitHubDocumentProgressDistinguishesReadyAndFailedDeletion(t *testing.T)
 	require.Equal(t, 1, result.DeletionFailed)
 	require.Len(t, result.Errors, 1)
 	require.Equal(t, "deletion_failed", result.Errors[0].Code)
+}
+
+type githubDocumentQueueCapture struct {
+	task *asynq.Task
+	opts []asynq.Option
+}
+
+func (q *githubDocumentQueueCapture) Enqueue(task *asynq.Task, opts ...asynq.Option) (*asynq.TaskInfo, error) {
+	q.task, q.opts = task, opts
+	return &asynq.TaskInfo{ID: "queued"}, nil
+}
+
+func TestGitHubDocumentLargeBatchQueuesBoundedContinuation(t *testing.T) {
+	processed, bytesRead := 0, int64(0)
+	for i := 0; i < 5; i++ {
+		if githubDocumentChunkFull(processed, bytesRead, types.GitHubDocumentItemUpsert, 14<<20) {
+			break
+		}
+		processed++
+		bytesRead += 14 << 20
+	}
+	require.Equal(t, 4, processed)
+	require.Equal(t, int64(56<<20), bytesRead)
+	q := &githubDocumentQueueCapture{}
+	svc := &DataSourceService{taskEnqueuer: q}
+	run := &types.GitHubDocumentRun{ID: uuid.NewString()}
+	payload := types.DataSourceSyncPayload{DataSourceID: "ds", TenantID: 7, SyncLogID: "log", Trigger: "schedule"}
+	require.NoError(t, svc.enqueueGitHubDocumentContinuation(context.Background(), run, payload))
+	require.NotNil(t, q.task)
+	var next types.DataSourceSyncPayload
+	require.NoError(t, json.Unmarshal(q.task.Payload(), &next))
+	require.Equal(t, 1, next.GitHubDocumentChunk)
+	require.Equal(t, payload.DataSourceID, next.DataSourceID)
+	require.Equal(t, payload.SyncLogID, next.SyncLogID)
+	var hasDelay, hasStableID bool
+	for _, opt := range q.opts {
+		if opt.Type() == asynq.ProcessInOpt {
+			hasDelay = true
+		}
+		if opt.Type() == asynq.TaskIDOpt && strings.Contains(fmt.Sprint(opt.Value()), run.ID) {
+			hasStableID = true
+		}
+	}
+	require.True(t, hasDelay)
+	require.True(t, hasStableID)
 }
 
 func TestGitHubSyncAccessGuardRejectsCredentialRevocation(t *testing.T) {

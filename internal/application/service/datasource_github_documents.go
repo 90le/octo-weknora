@@ -370,6 +370,11 @@ func (s *DataSourceService) enqueueGitHubDocumentContinuation(
 	return err
 }
 
+func githubDocumentChunkFull(processed int, bytesRead int64, operation string, nextSize int64) bool {
+	return processed >= githubDocumentChunkItems ||
+		(operation == types.GitHubDocumentItemUpsert && processed > 0 && bytesRead+nextSize > githubDocumentChunkBytes)
+}
+
 // A failed hard-delete may leave a soft-deleted row hidden from the ordinary
 // external-ID lookup. A retry must finish that tombstone before ACKing the
 // remote deletion; otherwise LastSyncCursor would move past residual content.
@@ -457,8 +462,7 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 				break
 			}
 		}
-		if processed >= githubDocumentChunkItems ||
-			(item.Operation == types.GitHubDocumentItemUpsert && processed > 0 && bytesRead+planned[item.PathHash].Size > githubDocumentChunkBytes) {
+		if githubDocumentChunkFull(processed, bytesRead, item.Operation, planned[item.PathHash].Size) {
 			break
 		}
 		if err := ensureSyncRunActive(ctx, runGuard); err != nil {
