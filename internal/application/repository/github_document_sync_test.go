@@ -63,6 +63,9 @@ func TestGitHubDocumentProgressSQLiteAckAndCursorRollback(t *testing.T) {
 	ok, err := repo.AcquireGitHubDocumentRunLease(ctx, run, leaseID, time.Now().Add(time.Minute))
 	require.NoError(t, err)
 	require.True(t, ok)
+	foreign := *ds
+	foreign.KnowledgeBaseID = "other-kb"
+	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, &foreign, "log-"+ds.ID), ErrGitHubDocumentRunChanged)
 	ok, err = repo.AcquireGitHubDocumentRunLease(ctx, run, uuid.NewString(), time.Now().Add(time.Minute))
 	require.NoError(t, err)
 	require.False(t, ok)

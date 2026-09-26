@@ -70,6 +70,28 @@ func TestGitHubDocumentProgressDistinguishesReadyAndFailedDeletion(t *testing.T)
 	require.Equal(t, "deletion_failed", result.Errors[0].Code)
 }
 
+func TestGitHubSyncAccessGuardRejectsCredentialRevocation(t *testing.T) {
+	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "github-credential-guard.db")), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&types.DataSource{}))
+	repo := apprepo.NewDataSourceRepository(db)
+	cfg := &types.DataSourceConfig{Credentials: map[string]interface{}{"access_token": "token-one"},
+		Settings: map[string]interface{}{"repository": "test/docs", "mode": "documents"}}
+	encoded, err := cfg.ToJSON()
+	require.NoError(t, err)
+	ds := &types.DataSource{ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: "kb", Type: types.ConnectorTypeGitHub,
+		Status: types.DataSourceStatusActive, Config: encoded}
+	require.NoError(t, repo.Create(context.Background(), ds))
+	guard := &syncAccessGuard{svc: &DataSourceService{dsRepo: repo}, ds: ds, config: cfg}
+	require.NoError(t, guard.check(context.Background()))
+	rotated := &types.DataSourceConfig{Credentials: map[string]interface{}{"access_token": "token-two"}, Settings: cfg.Settings}
+	newConfig, err := rotated.ToJSON()
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", ds.ID).Update("config", newConfig).Error)
+	require.ErrorIs(t, guard.check(context.Background()), errSyncAccessChanged)
+}
+
 type githubDocumentTestKnowledgeService struct {
 	interfaces.KnowledgeService
 	repo      *preparedRepo
