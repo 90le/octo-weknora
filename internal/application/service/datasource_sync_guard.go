@@ -237,6 +237,9 @@ func (g *syncAccessGuard) check(ctx context.Context) error {
 	if current.Type == types.ConnectorTypeGitHub && !reflect.DeepEqual(cfg.Credentials, g.config.Credentials) {
 		return fmt.Errorf("%w: GitHub credentials changed; start a new sync", errSyncAccessChanged)
 	}
+	if current.Type == types.ConnectorTypeGitHub && current.SyncMode != g.ds.SyncMode {
+		return fmt.Errorf("%w: GitHub sync mode changed; start a new sync", errSyncAccessChanged)
+	}
 	if current.Type == localfolder.Type {
 		if g.svc.connectorRegistry == nil {
 			return errors.New("server folder registry unavailable")

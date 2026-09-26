@@ -198,6 +198,52 @@ func TestGitHubDocumentProgressSQLitePauseRaceCannotPublish(t *testing.T) {
 	require.Contains(t, string(stored.LastSyncCursor), `"selection":"old"`)
 }
 
+func TestGitHubDocumentProgressSQLiteModeRaceCannotPublish(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "github-mode.db")), &gorm.Config{})
+	require.NoError(t, err)
+	repo, ds, run, items := githubDocumentTestRows(t, db)
+	ctx := context.Background()
+	leaseID := uuid.NewString()
+	ok, err := repo.AcquireGitHubDocumentRunLease(ctx, run, leaseID, time.Now().Add(time.Minute))
+	require.NoError(t, err)
+	require.True(t, ok)
+	for _, item := range items {
+		require.NoError(t, repo.UpdateGitHubDocumentItem(ctx, run, leaseID, item,
+			types.GitHubDocumentItemReady, types.GitHubDocumentOutcomeSkipped, ""))
+	}
+	// A mode edit after the last service guard must fail the final cursor CAS.
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", ds.ID).
+		Update("sync_mode", types.SyncModeFull).Error)
+	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID, githubDocumentTestCursor(t, run)), ErrGitHubDocumentRunChanged)
+	stored, err := repo.FindByID(ctx, ds.ID)
+	require.NoError(t, err)
+	require.Contains(t, string(stored.LastSyncCursor), `"selection":"old"`)
+}
+
+func TestGitHubDocumentProgressSQLiteSupersedeOnlyIdleRun(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "github-supersede.db")), &gorm.Config{})
+	require.NoError(t, err)
+	repo, ds, run, _ := githubDocumentTestRows(t, db)
+	ctx := context.Background()
+	leaseID := uuid.NewString()
+	ok, err := repo.AcquireGitHubDocumentRunLease(ctx, run, leaseID, time.Now().Add(time.Minute))
+	require.NoError(t, err)
+	require.True(t, ok)
+	ok, err = repo.SupersedeGitHubDocumentRunIfIdle(ctx, run)
+	require.NoError(t, err)
+	require.False(t, ok, "an active worker must retain its fixed-commit plan")
+	require.NoError(t, repo.ReleaseGitHubDocumentRunLease(ctx, run, leaseID))
+	ok, err = repo.SupersedeGitHubDocumentRunIfIdle(ctx, run)
+	require.NoError(t, err)
+	require.True(t, ok)
+	var saved types.GitHubDocumentRun
+	require.NoError(t, db.First(&saved, "id = ?", run.ID).Error)
+	require.Equal(t, types.GitHubDocumentRunSuperseded, saved.Status)
+	stored, err := repo.FindByID(ctx, ds.ID)
+	require.NoError(t, err)
+	require.Contains(t, string(stored.LastSyncCursor), `"selection":"old"`)
+}
+
 func TestGitHubDocumentCheckpointPostgresSchemaAndRollback(t *testing.T) {
 	dsn := os.Getenv("WEKNORA_TEST_POSTGRES_DSN")
 	if dsn == "" {

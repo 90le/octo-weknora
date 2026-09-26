@@ -36,7 +36,7 @@ type githubDocumentProgressStore interface {
 	CreateGitHubDocumentRun(context.Context, *types.GitHubDocumentRun, []types.GitHubDocumentSyncItem) error
 	ListGitHubDocumentRunItems(context.Context, *types.GitHubDocumentRun) ([]types.GitHubDocumentSyncItem, error)
 	UpdateGitHubDocumentItem(context.Context, *types.GitHubDocumentRun, string, types.GitHubDocumentSyncItem, string, string, string) error
-	SupersedeGitHubDocumentRun(context.Context, *types.GitHubDocumentRun) error
+	SupersedeGitHubDocumentRunIfIdle(context.Context, *types.GitHubDocumentRun) (bool, error)
 	AcquireGitHubDocumentRunLease(context.Context, *types.GitHubDocumentRun, string, time.Time) (bool, error)
 	RenewGitHubDocumentRunLease(context.Context, *types.GitHubDocumentRun, string, time.Time) (bool, error)
 	ReleaseGitHubDocumentRunLease(context.Context, *types.GitHubDocumentRun, string) error
@@ -155,16 +155,34 @@ func (s *DataSourceService) processGitHubDocumentRun(
 	if err != nil {
 		return s.githubDocumentRunFailure(ctx, ds, syncLog, wasPaused, err)
 	}
-	if run != nil && (run.Selection != selection || run.CredentialScope != credentialScope) {
-		if err := store.SupersedeGitHubDocumentRun(ctx, run); err != nil {
+	requestedFull := payload.ForceFull || ds.SyncMode == types.SyncModeFull
+	if run != nil && (run.Selection != selection || run.CredentialScope != credentialScope || run.ForceFull != requestedFull) {
+		superseded, err := store.SupersedeGitHubDocumentRunIfIdle(ctx, run)
+		if err != nil {
 			return s.githubDocumentRunFailure(ctx, ds, syncLog, wasPaused, err)
+		}
+		if !superseded {
+			// The existing worker is still in one native parser operation. Keep
+			// its plan/cursor intact and make the conflicting request visible;
+			// never pretend the requested full/incremental mode was honored.
+			prior, parseErr := ds.ParseSyncResult()
+			if parseErr != nil {
+				return s.githubDocumentRunFailure(ctx, ds, syncLog, wasPaused, parseErr)
+			}
+			if prior == nil {
+				prior = &types.SyncResult{}
+			}
+			data, _ := prior.ToJSON()
+			return s.updateSyncRunResult(ctx, ds, syncLog, prior, data, types.SyncLogStatusPartial,
+				"A previous GitHub document sync is still processing; retry the changed sync mode or scope after it finishes",
+				wasPaused, false)
 		}
 		run = nil
 	}
-	forceFull := payload.ForceFull || ds.SyncMode == types.SyncModeFull
+	forceFull := requestedFull
 	pinCommit := ""
 	if run != nil {
-		forceFull, pinCommit = run.ForceFull, run.CommitSHA
+		pinCommit = run.CommitSHA
 	}
 	plan, err := connector.PlanDocuments(ctx, cfg, published, forceFull, pinCommit)
 	if err != nil {

@@ -159,6 +159,23 @@ func TestGitHubSyncAccessGuardRejectsCredentialRevocation(t *testing.T) {
 	require.ErrorIs(t, guard.check(context.Background()), errSyncAccessChanged)
 }
 
+func TestGitHubSyncAccessGuardRejectsModeChange(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "github-mode-guard.db")), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&types.DataSource{}))
+	repo := apprepo.NewDataSourceRepository(db)
+	cfg := &types.DataSourceConfig{Settings: map[string]interface{}{"repository": "test/docs", "mode": "documents"}}
+	encoded, err := cfg.ToJSON()
+	require.NoError(t, err)
+	ds := &types.DataSource{ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: "kb", Type: types.ConnectorTypeGitHub,
+		Status: types.DataSourceStatusActive, SyncMode: types.SyncModeIncremental, Config: encoded}
+	require.NoError(t, repo.Create(context.Background(), ds))
+	guard := &syncAccessGuard{svc: &DataSourceService{dsRepo: repo}, ds: ds, config: cfg}
+	require.NoError(t, guard.check(context.Background()))
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", ds.ID).Update("sync_mode", types.SyncModeFull).Error)
+	require.ErrorIs(t, guard.check(context.Background()), errSyncAccessChanged)
+}
+
 func TestGitHubDocumentChunkRejectsKnowledgeBaseRevocation(t *testing.T) {
 	ds := &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb"}
 	svc := &DataSourceService{kbService: &processSyncKBService{kb: &types.KnowledgeBase{ID: "kb", TenantID: 7}}}
@@ -269,6 +286,16 @@ func serviceGitRun(t *testing.T, dir string, args ...string) string {
 }
 
 func TestGitHubDocumentRunRetriesOnlyFailedFileAfterRestart(t *testing.T) {
+	testGitHubDocumentRunResume(t, "same-mode")
+}
+
+func TestGitHubDocumentRunReplansChangedModeAndManualFull(t *testing.T) {
+	for _, scenario := range []string{"configured-full", "manual-full", "full-to-incremental", "active-manual-full"} {
+		t.Run(scenario, func(t *testing.T) { testGitHubDocumentRunResume(t, scenario) })
+	}
+}
+
+func testGitHubDocumentRunResume(t *testing.T, scenario string) {
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "github-doc-service.db")), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&types.DataSource{}, &types.SyncLog{}, &types.GitHubDocumentRun{}, &types.GitHubDocumentSyncItem{}))
@@ -287,6 +314,9 @@ func TestGitHubDocumentRunRetriesOnlyFailedFileAfterRestart(t *testing.T) {
 	sourceRepo := apprepo.NewDataSourceRepository(db)
 	ds := &types.DataSource{ID: uuid.NewString(), TenantID: 7, KnowledgeBaseID: "kb", Name: "GitHub docs",
 		Type: types.ConnectorTypeGitHub, Status: types.DataSourceStatusActive, SyncDeletions: true}
+	if scenario == "full-to-incremental" {
+		ds.SyncMode = types.SyncModeFull
+	}
 	cfg := &types.DataSourceConfig{Settings: map[string]interface{}{"repository": "test/docs", "ref": "main", "mode": "documents", "paths": []string{"docs"}},
 		SyncSource: &types.DataSourceSyncSource{TenantID: 7, KnowledgeBaseID: "kb", DataSourceID: ds.ID}}
 	ds.Config, err = cfg.ToJSON()
@@ -345,17 +375,17 @@ func TestGitHubDocumentRunRetriesOnlyFailedFileAfterRestart(t *testing.T) {
 	svc := &DataSourceService{dsRepo: sourceRepo, syncLogRepo: syncLogs, knowledgeService: knowledge,
 		kbService:  &processSyncKBService{kb: &types.KnowledgeBase{ID: "kb", TenantID: 7}},
 		tenantRepo: &processSyncTenantRepo{tenant: &types.Tenant{ID: 7}}, tagService: &processSyncTagService{}}
-	process := func(logID string) error {
+	process := func(logID string, forceFull bool) error {
 		log := &types.SyncLog{ID: logID, DataSourceID: ds.ID, TenantID: ds.TenantID, Status: types.SyncLogStatusRunning}
 		require.NoError(t, syncLogs.Create(ctx, log))
 		current, findErr := sourceRepo.FindByID(ctx, ds.ID)
 		require.NoError(t, findErr)
 		guard := &syncAccessGuard{svc: svc, ds: current, config: cfg}
 		return svc.processGitHubDocumentRun(ctx, connector, current, cfg, log,
-			types.DataSourceSyncPayload{DataSourceID: ds.ID, TenantID: ds.TenantID, SyncLogID: logID},
+			types.DataSourceSyncPayload{DataSourceID: ds.ID, TenantID: ds.TenantID, SyncLogID: logID, ForceFull: forceFull},
 			false, &syncRunGuard{svc: svc, syncLogID: logID}, guard)
 	}
-	require.NoError(t, process(uuid.NewString()))
+	require.NoError(t, process(uuid.NewString(), false))
 	firstCursor, err := sourceRepo.FindByID(ctx, ds.ID)
 	require.NoError(t, err)
 	require.Contains(t, string(firstCursor.LastSyncCursor), oldCommit)
@@ -365,13 +395,49 @@ func TestGitHubDocumentRunRetriesOnlyFailedFileAfterRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, stillOld, "failed replacement must retain its old indexed document")
 	require.Equal(t, baseline.Upserts[0].BlobSHA, stillOld.GetMetadata()["github_blob_sha"])
+	oldRun, err := sourceRepo.FindRunningGitHubDocumentRun(ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID)
+	require.NoError(t, err)
+	require.NotNil(t, oldRun)
+	if scenario == "configured-full" || scenario == "full-to-incremental" {
+		mode := types.SyncModeFull
+		if scenario == "full-to-incremental" {
+			mode = types.SyncModeIncremental
+		}
+		require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", ds.ID).Update("sync_mode", mode).Error)
+	}
+	if scenario == "active-manual-full" {
+		leaseID := uuid.NewString()
+		ok, leaseErr := sourceRepo.AcquireGitHubDocumentRunLease(ctx, oldRun, leaseID, time.Now().Add(time.Minute))
+		require.NoError(t, leaseErr)
+		require.True(t, ok)
+		conflictLogID := uuid.NewString()
+		require.NoError(t, process(conflictLogID, true))
+		conflictLog, lookupErr := syncLogs.FindByID(ctx, conflictLogID)
+		require.NoError(t, lookupErr)
+		require.Equal(t, types.SyncLogStatusPartial, conflictLog.Status)
+		require.Contains(t, conflictLog.ErrorMessage, "previous GitHub document sync is still processing")
+		unchanged, lookupErr := sourceRepo.FindByID(ctx, ds.ID)
+		require.NoError(t, lookupErr)
+		require.Contains(t, string(unchanged.LastSyncCursor), oldCommit)
+		stillRunning, lookupErr := sourceRepo.FindRunningGitHubDocumentRun(ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID)
+		require.NoError(t, lookupErr)
+		require.Equal(t, oldRun.ID, stillRunning.ID)
+		require.NoError(t, sourceRepo.ReleaseGitHubDocumentRunLease(ctx, oldRun, leaseID))
+	}
 	knowledge.failPath = ""
-	require.NoError(t, process(uuid.NewString()))
+	requestedFull := scenario == "manual-full" || scenario == "active-manual-full"
+	require.NoError(t, process(uuid.NewString(), requestedFull))
 	finalCursor, err := sourceRepo.FindByID(ctx, ds.ID)
 	require.NoError(t, err)
 	require.Contains(t, string(finalCursor.LastSyncCursor), head)
 	require.Equal(t, 2, knowledge.createdBy["docs/a.md"])
 	require.Equal(t, 1, knowledge.createdBy["docs/b.md"], "already ACKed file must not be re-ingested")
+	if scenario != "same-mode" {
+		var superseded types.GitHubDocumentRun
+		require.NoError(t, db.First(&superseded, "id = ?", oldRun.ID).Error)
+		require.Equal(t, types.GitHubDocumentRunSuperseded, superseded.Status,
+			"a changed full/incremental request must not silently resume the old mode")
+	}
 }
 
 type githubDocumentDeleteRepo struct {

@@ -121,21 +121,23 @@ func (r *DataSourceRepository) UpdateGitHubDocumentItem(
 	})
 }
 
-func (r *DataSourceRepository) SupersedeGitHubDocumentRun(ctx context.Context, run *types.GitHubDocumentRun) error {
+// SupersedeGitHubDocumentRunIfIdle retires an unfinished plan only when no
+// worker still owns its lease. A new full-sync request or scope change must
+// never silently replace a run while that worker is indexing a file.
+func (r *DataSourceRepository) SupersedeGitHubDocumentRunIfIdle(ctx context.Context, run *types.GitHubDocumentRun) (bool, error) {
 	if run == nil || run.ID == "" {
-		return ErrGitHubDocumentRunChanged
+		return false, ErrGitHubDocumentRunChanged
 	}
+	now := time.Now().UTC()
 	result := r.db.WithContext(ctx).Model(&types.GitHubDocumentRun{}).
 		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND data_source_id = ? AND status = ?",
 			run.ID, run.TenantID, run.KnowledgeBaseID, run.DataSourceID, types.GitHubDocumentRunRunning).
-		Updates(map[string]interface{}{"status": types.GitHubDocumentRunSuperseded, "updated_at": time.Now().UTC()})
+		Where("lease_until IS NULL OR lease_until <= ?", now).
+		Updates(map[string]interface{}{"status": types.GitHubDocumentRunSuperseded, "lease_id": "", "lease_until": nil, "updated_at": now})
 	if result.Error != nil {
-		return result.Error
+		return false, result.Error
 	}
-	if result.RowsAffected != 1 {
-		return ErrGitHubDocumentRunChanged
-	}
-	return nil
+	return result.RowsAffected == 1, nil
 }
 
 func (r *DataSourceRepository) AcquireGitHubDocumentRunLease(
@@ -220,8 +222,8 @@ func (r *DataSourceRepository) PublishGitHubDocumentRun(
 		}
 		now := time.Now().UTC()
 		query := tx.Model(&types.DataSource{}).
-			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND deleted_at IS NULL AND status = ? AND sync_deletions = ?",
-				ds.ID, ds.TenantID, ds.KnowledgeBaseID, types.ConnectorTypeGitHub, ds.Status, ds.SyncDeletions)
+			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND deleted_at IS NULL AND status = ? AND sync_mode = ? AND sync_deletions = ?",
+				ds.ID, ds.TenantID, ds.KnowledgeBaseID, types.ConnectorTypeGitHub, ds.Status, ds.SyncMode, ds.SyncDeletions)
 		if tx.Dialector.Name() == "postgres" {
 			query = query.Where("config = ?::jsonb", ds.Config.ToString())
 		} else {
