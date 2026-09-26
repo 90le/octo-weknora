@@ -31,8 +31,8 @@ type githubBatchScopeReviewToken struct {
 	Version          int    `json:"v"`
 	TenantID         uint64 `json:"t"`
 	KnowledgeBaseID  string `json:"k"`
-	PrincipalSubject string `json:"a"`
-	Repository       string `json:"r"`
+	PrincipalDigest  string `json:"a"`
+	RepositoryDigest string `json:"r"`
 	Mode             string `json:"m"`
 	Selection        string `json:"s"`
 	Credential       string `json:"c"`
@@ -66,6 +66,18 @@ func (s *DataSourceService) PreviewGitHubBatchScope(
 	config.StripNonSecretCredentials(types.ConnectorTypeGitHub)
 	if err := snapshot.ValidateSettings(config); err != nil {
 		return nil, datasource.ErrInvalidConfig
+	}
+	// Document previews validate globs in documentExcludes. Source snapshots
+	// otherwise ignore malformed patterns, which would make a reviewed exclusion
+	// look effective even though the later sync cannot apply it.
+	if req.Mode == "source" {
+		if rules, ok := settings["exclude"].([]string); ok {
+			for _, rule := range rules {
+				if _, err := path.Match(rule, ""); err != nil {
+					return nil, datasource.ErrInvalidConfig
+				}
+			}
+		}
 	}
 	if _, valid := githubconnector.ConfiguredRepository(config); !valid {
 		return nil, datasource.ErrInvalidConfig
@@ -234,8 +246,12 @@ func summarizeGitHubSourceScope(files []githubconnector.SourcePreviewFile, exclu
 
 func githubBatchCredentialDigest(credentials map[string]interface{}, key []byte) string {
 	token, _ := credentials["access_token"].(string)
+	return githubBatchIdentityDigest(key, "credential", strings.TrimSpace(token))
+}
+
+func githubBatchIdentityDigest(key []byte, kind, value string) string {
 	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write([]byte("github-batch-credential-v1\x00" + strings.TrimSpace(token)))
+	_, _ = mac.Write([]byte("github-batch-" + kind + "-v1\x00" + value))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -248,7 +264,8 @@ func signGitHubBatchScopeReview(
 		return "", errors.New("GitHub batch scope signing is unavailable")
 	}
 	payload := githubBatchScopeReviewToken{Version: 1, TenantID: tenantID, KnowledgeBaseID: kbID,
-		PrincipalSubject: dataSourceDeletePrincipalSubject(ctx), Repository: repository, Mode: mode,
+		PrincipalDigest:  githubBatchIdentityDigest(key, "principal", dataSourceDeletePrincipalSubject(ctx)),
+		RepositoryDigest: githubBatchIdentityDigest(key, "repository", canonicalGitHubRepository(repository)), Mode: mode,
 		Selection: snapshot.Selection(config), Credential: githubBatchCredentialDigest(config.Credentials, key),
 		Commit: commit, EligibleFiles: eligible, ExpiresAtUnix: expires.Unix()}
 	raw, err := json.Marshal(payload)
@@ -286,10 +303,11 @@ func verifyGitHubBatchScopeReview(
 		return errors.New("GitHub scope preview token signature is invalid")
 	}
 	var payload githubBatchScopeReviewToken
-	if json.Unmarshal(raw, &payload) != nil || payload.Version != 1 || payload.ExpiresAtUnix < time.Now().UTC().Unix() ||
+	if json.Unmarshal(raw, &payload) != nil || payload.Version != 1 || payload.ExpiresAtUnix <= time.Now().UTC().Unix() ||
 		payload.TenantID != req.TenantID || payload.KnowledgeBaseID != req.KnowledgeBaseID ||
-		payload.PrincipalSubject == "" || payload.PrincipalSubject != dataSourceDeletePrincipalSubject(ctx) ||
-		payload.Repository != canonicalGitHubRepository(candidate.Repository) || payload.Mode != req.Mode ||
+		dataSourceDeletePrincipalSubject(ctx) == "" || payload.PrincipalDigest == "" ||
+		payload.PrincipalDigest != githubBatchIdentityDigest(key, "principal", dataSourceDeletePrincipalSubject(ctx)) ||
+		payload.RepositoryDigest != githubBatchIdentityDigest(key, "repository", canonicalGitHubRepository(candidate.Repository)) || payload.Mode != req.Mode ||
 		payload.Selection != snapshot.Selection(config) ||
 		payload.Credential != githubBatchCredentialDigest(config.Credentials, key) ||
 		payload.Commit == "" || payload.EligibleFiles < 0 ||

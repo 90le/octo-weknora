@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import {
   createGitHubDataSourceBatch,
   discoverGitHubRepositories,
+  previewGitHubBatchScope,
+  type GitHubBatchScopePreview,
   type GitHubBatchResponse,
   type GitHubBatchResultItem,
   type GitHubBulkMode,
@@ -30,7 +32,12 @@ import {
   selectableGitHubRepositoryMode,
   summarizeGitHubBulkResults,
   uniqueGitHubRepositories,
+  normalizeGitHubRepository,
 } from './githubBulkImportState'
+import {
+  effectiveGitHubBulkScope, githubBulkReviewKey, mapGitHubPreviewsBounded, validGitHubBulkReview,
+  type GitHubBulkRowOverride, type GitHubBulkReview,
+} from './githubBulkScopeReviewState'
 import type { DataSource } from '@/api/datasource'
 
 const props = withDefaults(defineProps<{
@@ -55,8 +62,8 @@ const search = ref('')
 const includeArchived = ref(false)
 const mode = ref<GitHubBulkMode>('source')
 const pathsText = ref('')
+const excludeText = ref('')
 const syncSchedule = ref(githubStaggeredScheduleChoice)
-const startSync = ref(false)
 const discovering = ref(false)
 const submitting = ref(false)
 const errorMessage = ref('')
@@ -64,6 +71,15 @@ const results = ref<GitHubBatchResultItem[]>([])
 const resultModePresence = ref<Record<string, { source: boolean; documents: boolean }>>({})
 const nextCursor = ref('')
 const loadingMore = ref(false)
+const previewing = ref(false)
+const previewDone = ref(0)
+const previewTotal = ref(0)
+const loadingRows = ref<Record<string, boolean>>({})
+const rowOverrides = ref<Record<string, GitHubBulkRowOverride>>({})
+const rowReviews = ref<Record<string, GitHubBulkReview>>({})
+const credentialRevision = ref(0)
+const reviewNow = ref(Date.now())
+let reviewClock: number | null = null
 const batchLimit = githubBulkRequestLimit
 
 const stepTitles = computed(() => [
@@ -98,7 +114,7 @@ const selectedCount = computed(() => selectedRepositories.value.length)
 const requestBatchCount = computed(() => Math.ceil(selectedCount.value / batchLimit))
 const selectionRequiresMultipleRequests = computed(() => requestBatchCount.value > 1)
 const resultSummary = computed(() => summarizeGitHubBulkResults(results.value))
-const isManualSyncPolicy = computed(() => !syncSchedule.value.trim())
+const pendingReviewCount = computed(() => selectedRepositories.value.filter(repository => !rowReady(repository)).length)
 const staggeredPreview = computed(() => selectedRepositories.value
   .filter((repository) => !hasGitHubRepositoryMode(repository.repository, mode.value, repositoryPresence.value))
   .map((repository) => ({
@@ -120,7 +136,7 @@ const drawerConfirmText = computed(() => {
 
 const confirmDisabled = computed(() => {
   if (step.value === 0) return !normalizeOwner(owner.value)
-  if (step.value === 1) return selectedCount.value === 0
+  if (step.value === 1) return selectedCount.value === 0 || previewing.value || pendingReviewCount.value > 0
   return false
 })
 
@@ -158,8 +174,8 @@ function reset() {
   includeArchived.value = false
   mode.value = 'source'
   pathsText.value = ''
+  excludeText.value = ''
   syncSchedule.value = githubStaggeredScheduleChoice
-  startSync.value = false
   discovering.value = false
   submitting.value = false
   errorMessage.value = ''
@@ -167,15 +183,128 @@ function reset() {
   resultModePresence.value = {}
   nextCursor.value = ''
   loadingMore.value = false
+  previewing.value = false
+  previewDone.value = 0
+  previewTotal.value = 0
+  loadingRows.value = {}
+  rowOverrides.value = {}
+  rowReviews.value = {}
 }
 
 watch(visible, (opened) => {
-  if (opened) reset()
+  if (opened) {
+    reset()
+    reviewNow.value = Date.now()
+    reviewClock = window.setInterval(() => { reviewNow.value = Date.now() }, 30_000)
+  } else if (reviewClock !== null) {
+    window.clearInterval(reviewClock)
+    reviewClock = null
+  }
+})
+onBeforeUnmount(() => { if (reviewClock !== null) window.clearInterval(reviewClock) })
+watch(accessToken, () => { credentialRevision.value += 1 })
+watch(selectedRepositories, (rows) => {
+  const next = { ...rowOverrides.value }
+  for (const repository of rows) {
+    const key = normalizeGitHubRepository(repository.repository)
+    if (!next[key]) next[key] = { pathsEnabled: false, pathsText: '', excludeEnabled: false, excludeText: '' }
+  }
+  rowOverrides.value = next
 })
 
-watch(isManualSyncPolicy, (manual) => {
-  if (manual) startSync.value = false
-})
+function repositoryKey(repository: GitHubRepository): string {
+  return normalizeGitHubRepository(repository.repository)
+}
+
+function scopeFor(repository: GitHubRepository) {
+  return effectiveGitHubBulkScope(pathsText.value, excludeText.value, rowOverrides.value[repositoryKey(repository)])
+}
+
+function scopeKey(repository: GitHubRepository): string {
+  return githubBulkReviewKey(repository, mode.value, scopeFor(repository), credentialRevision.value)
+}
+
+function reviewFor(repository: GitHubRepository): GitHubBulkReview | undefined {
+  return rowReviews.value[repositoryKey(repository)]
+}
+
+function rowReady(repository: GitHubRepository): boolean {
+  return validGitHubBulkReview(reviewFor(repository), scopeKey(repository), reviewNow.value)
+}
+
+function formatCount(value: number): string {
+  return new Intl.NumberFormat().format(value || 0)
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${formatCount(value)} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MiB`
+}
+
+function warningText(code: string): string {
+  const key = `datasource.githubBulk.batchReview.warning.${code}`
+  const localized = t(key)
+  return localized === key ? t('datasource.githubBulk.batchReview.warning.other') : localized
+}
+
+async function previewOne(repository: GitHubRepository, force = false) {
+  const key = repositoryKey(repository)
+  const selectionKey = scopeKey(repository)
+  if (!force && rowReady(repository)) return
+  if (loadingRows.value[key]) return
+  loadingRows.value = { ...loadingRows.value, [key]: true }
+  const scope = scopeFor(repository)
+  try {
+    const response = unwrapResponse<GitHubBatchScopePreview>(await previewGitHubBatchScope({
+      knowledge_base_id: props.kbId,
+      owner: owner.value,
+      repository: repository.repository,
+      ref: repository.default_branch,
+      mode: mode.value,
+      paths: scope.paths,
+      exclude: scope.exclude,
+      credentials: credentials(),
+    }))
+    if (scopeKey(repository) !== selectionKey || !visible.value) return
+    rowReviews.value = { ...rowReviews.value, [key]: {
+      key: selectionKey, preview: response,
+      error: response.preview_token && response.tree_state === 'complete' && !response.error_code
+        ? '' : response.error_message || t('datasource.githubBulk.batchReview.previewFailed'),
+      allowEmpty: false,
+    } }
+  } catch (error) {
+    if (scopeKey(repository) !== selectionKey || !visible.value) return
+    rowReviews.value = { ...rowReviews.value, [key]: { key: selectionKey, error: readError(error), allowEmpty: false } }
+  } finally {
+    loadingRows.value = { ...loadingRows.value, [key]: false }
+  }
+}
+
+async function previewSelected() {
+  if (previewing.value || !selectedRepositories.value.length) return
+  const pending = selectedRepositories.value.filter(repository => !rowReady(repository))
+  previewing.value = true
+  previewDone.value = 0
+  previewTotal.value = pending.length
+  try {
+    await mapGitHubPreviewsBounded(pending, async repository => {
+      await previewOne(repository)
+      previewDone.value += 1
+      return repository.repository
+    })
+  } finally {
+    previewing.value = false
+  }
+}
+
+function confirmEmpty(repository: GitHubRepository, allow: boolean) {
+  const key = repositoryKey(repository)
+  const review = rowReviews.value[key]
+  if (review && review.key === scopeKey(repository)) {
+    rowReviews.value = { ...rowReviews.value, [key]: { ...review, allowEmpty: allow } }
+  }
+}
 
 async function discover() {
   const normalizedOwner = normalizeOwner(owner.value)
@@ -240,12 +369,23 @@ async function loadMore() {
 }
 
 async function createBatch() {
-  if (selectedRepositories.value.length === 0) return
+  if (selectedRepositories.value.length === 0 || pendingReviewCount.value > 0 || previewing.value) return
   submitting.value = true
   errorMessage.value = ''
   try {
-    const sync = githubBatchSyncPayload(syncSchedule.value, startSync.value)
-    const batches = partitionGitHubRepositories(selectedRepositories.value, batchLimit)
+    const sync = githubBatchSyncPayload(syncSchedule.value, false)
+    const reviewedRepositories = selectedRepositories.value.map(repository => {
+      const scope = scopeFor(repository)
+      const reviewed = reviewFor(repository)
+      return {
+        ...repository,
+        ...(scope.candidatePaths !== undefined ? { paths: scope.candidatePaths } : {}),
+        ...(scope.candidateExclude !== undefined ? { exclude: scope.candidateExclude } : {}),
+        preview_token: reviewed?.preview?.preview_token,
+        allow_empty: reviewed?.allowEmpty || false,
+      }
+    })
+    const batches = partitionGitHubRepositories(reviewedRepositories, batchLimit)
     const nextResults: GitHubBatchResultItem[] = []
     for (let index = 0; index < batches.length; index += 1) {
       const repositories = batches[index]
@@ -257,7 +397,10 @@ async function createBatch() {
           credentials: credentials(),
           mode: mode.value,
           paths: parseGitHubPaths(pathsText.value),
+          exclude: parseGitHubPaths(excludeText.value).length ? parseGitHubPaths(excludeText.value) : undefined,
+          scope_review_required: true,
           ...sync,
+          start_sync: false,
         }))
         nextResults.push(...(response.results || []))
       } catch (error) {
@@ -593,8 +736,80 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
         />
         <p class="github-bulk-field-hint">{{ t('datasource.githubBulk.pathsHint') }}</p>
       </div>
-      <t-checkbox v-model="startSync" :disabled="isManualSyncPolicy">{{ t('datasource.githubBulk.startSync') }}</t-checkbox>
-      <p class="github-bulk-field-hint">{{ t('datasource.githubBulk.startSyncHint') }}</p>
+      <div>
+        <label class="github-bulk-label">{{ t('datasource.githubBulk.batchReview.globalExclude') }}</label>
+        <t-textarea v-model="excludeText" :placeholder="t('datasource.githubBulk.batchReview.excludeHint')"
+          :autosize="{ minRows: 2, maxRows: 5 }" />
+      </div>
+      <t-alert theme="info" :message="t('datasource.githubBulk.batchReview.noSync')" />
+    </section>
+
+    <section v-if="step === 1 && selectedRepositories.length" class="setting-drawer__section">
+      <h4 class="setting-drawer__section-title">{{ t('datasource.githubBulk.batchReview.title') }}</h4>
+      <p class="github-bulk-hint">{{ t('datasource.githubBulk.batchReview.hint') }}</p>
+      <p class="github-bulk-hint">{{ t('datasource.githubBulk.batchReview.previewVersionNotice') }}</p>
+      <div class="github-bulk-review-actions">
+        <t-button variant="outline" :loading="previewing" :disabled="pendingReviewCount === 0" @click="previewSelected">
+          {{ t('datasource.githubBulk.batchReview.previewSelected', { count: pendingReviewCount }) }}
+        </t-button>
+        <span v-if="previewing">{{ t('datasource.githubBulk.batchReview.progress', { done: previewDone, total: previewTotal }) }}</span>
+        <span v-else-if="pendingReviewCount > 0">{{ t('datasource.githubBulk.batchReview.pending', { count: pendingReviewCount }) }}</span>
+      </div>
+      <div class="github-bulk-reviewed-list">
+        <details v-for="repository in selectedRepositories" :key="repository.repository" class="github-bulk-reviewed-row">
+          <summary>
+            <strong>{{ repository.repository }}</strong>
+            <t-tag v-if="rowReady(repository)" size="small" theme="success" variant="light">{{ t('datasource.githubBulk.batchReview.ready') }}</t-tag>
+            <t-tag v-else-if="reviewFor(repository)?.key === scopeKey(repository) && reviewFor(repository)?.error"
+              size="small" theme="danger" variant="light">{{ t('datasource.githubBulk.batchReview.failed') }}</t-tag>
+            <t-tag v-else size="small" theme="warning" variant="light">{{ t('datasource.githubBulk.batchReview.needsPreview') }}</t-tag>
+          </summary>
+          <div class="github-bulk-reviewed-row__body">
+            <p>{{ t('datasource.githubBulk.defaultBranch', { branch: repository.default_branch || '--' }) }}</p>
+            <t-checkbox v-model="rowOverrides[repositoryKey(repository)].pathsEnabled">
+              {{ t('datasource.githubBulk.batchReview.overridePaths') }}
+            </t-checkbox>
+            <t-textarea v-if="rowOverrides[repositoryKey(repository)].pathsEnabled"
+              v-model="rowOverrides[repositoryKey(repository)].pathsText"
+              :placeholder="t('datasource.github.pathsHint')" :autosize="{ minRows: 2, maxRows: 5 }" />
+            <t-checkbox v-model="rowOverrides[repositoryKey(repository)].excludeEnabled">
+              {{ t('datasource.githubBulk.batchReview.overrideExclude') }}
+            </t-checkbox>
+            <t-textarea v-if="rowOverrides[repositoryKey(repository)].excludeEnabled"
+              v-model="rowOverrides[repositoryKey(repository)].excludeText"
+              :placeholder="t('datasource.githubBulk.batchReview.excludeHint')" :autosize="{ minRows: 2, maxRows: 5 }" />
+            <t-button variant="outline" size="small" :loading="Boolean(loadingRows[repositoryKey(repository)])"
+              :disabled="previewing" @click="previewOne(repository, true)">
+              {{ t('datasource.githubBulk.batchReview.previewOne') }}
+            </t-button>
+            <t-alert v-if="reviewFor(repository)?.key === scopeKey(repository) && reviewFor(repository)?.error"
+              theme="error" :message="reviewFor(repository)?.error || ''" />
+            <div v-if="reviewFor(repository)?.key === scopeKey(repository) && reviewFor(repository)?.preview"
+              class="github-bulk-reviewed-result">
+              <p>{{ t('datasource.githubBulk.scopePreview.commit') }}: <code>{{ reviewFor(repository)?.preview?.commit?.slice(0, 12) || '—' }}</code>
+                · {{ t('datasource.githubBulk.scopePreview.candidate') }} {{ formatCount(reviewFor(repository)?.preview?.summary.candidate_files || 0) }}
+                · {{ t('datasource.githubBulk.scopePreview.eligible') }} {{ formatCount(reviewFor(repository)?.preview?.summary.eligible_files || 0) }}
+                · {{ formatBytes(reviewFor(repository)?.preview?.summary.candidate_bytes || 0) }}
+              </p>
+              <p>{{ t('datasource.githubBulk.scopePreview.extensions') }}:
+                {{ reviewFor(repository)?.preview?.summary.extensions.slice(0, 6).map(group => `${group.name} ${group.files}`).join(' · ') || '—' }}
+              </p>
+              <p v-if="reviewFor(repository)?.preview?.estimated">{{ t('datasource.githubBulk.batchReview.sourceEstimate') }}</p>
+              <p v-if="reviewFor(repository)?.preview?.summary.sample_paths.length">
+                {{ t('datasource.githubBulk.scopePreview.sample') }}: {{ reviewFor(repository)?.preview?.summary.sample_paths.slice(0, 5).join(' · ') }}
+              </p>
+              <p v-if="reviewFor(repository)?.preview?.warnings.length">
+                {{ t('datasource.githubBulk.batchReview.warnings') }}: {{ reviewFor(repository)?.preview?.warnings.map(warningText).join(' · ') }}
+              </p>
+              <t-checkbox v-if="reviewFor(repository)?.preview?.preview_token && reviewFor(repository)?.preview?.summary.eligible_files === 0"
+                :checked="Boolean(reviewFor(repository)?.allowEmpty)"
+                @change="confirmEmpty(repository, Boolean($event))">
+                {{ t('datasource.githubBulk.batchReview.allowEmpty') }}
+              </t-checkbox>
+            </div>
+          </div>
+        </details>
+      </div>
     </section>
   </SettingDrawer>
 </template>
@@ -701,6 +916,14 @@ function resultStatusLabel(status: GitHubBatchResultItem['status']) {
 .github-bulk-repository-row__meta { color: var(--td-text-color-placeholder); font-size: 11px; }
 
 .github-bulk-config-grid { display: grid; grid-template-columns: minmax(0, 1fr) 210px; gap: 16px; }
+.github-bulk-review-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 12px 0; font-size: 12px; color: var(--td-text-color-secondary); }
+.github-bulk-reviewed-list { display: grid; gap: 8px; }
+.github-bulk-reviewed-row { border: 1px solid var(--td-component-stroke); border-radius: 7px; padding: 9px 12px; }
+.github-bulk-reviewed-row summary { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px; }
+.github-bulk-reviewed-row summary strong { flex: 1; overflow-wrap: anywhere; }
+.github-bulk-reviewed-row__body { display: grid; gap: 9px; padding-top: 10px; color: var(--td-text-color-secondary); font-size: 12px; }
+.github-bulk-reviewed-row__body p { margin: 0; overflow-wrap: anywhere; }
+.github-bulk-reviewed-result { display: grid; gap: 5px; padding: 10px; border-radius: 6px; background: var(--td-bg-color-secondarycontainer); }
 .github-bulk-schedule-preview { color: var(--td-text-color-secondary); font-size: 12px; }
 .github-bulk-schedule-preview summary { cursor: pointer; }
 .github-bulk-schedule-preview ul { max-height: 180px; overflow: auto; margin: 8px 0 0; padding: 0; list-style: none; }

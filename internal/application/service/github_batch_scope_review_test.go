@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -23,13 +25,23 @@ func reviewedBatchContext() context.Context {
 	return types.WithPrincipal(context.Background(), types.Principal{Type: types.PrincipalWebUser, ID: "owner-one"})
 }
 
-func reviewedBatchFixture(t *testing.T, truncated bool) (*DataSourceService, func()) {
+func reviewedBatchFixture(t *testing.T, truncated bool, statuses ...int) (*DataSourceService, func()) {
 	t.Helper()
 	sha := strings.Repeat("c", 40)
 	commit := strings.Repeat("a", 40)
 	treeSHA := strings.Repeat("b", 40)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if len(statuses) > 0 && r.URL.Path == "/repos/example/repo" {
+			if statuses[0] == http.StatusForbidden {
+				w.Header().Set("X-RateLimit-Remaining", "0")
+				w.Header().Set("X-RateLimit-Reset", fmt.Sprint(time.Now().UTC().Add(time.Hour).Unix()))
+			} else if statuses[0] == http.StatusTooManyRequests {
+				w.Header().Set("Retry-After", "60")
+			}
+			w.WriteHeader(statuses[0])
+			return
+		}
 		switch r.URL.Path {
 		case "/repos/example/repo":
 			_ = json.NewEncoder(w).Encode(map[string]string{"full_name": "example/repo", "default_branch": "main"})
@@ -58,6 +70,23 @@ func reviewedBatchFixture(t *testing.T, truncated bool) (*DataSourceService, fun
 		}}}, server.Close
 }
 
+func TestGitHubBatchPreviewRateLimitCannotIssueCreationTicket(t *testing.T) {
+	t.Setenv("SYSTEM_AES_KEY", "weknora-test-aes-key-32bytes!!!")
+	for _, status := range []int{http.StatusForbidden, http.StatusTooManyRequests} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			service, stop := reviewedBatchFixture(t, false, status)
+			defer stop()
+			request := &types.GitHubBatchScopePreviewRequest{TenantID: 7, KnowledgeBaseID: "kb-one",
+				Owner: "example", Repository: "example/repo", Ref: "main", Mode: "documents"}
+			preview, err := service.PreviewGitHubBatchScope(reviewedBatchContext(), request)
+			require.NoError(t, err)
+			require.Equal(t, "error", preview.TreeState)
+			require.NotEmpty(t, preview.ErrorCode)
+			require.Empty(t, preview.PreviewToken)
+		})
+	}
+}
+
 func TestGitHubBatchRequestOnlyPreviewRequiresCompleteMatchingScope(t *testing.T) {
 	t.Setenv("SYSTEM_AES_KEY", "weknora-test-aes-key-32bytes!!!")
 	service, closeServer := reviewedBatchFixture(t, false)
@@ -71,6 +100,12 @@ func TestGitHubBatchRequestOnlyPreviewRequiresCompleteMatchingScope(t *testing.T
 	require.Equal(t, 1, preview.Summary.EligibleFiles)
 	require.NotEmpty(t, preview.PreviewToken)
 	require.NotEmpty(t, preview.Commit)
+	encoded := strings.Split(preview.PreviewToken, ".")[0]
+	tokenBody, err := base64.RawURLEncoding.DecodeString(encoded)
+	require.NoError(t, err)
+	require.NotContains(t, string(tokenBody), "example/repo")
+	require.NotContains(t, string(tokenBody), "README.md")
+	require.NotContains(t, string(tokenBody), "owner-one")
 	candidate := types.GitHubRepositoryCandidate{Repository: "example/repo", DefaultBranch: "main",
 		Paths: &paths, PreviewToken: preview.PreviewToken}
 	batch := &types.GitHubBatchRequest{TenantID: 7, KnowledgeBaseID: "kb-one", Owner: "example", Mode: "documents",
@@ -78,6 +113,27 @@ func TestGitHubBatchRequestOnlyPreviewRequiresCompleteMatchingScope(t *testing.T
 	config := &types.DataSourceConfig{Type: types.ConnectorTypeGitHub, Settings: githubBatchEffectiveSettings(
 		candidate.Repository, candidate.DefaultBranch, batch.Mode, batch.Paths, batch.Exclude, candidate, true)}
 	require.NoError(t, verifyGitHubBatchScopeReview(reviewedBatchContext(), batch, candidate, config))
+	batch.Mode = "source"
+	require.Error(t, verifyGitHubBatchScopeReview(reviewedBatchContext(), batch, candidate, config))
+	batch.Mode = "documents"
+	candidate.DefaultBranch = "feature"
+	config.Settings = githubBatchEffectiveSettings(candidate.Repository, candidate.DefaultBranch, batch.Mode,
+		batch.Paths, batch.Exclude, candidate, true)
+	require.Error(t, verifyGitHubBatchScopeReview(reviewedBatchContext(), batch, candidate, config))
+	candidate.DefaultBranch = "main"
+	config.Settings = githubBatchEffectiveSettings(candidate.Repository, candidate.DefaultBranch, batch.Mode,
+		batch.Paths, batch.Exclude, candidate, true)
+	changedExclude := []string{"docs"}
+	candidate.Exclude = &changedExclude
+	config.Settings = githubBatchEffectiveSettings(candidate.Repository, candidate.DefaultBranch, batch.Mode,
+		batch.Paths, batch.Exclude, candidate, true)
+	require.Error(t, verifyGitHubBatchScopeReview(reviewedBatchContext(), batch, candidate, config))
+	candidate.Exclude = nil
+	config.Settings = githubBatchEffectiveSettings(candidate.Repository, candidate.DefaultBranch, batch.Mode,
+		batch.Paths, batch.Exclude, candidate, true)
+	candidate.Repository = "example/another"
+	require.Error(t, verifyGitHubBatchScopeReview(reviewedBatchContext(), batch, candidate, config))
+	candidate.Repository = "example/repo"
 	changed := []string{"src"}
 	candidate.Paths = &changed
 	config.Settings = githubBatchEffectiveSettings(candidate.Repository, candidate.DefaultBranch, batch.Mode,
@@ -93,6 +149,13 @@ func TestGitHubBatchRequestOnlyPreviewRequiresCompleteMatchingScope(t *testing.T
 	config.Credentials = nil
 	batch.KnowledgeBaseID = "other-kb"
 	require.Error(t, verifyGitHubBatchScopeReview(reviewedBatchContext(), batch, candidate, config))
+	request.Credentials = map[string]interface{}{"access_token": "private-gh-token-not-for-ticket"}
+	privatePreview, err := service.PreviewGitHubBatchScope(reviewedBatchContext(), request)
+	require.NoError(t, err)
+	require.NotEmpty(t, privatePreview.PreviewToken)
+	privateBody, err := base64.RawURLEncoding.DecodeString(strings.Split(privatePreview.PreviewToken, ".")[0])
+	require.NoError(t, err)
+	require.NotContains(t, string(privateBody), "private-gh-token-not-for-ticket")
 }
 
 func TestGitHubBatchPreviewRejectsUnknownButAllowsExplicitEmpty(t *testing.T) {
@@ -128,6 +191,53 @@ func TestGitHubBatchPreviewRejectsUnknownButAllowsExplicitEmpty(t *testing.T) {
 	require.Error(t, verifyGitHubBatchScopeReview(reviewedBatchContext(), batch, candidate, config))
 	candidate.AllowEmpty = true
 	require.NoError(t, verifyGitHubBatchScopeReview(reviewedBatchContext(), batch, candidate, config))
+}
+
+func TestGitHubBatchReviewedDocumentExclusionMatchesPersistedScope(t *testing.T) {
+	t.Setenv("SYSTEM_AES_KEY", "weknora-test-aes-key-32bytes!!!")
+	service, closeServer := reviewedBatchFixture(t, false)
+	defer closeServer()
+	ctx := reviewedBatchContext()
+	exclude := []string{"images"}
+	request := &types.GitHubBatchScopePreviewRequest{TenantID: 7, KnowledgeBaseID: "kb-one", Owner: "example",
+		Repository: "example/repo", Ref: "main", Mode: "documents", Exclude: &exclude}
+	preview, err := service.PreviewGitHubBatchScope(ctx, request)
+	require.NoError(t, err)
+	require.Equal(t, "complete", preview.TreeState)
+	require.Equal(t, 1, preview.Summary.EligibleFiles)
+	require.NotEmpty(t, preview.PreviewToken)
+	batch := &types.GitHubBatchRequest{TenantID: 7, KnowledgeBaseID: "kb-one", Owner: "example", Mode: "documents",
+		SyncPolicy: "manual", ScopeReviewRequired: true,
+		Repositories: []types.GitHubRepositoryCandidate{{Repository: "example/repo", DefaultBranch: "main",
+			Exclude: &exclude, PreviewToken: preview.PreviewToken}},
+	}
+	created, err := service.CreateGitHubBatch(ctx, batch)
+	require.NoError(t, err)
+	require.Equal(t, "created", created.Results[0].Status)
+	rows, err := service.dsRepo.FindByKnowledgeBase(ctx, "kb-one")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	config, err := rows[0].ParseConfig()
+	require.NoError(t, err)
+	storedExcludes, err := previewStringList(config.Settings, "exclude")
+	require.NoError(t, err)
+	require.Equal(t, exclude, storedExcludes)
+
+	badGlob := []string{"docs/["}
+	request.Exclude = &badGlob
+	_, err = service.PreviewGitHubBatchScope(ctx, request)
+	require.Error(t, err)
+}
+
+func TestGitHubBatchReviewedSourceRejectsInvalidExclusionGlob(t *testing.T) {
+	t.Setenv("SYSTEM_AES_KEY", "weknora-test-aes-key-32bytes!!!")
+	service, closeServer := reviewedBatchFixture(t, false)
+	defer closeServer()
+	badGlob := []string{"docs/["}
+	request := &types.GitHubBatchScopePreviewRequest{TenantID: 7, KnowledgeBaseID: "kb-one", Owner: "example",
+		Repository: "example/repo", Ref: "main", Mode: "source", Exclude: &badGlob}
+	_, err := service.PreviewGitHubBatchScope(reviewedBatchContext(), request)
+	require.ErrorIs(t, err, datasource.ErrInvalidConfig)
 }
 
 func TestGitHubBatchSourcePreviewIsEstimatedAndTruncatedTreeCannotAuthorize(t *testing.T) {
