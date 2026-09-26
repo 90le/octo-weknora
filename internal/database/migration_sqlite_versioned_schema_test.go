@@ -24,6 +24,7 @@ var versionedSQLiteTables = []string{
 	"task_pending_ops",
 	"task_dead_letters",
 	"datasource_restart_recovery_runs",
+	"github_document_sync_runs", "github_document_sync_items",
 	"system_settings",
 	"knowledge_processing_spans",
 	"knowledge_tag_relations",
@@ -49,7 +50,7 @@ var versionedSQLiteColumns = map[string][]string{
 	"data_sources":       {"restart_recovery_lease_id", "restart_recovery_lease_until"}, // 000105
 }
 
-const expectedSQLiteMigrationVersion = 26
+const expectedSQLiteMigrationVersion = 27
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

@@ -567,6 +567,10 @@ type DataSourceSyncPayload struct {
 
 	// Maximum number of items to fetch (0 = unlimited)
 	MaxItems int `json:"max_items,omitempty"`
+
+	// GitHubDocumentChunk is an internal, monotonically increasing continuation
+	// ordinal. It makes queued follow-up task IDs stable across Asynq retries.
+	GitHubDocumentChunk int `json:"github_document_chunk,omitempty"`
 }
 
 // ToJSON converts a DataSourceConfig to the JSON blob stored in
