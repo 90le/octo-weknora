@@ -2,9 +2,9 @@
 
 更新：2026-09-27。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-27 05:4x CST 来源回读）
+## 当前状态（2026-09-27；来源回读于 05:4x CST）
 
-**代码、主线与运行版本：**PR #46–#58 已合并并通过对应 CI；主线提交为 [`ff60725ed985cd0977eadf19c7630c13d4e75f94`](https://github.com/90le/octo-weknora/commit/ff60725ed985cd0977eadf19c7630c13d4e75f94)。生产回读的 app Image ID 为 `sha256:851910cbd0d5142644baaa7ae1d89cb40a2e6dab836ef15f2c3869d3fb171203`，UI Image ID 为 `sha256:33fa85acef00c767ca2fdcaab69487046b65ada7a5963a56007d9bcf58ea1734`；API／UI 健康检查均为 200，PostgreSQL migration `106` 非 dirty。代码合并、镜像回读和业务验收是不同层次：本轮来源同步已完成回读，独立的真实 Octo 群问答尚待验证。此段依据 2026-09-27 的发布／运维交接记录，后续状态变化须重新回读。
+**代码、主线与运行版本：**PR #46–#58 已合并并通过对应 CI；主线提交为 [`ff60725ed985cd0977eadf19c7630c13d4e75f94`](https://github.com/90le/octo-weknora/commit/ff60725ed985cd0977eadf19c7630c13d4e75f94)。生产回读的 app Image ID 为 `sha256:851910cbd0d5142644baaa7ae1d89cb40a2e6dab836ef15f2c3869d3fb171203`，UI Image ID 为 `sha256:33fa85acef00c767ca2fdcaab69487046b65ada7a5963a56007d9bcf58ea1734`；API／UI 健康检查均为 200，PostgreSQL migration `106` 非 dirty。代码合并、镜像回读和业务验收是不同层次：本轮来源同步已完成回读，下述一个真实群问答场景通过，其他场景仍待验收。此段依据 2026-09-27 的发布／运维交接记录，后续状态变化须重新回读。
 
 **资产与恢复基线：**切换时有 1269 条活动知识；本次恢复后，活动知识库「Octo官方项目知识库」（ID `40b39914-b200-4daa-ba3c-1dd666729ce7`）有 1447 条活动知识，全部 `completed`。60 条来源全部 active（30 条文档、30 条源码），每条来源的最新同步日志均为 `success`；旧六小时整点 Cron 数为 0，运行中的 GitHub 文档同步为 0。该库当前 `graph=false`，不能沿用下文 2026-09-16 的“图谱已启用”历史结论推断其当前配置。2 TB 数据盘上的私有发布备份包含 PostgreSQL 一致性导出、应用文件和 Compose；恢复时仍须核对备份覆盖范围及恢复点之后的写入。
 
@@ -18,9 +18,11 @@
 | Server | 84 个文档创建 | `success` |
 | Web | 首轮 227 个候选中 `apps/web/e2e-kit/fixtures/html-attachment.html` 解析失败；排除该 fixtures 目录后预览 219 个，再同步跳过 219 个；首轮已创建 32 个、更新 2 个、跳过 192 个保留 | `success` |
 
-另五条最新原为旧版 `partial` 的活动文档来源已在新版重跑，最新均为 `success`：speech 创建 6／跳过 4，cli 创建 27／跳过 6，adapters 创建 8／跳过 6，admin 创建 9／跳过 5，lib 创建 7／跳过 6。排除规则只作用于后续同步，初次成功导入的内容不会因为修改范围而自动下架；如需清理旧索引，应另行审阅精确归属与影响。上述成功状态证明这一时点的来源同步和知识完成状态，尚不证明新版真实群问答质量。
+另五条最新原为旧版 `partial` 的活动文档来源已在新版重跑，最新均为 `success`：speech 创建 6／跳过 4，cli 创建 27／跳过 6，adapters 创建 8／跳过 6，admin 创建 9／跳过 5，lib 创建 7／跳过 6。排除规则只作用于后续同步，初次成功导入的内容不会因为修改范围而自动下架；如需清理旧索引，应另行审阅精确归属与影响。上述成功状态证明这一时点的来源同步和知识完成状态，不单独证明真实群问答质量。
 
-**容量与未完成事项：**定点清理旧 `/tmp/gopath` 567 MiB、`node-compile-cache` 421 MiB、`/tmp/go` 238 MiB 后，根盘可用空间约 12 GiB；根盘上的 `containerd` 约 58 GiB。2 TB 数据盘已用约 40 GiB，为 XFS `ftype=0`，不能作为当前 overlay 存储目录。重型构建缓存、PostgreSQL／Milvus 数据和来源快照已放在 2 TB 数据盘；保留回退镜像和发布证据，不执行宽范围 prune。文档与源码仍按数据源各持一份物理 Git 传输缓存；按仓库共享缓存、明确的 GitHub API 速率预算和 webhook 均未实现。下一步按 [实施计划](OCTO-PLAN.md) 做独立真实群问答、来源范围审阅及后续周期健康监测。
+**真实群问答验收（单例）：**「Octo 小测」（UID `28896t9kvbl1fbd86fb_bot`）在「Steward 联调群」（`group_no=f242768884694ce89e86bdc236f525f7`）以消息 `seq 522`、ID `2103963709519859712` 询问 Octo Server 的构建准备及固定来源。「Octo 小丘」（UID `286wbc0bphb6af78382_bot`）以相邻消息 `seq 523`、ID `2103963761822830592` 回复相关 Go、`replace` 和构建步骤，并附[官方固定提交 BUILDING.md](https://github.com/Mininglamp-OSS/octo-server/blob/d72384470cb72188af4f99c2576f92d2a0e39738/BUILDING.md)；已核对该页直接支持回答。原生 reply 指向原提问，mention UID 精确指向测试 Bot。内部 channel `892c8469-c005-49a3-b783-abe796ffff9c` 的 inbox 复合消息 ID `octo:286wbc0bphb6af78382_bot:2103963709519859712` 为 `delivered`、`attempts=1`。此例只覆盖该构建问答与对应出站路径，版本、多仓及其他文档问答仍需分别验证。
+
+**容量与未完成事项：**定点清理旧 `/tmp/gopath` 567 MiB、`node-compile-cache` 421 MiB、`/tmp/go` 238 MiB 后，根盘可用空间约 12 GiB；根盘上的 `containerd` 约 58 GiB。2 TB 数据盘已用约 40 GiB，为 XFS `ftype=0`，不能作为当前 overlay 存储目录。重型构建缓存、PostgreSQL／Milvus 数据和来源快照已放在 2 TB 数据盘；保留回退镜像和发布证据，不执行宽范围 prune。文档与源码仍按数据源各持一份物理 Git 传输缓存；按仓库共享缓存、明确的 GitHub API 速率预算和 webhook 均未实现。下一步按 [实施计划](OCTO-PLAN.md) 扩展真实群问答、审阅来源范围并监测后续周期健康。
 
 ## 历史发布：隐私修复（2026-09-23 15:58 CST）
 
