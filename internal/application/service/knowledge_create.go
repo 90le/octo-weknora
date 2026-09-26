@@ -84,28 +84,35 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		return nil, err
 	}
 
-	// Check if file already exists
+	// Ordinary uploads keep KB-wide content deduplication. Prepared GitHub and
+	// local-folder files use source + external path identity instead: the same
+	// bytes can legitimately appear in different repositories or paths, and
+	// each logical document must retain its own citation and deletion lifecycle.
+	// The exception is a private context scope set only by ingestPreparedFile;
+	// user-supplied metadata or the channel label cannot enable it.
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
-	logger.Infof(ctx, "Checking if file exists, tenant ID: %d", tenantID)
-	exists, existingKnowledge, err := s.repo.CheckKnowledgeExists(ctx, tenantID, kbID, &types.KnowledgeCheckParams{
-		Type:     "file",
-		FileName: fileName,
-		FileType: getFileType(fileName),
-		FileSize: file.Size,
-		FileHash: hash,
-	})
-	if err != nil {
-		logger.Errorf(ctx, "Failed to check knowledge existence: %v", err)
-		return nil, err
-	}
-	if exists {
-		logger.Infof(ctx, "File already exists: %s", fileName)
-		// Update creation time for existing knowledge
-		if err := s.repo.UpdateKnowledgeColumn(ctx, existingKnowledge.ID, "created_at", time.Now()); err != nil {
-			logger.Errorf(ctx, "Failed to update existing knowledge: %v", err)
+	if !isPreparedFileImport(ctx, tenantID, kbID, metadata) {
+		logger.Infof(ctx, "Checking if file exists, tenant ID: %d", tenantID)
+		exists, existingKnowledge, err := s.repo.CheckKnowledgeExists(ctx, tenantID, kbID, &types.KnowledgeCheckParams{
+			Type:     "file",
+			FileName: fileName,
+			FileType: getFileType(fileName),
+			FileSize: file.Size,
+			FileHash: hash,
+		})
+		if err != nil {
+			logger.Errorf(ctx, "Failed to check knowledge existence: %v", err)
 			return nil, err
 		}
-		return existingKnowledge, types.NewDuplicateFileError(existingKnowledge)
+		if exists {
+			logger.Infof(ctx, "File already exists: %s", fileName)
+			// Update creation time for existing knowledge
+			if err := s.repo.UpdateKnowledgeColumn(ctx, existingKnowledge.ID, "created_at", time.Now()); err != nil {
+				logger.Errorf(ctx, "Failed to update existing knowledge %s: %v", existingKnowledge.ID, err)
+				return nil, err
+			}
+			return existingKnowledge, types.NewDuplicateFileError(existingKnowledge)
+		}
 	}
 
 	// Check storage quota

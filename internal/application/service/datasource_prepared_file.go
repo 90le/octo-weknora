@@ -7,8 +7,41 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/datasource/connector/localfolder"
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+// A prepared repository file is identified by its source and path, not by a
+// KB-wide content hash. Keep this authority in a private context value: file
+// upload callers can provide metadata and a channel label, but cannot request
+// the duplicate-content exception by supplying either of them.
+type preparedFileImportContextKey struct{}
+
+var errPreparedFileOwnedByAnotherSource = errors.New("document duplicates another source; existing document was preserved")
+
+type preparedFileImportScope struct {
+	tenantID  uint64
+	kbID      string
+	sourceID  string
+	candidate string
+}
+
+func withPreparedFileImport(ctx context.Context, ds *types.DataSource, candidate string) context.Context {
+	if ds == nil || candidate == "" || ds.ID == "" || ds.KnowledgeBaseID == "" ||
+		(ds.Type != types.ConnectorTypeGitHub && ds.Type != localfolder.Type) {
+		return ctx
+	}
+	return context.WithValue(ctx, preparedFileImportContextKey{}, preparedFileImportScope{
+		tenantID: ds.TenantID, kbID: ds.KnowledgeBaseID, sourceID: ds.ID, candidate: candidate,
+	})
+}
+
+func isPreparedFileImport(ctx context.Context, tenantID uint64, kbID string, metadata map[string]string) bool {
+	scope, ok := ctx.Value(preparedFileImportContextKey{}).(preparedFileImportScope)
+	return ok && metadata != nil && scope.tenantID == tenantID && scope.kbID == kbID &&
+		scope.sourceID != "" && scope.candidate != "" &&
+		metadata["datasource_id"] == scope.sourceID && metadata["external_id"] == scope.candidate
+}
 
 // ingestPreparedFile is used by the new repository document connector. Existing
 // connectors retain their old behavior until migrated and tested explicitly.
@@ -51,7 +84,8 @@ func (s *DataSourceService) ingestPreparedFile(ctx context.Context, ds *types.Da
 		if err != nil {
 			return old != nil, err
 		}
-		candidate, err = s.knowledgeService.CreateKnowledgeFromFile(ctx, ds.KnowledgeBaseID, fh, metadata, nil, item.FileName, tags, ds.Type, nil)
+		candidate, err = s.knowledgeService.CreateKnowledgeFromFile(
+			withPreparedFileImport(ctx, ds, candidateID), ds.KnowledgeBaseID, fh, metadata, nil, item.FileName, tags, ds.Type, nil)
 		if err != nil {
 			// Do not adopt a duplicate belonging to another source or path.
 			var duplicate *types.DuplicateKnowledgeError
@@ -63,7 +97,7 @@ func (s *DataSourceService) ingestPreparedFile(ctx context.Context, ds *types.Da
 				return old != nil, err
 			}
 			if candidate == nil {
-				return old != nil, fmt.Errorf("document duplicates another source; existing document was preserved")
+				return old != nil, errPreparedFileOwnedByAnotherSource
 			}
 		}
 	}

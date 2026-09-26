@@ -13,7 +13,7 @@ import (
 
 // simpleFormats lists file extensions that Go can handle without the Python service.
 var simpleFormats = map[string]bool{
-	"md": true, "markdown": true,
+	"md": true, "markdown": true, "mdx": true,
 	"txt": true, "text": true,
 	"csv":  true,
 	"json": true,
@@ -54,7 +54,7 @@ func (b *SimpleFormatReader) Read(_ context.Context, req *types.ReadRequest) (*t
 	}
 
 	switch {
-	case ft == "md" || ft == "markdown":
+	case ft == "md" || ft == "markdown" || ft == "mdx":
 		return &types.ReadResult{MarkdownContent: string(req.FileContent)}, nil
 	case ft == "txt" || ft == "text":
 		return &types.ReadResult{MarkdownContent: string(req.FileContent)}, nil
