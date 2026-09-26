@@ -114,9 +114,12 @@ func NewChunkExtractTask(
 	if err != nil {
 		return false, err
 	}
-	task := asynq.NewTask(types.TypeChunkExtract, payload,
+	task := asynq.NewTask(types.TypeChunkExtract, payload)
+	// Pass processing options at enqueue time so both the Redis client and the
+	// Lite executor apply the same retry limit and timeout. Lite cannot read the
+	// private options stored inside an asynq.Task by NewTask.
+	info, err := client.Enqueue(task,
 		asynq.Queue(types.QueueGraph), asynq.MaxRetry(3), asynq.Timeout(30*time.Minute))
-	info, err := client.Enqueue(task)
 	if err != nil {
 		logger.Errorf(ctx, "failed to enqueue task: %v", err)
 		return false, fmt.Errorf("failed to enqueue task: %v", err)
