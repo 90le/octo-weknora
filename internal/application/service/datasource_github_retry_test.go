@@ -161,7 +161,7 @@ func TestGitHubAllFailedDeterministicCodesDoNotRetryBeyondSampleCap(t *testing.T
 	result := &types.SyncResult{}
 	for index := 0; index < 136; index++ {
 		result.Failed++
-		recordSyncError(result, types.SyncItemError{Code: "unsupported_file_type", Message: "unsupported"})
+		recordDeterministicSyncError(result, types.SyncItemError{Code: "unsupported_file_type", Message: "unsupported"})
 	}
 	require.Len(t, result.Errors, maxSyncResultErrors)
 	require.Equal(t, 136, result.FailureCodes["unsupported_file_type"])
@@ -173,6 +173,10 @@ func TestGitHubAllFailedDeterministicCodesDoNotRetryBeyondSampleCap(t *testing.T
 	require.True(t, allFetchedItemsRetryable(types.ConnectorTypeGitHub, result))
 	delete(result.FailureCodes, "other")
 	require.True(t, allFetchedItemsRetryable(types.ConnectorTypeGitHub, result), "incomplete aggregate must not imply a permanent failure")
+	spoofed := &types.SyncResult{Failed: 1}
+	recordSyncError(spoofed, types.SyncItemError{Code: "unsupported_file_type", Message: "external error metadata"})
+	require.Equal(t, 1, spoofed.FailureCodes["other"])
+	require.True(t, allFetchedItemsRetryable(types.ConnectorTypeGitHub, spoofed), "connector metadata cannot declare an error permanent")
 }
 
 func TestGitHubAnomalousRetryHintOverDayFailsVisiblyWithoutEarlyRetry(t *testing.T) {
@@ -201,4 +205,25 @@ func TestManualSyncFailsClosedWhenRunningStateCannotBeRead(t *testing.T) {
 	logs, err := f.logs.FindByDataSource(context.Background(), ds.ID, 10, 0)
 	require.NoError(t, err)
 	require.Empty(t, logs)
+}
+
+func TestGitHubPartialDeterministicFailureRemainsVisibleWithoutWholeRunRetry(t *testing.T) {
+	f := newMigrationFixture(t)
+	ds := f.source(t, "partial-webp", "kb-one", "0 0 */6 * * *", types.DataSourceStatusActive, 1)
+	log := &types.SyncLog{ID: "partial-webp-log", DataSourceID: ds.ID, TenantID: 1, Status: types.SyncLogStatusRunning}
+	require.NoError(t, f.logs.Create(context.Background(), log))
+	result := &types.SyncResult{Total: 2, Created: 1, Failed: 1}
+	recordDeterministicSyncError(result, types.SyncItemError{Code: "unsupported_file_type", Title: "image.webp"})
+	resultJSON, err := result.ToJSON()
+	require.NoError(t, err)
+	require.NoError(t, f.service.updateSyncRunResult(context.Background(), ds, log, result, resultJSON,
+		types.SyncLogStatusPartial, "1 document(s) failed to sync", false, false))
+	storedLog, err := f.logs.FindByID(context.Background(), log.ID)
+	require.NoError(t, err)
+	require.Equal(t, types.SyncLogStatusPartial, storedLog.Status)
+	require.Equal(t, 1, storedLog.ItemsFailed)
+	storedDS, err := f.repo.FindByID(context.Background(), ds.ID)
+	require.NoError(t, err)
+	require.Equal(t, types.DataSourceStatusActive, storedDS.Status)
+	require.Contains(t, storedDS.ErrorMessage, "1 document")
 }

@@ -89,7 +89,9 @@ func githubDeferredRetryNotBefore(sourceType string, cause error) *time.Time {
 // incomplete or mixed. Only GitHub imports whose *every* failed item has a
 // known deterministic code stop queue retries; unclassified ingestion errors
 // remain retryable. The aggregate counts are exact even when UI samples cap at
-// 100 items.
+// 100 items. Partial imports retain their existing Partial status and may
+// re-encounter an unsupported item on a later cron; per-item quarantine is a
+// separate capability, not inferred from this all-failed policy.
 func allFetchedItemsRetryable(sourceType string, result *types.SyncResult) bool {
 	if sourceType != types.ConnectorTypeGitHub || result == nil || result.Failed <= 0 {
 		return true

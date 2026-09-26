@@ -932,13 +932,21 @@ const maxSyncResultErrors = 100
 // recordSyncError appends an error sample to result.Errors, capped at
 // maxSyncResultErrors. Callers still increment result.Failed for the exact count.
 func recordSyncError(result *types.SyncResult, item types.SyncItemError) {
+	recordSyncErrorWithClass(result, item, "other")
+}
+
+// Only internally proven ingest outcomes may contribute deterministic counts.
+// A connector's error_reason_code is presentation data, not authority to
+// disable retries for a failed import.
+func recordDeterministicSyncError(result *types.SyncResult, item types.SyncItemError) {
+	recordSyncErrorWithClass(result, item, item.Code)
+}
+
+func recordSyncErrorWithClass(result *types.SyncResult, item types.SyncItemError, code string) {
 	if result.FailureCodes == nil {
 		result.FailureCodes = map[string]int{}
 	}
-	code := item.Code
 	if code != "unsupported_file_type" && code != "duplicate_other_source" {
-		// Connector-provided reason strings can vary per item. Keep this
-		// aggregate bounded to the two deterministic classes plus "other".
 		code = "other"
 	}
 	result.FailureCodes[code]++
@@ -1063,12 +1071,12 @@ func (s *DataSourceService) applyFetchedItem(
 			result.Skipped++
 		case errors.Is(err, ErrInvalidFileType):
 			result.Failed++
-			recordSyncError(result, types.SyncItemError{
+			recordDeterministicSyncError(result, types.SyncItemError{
 				Title: item.Title, Code: "unsupported_file_type", Message: "Document file type is not supported",
 			})
 		case errors.Is(err, errPreparedFileOwnedByAnotherSource):
 			result.Failed++
-			recordSyncError(result, types.SyncItemError{
+			recordDeterministicSyncError(result, types.SyncItemError{
 				Title: item.Title, Code: "duplicate_other_source", Message: "Identical content belongs to another source; existing document was preserved",
 			})
 		case item.Metadata["embedded_image"] == "true":
