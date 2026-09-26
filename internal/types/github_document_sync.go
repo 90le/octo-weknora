@@ -29,7 +29,6 @@ type GitHubDocumentRun struct {
 	CommitSHA       string `gorm:"type:varchar(40);not null"`
 	PlanDigest      string `gorm:"type:varchar(64);not null"`
 	CredentialScope string `gorm:"type:varchar(64);not null"`
-	TargetCursor    JSON   `gorm:"type:jsonb;not null"`
 	ForceFull       bool   `gorm:"not null;default:false"`
 	Status          string `gorm:"type:varchar(24);not null;index"`
 	LeaseID         string `gorm:"type:varchar(36);not null;default:''"`

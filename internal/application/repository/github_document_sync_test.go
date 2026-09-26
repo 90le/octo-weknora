@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,11 +36,17 @@ func githubDocumentTestRows(t *testing.T, db *gorm.DB) (*DataSourceRepository, *
 	require.NoError(t, err)
 	ds = stored
 	require.NoError(t, db.Create(&types.SyncLog{ID: ds.ID, DataSourceID: ds.ID, TenantID: ds.TenantID, Status: types.SyncLogStatusRunning}).Error)
+	selection, commit := strings.Repeat("b", 64), strings.Repeat("c", 40)
+	targetCursor, err := (&types.SyncCursor{ConnectorCursor: map[string]interface{}{
+		"selection": selection, "commit": commit, "files": map[string]interface{}{"guide.md": map[string]interface{}{}},
+	}}).ToJSON()
+	require.NoError(t, err)
+	digest := sha256.Sum256(targetCursor)
 	run := &types.GitHubDocumentRun{
 		ID: uuid.NewString(), TenantID: ds.TenantID, KnowledgeBaseID: ds.KnowledgeBaseID, DataSourceID: ds.ID,
-		Selection: strings.Repeat("b", 64), CommitSHA: strings.Repeat("c", 40), PlanDigest: strings.Repeat("d", 64),
-		CredentialScope: "public", TargetCursor: types.JSON(`{"connector_cursor":{"selection":"new","commit":"cccccccccccccccccccccccccccccccccccccccc","files":{"guide.md":{}}}}`),
-		Status: types.GitHubDocumentRunRunning, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		Selection: selection, CommitSHA: commit, PlanDigest: hex.EncodeToString(digest[:]),
+		CredentialScope: "public",
+		Status:          types.GitHubDocumentRunRunning, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
 	items := []types.GitHubDocumentSyncItem{
 		{RunID: run.ID, PathHash: strings.Repeat("1", 64), Path: "guide.md", BlobSHA: strings.Repeat("e", 40), Operation: types.GitHubDocumentItemUpsert, Status: types.GitHubDocumentItemPending},
@@ -46,6 +54,15 @@ func githubDocumentTestRows(t *testing.T, db *gorm.DB) (*DataSourceRepository, *
 	}
 	require.NoError(t, repo.CreateGitHubDocumentRun(context.Background(), run, items))
 	return repo, ds, run, items
+}
+
+func githubDocumentTestCursor(t *testing.T, run *types.GitHubDocumentRun) types.JSON {
+	t.Helper()
+	cursor, err := (&types.SyncCursor{ConnectorCursor: map[string]interface{}{
+		"selection": run.Selection, "commit": run.CommitSHA, "files": map[string]interface{}{"guide.md": map[string]interface{}{}},
+	}}).ToJSON()
+	require.NoError(t, err)
+	return cursor
 }
 
 func TestGitHubDocumentProgressSQLiteAckAndCursorRollback(t *testing.T) {
@@ -65,17 +82,17 @@ func TestGitHubDocumentProgressSQLiteAckAndCursorRollback(t *testing.T) {
 	require.True(t, ok)
 	foreign := *ds
 	foreign.KnowledgeBaseID = "other-kb"
-	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, &foreign, ds.ID), ErrGitHubDocumentRunChanged)
+	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, &foreign, ds.ID, githubDocumentTestCursor(t, run)), ErrGitHubDocumentRunChanged)
 	ok, err = repo.AcquireGitHubDocumentRunLease(ctx, run, uuid.NewString(), time.Now().Add(time.Minute))
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.NoError(t, repo.UpdateGitHubDocumentItem(ctx, run, leaseID, items[0], types.GitHubDocumentItemReady, types.GitHubDocumentOutcomeCreated, ""))
-	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID), ErrGitHubDocumentRunChanged)
+	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID, githubDocumentTestCursor(t, run)), ErrGitHubDocumentRunChanged)
 	stored, err := repo.FindByID(ctx, ds.ID)
 	require.NoError(t, err)
 	require.Contains(t, string(stored.LastSyncCursor), `"selection":"old"`, "failed deletion must roll back the complete cursor")
 	require.NoError(t, repo.UpdateGitHubDocumentItem(ctx, run, leaseID, items[1], types.GitHubDocumentItemFailed, "", "deletion_failed"))
-	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID), ErrGitHubDocumentRunChanged)
+	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID, githubDocumentTestCursor(t, run)), ErrGitHubDocumentRunChanged)
 	var runAfterFailure types.GitHubDocumentRun
 	require.NoError(t, db.First(&runAfterFailure, "id = ?", run.ID).Error)
 	require.Equal(t, types.GitHubDocumentRunRunning, runAfterFailure.Status)
@@ -98,10 +115,13 @@ func TestGitHubDocumentProgressSQLiteAckAndCursorRollback(t *testing.T) {
 	var remaining int64
 	require.NoError(t, db.Model(&types.GitHubDocumentSyncItem{}).Where("run_id = ? AND status <> ?", run.ID, types.GitHubDocumentItemReady).Count(&remaining).Error)
 	require.Zero(t, remaining)
-	require.NoError(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID))
+	tampered := append(types.JSON(nil), githubDocumentTestCursor(t, run)...)
+	tampered = append(tampered, ' ') // valid JSON, but not the verified plan bytes
+	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID, tampered), ErrGitHubDocumentRunChanged)
+	require.NoError(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID, githubDocumentTestCursor(t, run)))
 	stored, err = repo.FindByID(ctx, ds.ID)
 	require.NoError(t, err)
-	require.Contains(t, string(stored.LastSyncCursor), `"selection":"new"`)
+	require.Contains(t, string(stored.LastSyncCursor), run.Selection)
 	require.NotNil(t, stored.LastSyncAt)
 	active, err := repo.FindRunningGitHubDocumentRun(ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID)
 	require.NoError(t, err)
@@ -127,7 +147,7 @@ func TestGitHubDocumentProgressSQLiteRejectsCredentialChangeBeforePublish(t *tes
 	// credential rotation or source edit must invalidate its cursor publish.
 	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", ds.ID).
 		Update("config", types.JSON(`{"type":"github","credentials":{"access_token":"rotated"},"settings":{"repository":"test/docs"}}`)).Error)
-	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID), ErrGitHubDocumentRunChanged)
+	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID, githubDocumentTestCursor(t, run)), ErrGitHubDocumentRunChanged)
 	stored, err := repo.FindByID(ctx, ds.ID)
 	require.NoError(t, err)
 	require.Contains(t, string(stored.LastSyncCursor), `"selection":"old"`)
@@ -148,7 +168,7 @@ func TestGitHubDocumentProgressSQLiteCanceledRunCannotPublish(t *testing.T) {
 	}
 	require.NoError(t, db.Model(&types.SyncLog{}).Where("id = ?", ds.ID).
 		Update("status", types.SyncLogStatusCanceled).Error)
-	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID), ErrGitHubDocumentRunChanged)
+	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID, githubDocumentTestCursor(t, run)), ErrGitHubDocumentRunChanged)
 	stored, err := repo.FindByID(ctx, ds.ID)
 	require.NoError(t, err)
 	require.Contains(t, string(stored.LastSyncCursor), `"selection":"old"`)
@@ -171,7 +191,7 @@ func TestGitHubDocumentProgressSQLitePauseRaceCannotPublish(t *testing.T) {
 	// source before the SQL commit. Config and SyncLog can remain unchanged.
 	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", ds.ID).
 		Update("status", types.DataSourceStatusPaused).Error)
-	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID), ErrGitHubDocumentRunChanged)
+	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID, githubDocumentTestCursor(t, run)), ErrGitHubDocumentRunChanged)
 	stored, err := repo.FindByID(ctx, ds.ID)
 	require.NoError(t, err)
 	require.Equal(t, types.DataSourceStatusPaused, stored.Status)
@@ -207,5 +227,5 @@ func TestGitHubDocumentCheckpointPostgresSchemaAndRollback(t *testing.T) {
 	for _, item := range items {
 		require.NoError(t, repo.UpdateGitHubDocumentItem(context.Background(), run, leaseID, item, types.GitHubDocumentItemReady, types.GitHubDocumentOutcomeSkipped, ""))
 	}
-	require.NoError(t, repo.PublishGitHubDocumentRun(context.Background(), run, leaseID, ds, ds.ID))
+	require.NoError(t, repo.PublishGitHubDocumentRun(context.Background(), run, leaseID, ds, ds.ID, githubDocumentTestCursor(t, run)))
 }

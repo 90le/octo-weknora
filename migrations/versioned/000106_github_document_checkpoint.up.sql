@@ -9,7 +9,6 @@ CREATE TABLE github_document_sync_runs (
     commit_sha VARCHAR(40) NOT NULL,
     plan_digest VARCHAR(64) NOT NULL,
     credential_scope VARCHAR(64) NOT NULL,
-    target_cursor JSONB NOT NULL,
     force_full BOOLEAN NOT NULL DEFAULT FALSE,
     status VARCHAR(24) NOT NULL,
     lease_id VARCHAR(36) NOT NULL DEFAULT '',

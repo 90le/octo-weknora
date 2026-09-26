@@ -116,3 +116,20 @@ func TestGitHubDocumentPlanSkipsSensitiveBlobWithoutLosingLegacyCursor(t *testin
 	require.NoError(t, err)
 	require.Contains(t, string(encoded), "secrets/notes.md")
 }
+
+func TestGitHubDocumentCheckpointCacheLossKeepsOldCursor(t *testing.T) {
+	_, cacheDir, cfg, commit := documentGitFixture(t, map[string]string{"docs/guide.md": "current\n"})
+	c, _ := fastPathHeadConnector(t, commit)
+	first, err := c.PlanDocuments(context.Background(), cfg, nil, false, "")
+	require.NoError(t, err)
+	old := first.Cursor()
+	encoded, err := old.ToJSON()
+	require.NoError(t, err)
+	require.NoError(t, os.RemoveAll(cacheDir))
+	t.Setenv("PATH", t.TempDir())
+	_, err = c.PlanDocuments(context.Background(), cfg, old, true, "")
+	require.ErrorContains(t, err, "requires Git")
+	after, err := old.ToJSON()
+	require.NoError(t, err)
+	require.Equal(t, string(encoded), string(after), "cache failure cannot alter the previous complete cursor")
+}

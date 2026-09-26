@@ -39,7 +39,7 @@ type githubDocumentProgressStore interface {
 	AcquireGitHubDocumentRunLease(context.Context, *types.GitHubDocumentRun, string, time.Time) (bool, error)
 	RenewGitHubDocumentRunLease(context.Context, *types.GitHubDocumentRun, string, time.Time) (bool, error)
 	ReleaseGitHubDocumentRunLease(context.Context, *types.GitHubDocumentRun, string) error
-	PublishGitHubDocumentRun(context.Context, *types.GitHubDocumentRun, string, *types.DataSource, string) error
+	PublishGitHubDocumentRun(context.Context, *types.GitHubDocumentRun, string, *types.DataSource, string, types.JSON) error
 }
 
 // The HMAC scope is only an opaque equality marker for a configured token.
@@ -93,15 +93,11 @@ func (s *DataSourceService) verifyGitHubDocumentKB(ctx context.Context, ds *type
 func newGitHubDocumentRun(
 	ds *types.DataSource, plan *githubConnector.DocumentPlan, credentialScope string, forceFull bool,
 ) (*types.GitHubDocumentRun, []types.GitHubDocumentSyncItem, error) {
-	cursorJSON, err := plan.Cursor().ToJSON()
-	if err != nil {
-		return nil, nil, err
-	}
 	now := time.Now().UTC()
 	run := &types.GitHubDocumentRun{
 		ID: uuid.NewString(), TenantID: ds.TenantID, KnowledgeBaseID: ds.KnowledgeBaseID, DataSourceID: ds.ID,
 		Selection: plan.Selection, CommitSHA: plan.Commit, PlanDigest: plan.Digest, CredentialScope: credentialScope,
-		TargetCursor: cursorJSON, ForceFull: forceFull, Status: types.GitHubDocumentRunRunning, CreatedAt: now, UpdatedAt: now,
+		ForceFull: forceFull, Status: types.GitHubDocumentRunRunning, CreatedAt: now, UpdatedAt: now,
 	}
 	items := make([]types.GitHubDocumentSyncItem, 0, len(plan.Upserts)+len(plan.Deletions))
 	seen := make(map[string]string)
@@ -621,7 +617,11 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 		return s.finishGitHubDocumentIncomplete(ctx, ds, syncLog, result, wasPaused,
 			fmt.Sprintf("%d GitHub document(s) still need attention", failed))
 	}
-	if err := store.PublishGitHubDocumentRun(ctx, run, leaseID, ds, syncLog.ID); err != nil {
+	verifiedCursor, err := plan.Cursor().ToJSON()
+	if err != nil {
+		return s.githubDocumentRunFailure(ctx, ds, syncLog, wasPaused, err)
+	}
+	if err := store.PublishGitHubDocumentRun(ctx, run, leaseID, ds, syncLog.ID, verifiedCursor); err != nil {
 		return s.githubDocumentRunFailure(ctx, ds, syncLog, wasPaused, err)
 	}
 	data, _ := result.ToJSON()

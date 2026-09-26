@@ -173,11 +173,10 @@ func (c *Connector) planDocuments(
 }
 
 func documentPlanDigest(selection, commit string, files map[string]entry) string {
-	data, _ := json.Marshal(struct {
-		Selection string           `json:"selection"`
-		Commit    string           `json:"commit"`
-		Files     map[string]entry `json:"files"`
-	}{selection, commit, files})
+	cursor := &types.SyncCursor{ConnectorCursor: map[string]interface{}{
+		"selection": selection, "commit": commit, "files": files,
+	}}
+	data, _ := cursor.ToJSON()
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }

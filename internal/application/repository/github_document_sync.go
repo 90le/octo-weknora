@@ -2,6 +2,9 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"sort"
 	"time"
@@ -33,7 +36,7 @@ func (r *DataSourceRepository) CreateGitHubDocumentRun(
 	ctx context.Context, run *types.GitHubDocumentRun, items []types.GitHubDocumentSyncItem,
 ) error {
 	if run == nil || run.ID == "" || run.DataSourceID == "" || run.KnowledgeBaseID == "" || run.TenantID == 0 ||
-		run.Selection == "" || run.CommitSHA == "" || run.PlanDigest == "" || run.CredentialScope == "" || len(run.TargetCursor) == 0 {
+		run.Selection == "" || run.CommitSHA == "" || run.PlanDigest == "" || run.CredentialScope == "" {
 		return errors.New("GitHub document plan is incomplete")
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -178,8 +181,24 @@ func (r *DataSourceRepository) ReleaseGitHubDocumentRunLease(ctx context.Context
 // selection change between the service's access check and this transaction.
 func (r *DataSourceRepository) PublishGitHubDocumentRun(
 	ctx context.Context, run *types.GitHubDocumentRun, leaseID string, ds *types.DataSource, syncLogID string,
+	verifiedCursor types.JSON,
 ) error {
-	if run == nil || leaseID == "" || syncLogID == "" || ds == nil || run.TenantID != ds.TenantID || run.KnowledgeBaseID != ds.KnowledgeBaseID || run.DataSourceID != ds.ID {
+	if run == nil || leaseID == "" || syncLogID == "" || ds == nil || run.TenantID != ds.TenantID || run.KnowledgeBaseID != ds.KnowledgeBaseID || run.DataSourceID != ds.ID || len(verifiedCursor) == 0 {
+		return ErrGitHubDocumentRunChanged
+	}
+	var decoded struct {
+		ConnectorCursor struct {
+			Selection string                     `json:"selection"`
+			Commit    string                     `json:"commit"`
+			Files     map[string]json.RawMessage `json:"files"`
+		} `json:"connector_cursor"`
+	}
+	if err := json.Unmarshal(verifiedCursor, &decoded); err != nil || decoded.ConnectorCursor.Selection != run.Selection ||
+		decoded.ConnectorCursor.Commit != run.CommitSHA || decoded.ConnectorCursor.Files == nil {
+		return ErrGitHubDocumentRunChanged
+	}
+	digest := sha256.Sum256(verifiedCursor)
+	if hex.EncodeToString(digest[:]) != run.PlanDigest {
 		return ErrGitHubDocumentRunChanged
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -210,7 +229,7 @@ func (r *DataSourceRepository) PublishGitHubDocumentRun(
 			// with a Go string (TEXT) would miss despite identical bytes.
 			query = query.Where("config = ?", ds.Config)
 		}
-		updated := query.Updates(map[string]interface{}{"last_sync_cursor": run.TargetCursor, "last_sync_at": now, "updated_at": now})
+		updated := query.Updates(map[string]interface{}{"last_sync_cursor": verifiedCursor, "last_sync_at": now, "updated_at": now})
 		if updated.Error != nil {
 			return updated.Error
 		}
@@ -246,7 +265,7 @@ func (r *DataSourceRepository) PublishGitHubDocumentRun(
 			Delete(&types.GitHubDocumentRun{}).Error; err != nil {
 			return err
 		}
-		ds.LastSyncCursor = append(types.JSON(nil), run.TargetCursor...)
+		ds.LastSyncCursor = append(types.JSON(nil), verifiedCursor...)
 		ds.LastSyncAt = &now
 		return nil
 	})
