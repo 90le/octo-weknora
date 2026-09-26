@@ -131,6 +131,20 @@ func TestGitHubBatchSettingsKeepExplicitExclusions(t *testing.T) {
 	require.Equal(t, []string{"generated", "dist"}, settings["exclude"])
 }
 
+func TestReviewedGitHubBatchUsesPerRepositoryOverridesWithoutChangingLegacyRequests(t *testing.T) {
+	paths := []string{"docs"}
+	emptyExclude := []string{}
+	candidate := types.GitHubRepositoryCandidate{Repository: "Mininglamp-OSS/octo-cli", Paths: &paths, Exclude: &emptyExclude}
+	reviewed := githubBatchEffectiveSettings(candidate.Repository, "main", "source",
+		[]string{"README.md"}, []string{"dist"}, candidate, true)
+	require.Equal(t, []string{"docs"}, reviewed["paths"])
+	require.Equal(t, []string{}, reviewed["exclude"], "explicit empty override clears source defaults")
+	legacy := githubBatchEffectiveSettings(candidate.Repository, "main", "source",
+		[]string{"README.md"}, []string{"dist"}, candidate, false)
+	require.Equal(t, []string{"README.md"}, legacy["paths"])
+	require.Equal(t, []string{"dist"}, legacy["exclude"])
+}
+
 func TestCreateGitHubBatchRejectsTooManyExclusionsBeforeCreating(t *testing.T) {
 	service := &DataSourceService{}
 	response, err := service.CreateGitHubBatch(context.Background(), &types.GitHubBatchRequest{
