@@ -24,11 +24,12 @@ const error = ref('')
 const preview = ref<GitHubScheduleMigrationPreviewResponse | null>(null)
 const selectedIDs = ref<string[]>([])
 const result = ref<GitHubScheduleMigrationApplyResponse | null>(null)
+const maxApply = 100
 let generation = 0
 
 const eligible = computed(() => preview.value?.items.filter(item => item.eligible) || [])
 const selected = computed(() => eligible.value.filter(item => selectedIDs.value.includes(item.data_source_id)))
-const canApply = computed(() => !loading.value && !applying.value && selected.value.length > 0)
+const canApply = computed(() => !loading.value && !applying.value && selected.value.length > 0 && selected.value.length <= maxApply)
 const appliedCount = computed(() => result.value?.results.filter(item => item.status !== 'skipped').length || 0)
 
 function unwrap<T>(response: unknown): T {
@@ -78,7 +79,7 @@ function reason(item: GitHubScheduleMigrationPreviewItem): string {
 }
 
 function selectAll() {
-  selectedIDs.value = eligible.value.map(item => item.data_source_id)
+  selectedIDs.value = eligible.value.slice(0, maxApply).map(item => item.data_source_id)
 }
 
 async function applySelected() {
@@ -128,6 +129,9 @@ async function applySelected() {
             {{ t('datasource.githubBulk.migration.selectAll') }}
           </t-button>
         </div>
+        <p v-if="eligible.length > maxApply || selected.length > maxApply" class="migration-limit">
+          {{ t('datasource.githubBulk.migration.maxPerApply', { count: maxApply }) }}
+        </p>
         <div v-if="preview.items.length" class="migration-list">
           <t-checkbox-group v-model="selectedIDs">
             <div v-for="item in preview.items" :key="item.data_source_id" class="migration-row">
@@ -163,6 +167,7 @@ async function applySelected() {
 .migration-row__body code { overflow-wrap: anywhere; }
 .migration-row__body small { color: var(--td-text-color-placeholder); }
 .migration-error { color: var(--td-error-color); }
+.migration-limit { color: var(--td-warning-color); font-size: 12px; }
 .migration-result { margin-top: 14px; font-size: 12px; }
 .migration-result p { margin: 5px 0; overflow-wrap: anywhere; }
 </style>
