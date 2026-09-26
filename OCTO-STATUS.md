@@ -22,7 +22,9 @@
 
 **真实群问答验收（单例）：**「Octo 小测」（UID `28896t9kvbl1fbd86fb_bot`）在「Steward 联调群」（`group_no=f242768884694ce89e86bdc236f525f7`）以消息 `seq 522`、ID `2103963709519859712` 询问 Octo Server 的构建准备及固定来源。「Octo 小丘」（UID `286wbc0bphb6af78382_bot`）以相邻消息 `seq 523`、ID `2103963761822830592` 回复相关 Go、`replace` 和构建步骤，并附[官方固定提交 BUILDING.md](https://github.com/Mininglamp-OSS/octo-server/blob/d72384470cb72188af4f99c2576f92d2a0e39738/BUILDING.md)；已核对该页直接支持回答。原生 reply 指向原提问，mention UID 精确指向测试 Bot。内部 channel `892c8469-c005-49a3-b783-abe796ffff9c` 的 inbox 复合消息 ID `octo:286wbc0bphb6af78382_bot:2103963709519859712` 为 `delivered`、`attempts=1`。此例只覆盖该构建问答与对应出站路径，版本、多仓及其他文档问答仍需分别验证。
 
-**容量与未完成事项：**先前定点清理旧 `/tmp/gopath` 567 MiB、`node-compile-cache` 421 MiB、`/tmp/go` 238 MiB；随后把约 2.47 GB Go 模块缓存复制到 2 TB 数据盘，`rsync --checksum --dry-run` 差异为 0，原路径改为符号链接并验证 Docker bind mount 可读，最后定点移除根盘旧副本。未重启生产应用。根盘现可用约 15 GiB，根盘上的 `containerd` 仍约 58 GB；2 TB 数据盘已用约 42 GB，为 XFS `ftype=0`，不能作为当前 overlay 存储目录。下一次构建须继续把 `TMPDIR`、`GOTMPDIR` 和重型构建缓存指向数据盘；PostgreSQL／Milvus 数据、来源快照及发布备份也留在数据盘。保留回退镜像和发布证据，不执行宽范围 prune。文档与源码仍按数据源各持一份物理 Git 传输缓存；按仓库共享缓存、明确的 GitHub API 速率预算和 webhook 均未实现。下一步按 [实施计划](OCTO-PLAN.md) 扩展真实群问答、审阅来源范围并监测后续周期健康。
+**容量与清理：**先前定点清理旧 `/tmp/gopath` 567 MiB、`node-compile-cache` 421 MiB、`/tmp/go` 238 MiB；随后把约 2.47 GB Go 模块缓存复制到 2 TB 数据盘，`rsync --checksum --dry-run` 差异为 0，原路径改为符号链接并验证 Docker bind mount 可读，最后定点移除根盘旧副本。验收后停止并移除 4 个隔离候选容器和候选网络，确认无挂载及打开文件后，定点清理候选克隆目录约 871 MiB、旧范围预览测试缓存约 4.0 GiB、`ff60725e` 发布暂存的源码／包／UI／npm 产物约 1.4 GiB。生产应用未重启。根盘可用约 15 GiB，根盘上的 `containerd` 仍约 58 GB；2 TB 数据盘已用约 37 GiB，为 XFS `ftype=0`，不能作为当前 overlay 存储目录。PostgreSQL／Milvus 数据和来源快照仍在数据盘；现行 `backup-final`（PostgreSQL 导出、应用文件、Compose）、`source.tar`、`ff60725e` 不可变镜像以及 `711` 版本回退镜像和备份目录均保留。需要时可由备份重建隔离候选。下一次构建须继续把 `TMPDIR`、`GOTMPDIR` 和重型构建缓存指向数据盘，不执行宽范围 prune。
+
+**未完成事项：**文档与源码仍按数据源各持一份物理 Git 传输缓存；按仓库共享缓存、明确的 GitHub API 速率预算和 webhook 均未实现。下一步按 [实施计划](OCTO-PLAN.md) 扩展真实群问答、审阅来源范围并监测后续周期健康。
 
 ## 历史发布：隐私修复（2026-09-23 15:58 CST）
 
