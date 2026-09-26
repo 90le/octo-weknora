@@ -184,30 +184,18 @@ func githubStaggeredSixHourSchedule(repository, mode string) string {
 	return fmt.Sprintf("0 %d %d,%d,%d,%d * * *", minute, hour, hour+6, hour+12, hour+18)
 }
 
-// GitHubLegacySchedulePreview is a read-only migration candidate. Operators
-// can inspect the old and proposed cron expressions before any explicit
-// update. This helper intentionally does not write data source rows.
-type GitHubLegacySchedulePreview struct {
-	DataSourceID string
-	Repository   string
-	Mode         string
-	Status       string
-	Current      string
-	Proposed     string
-	Eligible     bool
-	Reason       string
-}
-
 // PreviewGitHubLegacySchedules never guesses that an operator's custom cron
 // should be moved. Only active GitHub sources with the exact old six-hour
 // default are eligible; paused/error/manual/custom rows remain untouched.
-func PreviewGitHubLegacySchedules(rows []*types.DataSource) []GitHubLegacySchedulePreview {
-	previews := make([]GitHubLegacySchedulePreview, 0, len(rows))
+func PreviewGitHubLegacySchedules(rows []*types.DataSource) []types.GitHubScheduleMigrationPreviewItem {
+	previews := make([]types.GitHubScheduleMigrationPreviewItem, 0, len(rows))
 	for _, ds := range rows {
 		if ds == nil || ds.Type != types.ConnectorTypeGitHub {
 			continue
 		}
-		p := GitHubLegacySchedulePreview{DataSourceID: ds.ID, Status: ds.Status, Current: ds.SyncSchedule}
+		p := types.GitHubScheduleMigrationPreviewItem{
+			DataSourceID: ds.ID, Status: ds.Status, Current: ds.SyncSchedule, UpdatedAt: ds.UpdatedAt,
+		}
 		config, err := ds.ParseConfig()
 		if err != nil || config == nil {
 			p.Reason = "invalid_config"

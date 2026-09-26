@@ -314,6 +314,8 @@ func RegisterDataSourceRoutes(
 		// /:id so "github" is never interpreted as a data-source identifier.
 		ds.POST("/github/discover", g.Admin(), handler.DiscoverGitHubRepositories)
 		ds.POST("/github/batch", g.Admin(), handler.CreateGitHubBatch)
+		ds.POST("/github/schedule-migration/preview", g.Admin(), handler.PreviewGitHubScheduleMigration)
+		ds.POST("/github/schedule-migration/apply", g.Admin(), handler.ApplyGitHubScheduleMigration)
 
 		// CRUD operations
 		ds.POST("", g.Admin(), handler.CreateDataSource)

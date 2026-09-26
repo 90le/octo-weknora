@@ -63,3 +63,56 @@ type GitHubBatchResponse struct {
 	Owner   string                  `json:"owner"`
 	Results []GitHubBatchItemResult `json:"results"`
 }
+
+// GitHubScheduleMigrationPreviewItem is a display-safe snapshot of one source.
+// No credential or source configuration body is returned to the browser.
+type GitHubScheduleMigrationPreviewItem struct {
+	DataSourceID string    `json:"data_source_id"`
+	Repository   string    `json:"repository,omitempty"`
+	Mode         string    `json:"mode,omitempty"`
+	Status       string    `json:"status"`
+	Current      string    `json:"current_schedule"`
+	Proposed     string    `json:"proposed_schedule,omitempty"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Eligible     bool      `json:"eligible"`
+	Reason       string    `json:"reason"`
+}
+
+type GitHubScheduleMigrationPreviewRequest struct {
+	TenantID        uint64 `json:"-"`
+	KnowledgeBaseID string `json:"knowledge_base_id"`
+}
+
+type GitHubScheduleMigrationPreviewResponse struct {
+	KnowledgeBaseID string                               `json:"knowledge_base_id"`
+	Items           []GitHubScheduleMigrationPreviewItem `json:"items"`
+}
+
+// Each apply item binds the user's explicit selection to the previewed row
+// version and values. The server recomputes Proposed; it never trusts a
+// client-supplied cron expression as the migration target.
+type GitHubScheduleMigrationSelection struct {
+	DataSourceID      string    `json:"data_source_id"`
+	ExpectedSchedule  string    `json:"expected_schedule"`
+	ExpectedStatus    string    `json:"expected_status"`
+	ExpectedUpdatedAt time.Time `json:"expected_updated_at"`
+	ExpectedProposed  string    `json:"expected_proposed"`
+}
+
+type GitHubScheduleMigrationApplyRequest struct {
+	TenantID        uint64                             `json:"-"`
+	KnowledgeBaseID string                             `json:"knowledge_base_id"`
+	Selections      []GitHubScheduleMigrationSelection `json:"selections"`
+}
+
+type GitHubScheduleMigrationApplyItem struct {
+	DataSourceID string `json:"data_source_id"`
+	Status       string `json:"status"` // applied, applied_with_warning or skipped
+	Reason       string `json:"reason"`
+	Schedule     string `json:"schedule,omitempty"`
+}
+
+type GitHubScheduleMigrationApplyResponse struct {
+	KnowledgeBaseID string                             `json:"knowledge_base_id"`
+	Results         []GitHubScheduleMigrationApplyItem `json:"results"`
+}

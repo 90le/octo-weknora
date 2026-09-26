@@ -72,6 +72,26 @@ jobs:
     name: Format, vet, test, and build
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Disposable CI database only. The guarded CAS test refuses any database
+      # whose name does not start with weknora_test_.
+      WEKNORA_TEST_POSTGRES_DSN: postgres://tester:test-only@127.0.0.1:5432/weknora_test_schedule?sslmode=disable
+    services:
+      # Small startup cost buys a real PostgreSQL timestamp/CAS test on every
+      # App Go run; no production data or credential is involved.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: tester
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: weknora_test_schedule
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tester -d weknora_test_schedule"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v6
         with:
