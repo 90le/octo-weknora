@@ -282,7 +282,7 @@ func (s *DataSourceService) UpdateDataSourceCredentials(
 	if err := s.dsRepo.Update(ctx, existing); err != nil {
 		return nil, err
 	}
-	if existing.Type == types.ConnectorTypeGitHub && snapshot.IsSource(parsed) {
+	if existing.Type == types.ConnectorTypeGitHub {
 		if store, storeErr := snapshot.FromEnvironment(); storeErr == nil {
 			if clearErr := store.ClearPrivateDirectory(existing, "git"); clearErr != nil {
 				logger.Warnf(ctx, "failed to clear GitHub transport cache after credential update: %v", clearErr)
@@ -330,6 +330,13 @@ func (s *DataSourceService) ClearDataSourceCredentials(ctx context.Context, id s
 	existing.Config = blob
 	if err := s.dsRepo.Update(ctx, existing); err != nil {
 		return err
+	}
+	if existing.Type == types.ConnectorTypeGitHub {
+		if store, storeErr := snapshot.FromEnvironment(); storeErr == nil {
+			if clearErr := store.ClearPrivateDirectory(existing, "git"); clearErr != nil {
+				logger.Warnf(ctx, "failed to clear GitHub transport cache after credential removal: %v", clearErr)
+			}
+		}
 	}
 	logger.Infof(ctx, "DataSource credentials cleared by user: id=%s", secutils.SanitizeForLog(id))
 	recordKBActivity(ctx, s.audit, existing.TenantID, existing.KnowledgeBaseID, types.AuditActionDataSourceUpdated,
@@ -718,6 +725,11 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		logger.Errorf(ctx, "failed to parse config: %v", err)
 		return s.failSyncRun(ctx, ds, syncLog, nil,
 			fmt.Sprintf("Invalid configuration: %v", err), wasPaused, err, false)
+	}
+	// Only the trusted sync path may supply generated-cache ownership. This
+	// identity is deliberately not part of the persisted data-source config.
+	config.SyncSource = &types.DataSourceSyncSource{
+		TenantID: ds.TenantID, KnowledgeBaseID: ds.KnowledgeBaseID, DataSourceID: ds.ID,
 	}
 	// Surface the KB's multimodal/VLM state to the connector so it only extracts
 	// embedded images for OCR when the KB can actually ingest them (never persisted).

@@ -51,10 +51,19 @@ type Builder struct {
 // files supplied by a user. Store.Delete removes this namespace together with
 // the snapshot objects when the data source is deleted.
 func (b *Builder) PrivateDirectory(name string) (string, error) {
-	if b == nil || b.store == nil || b.ds == nil || !privateDirectoryPattern.MatchString(name) {
+	if b == nil || b.store == nil {
 		return "", ErrUnavailable
 	}
-	dir := filepath.Join(b.store.scope(b.ds), "private", name)
+	return b.store.PrivateDirectory(b.ds, name)
+}
+
+// PrivateDirectory exposes only generated transport storage for one verified
+// data source. Document connectors use it without creating a source snapshot.
+func (s *Store) PrivateDirectory(ds *types.DataSource, name string) (string, error) {
+	if s == nil || ds == nil || ds.TenantID == 0 || ds.KnowledgeBaseID == "" || ds.ID == "" || !privateDirectoryPattern.MatchString(name) {
+		return "", ErrUnavailable
+	}
+	dir := filepath.Join(s.scope(ds), "private", name)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", errors.New("cannot prepare private source cache")
 	}
