@@ -139,6 +139,16 @@ func TestGitHubSyncAccessGuardRejectsCredentialRevocation(t *testing.T) {
 	require.ErrorIs(t, guard.check(context.Background()), errSyncAccessChanged)
 }
 
+func TestGitHubDocumentChunkRejectsKnowledgeBaseRevocation(t *testing.T) {
+	ds := &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: "kb"}
+	svc := &DataSourceService{kbService: &processSyncKBService{kb: &types.KnowledgeBase{ID: "kb", TenantID: 7}}}
+	require.NoError(t, svc.verifyGitHubDocumentKB(context.Background(), ds))
+	svc.kbService = &processSyncKBService{kb: &types.KnowledgeBase{ID: "kb", TenantID: 8}}
+	require.ErrorIs(t, svc.verifyGitHubDocumentKB(context.Background(), ds), errSyncAccessChanged)
+	svc.kbService = &processSyncKBService{getErr: errors.New("knowledge base removed")}
+	require.ErrorIs(t, svc.verifyGitHubDocumentKB(context.Background(), ds), errSyncAccessChanged)
+}
+
 type githubDocumentTestKnowledgeService struct {
 	interfaces.KnowledgeService
 	repo      *preparedRepo
@@ -260,6 +270,7 @@ func TestGitHubDocumentRunRetriesOnlyFailedFileAfterRestart(t *testing.T) {
 	knowledge := &githubDocumentTestKnowledgeService{repo: knowledgeRepo, failPath: "docs/a.md", createdBy: map[string]int{}}
 	syncLogs := apprepo.NewSyncLogRepository(db)
 	svc := &DataSourceService{dsRepo: sourceRepo, syncLogRepo: syncLogs, knowledgeService: knowledge,
+		kbService:  &processSyncKBService{kb: &types.KnowledgeBase{ID: "kb", TenantID: 7}},
 		tenantRepo: &processSyncTenantRepo{tenant: &types.Tenant{ID: 7}}, tagService: &processSyncTagService{}}
 	process := func(logID string) error {
 		log := &types.SyncLog{ID: logID, DataSourceID: ds.ID, TenantID: ds.TenantID, Status: types.SyncLogStatusRunning}

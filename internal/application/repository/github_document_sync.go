@@ -199,8 +199,8 @@ func (r *DataSourceRepository) PublishGitHubDocumentRun(
 		}
 		now := time.Now().UTC()
 		query := tx.Model(&types.DataSource{}).
-			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND deleted_at IS NULL AND sync_deletions = ?",
-				ds.ID, ds.TenantID, ds.KnowledgeBaseID, types.ConnectorTypeGitHub, ds.SyncDeletions)
+			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND type = ? AND deleted_at IS NULL AND status = ? AND sync_deletions = ?",
+				ds.ID, ds.TenantID, ds.KnowledgeBaseID, types.ConnectorTypeGitHub, ds.Status, ds.SyncDeletions)
 		if tx.Dialector.Name() == "postgres" {
 			query = query.Where("config = ?::jsonb", ds.Config.ToString())
 		} else {

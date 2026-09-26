@@ -154,6 +154,30 @@ func TestGitHubDocumentProgressSQLiteCanceledRunCannotPublish(t *testing.T) {
 	require.Contains(t, string(stored.LastSyncCursor), `"selection":"old"`)
 }
 
+func TestGitHubDocumentProgressSQLitePauseRaceCannotPublish(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "github-pause.db")), &gorm.Config{})
+	require.NoError(t, err)
+	repo, ds, run, items := githubDocumentTestRows(t, db)
+	ctx := context.Background()
+	leaseID := uuid.NewString()
+	ok, err := repo.AcquireGitHubDocumentRunLease(ctx, run, leaseID, time.Now().Add(time.Minute))
+	require.NoError(t, err)
+	require.True(t, ok)
+	for _, item := range items {
+		require.NoError(t, repo.UpdateGitHubDocumentItem(ctx, run, leaseID, item,
+			types.GitHubDocumentItemReady, types.GitHubDocumentOutcomeSkipped, ""))
+	}
+	// The worker's last guard ran while active; an administrator pauses the
+	// source before the SQL commit. Config and SyncLog can remain unchanged.
+	require.NoError(t, db.Model(&types.DataSource{}).Where("id = ?", ds.ID).
+		Update("status", types.DataSourceStatusPaused).Error)
+	require.ErrorIs(t, repo.PublishGitHubDocumentRun(ctx, run, leaseID, ds, ds.ID), ErrGitHubDocumentRunChanged)
+	stored, err := repo.FindByID(ctx, ds.ID)
+	require.NoError(t, err)
+	require.Equal(t, types.DataSourceStatusPaused, stored.Status)
+	require.Contains(t, string(stored.LastSyncCursor), `"selection":"old"`)
+}
+
 func TestGitHubDocumentCheckpointPostgresSchemaAndRollback(t *testing.T) {
 	dsn := os.Getenv("WEKNORA_TEST_POSTGRES_DSN")
 	if dsn == "" {

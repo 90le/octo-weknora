@@ -79,6 +79,17 @@ func githubDocumentPathHash(path string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func (s *DataSourceService) verifyGitHubDocumentKB(ctx context.Context, ds *types.DataSource) error {
+	if s.kbService == nil {
+		return errors.New("knowledge-base authorization service is unavailable")
+	}
+	kb, err := s.kbService.GetKnowledgeBaseByID(ctx, ds.KnowledgeBaseID)
+	if err != nil || kb == nil || kb.ID != ds.KnowledgeBaseID || kb.TenantID != ds.TenantID {
+		return fmt.Errorf("%w: GitHub document knowledge-base access changed", errSyncAccessChanged)
+	}
+	return nil
+}
+
 func newGitHubDocumentRun(
 	ds *types.DataSource, plan *githubConnector.DocumentPlan, credentialScope string, forceFull bool,
 ) (*types.GitHubDocumentRun, []types.GitHubDocumentSyncItem, error) {
@@ -181,7 +192,16 @@ func (s *DataSourceService) processGitHubDocumentRun(
 			return s.githubDocumentRunFailure(ctx, ds, syncLog, wasPaused, err)
 		}
 		if err = store.CreateGitHubDocumentRun(ctx, run, items); err != nil {
-			return s.githubDocumentRunFailure(ctx, ds, syncLog, wasPaused, err)
+			// A second worker can lose the unique active-run insert after both
+			// resolved the same fixed commit. Reuse only an exactly matching plan;
+			// never create a competing cursor lineage for this source.
+			existing, lookupErr := store.FindRunningGitHubDocumentRun(ctx, ds.TenantID, ds.KnowledgeBaseID, ds.ID)
+			if lookupErr != nil || existing == nil || existing.Selection != plan.Selection ||
+				existing.CommitSHA != plan.Commit || existing.PlanDigest != plan.Digest || existing.CredentialScope != credentialScope ||
+				existing.ForceFull != forceFull {
+				return s.githubDocumentRunFailure(ctx, ds, syncLog, wasPaused, err)
+			}
+			run = existing
 		}
 	}
 	leaseID := uuid.NewString()
@@ -208,6 +228,9 @@ func (s *DataSourceService) processGitHubDocumentRun(
 		return s.finishSyncRunGuardError(ctx, ds, syncLog, nil, wasPaused, err)
 	}
 	if err := accessGuard.check(ctx); err != nil {
+		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, nil, wasPaused, err)
+	}
+	if err := s.verifyGitHubDocumentKB(ctx, ds); err != nil {
 		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, nil, wasPaused, err)
 	}
 	items, err := store.ListGitHubDocumentRunItems(ctx, run)
@@ -471,6 +494,9 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 		if err := accessGuard.check(ctx); err != nil {
 			return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items), wasPaused, err)
 		}
+		if err := s.verifyGitHubDocumentKB(ctx, ds); err != nil {
+			return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items), wasPaused, err)
+		}
 		var outcome, errorCode string
 		if item.Operation == types.GitHubDocumentItemUpsert {
 			plannedItem := planned[item.PathHash]
@@ -528,6 +554,9 @@ func (s *DataSourceService) processGitHubDocumentChunk(
 		return s.finishSyncRunGuardError(ctx, ds, syncLog, githubDocumentProgressResult(items), wasPaused, err)
 	}
 	if err := accessGuard.check(ctx); err != nil {
+		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items), wasPaused, err)
+	}
+	if err := s.verifyGitHubDocumentKB(ctx, ds); err != nil {
 		return s.stopSyncAfterAccessChange(ctx, ds, syncLog, githubDocumentProgressResult(items), wasPaused, err)
 	}
 	pending, failed, pendingUpserts, failedUpserts := 0, 0, 0, 0
