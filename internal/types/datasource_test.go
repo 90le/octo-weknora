@@ -166,3 +166,18 @@ func TestSubtreeChildID_MatchesPrefix(t *testing.T) {
 	assert.False(t, strings.HasPrefix(sibling, prefix),
 		"sibling node whose id shares a leading substring must not match the prefix")
 }
+
+func TestDataSourceConfigSyncSourceIsRuntimeOnly(t *testing.T) {
+	cfg := &DataSourceConfig{
+		Type:       ConnectorTypeGitHub,
+		Settings:   map[string]interface{}{"repository": "test/docs"},
+		SyncSource: &DataSourceSyncSource{TenantID: 7, KnowledgeBaseID: "private-kb", DataSourceID: "private-ds"},
+	}
+	data, err := cfg.ToJSON()
+	assert.NoError(t, err)
+	assert.NotContains(t, string(data), "private-kb")
+	assert.NotContains(t, string(data), "private-ds")
+	var decoded DataSourceConfig
+	assert.NoError(t, json.Unmarshal(data, &decoded))
+	assert.Nil(t, decoded.SyncSource)
+}

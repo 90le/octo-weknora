@@ -37,11 +37,13 @@ type gitCache struct {
 
 type cacheOutput struct {
 	bytes.Buffer
-	max int
+	max      int
+	exceeded bool
 }
 
 func (b *cacheOutput) Write(p []byte) (int, error) {
 	if b.Len()+len(p) > b.max {
+		b.exceeded = true
 		return 0, errors.New("Git cache command output exceeds limit")
 	}
 	return b.Buffer.Write(p)
@@ -146,7 +148,7 @@ func (c *Connector) buildGitSnapshot(ctx context.Context, cfg *types.DataSourceC
 			return &Error{Code: "github_selected_path_missing", Message: "Selected GitHub path no longer exists; review source selection"}
 		}
 	}
-	return cache.readBlobs(ctx, need, func(entry gitTreeEntry, body []byte) error {
+	return cache.readBlobs(ctx, need, snapshot.MaxFileBytes, func(entry gitTreeEntry, body []byte) error {
 		return b.AddGit(ctx, entry.Path, body, githubBlobURL(s.Repository, commit, entry.Path), commit, entry.SHA)
 	})
 }
@@ -241,9 +243,17 @@ func (g *gitCache) cloneShallow(ctx context.Context) error {
 	return nil
 }
 
-func (g *gitCache) tree(ctx context.Context, commit string) ([]gitTreeEntry, error) {
-	raw, err := g.run(ctx, "ls-tree", "--full-tree", "-r", "-z", "-l", commit)
+func (g *gitCache) tree(ctx context.Context, commit string, roots ...string) ([]gitTreeEntry, error) {
+	args := []string{"ls-tree", "--full-tree", "-r", "-z", "-l", commit}
+	if len(roots) > 0 {
+		args = append(args, "--")
+		args = append(args, roots...)
+	}
+	raw, err := g.runLimit(ctx, 64<<20, args...)
 	if err != nil {
+		if errors.Is(err, errGitOutputLimit) {
+			return nil, &Error{Code: "github_git_tree_limit", Message: "GitHub repository tree exceeds the local sync limit; select narrower paths"}
+		}
 		return nil, &Error{Code: "github_tree", Message: "GitHub source tree cannot be read from the cache"}
 	}
 	entries := make([]gitTreeEntry, 0)
@@ -268,7 +278,7 @@ func (g *gitCache) tree(ctx context.Context, commit string) ([]gitTreeEntry, err
 	return entries, nil
 }
 
-func (g *gitCache) readBlobs(ctx context.Context, entries []gitTreeEntry, emit func(gitTreeEntry, []byte) error) error {
+func (g *gitCache) readBlobs(ctx context.Context, entries []gitTreeEntry, maxFileBytes int64, emit func(gitTreeEntry, []byte) error) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -312,7 +322,7 @@ func (g *gitCache) readBlobs(ctx context.Context, entries []gitTreeEntry, emit f
 			return &Error{Code: "github_blob_invalid", Message: "GitHub source cache returned an unexpected file object"}
 		}
 		size, parseErr := strconv.ParseInt(fields[2], 10, 64)
-		if parseErr != nil || size != entry.Size || size > snapshot.MaxFileBytes {
+		if parseErr != nil || size != entry.Size || size > maxFileBytes {
 			_ = cmd.Wait()
 			return &Error{Code: "github_blob_invalid", Message: "GitHub source cache returned an invalid file size"}
 		}
@@ -341,15 +351,24 @@ func (g *gitCache) readBlobs(ctx context.Context, entries []gitTreeEntry, emit f
 }
 
 func (g *gitCache) run(ctx context.Context, args ...string) ([]byte, error) {
+	return g.runLimit(ctx, 16<<20, args...)
+}
+
+var errGitOutputLimit = errors.New("Git cache command output exceeds limit")
+
+func (g *gitCache) runLimit(ctx context.Context, limit int, args ...string) ([]byte, error) {
 	cmd, cleanup, err := g.command(ctx, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
 	var out cacheOutput
-	out.max = 16 << 20
+	out.max = limit
 	cmd.Stdout = &out
 	if err = cmd.Run(); err != nil {
+		if out.exceeded {
+			return nil, errGitOutputLimit
+		}
 		return nil, errors.New("git command failed")
 	}
 	return out.Bytes(), nil

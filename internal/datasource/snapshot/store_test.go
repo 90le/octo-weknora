@@ -41,6 +41,31 @@ func TestSnapshotsKeepTextLanguagesAndBindScope(t *testing.T) {
 	_, err = s.Content(ds, object)
 	require.Error(t, err)
 }
+
+func TestTransportPrivateDirectoryIsPerDataSourceAndDeletedWithIt(t *testing.T) {
+	store := &Store{Base: t.TempDir()}
+	first := &types.DataSource{ID: "docs-a", TenantID: 7, KnowledgeBaseID: "kb"}
+	second := &types.DataSource{ID: "docs-b", TenantID: 7, KnowledgeBaseID: "kb"}
+	firstDir, err := store.PrivateDirectory(first, "git")
+	require.NoError(t, err)
+	secondDir, err := store.PrivateDirectory(second, "git")
+	require.NoError(t, err)
+	require.NotEqual(t, firstDir, secondDir)
+	require.NoError(t, os.WriteFile(filepath.Join(firstDir, "probe"), []byte("private"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(secondDir, "probe"), []byte("private"), 0o600))
+	// Credential rotation/removal clears generated transport data for this
+	// data source, while preserving unrelated sources and published snapshots.
+	require.NoError(t, store.ClearPrivateDirectory(first, "git"))
+	require.NoDirExists(t, firstDir)
+	require.FileExists(t, filepath.Join(secondDir, "probe"))
+	firstDir, err = store.PrivateDirectory(first, "git")
+	require.NoError(t, err)
+	require.NoError(t, store.Delete(first))
+	require.NoDirExists(t, firstDir)
+	require.DirExists(t, secondDir)
+	_, err = store.PrivateDirectory(&types.DataSource{ID: "docs-a", TenantID: 0, KnowledgeBaseID: "kb"}, "git")
+	require.ErrorIs(t, err, ErrUnavailable)
+}
 func TestSnapshotPolicyDoesNotWhitelistLanguages(t *testing.T) {
 	for _, p := range []string{"src/main.js", "app.php", "nested/handler.py", ".github/workflows/check.yml", "config.toml"} {
 		require.False(t, Excluded(p, DefaultExcludes), p)
