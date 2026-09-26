@@ -19,6 +19,18 @@ Example native settings:
 Credentials use the existing data-source credential subresource and encryption.
 They never belong in the settings object or a client-visible response.
 
+The optional `DATASOURCE_GITHUB_SHARED_GIT_CACHE=1` switch reuses one physical
+bare Git mirror for sources with the same tenant, canonical repository and
+identical credential scope. It requires `SYSTEM_AES_KEY`, Git, and a private
+persistent `DATASOURCE_SNAPSHOT_DIR` whose filesystem supports cross-process
+file locks. Each source still has its own manifest, index, cursor and access
+checks. The existing per-source cache remains available when the switch is
+off; turning it on does not migrate or delete old per-source caches. Source
+deletion and credential changes remove a shared mirror only after checking
+that no other source in the tenant still subscribes. If that check fails, the
+mirror is retained for review. This switch does not combine HEAD checks,
+schedule runs or API rate budgets; it is not evidence of production rollout.
+
 Each fetch resolves a commit and reads its tree/blobs. The file list is compared
 with the last acknowledged manifest. Unchanged blobs are skipped. Returned
 documents preserve the repository-relative folder under `owner/repository/`

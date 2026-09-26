@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -50,10 +49,11 @@ func githubDocumentCredentialScope(ds *types.DataSource, cfg *types.DataSourceCo
 	if ds == nil || cfg == nil {
 		return "", errors.New("GitHub document credentials are unavailable")
 	}
-	token, _ := cfg.Credentials["access_token"].(string)
-	token = strings.TrimSpace(token)
-	key := secutils.GetAESKey()
-	if token == "" {
+	scope, err := githubConnector.CredentialScope(cfg)
+	if err != nil {
+		return "", err
+	}
+	if scope == "public" {
 		var persisted struct {
 			Credentials map[string]interface{} `json:"credentials"`
 		}
@@ -66,13 +66,7 @@ func githubDocumentCredentialScope(ds *types.DataSource, cfg *types.DataSourceCo
 		}
 		return "public", nil
 	}
-	if key == nil {
-		return "", errors.New("GitHub private document sync requires SYSTEM_AES_KEY")
-	}
-	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write([]byte("github-document-sync-credential-v1\x00"))
-	_, _ = mac.Write([]byte(token))
-	return hex.EncodeToString(mac.Sum(nil)), nil
+	return scope, nil
 }
 
 func githubDocumentPathHash(path string) string {

@@ -1056,6 +1056,9 @@ func (s *knowledgeBaseService) deleteDataSourcesForKnowledgeBase(ctx context.Con
 			continue
 		}
 		removeSourceCache(ds)
+		if err := cleanupGitHubSharedCache(ctx, s.dsRepo, ds); err != nil {
+			logger.Warnf(ctx, "Failed to release GitHub shared cache for deleted KB source %s: %v", ds.ID, err)
+		}
 		if s.dsScheduler != nil {
 			s.dsScheduler.Remove(ds.ID)
 		}

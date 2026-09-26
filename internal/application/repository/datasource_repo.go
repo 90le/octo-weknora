@@ -77,6 +77,18 @@ func (r *DataSourceRepository) FindByKnowledgeBase(ctx context.Context, kbID str
 	return dataSources, nil
 }
 
+// FindGitHubByTenant is used only while deciding whether a physical Git
+// mirror still has subscribers. Include paused/error sources: they still own
+// their configured repository and may resume without reconfiguration.
+func (r *DataSourceRepository) FindGitHubByTenant(ctx context.Context, tenantID uint64) ([]*types.DataSource, error) {
+	if tenantID == 0 {
+		return nil, errors.New("tenant id is empty")
+	}
+	var sources []*types.DataSource
+	err := r.db.WithContext(ctx).Where("tenant_id = ? AND type = ? AND deleted_at IS NULL", tenantID, types.ConnectorTypeGitHub).Find(&sources).Error
+	return sources, err
+}
+
 // Update updates an existing data source
 func (r *DataSourceRepository) Update(ctx context.Context, ds *types.DataSource) error {
 	if ds == nil {

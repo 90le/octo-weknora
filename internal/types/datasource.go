@@ -1,6 +1,7 @@
 package types
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"strings"
@@ -275,6 +276,12 @@ type DataSourceSyncSource struct {
 	TenantID        uint64
 	KnowledgeBaseID string
 	DataSourceID    string
+	// CredentialScope is an opaque, keyed identity set by the sync service.
+	// It is never accepted from persisted configuration or returned to clients.
+	CredentialScope string
+	// CheckAccess revalidates the exact source while a shared transport lock is
+	// held, so an old worker cannot recreate a cache after credential rotation.
+	CheckAccess func(context.Context) error
 }
 
 // HasCredentials reports whether the credentials map carries any value at
