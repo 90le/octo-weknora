@@ -26,11 +26,13 @@ Keep application data, source snapshots, generated Git caches, parsing temporary
 
 Do not migrate a container runtime merely because a larger disk is available. Its target filesystem must support the runtime's overlay storage requirements. If it does not, keep the runtime on its verified filesystem, control root-disk growth with bounded logs and caches, and wait for a compatible replacement volume. Never reformat an active data volume as part of a release.
 
+Check the target filesystem's overlay compatibility before changing containerd storage. Preserve the running and rollback images; investigate measured cache and log usage before any targeted cleanup. Avoid broad image or volume pruning during a release or source recovery.
+
 ## Required checks before switching
 
 1. Focused draft visibility tests plus upstream required checks complete successfully.
-2. Compare deployed commit and release commit, including migrations and configuration defaults. Review existing local patches.
-3. Create a consistent database backup and corresponding file snapshot; record the exact old images and Compose configuration privately.
+2. Compare deployed commit and release commit, including migrations and configuration defaults. Review existing local patches. Drain running source sync and parsing jobs, and check `pending/processing/finalizing` knowledge before replacing the app.
+3. Create a consistent database backup and corresponding file snapshot; record the exact old images and Compose configuration privately. Record which stores and volumes the recovery point actually covers, including whether Milvus and Neo4j are included. A PostgreSQL dump plus application files is not a complete recovery point for stores it omits.
 4. Test the release against an isolated restored database before its first deployment. Avoid connecting a second test application to the production database.
 5. Build both images from the reviewed commit. Keep the original image IDs available.
 
@@ -47,6 +49,6 @@ Do not equate HTTP 200, a passing test suite or an isolated candidate with full 
 
 ## Recovery
 
-If no incompatible migration ran, restore the prior image references and verify readback. If migrations changed the schema incompatibly, an image rollback alone is insufficient: restore the reviewed database/file recovery point using the deployment runbook. Record any writes after the recovery point before restoring.
+If no incompatible migration ran, restore the prior image references and verify readback. If migrations changed the schema incompatibly, an image rollback alone is insufficient: restore the reviewed database/file recovery point using the deployment runbook. Check the recovery point's exact store and volume coverage, and record any writes after it before restoring.
 
 Private paths, credentials and deployment snapshots do not belong in this public repository.

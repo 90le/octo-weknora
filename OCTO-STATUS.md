@@ -1,8 +1,18 @@
 # 项目进度
 
-更新：2026-09-23。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
+更新：2026-09-27。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-23 15:58 CST）
+## 当前状态（2026-09-27，来源恢复进行中）
+
+**代码、主线与运行版本：**PR #46–#58 已合并并通过对应 CI；主线提交为 [`ff60725ed985cd0977eadf19c7630c13d4e75f94`](https://github.com/90le/octo-weknora/commit/ff60725ed985cd0977eadf19c7630c13d4e75f94)。生产回读的 app Image ID 为 `sha256:851910cbd0d5142644baaa7ae1d89cb40a2e6dab836ef15f2c3869d3fb171203`，UI Image ID 为 `sha256:33fa85acef00c767ca2fdcaab69487046b65ada7a5963a56007d9bcf58ea1734`；API／UI 健康检查均为 200，PostgreSQL migration `106` 非 dirty。代码合并、镜像回读和业务验收是不同层次；本轮来源恢复与问答回归仍在进行。此段依据 2026-09-27 的发布／运维交接记录，后续状态变化须重新回读。
+
+**资产与恢复基线：**切换时有 60 条活动来源；活动知识库「Octo官方项目知识库」ID 为 `40b39914-b200-4daa-ba3c-1dd666729ce7`，切换时有 1269 条活动知识。该库目前关闭图谱抽取，不能沿用下文 2026-09-16 的“图谱已启用”历史结论推断其当前配置。2 TB 数据盘上的私有发布备份包含 PostgreSQL 一致性导出、应用文件和 Compose；恢复时仍须核对备份覆盖范围及恢复点之后的写入。
+
+**GitHub 文档来源恢复：**五条此前处于 `error` 的文档来源正在逐条恢复。Android 在选取 11 个文件后完成；Chrome 在跳过 8 个文件后完成；iOS 排除 Xcode `.xcassets` 后在跳过 26 个 PDF 的情况下完成。Server 的 84 个文档仍在同步，Web 的 227 个文档已准备、尚未确认同步完成。这些计数是各来源本次处理范围／跳过情况，不是全库最终成功计数。五条旧错误来源中，四条已从六小时整点计划迁到稳定错峰；Server 因同步尚在进行，计划迁移待其结束。另有五条活动文档来源最新记录仍是旧版的 `partial`，尚待按新版本审阅并重跑；不能把代码支持续接或单条来源成功推断为全体 60 条来源已恢复。
+
+**容量与未完成事项：**根盘可用空间约 11 GiB，根盘上的 `containerd` 约 58 GiB；2 TB 数据盘为 XFS `ftype=0`，不能作为当前 overlay 存储目录。重型构建缓存、PostgreSQL／Milvus 数据和来源快照已放在 2 TB 数据盘；保留回退镜像和发布证据，不执行宽范围 prune。文档与源码仍按数据源各持一份物理 Git 传输缓存；按仓库共享缓存、明确的 GitHub API 速率预算和 webhook 均未实现。下一步先完成 Server／Web、旧 `partial` 来源及剩余计划迁移，再逐项回读同步日志、完整成功时间和知识状态；之后按 [实施计划](OCTO-PLAN.md) 做真实问答与来源验收。
+
+## 历史发布：隐私修复（2026-09-23 15:58 CST）
 
 **隐私修复已发布。**[PR #41](https://github.com/90le/octo-weknora/pull/41)、[#42](https://github.com/90le/octo-weknora/pull/42)、[#43](https://github.com/90le/octo-weknora/pull/43)、[#45](https://github.com/90le/octo-weknora/pull/45) 已合并；最后的 #45 修复 QA 错误路径与 GORM SQL 警告泄露。生产 app 的不可变 Image ID 已回读为 `sha256:64e8489264404dc9d507efa544edbf4db9753d502775ca17d275be2ab90601bd`，对应合并提交 `43030dd1c2cdb2b75c82d28380c0c3d109369eea`，构建源归档校验值前缀 `7723ce70`；UI 仍为 `sha256:1406a7f1…`。四项 PR 的 Go 测试／构建与 lint 检查通过，#45 的 scope 检查也通过。生产后端健康 200、未认证知识 API 401、前端 200；认证系统信息返回完整 `43030dd1` 与 migration `105`、4 个知识库、Anydoc 可用。PostgreSQL migration `105` 非 dirty，4 个活动知识库、60 条活动来源、4 条问题，运行中的同步／解析均为 0；IM 通道启用 1 条、inbox 处理中 0 条，Octo 小丘 WebSocket 运行时已初始化。私人 OpenClaw Gateway 与 Octo daemon 保持 active。
 
