@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"path"
 	"sort"
 
 	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
@@ -31,6 +32,11 @@ func documentExcludes(cfg *types.DataSourceConfig) ([]string, error) {
 	}
 	if len(rules) == 0 {
 		return nil, nil
+	}
+	for _, rule := range rules {
+		if _, err := path.Match(rule, ""); err != nil {
+			return nil, &Error{Code: "github_exclusion_invalid", Message: "Invalid GitHub document exclusion glob"}
+		}
 	}
 	sort.Strings(rules)
 	return rules, nil

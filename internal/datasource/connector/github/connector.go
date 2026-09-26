@@ -327,6 +327,11 @@ func (c *Connector) Validate(ctx context.Context, cfg *types.DataSourceConfig) e
 	if err := snapshot.ValidateSettings(cfg); err != nil {
 		return err
 	}
+	if cfg != nil && !snapshot.IsSource(cfg) {
+		if _, err := documentExcludes(cfg); err != nil {
+			return err
+		}
+	}
 	if cfg != nil && snapshot.IsSource(cfg) {
 		if _, err := snapshot.FromEnvironment(); err != nil {
 			return err

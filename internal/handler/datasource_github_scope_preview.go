@@ -49,7 +49,7 @@ func (h *DataSourceHandler) PreviewGitHubDocumentScope(c *gin.Context) {
 	case "missing_path":
 		c.JSON(http.StatusUnprocessableEntity, preview)
 	case "error":
-		if preview.ErrorCode == "github_selection_invalid" {
+		if preview.ErrorCode == "github_selection_invalid" || preview.ErrorCode == "github_exclusion_invalid" {
 			c.JSON(http.StatusBadRequest, preview)
 		} else if preview.ErrorCode == "github_preview_timeout" {
 			c.JSON(http.StatusGatewayTimeout, preview)

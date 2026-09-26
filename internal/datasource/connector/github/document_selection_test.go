@@ -43,6 +43,28 @@ func TestDocumentExclusionsKeepLegacyNilCursorAndInvalidateOnChange(t *testing.T
 	base.Settings["exclude"] = []string{"bad\\rule"}
 	_, err = documentExcludes(base)
 	require.Error(t, err)
+	base.Settings["exclude"] = []string{"docs/["}
+	_, err = documentExcludes(base)
+	var githubErr *Error
+	require.ErrorAs(t, err, &githubErr)
+	require.Equal(t, "github_exclusion_invalid", githubErr.Code)
+	require.NotContains(t, githubErr.Error(), "docs/[", "invalid rule must not leak into a public error")
+}
+
+func TestInvalidDocumentExclusionRejectedBeforeRemoteValidationOrPreview(t *testing.T) {
+	c, blobs, closeServer := githubPreviewFixture(t, nil, false)
+	defer closeServer()
+	cfg := &types.DataSourceConfig{Settings: map[string]interface{}{
+		"repository": "example/repo", "mode": "documents", "exclude": []string{"docs/["},
+	}}
+	var githubErr *Error
+	err := c.Validate(context.Background(), cfg)
+	require.ErrorAs(t, err, &githubErr)
+	require.Equal(t, "github_exclusion_invalid", githubErr.Code)
+	_, err = c.PreviewDocumentTree(context.Background(), cfg)
+	require.ErrorAs(t, err, &githubErr)
+	require.Equal(t, "github_exclusion_invalid", githubErr.Code)
+	require.Zero(t, blobs.Load())
 }
 
 func TestDocumentScopeAppliesDirectoryGlobImageAndMandatorySafety(t *testing.T) {

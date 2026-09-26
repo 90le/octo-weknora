@@ -254,4 +254,11 @@ func TestGitHubDocumentScopePreviewInvalidAndMissingPath(t *testing.T) {
 	require.Equal(t, "github_selected_path_missing", resp.ErrorCode)
 	require.NotEmpty(t, resp.Commit, "missing path still has a pinned tree revision")
 	require.Zero(t, blobs.Load())
+	badGlob := []string{"docs/["}
+	callsBefore := calls.Load()
+	resp, err = svc.PreviewGitHubDocumentScope(context.Background(), 7, "kb-a", &types.GitHubDocumentScopePreviewRequest{SourceID: "source-a", Exclude: &badGlob})
+	require.NoError(t, err)
+	require.Equal(t, "error", resp.TreeState)
+	require.Equal(t, "github_exclusion_invalid", resp.ErrorCode)
+	require.Equal(t, callsBefore, calls.Load(), "invalid exclusion should fail before GitHub access")
 }
