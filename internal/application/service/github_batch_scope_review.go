@@ -197,6 +197,8 @@ func summarizeGitHubSourceScope(files []githubconnector.SourcePreviewFile, exclu
 			continue
 		}
 		if snapshot.Excluded(file.Path, excludes) {
+			summary.UserExcludedFiles++
+			addPreviewBytes(&summary.UserExcludedBytes, max(file.Size, 0))
 			continue
 		}
 		bytes := max(file.Size, 0)

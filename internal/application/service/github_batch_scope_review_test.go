@@ -25,6 +25,19 @@ func reviewedBatchContext() context.Context {
 	return types.WithPrincipal(context.Background(), types.Principal{Type: types.PrincipalWebUser, ID: "owner-one"})
 }
 
+func TestGitHubBatchSourcePreviewCountsRecursiveExclusions(t *testing.T) {
+	files := []githubconnector.SourcePreviewFile{
+		{Path: "root.png", Size: 10, Mode: "100644"},
+		{Path: "docs/assets/icons/nested.png", Size: 20, Mode: "100644"},
+		{Path: "docs/readme.md", Size: 30, Mode: "100644"},
+	}
+	summary := summarizeGitHubSourceScope(files, []string{"**/*.png"})
+	require.Equal(t, 2, summary.UserExcludedFiles)
+	require.Equal(t, int64(30), summary.UserExcludedBytes)
+	require.Equal(t, 1, summary.CandidateFiles)
+	require.Equal(t, []string{"docs/readme.md"}, summary.SamplePaths)
+}
+
 func reviewedBatchFixture(t *testing.T, truncated bool, statuses ...int) (*DataSourceService, func()) {
 	t.Helper()
 	sha := strings.Repeat("c", 40)
