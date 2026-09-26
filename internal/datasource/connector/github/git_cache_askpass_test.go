@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -40,6 +42,38 @@ func TestGitCacheTokenedInitialCloneCreatesAskPassInPrivateParent(t *testing.T) 
 	cleanup()
 	_, statErr = os.Stat(askPass)
 	require.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func TestSharedGitAskPassAcceptsOnlyGitHubPrompts(t *testing.T) {
+	t.Setenv("WEKNORA_GITHUB_TOKEN", "test-token-only")
+	helper, cleanup, err := createAskPass(t.TempDir(), true)
+	require.NoError(t, err)
+	defer cleanup()
+	run := func(prompt string) (string, error) {
+		var cmd *exec.Cmd
+		if runtime.GOOS == "windows" {
+			cmd = exec.Command("cmd.exe", "/d", "/c", helper, prompt)
+		} else {
+			cmd = exec.Command(helper, prompt)
+		}
+		out, err := cmd.CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	for _, prompt := range []string{"Username for 'https://github.com':", "Username for 'https://github.com': "} {
+		out, err := run(prompt)
+		require.NoError(t, err)
+		require.Equal(t, "x-access-token", out)
+	}
+	for _, prompt := range []string{"Password for 'https://x-access-token@github.com':", "Password for 'https://x-access-token@github.com': "} {
+		out, err := run(prompt)
+		require.NoError(t, err)
+		require.Equal(t, "test-token-only", out)
+	}
+	for _, prompt := range []string{"Password for 'https://evilgithub.com': ", "Password for 'https://github.com.evil.test': ", "Password for 'https://other@github.com': "} {
+		out, err := run(prompt)
+		require.Error(t, err)
+		require.NotContains(t, out, "test-token-only")
+	}
 }
 
 func TestGitCacheAskPassPreparationDoesNotExposePrivatePath(t *testing.T) {

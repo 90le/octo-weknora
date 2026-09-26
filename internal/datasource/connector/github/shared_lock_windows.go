@@ -23,6 +23,8 @@ func tryMirrorFileLock(f *os.File, exclusive bool) (bool, error) {
 }
 
 func unlockMirrorFile(f *os.File) error {
+	// UnlockFileEx matches the handle and byte range. A fresh zero-offset
+	// OVERLAPPED describes the same one-byte range used by LockFileEx.
 	var overlap windows.Overlapped
 	return windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, &overlap)
 }

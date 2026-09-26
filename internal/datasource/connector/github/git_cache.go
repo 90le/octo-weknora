@@ -490,7 +490,7 @@ func createAskPass(dir string, strict bool) (string, func(), error) {
 		}
 		script := "@echo off\r\nif /I \"%~1\"==\"Username for 'https://github.com':\" (echo x-access-token) else (echo %WEKNORA_GITHUB_TOKEN%)\r\n"
 		if strict {
-			script = "@echo off\r\nif /I \"%~1\"==\"Username for 'https://github.com':\" (echo x-access-token & exit /b 0)\r\nif /I \"%~1\"==\"Password for 'https://x-access-token@github.com':\" (echo %WEKNORA_GITHUB_TOKEN% & exit /b 0)\r\nexit /b 1\r\n"
+			script = "@echo off\r\nif /I \"%~1\"==\"Username for 'https://github.com':\" (echo x-access-token & exit /b 0)\r\nif /I \"%~1\"==\"Username for 'https://github.com': \" (echo x-access-token & exit /b 0)\r\nif /I \"%~1\"==\"Password for 'https://x-access-token@github.com':\" (echo %WEKNORA_GITHUB_TOKEN% & exit /b 0)\r\nif /I \"%~1\"==\"Password for 'https://x-access-token@github.com': \" (echo %WEKNORA_GITHUB_TOKEN% & exit /b 0)\r\nexit /b 1\r\n"
 		}
 		if _, err = f.WriteString(script); err != nil {
 			f.Close()
@@ -509,7 +509,7 @@ func createAskPass(dir string, strict bool) (string, func(), error) {
 	}
 	script := "#!/bin/sh\ncase \"$1\" in\n  *Username*) printf '%s\\n' x-access-token ;;\n  *) printf '%s\\n' \"$WEKNORA_GITHUB_TOKEN\" ;;\nesac\n"
 	if strict {
-		script = "#!/bin/sh\ncase \"$1\" in\n  \"Username for 'https://github.com':\") printf '%s\\n' x-access-token ;;\n  \"Password for 'https://x-access-token@github.com':\") printf '%s\\n' \"$WEKNORA_GITHUB_TOKEN\" ;;\n  *) exit 1 ;;\nesac\n"
+		script = "#!/bin/sh\ncase \"$1\" in\n  \"Username for 'https://github.com':\"|\"Username for 'https://github.com': \") printf '%s\\n' x-access-token ;;\n  \"Password for 'https://x-access-token@github.com':\"|\"Password for 'https://x-access-token@github.com': \") printf '%s\\n' \"$WEKNORA_GITHUB_TOKEN\" ;;\n  *) exit 1 ;;\nesac\n"
 	}
 	if _, err = f.WriteString(script); err != nil {
 		f.Close()

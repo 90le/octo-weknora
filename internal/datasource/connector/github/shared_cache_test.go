@@ -11,10 +11,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -180,16 +180,44 @@ func TestSharedGitCleanupRetainsTwinAndRejectsCorruptCache(t *testing.T) {
 	require.NotContains(t, err.Error(), strings.TrimSpace(cfg.Credentials["access_token"].(string)))
 }
 
-func TestSharedGitLockWaitCancelsAndThenAcquires(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "mirror.lock")
-	unlockRead, err := mirrorLock(context.Background(), path, false)
+func TestSharedGitRecoversAbandonedStageAndAccumulatedCache(t *testing.T) {
+	t.Setenv("SYSTEM_AES_KEY", "0123456789abcdef0123456789abcdef")
+	t.Setenv("DATASOURCE_SNAPSHOT_DIR", t.TempDir())
+	t.Setenv("DATASOURCE_GITHUB_GIT_CACHE_MAX_BYTES", "67108864")
+	repo, commit := sharedGitFixture(t)
+	c := NewConnector()
+	c.testGitRemote = localGitURL(repo)
+	var network atomic.Int32
+	c.testNetworkGitObserved = func() { network.Add(1) }
+	cfg := sharedGitConfig(t, "a", "documents", "same-token", 7)
+	_, err := c.sharedGitCache(context.Background(), cfg, selection{Repository: "test/docs"}, commit)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
-	defer cancel()
-	_, err = mirrorLock(ctx, path, true)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	unlockRead()
-	unlockWrite, err := mirrorLock(context.Background(), path, true)
+	identity, err := sharedGitIdentityFor(7, "test/docs", cfg.SyncSource.CredentialScope)
 	require.NoError(t, err)
-	unlockWrite()
+	abandoned := identity.dir + ".stage-" + uuid.NewString()
+	require.NoError(t, os.MkdirAll(abandoned, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(abandoned, "partial-pack"), []byte("interrupted clone"), 0o600))
+	_, err = c.sharedGitCache(context.Background(), cfg, selection{Repository: "test/docs"}, commit)
+	require.NoError(t, err)
+	_, err = os.Stat(abandoned)
+	require.True(t, os.IsNotExist(err), "next locked acquisition removes only its own abandoned stage")
+	require.EqualValues(t, 1, network.Load())
+	// Simulate retained packs crossing the per-mirror cap. Rebuild a clean
+	// shallow mirror under the exclusive lock instead of permanently failing.
+	padding := filepath.Join(identity.dir, "old-unreachable-pack")
+	require.NoError(t, os.WriteFile(padding, nil, 0o600))
+	require.NoError(t, os.Truncate(padding, 65<<20))
+	cache, err := c.sharedGitCache(context.Background(), cfg, selection{Repository: "test/docs"}, commit)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, network.Load())
+	_, err = os.Stat(padding)
+	require.True(t, os.IsNotExist(err))
+	_, err = cache.tree(context.Background(), commit)
+	require.NoError(t, err)
+	// A cache with its identity marker intact but a missing bare HEAD is
+	// incomplete. Replace it from the verified remote under the same lock.
+	require.NoError(t, os.Remove(filepath.Join(identity.dir, "HEAD")))
+	_, err = c.sharedGitCache(context.Background(), cfg, selection{Repository: "test/docs"}, commit)
+	require.NoError(t, err)
+	require.EqualValues(t, 3, network.Load())
 }

@@ -30,6 +30,17 @@ deletion and credential changes remove a shared mirror only after checking
 that no other source in the tenant still subscribes. If that check fails, the
 mirror is retained for review. This switch does not combine HEAD checks,
 schedule runs or API rate budgets; it is not evidence of production rollout.
+Each mirror keeps Git's fetched commit refs until it reaches the configured
+per-cache size cap (2 GiB by default). Under its exclusive lock, an oversized
+mirror is replaced with a fresh shallow mirror for the requested commit. A
+concurrent plan that still needs an older object then fails safely and retries
+from its fixed commit; published content and cursors stay intact. A single
+fresh repository above the cap still needs operator action. Interrupted clone
+stages are removed under the same lock on the next acquisition or source
+cleanup. There is no global orphan sweeper: after a crash with no subsequent
+access, or after installation-key rotation, operators must inspect the private
+`github-shared-git-v1` directory with sync workers stopped before removing
+unreferenced stages or mirrors.
 
 Each fetch resolves a commit and reads its tree/blobs. The file list is compared
 with the last acknowledged manifest. Unchanged blobs are skipped. Returned
