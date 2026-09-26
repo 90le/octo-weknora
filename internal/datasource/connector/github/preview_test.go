@@ -131,6 +131,19 @@ func TestFetchIncrementalSkipsSensitiveBeforeBlobReadAndPreservesOldCursor(t *te
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(encoded, &parsed))
 	require.Contains(t, parsed.Files, "secrets/notes.md")
+
+	// Changing the selected scope is not permission to forget or purge an old
+	// sensitive row. The canonical row remains for a separate audited removal.
+	config.Settings["paths"] = []string{"secrets/notes.md"}
+	items, next, err = c.FetchIncremental(context.Background(), config, old)
+	require.NoError(t, err)
+	require.Empty(t, items)
+	require.Equal(t, 1, config.SkippedSensitive)
+	require.Zero(t, blobs.Load())
+	encoded, err = json.Marshal(next.ConnectorCursor)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(encoded, &parsed))
+	require.Contains(t, parsed.Files, "secrets/notes.md")
 }
 
 func TestFetchIncrementalUnchangedTrustedCursorDoesNotReadSensitiveTreeOrBlob(t *testing.T) {

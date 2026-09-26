@@ -563,11 +563,9 @@ func (c *Connector) fetchIncremental(ctx context.Context, cfg *types.DataSourceC
 	// historical row. Preserve its cursor lineage and never infer deletion from
 	// this safety-policy change (or a later remote removal). Review/downrank it
 	// separately; this sync must neither re-read nor implicitly purge it.
-	if prev.Selection == key {
-		for p, oldEntry := range prev.Files {
-			if snapshot.Excluded(p, nil) {
-				files[p] = oldEntry
-			}
+	for p, oldEntry := range prev.Files {
+		if snapshot.Excluded(p, nil) {
+			files[p] = oldEntry
 		}
 	}
 	next := cursor{Selection: key, Commit: commit, Files: files}
