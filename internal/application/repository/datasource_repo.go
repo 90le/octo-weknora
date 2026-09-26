@@ -97,6 +97,26 @@ func (r *DataSourceRepository) Update(ctx context.Context, ds *types.DataSource)
 	})
 }
 
+// UpdateGitHubScheduleIfUnchanged is the narrow compare-and-swap used by an
+// administrator-confirmed migration of the old GitHub batch default. It never
+// changes source configuration, status or sync state. The active sync check is
+// part of the same SQL statement as the update, not an earlier advisory read.
+func (r *DataSourceRepository) UpdateGitHubScheduleIfUnchanged(
+	ctx context.Context, tenantID uint64, kbID, dsID string, expectedUpdatedAt time.Time, proposed string,
+) (bool, error) {
+	result := r.db.WithContext(ctx).Model(&types.DataSource{}).
+		Where("data_sources.id = ? AND data_sources.tenant_id = ? AND data_sources.knowledge_base_id = ?", dsID, tenantID, kbID).
+		Where("data_sources.type = ? AND data_sources.status = ? AND data_sources.sync_schedule = ? AND data_sources.updated_at = ?",
+			types.ConnectorTypeGitHub, types.DataSourceStatusActive, "0 0 */6 * * *", expectedUpdatedAt).
+		Where("NOT EXISTS (SELECT 1 FROM sync_logs WHERE sync_logs.data_source_id = data_sources.id AND sync_logs.status = ?)",
+			types.SyncLogStatusRunning).
+		Updates(map[string]interface{}{"sync_schedule": proposed, "updated_at": time.Now().UTC()})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
 // UpdateSyncState updates only fields managed by sync execution. GORM's
 // Updates(struct) skips zero values, so use a map here to persist cleared error
 // messages without broadening the generic Update method.

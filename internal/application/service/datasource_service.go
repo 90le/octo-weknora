@@ -1289,6 +1289,7 @@ func (s *DataSourceService) updateSyncRunResult(
 	// Prepare the whole datasource outcome before handing it to the atomic
 	// repository path. The transaction must persist the status/error/result
 	// belonging to this exact SyncLog outcome, not the previous in-memory state.
+	previousStatus := ds.Status
 	if effectiveStatus == types.SyncLogStatusFailed {
 		if !wasPaused {
 			ds.Status = types.DataSourceStatusError
@@ -1326,6 +1327,22 @@ func (s *DataSourceService) updateSyncRunResult(
 
 	if retryPending {
 		return nil
+	}
+	// A failed source was omitted when the scheduler loaded active rows at
+	// startup. A later successful manual sync reactivates it durably, but that
+	// alone does not create its in-memory cron entry until another restart.
+	// Re-register only this error -> active transition after persistence; a
+	// paused source must remain unscheduled.
+	if previousStatus == types.DataSourceStatusError && ds.Status == types.DataSourceStatusActive &&
+		s.scheduler != nil && ds.SyncSchedule != "" {
+		current, readErr := s.dsRepo.FindByID(persistCtx, ds.ID)
+		if readErr != nil {
+			logger.Warnf(persistCtx, "failed to reload restored data-source schedule ds=%s: %v", ds.ID, readErr)
+		} else if current != nil && current.Status == types.DataSourceStatusActive {
+			if scheduleErr := s.scheduler.AddOrUpdate(current); scheduleErr != nil {
+				logger.Warnf(persistCtx, "failed to restore data-source schedule ds=%s: %v", ds.ID, scheduleErr)
+			}
+		}
 	}
 	action := types.AuditActionDataSourceSyncCompleted
 	outcome := types.AuditOutcomeSuccess

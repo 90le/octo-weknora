@@ -118,6 +118,41 @@ export interface GitHubBatchResponse {
   results: GitHubBatchResultItem[]
 }
 
+export interface GitHubScheduleMigrationPreviewItem {
+  data_source_id: string
+  repository?: string
+  mode?: GitHubBulkMode
+  status: string
+  current_schedule: string
+  proposed_schedule?: string
+  updated_at: string
+  eligible: boolean
+  reason: string
+}
+
+export interface GitHubScheduleMigrationPreviewResponse {
+  knowledge_base_id: string
+  items: GitHubScheduleMigrationPreviewItem[]
+}
+
+export interface GitHubScheduleMigrationSelection {
+  data_source_id: string
+  expected_schedule: string
+  expected_status: string
+  expected_updated_at: string
+  expected_proposed: string
+}
+
+export interface GitHubScheduleMigrationApplyResponse {
+  knowledge_base_id: string
+  results: Array<{
+    data_source_id: string
+    status: 'applied' | 'skipped'
+    reason: string
+    schedule?: string
+  }>
+}
+
 /**
  * `detach` only stops the source and preserves documents already indexed by
  * it. `purge_generated` additionally removes content which the server can
@@ -310,6 +345,19 @@ export function createGitHubDataSourceBatch(data: {
   start_sync?: boolean
 }) {
   return post('/api/v1/datasource/github/batch', data)
+}
+
+export function previewGitHubScheduleMigration(knowledgeBaseId: string) {
+  return post<GitHubScheduleMigrationPreviewResponse>('/api/v1/datasource/github/schedule-migration/preview', {
+    knowledge_base_id: knowledgeBaseId,
+  })
+}
+
+export function applyGitHubScheduleMigration(knowledgeBaseId: string, selections: GitHubScheduleMigrationSelection[]) {
+  return post<GitHubScheduleMigrationApplyResponse>('/api/v1/datasource/github/schedule-migration/apply', {
+    knowledge_base_id: knowledgeBaseId,
+    selections,
+  })
 }
 
 // listResources lists selectable resources for a data source. Pass parentId to
