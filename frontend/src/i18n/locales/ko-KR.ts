@@ -761,7 +761,7 @@ export default {
 },
     github: {
       repository: 'GitHub repository', repositoryRequired: 'Enter a GitHub repository',
-      hint: 'Sync documents at a fixed commit and preserve folders. Code, hidden files and dependencies are excluded. Limits: 2000 documents, 64 MiB per sync, 16 MiB per file.',
+      hint: 'Sync documents at a fixed commit and preserve folders. Code, hidden files and dependencies are excluded. Up to 2000 documents per source and 16 MiB per file; changed documents continue in chunks of up to 24 items and 64 MiB.',
       tokenHint: 'Optional for public repositories. Private repositories require a read-only Contents token. Stored encrypted; never returned.',
       pathsHint: 'One file or directory per line, for example README.md or docs. Empty includes all supported documents.',
     },
