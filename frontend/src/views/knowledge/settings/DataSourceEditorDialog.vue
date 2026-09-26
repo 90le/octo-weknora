@@ -1579,7 +1579,13 @@ const drawerConfirmText = computed(() => {
     <!-- Step 2: Select resources -->
     <section v-if="step === 2" class="setting-drawer__section ds-resource-section">
       <SourceModeFields v-if="['github','local_folder'].includes(form.type)" v-model="form.config.settings" />
-      <GitHubSourceFields v-if="form.type === 'github'" v-model="form.config.settings" />
+      <GitHubSourceFields
+        v-if="form.type === 'github'"
+        v-model="form.config.settings"
+        :kb-id="kbId"
+        :source-id="dataSource?.id"
+        :stored-settings="dataSource?.config?.settings"
+      />
       <LocalFolderSourceFields v-else-if="form.type === 'local_folder'" v-model="form.config.settings" />
       <template v-else-if="isGitLabConnector(form.type)">
         <h4 class="setting-drawer__section-title">{{ t('datasource.gitlab.projects') }}</h4>

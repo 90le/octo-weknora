@@ -7,6 +7,7 @@ import (
 	"maps"
 	"math"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -89,9 +90,9 @@ func (s *DataSourceService) PreviewGitHubDocumentScope(
 	}
 	resp := &types.GitHubDocumentScopePreview{
 		SourceID: req.SourceID, TreeState: "error", StoredPaths: storedPaths,
-		PreviewPaths: paths, PathsOverridden: req.Paths != nil,
+		PreviewPaths: paths, PathsOverridden: req.Paths != nil && !slices.Equal(paths, storedPaths),
 		FullRepository:  len(paths) == 0 || (len(paths) == 1 && paths[0] == ""),
-		ProposedExclude: proposedExclude, ExcludeOverridden: req.Exclude != nil,
+		ProposedExclude: proposedExclude, ExcludeOverridden: req.Exclude != nil && !slices.Equal(proposedExclude, storedExclude),
 		ExclusionsAppliedBySync: false, Warnings: []string{},
 	}
 	previewCtx, cancel := context.WithTimeout(ctx, githubScopePreviewTimeout)

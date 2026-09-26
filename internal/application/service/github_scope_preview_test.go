@@ -138,6 +138,7 @@ func TestGitHubDocumentScopePreviewFullRepoLimitsTruncationAndNoBlob(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, "truncated", resp.TreeState)
 	require.True(t, resp.FullRepository)
+	require.False(t, resp.PathsOverridden)
 	require.Equal(t, 2001, resp.ActualSync.CandidateFiles)
 	require.Len(t, resp.ActualSync.SamplePaths, githubScopePreviewMaxSample)
 	require.Contains(t, resp.ActualSync.Warnings, "document_count_limit")
