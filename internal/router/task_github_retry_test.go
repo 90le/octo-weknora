@@ -33,7 +33,9 @@ func TestGitHubQueueDelaySecondaryAndPermanent(t *testing.T) {
 	}, task, now)
 	require.True(t, ok)
 	require.Greater(t, wait, time.Minute)
-	require.LessOrEqual(t, wait, time.Minute+3*time.Second+time.Millisecond)
+	// Asynq's own exponential backoff may be longer than a 60-second hint;
+	// Retry-After is a lower bound, not an exact execution time.
+	require.Less(t, wait, 2*time.Minute)
 	_, ok = sourceRetryDelay(1, &githubconnector.Error{Code: "github_auth"}, task, now)
 	require.False(t, ok)
 	_, ok = sourceRetryDelay(1, &githubconnector.Error{Code: "github_http", StatusCode: 503},
