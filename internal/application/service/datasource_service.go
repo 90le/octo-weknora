@@ -150,10 +150,32 @@ func (s *DataSourceService) ListDataSources(ctx context.Context, kbID string) ([
 	}
 
 	// Attach latest sync log to each data source
+	if bulk, ok := s.syncLogRepo.(interface {
+		FindCardSummaries(context.Context, []string) (map[string]*types.SyncLog, map[string]*time.Time, error)
+	}); ok && len(dataSources) > 0 {
+		ids := make([]string, 0, len(dataSources))
+		for _, ds := range dataSources {
+			ids = append(ids, ds.ID)
+		}
+		latest, successful, err := bulk.FindCardSummaries(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		for _, ds := range dataSources {
+			ds.LatestSyncLog = latest[ds.ID]
+			ds.LastSuccessfulSyncAt = successful[ds.ID]
+		}
+		return dataSources, nil
+	}
+	// Lightweight repository adapters keep the established single-source
+	// fallback; production uses the two bounded queries above.
 	for _, ds := range dataSources {
 		log, _ := s.syncLogRepo.FindLatest(ctx, ds.ID)
 		if log != nil {
 			ds.LatestSyncLog = log
+			if log.Status == types.SyncLogStatusSuccess {
+				ds.LastSuccessfulSyncAt = log.FinishedAt
+			}
 		}
 	}
 

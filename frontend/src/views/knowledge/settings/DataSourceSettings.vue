@@ -19,6 +19,7 @@ import SourceBrowserDrawer from './SourceBrowserDrawer.vue'
 import DataSourceDeleteDialog from './DataSourceDeleteDialog.vue'
 import DataSourceRestartRecoveryDialog from './DataSourceRestartRecoveryDialog.vue'
 import { canPreviewRestartRecoveryForSource } from './datasourceRestartRecoveryState'
+import { githubSourceHealth, type GitHubHealthView } from './githubSourceHealth'
 import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{ kbId: string }>()
@@ -32,6 +33,14 @@ const authStore = useAuthStore()
 const canManageDataSource = computed(() => authStore.hasRole('admin'))
 
 const dataSources = ref<DataSource[]>([])
+const githubHealthByID = computed<Record<string, GitHubHealthView>>(() => {
+  const views: Record<string, GitHubHealthView> = {}
+  for (const source of dataSources.value) {
+    const view = githubSourceHealth(source)
+    if (view) views[source.id] = view
+  }
+  return views
+})
 const loading = ref(false)
 const editorVisible = ref(false)
 const githubBulkVisible = ref(false)
@@ -200,16 +209,31 @@ function scheduleLabel(cron: string) {
 }
 
 function lastSyncTime(ds: DataSource) {
-  return relativeTime(ds.last_sync_at, t)
+  return relativeTime(ds.type === 'github' ? githubHealthByID.value[ds.id]?.attemptAt || null : ds.last_sync_at, t)
 }
 
 function lastSyncFullTime(ds: DataSource) {
-  if (!ds.last_sync_at) return ''
-  return new Date(ds.last_sync_at).toLocaleString()
+  const value = ds.type === 'github' ? githubHealthByID.value[ds.id]?.attemptAt : ds.last_sync_at
+  if (!value) return ''
+  return new Date(value).toLocaleString()
+}
+
+function fullTime(value: string | null): string {
+  return value ? new Date(value).toLocaleString() : ''
+}
+
+function githubHealthLabel(view: GitHubHealthView): string {
+  return t(`datasource.githubBulk.health.kind.${view.kind}`)
+}
+
+function githubHealthFailedLabel(view: GitHubHealthView): string {
+  return view.total > 0
+    ? t('datasource.githubBulk.health.failedOfTotal', { failed: view.failed, total: view.total })
+    : t('datasource.githubBulk.health.failedCount', { failed: view.failed })
 }
 
 function syncResultPills(ds: DataSource) {
-  const log = ds.latest_sync_log
+  const log = ds.type === 'github' ? ds.latest_sync_summary || ds.latest_sync_log : ds.latest_sync_log
   if (!log) return []
   const pills: { text: string; cls: string }[] = []
   if (log.items_created > 0) pills.push({ text: `+${log.items_created}`, cls: 'created' })
@@ -338,18 +362,19 @@ onBeforeUnmount(stopPolling)
               <span class="ds-card__sep">·</span>
               <span class="ds-card__status" :class="`ds-card__status--${ds.status}`">
                 <span class="ds-status-dot" aria-hidden="true" />
-                {{ statusLabel(ds.status) }}
+                {{ ds.type === 'github' && ds.status === 'active' ? t('datasource.githubBulk.health.enabled') : statusLabel(ds.status) }}
               </span>
             </p>
             <p class="ds-card__detail">
               {{ scheduleLabel(ds.sync_schedule) }}
               <span class="ds-card__sep">·</span>
               <t-tooltip :content="lastSyncFullTime(ds)" :disabled="!lastSyncFullTime(ds)">
-                <span>{{ lastSyncTime(ds) || '--' }}</span>
+                <span><template v-if="ds.type === 'github'">{{ t('datasource.githubBulk.health.lastAttempt') }} </template>{{ lastSyncTime(ds) || '--' }}</span>
               </t-tooltip>
               <template v-if="ds.latest_sync_log">
-                <span class="ds-card__sep">·</span>
+                <span v-if="ds.type !== 'github' || syncResultPills(ds).length" class="ds-card__sep">·</span>
                 <span
+                  v-if="ds.type !== 'github'"
                   class="ds-card__sync-result"
                   :class="`ds-card__sync-result--${ds.latest_sync_log.status}`"
                 >
@@ -362,7 +387,24 @@ onBeforeUnmount(stopPolling)
                 >{{ pill.text }}</span>
               </template>
             </p>
-            <div v-if="ds.error_message" class="ds-card__error">
+            <div v-if="ds.type === 'github' && githubHealthByID[ds.id]" class="ds-card__health" @click.stop>
+              <t-tag size="small" variant="light" :theme="githubHealthByID[ds.id].theme">
+                {{ githubHealthLabel(githubHealthByID[ds.id]) }}
+              </t-tag>
+              <span v-if="githubHealthByID[ds.id].failed > 0" class="ds-card__health-count">
+                {{ githubHealthFailedLabel(githubHealthByID[ds.id]) }}
+              </span>
+              <span v-if="githubHealthByID[ds.id].successAt" :title="fullTime(githubHealthByID[ds.id].successAt)">
+                {{ t('datasource.githubBulk.health.lastSuccess') }} {{ relativeTime(githubHealthByID[ds.id].successAt, t) }}
+              </span>
+              <span v-if="githubHealthByID[ds.id].retryAt && githubHealthByID[ds.id].kind === 'cooldown'">
+                {{ t('datasource.githubBulk.health.retryAfter') }} {{ fullTime(githubHealthByID[ds.id].retryAt) }}
+              </span>
+              <t-button variant="text" size="small" @click.stop="openLogs(ds)">
+                {{ t('datasource.githubBulk.health.logs') }}
+              </t-button>
+            </div>
+            <div v-if="ds.error_message && (ds.type !== 'github' || ds.status === 'error')" class="ds-card__error">
               <t-icon name="error-circle-filled" size="14px" />
               <span>{{ ds.error_message }}</span>
             </div>
@@ -691,6 +733,27 @@ onBeforeUnmount(stopPolling)
     font-variant-numeric: tabular-nums;
     color: var(--td-text-color-disabled);
   }
+
+  &__health {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    min-width: 0;
+    margin-top: 8px;
+    padding: 6px 8px;
+    border: 1px solid var(--td-component-stroke);
+    border-radius: 6px;
+    background: var(--td-bg-color-secondarycontainer);
+    color: var(--td-text-color-secondary);
+    font-size: 11px;
+    line-height: 1.5;
+    text-align: left;
+
+    :deep(.t-button) { margin-left: auto; padding: 0 2px; height: auto; }
+  }
+
+  &__health-count { font-variant-numeric: tabular-nums; }
 
   &__sep {
     color: var(--td-text-color-disabled);

@@ -15,6 +15,8 @@ export interface DataSource {
   conflict_strategy: 'overwrite' | 'skip'
   sync_deletions: boolean
   last_sync_at: string | null
+  /** Last retained fully successful sync, distinct from partial attempts. */
+  last_successful_sync_at?: string | null
   last_sync_result: any
   error_message: string
   // Single-field "credentials" map from the main response — DataSource
@@ -23,6 +25,21 @@ export interface DataSource {
   created_at: string
   updated_at: string
   latest_sync_log?: SyncLog
+  /** Bounded card fields; excludes raw error_message and result. */
+  latest_sync_summary?: SyncLogCardSummary
+}
+
+export interface SyncLogCardSummary {
+  id: string
+  status: SyncLog['status']
+  started_at: string
+  finished_at: string | null
+  items_total: number
+  items_created: number
+  items_updated: number
+  items_deleted: number
+  items_skipped: number
+  items_failed: number
 }
 
 /**
