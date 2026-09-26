@@ -2,15 +2,25 @@
 
 更新：2026-09-27。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-27，来源恢复进行中）
+## 当前状态（2026-09-27 05:4x CST 来源回读）
 
-**代码、主线与运行版本：**PR #46–#58 已合并并通过对应 CI；主线提交为 [`ff60725ed985cd0977eadf19c7630c13d4e75f94`](https://github.com/90le/octo-weknora/commit/ff60725ed985cd0977eadf19c7630c13d4e75f94)。生产回读的 app Image ID 为 `sha256:851910cbd0d5142644baaa7ae1d89cb40a2e6dab836ef15f2c3869d3fb171203`，UI Image ID 为 `sha256:33fa85acef00c767ca2fdcaab69487046b65ada7a5963a56007d9bcf58ea1734`；API／UI 健康检查均为 200，PostgreSQL migration `106` 非 dirty。代码合并、镜像回读和业务验收是不同层次；本轮来源恢复与问答回归仍在进行。此段依据 2026-09-27 的发布／运维交接记录，后续状态变化须重新回读。
+**代码、主线与运行版本：**PR #46–#58 已合并并通过对应 CI；主线提交为 [`ff60725ed985cd0977eadf19c7630c13d4e75f94`](https://github.com/90le/octo-weknora/commit/ff60725ed985cd0977eadf19c7630c13d4e75f94)。生产回读的 app Image ID 为 `sha256:851910cbd0d5142644baaa7ae1d89cb40a2e6dab836ef15f2c3869d3fb171203`，UI Image ID 为 `sha256:33fa85acef00c767ca2fdcaab69487046b65ada7a5963a56007d9bcf58ea1734`；API／UI 健康检查均为 200，PostgreSQL migration `106` 非 dirty。代码合并、镜像回读和业务验收是不同层次：本轮来源同步已完成回读，独立的真实 Octo 群问答尚待验证。此段依据 2026-09-27 的发布／运维交接记录，后续状态变化须重新回读。
 
-**资产与恢复基线：**切换时有 60 条活动来源；活动知识库「Octo官方项目知识库」ID 为 `40b39914-b200-4daa-ba3c-1dd666729ce7`，切换时有 1269 条活动知识。该库目前关闭图谱抽取，不能沿用下文 2026-09-16 的“图谱已启用”历史结论推断其当前配置。2 TB 数据盘上的私有发布备份包含 PostgreSQL 一致性导出、应用文件和 Compose；恢复时仍须核对备份覆盖范围及恢复点之后的写入。
+**资产与恢复基线：**切换时有 1269 条活动知识；本次恢复后，活动知识库「Octo官方项目知识库」（ID `40b39914-b200-4daa-ba3c-1dd666729ce7`）有 1447 条活动知识，全部 `completed`。60 条来源全部 active（30 条文档、30 条源码），每条来源的最新同步日志均为 `success`；旧六小时整点 Cron 数为 0，运行中的 GitHub 文档同步为 0。该库当前 `graph=false`，不能沿用下文 2026-09-16 的“图谱已启用”历史结论推断其当前配置。2 TB 数据盘上的私有发布备份包含 PostgreSQL 一致性导出、应用文件和 Compose；恢复时仍须核对备份覆盖范围及恢复点之后的写入。
 
-**GitHub 文档来源恢复：**五条此前处于 `error` 的文档来源正在逐条恢复。Android 在选取 11 个文件后完成；Chrome 在跳过 8 个文件后完成；iOS 排除 Xcode `.xcassets` 后在跳过 26 个 PDF 的情况下完成。Server 的 84 个文档仍在同步，Web 的 227 个文档已准备、尚未确认同步完成。这些计数是各来源本次处理范围／跳过情况，不是全库最终成功计数。五条旧错误来源中，四条已从六小时整点计划迁到稳定错峰；Server 因同步尚在进行，计划迁移待其结束。另有五条活动文档来源最新记录仍是旧版的 `partial`，尚待按新版本审阅并重跑；不能把代码支持续接或单条来源成功推断为全体 60 条来源已恢复。
+**GitHub 文档来源恢复：**五条旧 `error` 来源都已通过正式同步，不能把此前只修复代码、尚未重跑的阶段误写成已恢复。
 
-**容量与未完成事项：**根盘可用空间约 11 GiB，根盘上的 `containerd` 约 58 GiB；2 TB 数据盘为 XFS `ftype=0`，不能作为当前 overlay 存储目录。重型构建缓存、PostgreSQL／Milvus 数据和来源快照已放在 2 TB 数据盘；保留回退镜像和发布证据，不执行宽范围 prune。文档与源码仍按数据源各持一份物理 Git 传输缓存；按仓库共享缓存、明确的 GitHub API 速率预算和 webhook 均未实现。下一步先完成 Server／Web、旧 `partial` 来源及剩余计划迁移，再逐项回读同步日志、完整成功时间和知识状态；之后按 [实施计划](OCTO-PLAN.md) 做真实问答与来源验收。
+| 来源 | 本次同步与范围处理 | 最新结果 |
+|---|---|---|
+| Android | 11 个文档创建 | `success` |
+| Chrome | 8 个文件跳过 | `success` |
+| iOS | 首轮 59 个候选中 33 个 Xcode `.xcassets` PDF 失败；排除资源目录后再同步，跳过 26 个；首轮已创建 6 个、跳过 20 个保留 | `success` |
+| Server | 84 个文档创建 | `success` |
+| Web | 首轮 227 个候选中 `apps/web/e2e-kit/fixtures/html-attachment.html` 解析失败；排除该 fixtures 目录后预览 219 个，再同步跳过 219 个；首轮已创建 32 个、更新 2 个、跳过 192 个保留 | `success` |
+
+另五条最新原为旧版 `partial` 的活动文档来源已在新版重跑，最新均为 `success`：speech 创建 6／跳过 4，cli 创建 27／跳过 6，adapters 创建 8／跳过 6，admin 创建 9／跳过 5，lib 创建 7／跳过 6。排除规则只作用于后续同步，初次成功导入的内容不会因为修改范围而自动下架；如需清理旧索引，应另行审阅精确归属与影响。上述成功状态证明这一时点的来源同步和知识完成状态，尚不证明新版真实群问答质量。
+
+**容量与未完成事项：**定点清理旧 `/tmp/gopath` 567 MiB、`node-compile-cache` 421 MiB、`/tmp/go` 238 MiB 后，根盘可用空间约 12 GiB；根盘上的 `containerd` 约 58 GiB。2 TB 数据盘已用约 40 GiB，为 XFS `ftype=0`，不能作为当前 overlay 存储目录。重型构建缓存、PostgreSQL／Milvus 数据和来源快照已放在 2 TB 数据盘；保留回退镜像和发布证据，不执行宽范围 prune。文档与源码仍按数据源各持一份物理 Git 传输缓存；按仓库共享缓存、明确的 GitHub API 速率预算和 webhook 均未实现。下一步按 [实施计划](OCTO-PLAN.md) 做独立真实群问答、来源范围审阅及后续周期健康监测。
 
 ## 历史发布：隐私修复（2026-09-23 15:58 CST）
 
