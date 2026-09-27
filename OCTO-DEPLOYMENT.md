@@ -30,6 +30,8 @@ Check the target filesystem's overlay compatibility before changing containerd s
 
 Before a full image build, prefer at least 20 GiB free on the filesystem that actually holds containerd snapshots; stop the build if free space falls below 10 GiB. Stage source archives, Go/npm caches and temporary compilation on the data volume. After acceptance, retain the running images and one verified rollback pair, then remove only identified unused build cache and older image tags. Use `df` to verify physical recovery: Docker's logical “reclaimable” total is not the amount the root filesystem will necessarily gain.
 
+When the existing data filesystem lacks the required OverlayFS features and no new block device is available, a preallocated ext4 loop image on that volume is a conditional migration option. An isolated OverlayFS mount probe only establishes kernel/filesystem compatibility. Before moving containerd, plan the image size, inner and outer capacity monitoring, an offline backup and rollback copy, complete consumer shutdown, fail-closed mount-before-containerd ordering, and container/image checks after restart and reboot. Never copy or remove containerd's live root during normal service operation.
+
 ## Required checks before switching
 
 1. Focused draft visibility tests plus upstream required checks complete successfully.
