@@ -28,6 +28,8 @@
 
 **容量与清理：**先前定点清理旧 `/tmp/gopath` 567 MiB、`node-compile-cache` 421 MiB、`/tmp/go` 238 MiB；随后把约 2.47 GB Go 模块缓存复制到 2 TB 数据盘，`rsync --checksum --dry-run` 差异为 0，原路径改为符号链接并验证 Docker bind mount 可读，最后定点移除根盘旧副本。验收后停止并移除 4 个隔离候选容器和候选网络，确认无挂载及打开文件后，定点清理候选克隆目录约 871 MiB、旧范围预览测试缓存约 4.0 GiB、`ff60725e` 发布暂存的源码／包／UI／npm 产物约 1.4 GiB。另移除两个确认未使用的旧镜像标签；共享镜像层使根盘空间未立即变化。生产应用未重启。其后用现有 mlclaw Docker CLI 插件分两次定点清理 BuildKit 缓存（`--max-used-space`／`--reserved-space` 先 8GB／8GB、再 4GB／4GB），逻辑缓存约回收 6.5 GB；本次回读的根盘可用约 18 GiB、使用率 83%（时点值），未做宽范围镜像或卷清理，生产应用未重启。根盘上的 `containerd` 仍约 58 GB；2 TB 数据盘已用约 37 GiB，为 XFS `ftype=0`，不能作为当前 overlay 存储目录。PostgreSQL／Milvus 数据和来源快照仍在数据盘；现行 `backup-final`（PostgreSQL 导出、应用文件、Compose）、`source.tar`、`ff60725e` 不可变镜像以及一组回退镜像和备份目录均保留。需要时可由备份重建隔离候选。下一次构建须继续把 `TMPDIR`、`GOTMPDIR` 和重型构建缓存指向数据盘，不执行宽范围 prune。
 
+**根盘容量复核（2026-09-27 09:06 CST）：**继续定点回收未使用的 BuildKit 缓存后，100 GB 根盘约已用 79 GB、可用 21 GB；2 TB 数据盘约已用 37 GB。`/var/lib/containerd` 约 50 GB，BuildKit 私有缓存约 43 MB。当前 app 镜像约 2.18 GB 独占空间，保留的回退 app 约 1.81 GB；若以后只追加镜像、不清退旧版，根盘仍会下降。生产 app／UI 和 OpenClaw 服务未重启。短期按 [部署契约](OCTO-DEPLOYMENT.md) 控制构建峰值、保留一版回退并核对物理余量；长期需为 containerd 准备 ext4／XFS `ftype=1` 的兼容存储，或经运维扩容根盘。现有 2 TB XFS `ftype=0` 不可直接作为其 overlay 镜像层目录。
+
 **待启用与未完成事项：**本次生产文档与源码仍按数据源各持一份物理 Git 传输缓存；PR #60 的可选共享镜像代码默认关闭，尚无生产启用与双用途共享获取验收。仓库级 HEAD 合并、明确的 GitHub API 速率预算、安全自动回收和 webhook 尚未实现。下一步按 [实施计划](OCTO-PLAN.md) 扩展真实群问答、审阅来源范围并监测后续周期健康。
 
 ## 历史发布：隐私修复（2026-09-23 15:58 CST）

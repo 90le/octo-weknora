@@ -28,6 +28,8 @@ Do not migrate a container runtime merely because a larger disk is available. It
 
 Check the target filesystem's overlay compatibility before changing containerd storage. Preserve the running and rollback images; investigate measured cache and log usage before any targeted cleanup. Avoid broad image or volume pruning during a release or source recovery.
 
+Before a full image build, prefer at least 20 GiB free on the filesystem that actually holds containerd snapshots; stop the build if free space falls below 10 GiB. Stage source archives, Go/npm caches and temporary compilation on the data volume. After acceptance, retain the running images and one verified rollback pair, then remove only identified unused build cache and older image tags. Use `df` to verify physical recovery: Docker's logical “reclaimable” total is not the amount the root filesystem will necessarily gain.
+
 ## Required checks before switching
 
 1. Focused draft visibility tests plus upstream required checks complete successfully.
