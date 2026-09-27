@@ -23,6 +23,10 @@ var octoGitCommitRE = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 var octoGitHubLineFragmentRE = regexp.MustCompile(`^L[0-9]+(?:-L[0-9]+)?$`)
 var octoMarkdownGitHubLinkRE = regexp.MustCompile(`(?i)\[([^\]\r\n]+)\]\((<?https://github\.com/[^\s)]+>?)\)`)
 var octoBareGitHubURLRE = regexp.MustCompile(`(?i)https://github\.com/[^#\s<>"'\])，。；：！？,;:!?]+#(?:L|%4C)[0-9]+(?:-(?:L|%4C)[0-9]+)?`)
+var octoBareCredentialRE = regexp.MustCompile(`(?i)(?:^|[\s:=])(?:sk-|bf_|app_|uk_)[a-z0-9_-]{8,}`)
+var octoURLCredentialRE = regexp.MustCompile(`(?i)(?:^|[/#=:])(?:sk-|bf_|app_|uk_)[a-z0-9]{16,}`)
+var octoWindowsSlashPathRE = regexp.MustCompile(`(?i)^[a-z]:/`)
+var octoEmbeddedAbsolutePathRE = regexp.MustCompile(`(?i)(?:^|[\s（(:：])(?:[a-z]:/|~/|/[^/\s]+/)`)
 
 const maxOctoObservedLineSubset = 12
 
@@ -186,6 +190,14 @@ func safeOctoSourceURL(raw string) string {
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Port() != "" {
 		return ""
 	}
+	// A public-looking URL can still carry a secret in its path or fragment.
+	// net/url has decoded percent escapes in Path and Fragment by this point.
+	location := strings.ToLower(parsed.Path + "#" + parsed.Fragment)
+	if octoURLCredentialRE.MatchString(location) || strings.Contains(location, "token=") ||
+		strings.Contains(location, "api_key=") || strings.Contains(location, "apikey=") ||
+		strings.Contains(location, "secret=") || strings.Contains(location, "bearer ") {
+		return ""
+	}
 	host := strings.ToLower(parsed.Hostname())
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
 		return ""
@@ -232,6 +244,34 @@ func markdownSourceTitle(title string) string {
 	return strings.NewReplacer("\\", "\\\\", "[", "\\[", "]", "\\]", "<", "&lt;", ">", "&gt;").Replace(title)
 }
 
+func safeOctoSourceTitle(title string) string {
+	title = strings.Join(strings.Fields(title), " ")
+	lower := strings.ToLower(title)
+	// A persisted title can be operator-supplied. Never surface a local path or
+	// a credential-shaped title as an IM citation label.
+	if title == "" || strings.HasPrefix(title, "/") || strings.HasPrefix(title, "~/") ||
+		strings.HasPrefix(title, "./") || strings.HasPrefix(title, "../") ||
+		octoWindowsSlashPathRE.MatchString(title) || octoEmbeddedAbsolutePathRE.MatchString(title) ||
+		strings.Contains(title, "\\") ||
+		strings.Contains(title, "://") || strings.Contains(lower, "token=") ||
+		strings.Contains(lower, "api_key=") || strings.Contains(lower, "secret=") ||
+		strings.Contains(lower, "bearer ") || octoBareCredentialRE.MatchString(title) {
+		return "知识库资料"
+	}
+	if runes := []rune(title); len(runes) > 64 {
+		return string(runes[:64]) + "…"
+	}
+	return title
+}
+
+func inlineOctoSource(source octoCitedSource) string {
+	title := markdownSourceTitle(safeOctoSourceTitle(source.title))
+	if source.url == "" {
+		return "（来源：" + title + "）"
+	}
+	return " [来源：" + title + "](<" + source.url + ">)"
+}
+
 // appendOctoSources is invoked before the ordinary IM citation-tag stripping.
 // It links only explicit citations, never all search hits. Titles alone are
 // resolved only in an explicit source section or Chinese book-title marks,
@@ -245,6 +285,9 @@ func (s *Service) appendOctoSources(ctx context.Context, answer string, refs []*
 		return answer
 	}
 	answer = sanitizeOctoGitHubLineLinks(ctx, answer)
+	if !octobusiness.CitationRenderingEnabled(ctx) {
+		return stripIMCitationTags(answer)
+	}
 	cited := map[string]*types.SearchResult{}
 	ordered := []string{}
 	addRef := func(ref *types.SearchResult) {
@@ -284,8 +327,13 @@ func (s *Service) appendOctoSources(ctx context.Context, answer string, refs []*
 	for _, tag := range octoSourceTagRE.FindAllStringSubmatch(answer, -1) {
 		attrs := octoCitationAttrs(tag[2])
 		if tag[1] == "web" {
-			if source, ok := rawSources[safeOctoSourceURL(attrs["url"])]; ok {
-				sources = append(sources, octoCitedSource{title: source.Path, url: source.URL})
+			valid := safeOctoSourceURL(attrs["url"])
+			if source, ok := rawSources[valid]; ok {
+				title := source.Title
+				if title == "" {
+					title = source.Path
+				}
+				sources = append(sources, octoCitedSource{title: title, url: valid})
 			}
 			continue
 		}
@@ -312,6 +360,7 @@ func (s *Service) appendOctoSources(ctx context.Context, answer string, refs []*
 	for _, quoted := range octoQuotedSourceTitleRE.FindAllStringSubmatch(answer, -1) {
 		addRef(uniqueCitedKnowledge(refs, "", "", quoted[1]))
 	}
+	resolvedKnowledge := map[string]octoCitedSource{}
 	for _, id := range ordered {
 		ref := cited[id]
 		if s.knowledgeService == nil {
@@ -328,11 +377,43 @@ func (s *Service) appendOctoSources(ctx context.Context, answer string, refs []*
 		if title == "" {
 			continue
 		}
-		sources = append(sources, octoCitedSource{title: title, url: persistedOctoSource(knowledge)})
+		source := octoCitedSource{title: title, url: persistedOctoSource(knowledge)}
+		sources = append(sources, source)
+		resolvedKnowledge[id] = source
 	}
+	// Render only the same explicitly cited, current-turn sources that passed
+	// the tail-list checks above. Invalid tags disappear, including references
+	// to draft, other-tenant, other-KB, or otherwise unobserved material.
+	answer = octoSourceTagRE.ReplaceAllStringFunc(answer, func(tag string) string {
+		match := octoSourceTagRE.FindStringSubmatch(tag)
+		if len(match) != 3 {
+			return ""
+		}
+		attrs := octoCitationAttrs(match[2])
+		if match[1] == "web" {
+			valid := safeOctoSourceURL(attrs["url"])
+			source, ok := rawSources[valid]
+			if !ok {
+				return ""
+			}
+			title := source.Title
+			if title == "" {
+				title = source.Path
+			}
+			return inlineOctoSource(octoCitedSource{title: title, url: valid})
+		}
+		ref := uniqueCitedKnowledge(refs, attrs["chunk_id"], attrs["kb_id"], attrs["doc"])
+		if ref == nil {
+			return ""
+		}
+		if source, ok := resolvedKnowledge[ref.KnowledgeID]; ok {
+			return inlineOctoSource(source)
+		}
+		return ""
+	})
 	seen := map[string]bool{}
 	lines := []string{}
-	visibleAnswer := stripIMCitationTags(answer)
+	visibleAnswer := answer
 	for _, source := range sources {
 		key := source.url
 		if key == "" {
@@ -342,7 +423,7 @@ func (s *Service) appendOctoSources(ctx context.Context, answer string, refs []*
 			continue
 		}
 		seen[key] = true
-		title := markdownSourceTitle(source.title)
+		title := markdownSourceTitle(safeOctoSourceTitle(source.title))
 		if source.url != "" {
 			lines = append(lines, "- ["+title+"](<"+source.url+">)")
 		} else {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"strings"
 )
 
 // Code citations retain line fragments. Ordinary web references deduplicate
@@ -53,7 +54,12 @@ func (r *sourceRegistry) modelSourceSnapshot(action, output string) string {
 	if u == "" {
 		u = read.PreviewURL
 	}
-	handle := r.registerFileReference(u, fmt.Sprintf("%s:%d-%d", read.Path, read.StartLine, read.EndLine))
+	// An empty (or whitespace-only) read is navigation, not source evidence.
+	// In particular it must not allocate a citable wN handle from its URL.
+	handle := ""
+	if strings.TrimSpace(read.Content) != "" {
+		handle = r.registerFileReference(u, fmt.Sprintf("%s:%d-%d", read.Path, read.StartLine, read.EndLine))
+	}
 	metadata := map[string]interface{}{"path": read.Path, "revision": read.Revision, "start_line": read.StartLine, "end_line": read.EndLine, "total_lines": read.TotalLines, "truncated": read.Truncated, "citation_ref": handle}
 	if read.SourceRef != "" {
 		metadata["source_ref"] = read.SourceRef
@@ -66,6 +72,21 @@ func (r *sourceRegistry) modelSourceSnapshot(action, output string) string {
 	}
 	encodedMetadata, _ := json.Marshal(metadata)
 	var body bytes.Buffer
-	_ = xml.EscapeText(&body, []byte(read.Content))
+	if read.Content != "" {
+		start := read.StartLine
+		if start < 1 { // Preserve old transcripts that omitted start_line.
+			start = 1
+		}
+		for i, line := range strings.Split(read.Content, "\n") {
+			if i > 0 {
+				body.WriteByte('\n')
+			}
+			fmt.Fprintf(&body, "L%d: ", start+i)
+			_ = xml.EscapeText(&body, []byte(line))
+		}
+	}
+	if handle == "" {
+		return string(encodedMetadata) + fmt.Sprintf("\n<source_file>\n%s\n</source_file>\nNo citable source reference is available for this excerpt.", body.String())
+	}
 	return string(encodedMetadata) + fmt.Sprintf("\n<source_file ref=\"%s\">\n%s\n</source_file>\nCite this excerpt with <ref id=\"%s\"/>.", handle, body.String(), handle)
 }

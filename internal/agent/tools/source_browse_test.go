@@ -330,6 +330,110 @@ func TestSourceBrowseSearchRetainsPrivateAuditWithoutPromotingReadEvidence(t *te
 	require.NotContains(t, string(serialized), "_source_browse_search")
 }
 
+func TestSourceBrowseScopedSearchAcceptsLimitAndPagesOnlyAuthorizedMatches(t *testing.T) {
+	matches := make([]types.SourceMatch, 35)
+	for i := range matches {
+		matches[i] = types.SourceMatch{Path: "src/main.go", Line: i + 1, Text: fmt.Sprintf("needle %02d", i)}
+	}
+	reader := &sourceToolReader{
+		summaries: map[string][]types.SourceSummary{
+			"kb-authorized": {sourceSummary("source", "snapshot", "github.com/example/allowed")},
+			"kb-restricted": {sourceSummary("other", "other-snapshot", "github.com/example/restricted")},
+		},
+		results: map[string]*types.SourceSearch{
+			"source": {SnapshotID: "snapshot", Matches: matches, ScannedFiles: 4, Complete: true},
+		},
+		requireGrant: true,
+	}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{
+		{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb-authorized"},
+		{Type: types.SearchTargetTypeKnowledge, TenantID: 7, KnowledgeBaseID: "kb-restricted", KnowledgeIDs: []string{"one-file"}},
+	})
+	listed := sourceCatalog(t, tool)
+	require.Len(t, listed.Sources, 1)
+	ref := listed.Sources[0].SourceRef
+
+	for _, tc := range []struct {
+		offset, wantMatches, wantFirst, wantNext int
+		complete                                 bool
+	}{
+		{offset: 0, wantMatches: 20, wantFirst: 1, wantNext: 20, complete: false},
+		{offset: 20, wantMatches: 15, wantFirst: 21, wantNext: -1, complete: false},
+	} {
+		result, err := tool.Execute(sourceToolContext(), json.RawMessage(fmt.Sprintf(`{"action":"search","source_ref":"%s","query":"needle","limit":20,"offset":%d}`, ref, tc.offset)))
+		require.NoError(t, err)
+		require.True(t, result.Success, result.Error)
+		var page sourceBrowseSearch
+		require.NoError(t, json.Unmarshal([]byte(result.Output), &page))
+		require.Equal(t, tc.offset, page.Offset)
+		require.Len(t, page.Matches, tc.wantMatches, "limit must bound the model-visible result")
+		require.Equal(t, tc.wantFirst, page.Matches[0].Line)
+		require.Equal(t, tc.complete, page.Complete)
+		if tc.wantNext < 0 {
+			require.Nil(t, page.NextOffset)
+		} else {
+			require.NotNil(t, page.NextOffset)
+			require.Equal(t, tc.wantNext, *page.NextOffset)
+		}
+		audit, ok := result.Data[types.SourceBrowseSearchDataKey].(types.SourceBrowseSearchAudit)
+		require.True(t, ok)
+		require.Equal(t, "github.com/example/allowed", audit.Repository)
+		require.False(t, audit.Complete, "a scoped page is not an exhaustive repository search")
+		require.NotContains(t, result.Output, "restricted")
+	}
+
+	unpaged, err := tool.Execute(sourceToolContext(), json.RawMessage(fmt.Sprintf(`{"action":"search","source_ref":"%s","query":"needle"}`, ref)))
+	require.NoError(t, err)
+	require.True(t, unpaged.Success, unpaged.Error)
+	var full sourceBrowseSearch
+	require.NoError(t, json.Unmarshal([]byte(unpaged.Output), &full))
+	require.Len(t, full.Matches, 35)
+	require.True(t, full.Complete, "an unpaged complete scoped search keeps its existing semantics")
+	for _, call := range reader.searches {
+		require.Equal(t, "kb-authorized", call.KnowledgeBaseID)
+		require.Equal(t, "source", call.SourceID)
+	}
+	require.NotContains(t, reader.listCalls, "kb-restricted")
+	denied, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"search","source_ref":"s2","query":"needle","limit":20}`))
+	require.NoError(t, err)
+	require.False(t, denied.Success)
+	require.Len(t, reader.searches, 3, "unknown ref must not search a different snapshot")
+}
+
+func TestSourceBrowseScopedSearchIncompleteAndEmptyPagesNeverClaimFullCoverage(t *testing.T) {
+	matches := make([]types.SourceMatch, 40)
+	for i := range matches {
+		matches[i] = types.SourceMatch{Path: "main.go", Line: i + 1, Text: "needle"}
+	}
+	reader := &sourceToolReader{
+		summaries: map[string][]types.SourceSummary{"kb": {sourceSummary("source", "snapshot", "github.com/example/repo")}},
+		results:   map[string]*types.SourceSearch{"source": {SnapshotID: "snapshot", Matches: matches, Complete: false}},
+	}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	ref := sourceCatalog(t, tool).Sources[0].SourceRef
+	for _, tc := range []struct {
+		offset, wantMatches, wantNext int
+	}{
+		{offset: 0, wantMatches: 20, wantNext: 20},
+		{offset: 20, wantMatches: 20, wantNext: -1},
+		{offset: 40, wantMatches: 0, wantNext: -1},
+	} {
+		result, err := tool.Execute(sourceToolContext(), json.RawMessage(fmt.Sprintf(`{"action":"search","source_ref":"%s","query":"needle","limit":20,"offset":%d}`, ref, tc.offset)))
+		require.NoError(t, err)
+		require.True(t, result.Success, result.Error)
+		var page sourceBrowseSearch
+		require.NoError(t, json.Unmarshal([]byte(result.Output), &page))
+		require.Len(t, page.Matches, tc.wantMatches)
+		require.False(t, page.Complete, "the reader's 40-match ceiling remains incomplete")
+		if tc.wantNext < 0 {
+			require.Nil(t, page.NextOffset)
+		} else {
+			require.NotNil(t, page.NextOffset)
+			require.Equal(t, tc.wantNext, *page.NextOffset)
+		}
+	}
+}
+
 func TestSourceBrowseRejectsMalformedRefsAndSafelyCorrectsLegacyArguments(t *testing.T) {
 	reader := &sourceToolReader{summaries: map[string][]types.SourceSummary{
 		"kb-uuid": {sourceSummary("source-uuid", "snapshot-uuid", "github.com/example/repo")},
@@ -504,7 +608,8 @@ func TestSourceBrowseGlobalSearchRejectsUnsafePageSelectors(t *testing.T) {
 		`{"action":"search","query":"needle","limit":65}`,
 		`{"action":"search","query":"needle","repository_query":"` + strings.Repeat("x", 129) + `"}`,
 		`{"action":"search","source_ref":"s1","query":"needle","repository_query":"repo"}`,
-		`{"action":"search","source_ref":"s1","query":"needle","offset":1}`,
+		`{"action":"search","source_ref":"s1","query":"needle","offset":-1}`,
+		`{"action":"search","source_ref":"s1","query":"needle","limit":65}`,
 		`{"action":"tree","source_ref":"s1","repository_query":"repo"}`,
 		`{"action":"read","source_ref":"s1","path":"README.md","limit":1}`,
 	} {

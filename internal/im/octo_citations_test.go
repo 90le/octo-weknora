@@ -71,6 +71,104 @@ func TestOctoAgentCitationSurvivesOutboundCleanup(t *testing.T) {
 	require.Contains(t, visible, link)
 }
 
+func TestOctoStreamingFinalKeepsTrustedKBAndSourceLinksBesideTheirClaims(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	kbURL := "https://github.com/example/docs/blob/" + commit + "/README.md"
+	codeURL := "https://github.com/example/code/blob/" + commit + "/src/socket.go#L8-L9"
+	knowledge := &octoCitationKnowledge{rows: map[string]*types.Knowledge{
+		"doc": {ID: "doc", TenantID: 1, KnowledgeBaseID: "kb", Title: "产品说明", Source: kbURL, EnableStatus: "enabled"},
+	}}
+	refs := []*types.SearchResult{{ID: "chunk", KnowledgeID: "doc", KnowledgeBaseID: "kb", KnowledgeTitle: "产品说明"}}
+	ctx := octobusiness.WithRetrievalTrace(octoCitationContext())
+	read, err := json.Marshal(types.SourceRead{Path: "src/socket.go", SourceURL: codeURL, Revision: commit})
+	require.NoError(t, err)
+	_, err = octobusiness.TrackRetrieval(&octoCitationSourceTool{output: string(read), data: map[string]interface{}{
+		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", URL: codeURL, Path: "src/socket.go", Revision: commit},
+	}}).Execute(ctx, []byte(`{"action":"read","source_ref":"s1"}`))
+	require.NoError(t, err)
+	service := &Service{knowledgeService: knowledge}
+	parts := IMStreamParts{Mode: IMStreamModeAgent, Answer: `文档说明可以安装。<kb doc="产品说明" chunk_id="chunk" kb_id="kb"/> 源码在这里建连接。<web title="伪造标题" url="` + codeURL + `"/> 请分别核对。`}
+	final := service.formatIMStreamFinal(ctx, parts, refs, nil)
+	require.NotContains(t, final, "<kb")
+	require.NotContains(t, final, "<web")
+	require.NotContains(t, final, "chunk")
+	require.NotContains(t, final, "伪造标题", "never take citation labels from the model tag")
+	require.Less(t, strings.Index(final, "文档说明可以安装。"), strings.Index(final, "[来源：产品说明]"))
+	require.Less(t, strings.Index(final, "[来源：产品说明]"), strings.Index(final, "源码在这里建连接。"))
+	require.Less(t, strings.Index(final, "源码在这里建连接。"), strings.Index(final, "[来源：src/socket.go]"))
+	require.Less(t, strings.Index(final, "[来源：src/socket.go]"), strings.Index(final, "请分别核对。"))
+	require.Equal(t, 1, strings.Count(final, kbURL), "inline source must not be repeated in a tail list")
+	require.Equal(t, 1, strings.Count(final, codeURL), "inline source must not be repeated in a tail list")
+	require.NotContains(t, final, "\n来源：\n")
+}
+
+func TestOctoNonStreamInlineSourceRejectsForgedDraftAndCrossKBTags(t *testing.T) {
+	commit := strings.Repeat("b", 40)
+	validURL := "https://github.com/example/docs/blob/" + commit + "/guide.md"
+	knowledge := &octoCitationKnowledge{rows: map[string]*types.Knowledge{
+		"valid": {ID: "valid", TenantID: 1, KnowledgeBaseID: "kb", Title: "有效指南", Source: validURL, EnableStatus: "enabled"},
+		"draft": {ID: "draft", TenantID: 1, KnowledgeBaseID: "kb", Title: "未发布", Source: "https://example.org/draft", EnableStatus: "disabled"},
+		"other": {ID: "other", TenantID: 1, KnowledgeBaseID: "other-kb", Title: "异库资料", Source: "https://example.org/other", EnableStatus: "enabled"},
+	}}
+	refs := []*types.SearchResult{
+		{ID: "valid-chunk", KnowledgeID: "valid", KnowledgeBaseID: "kb", KnowledgeTitle: "有效指南"},
+		{ID: "draft-chunk", KnowledgeID: "draft", KnowledgeBaseID: "kb", KnowledgeTitle: "未发布"},
+		{ID: "other-chunk", KnowledgeID: "other", KnowledgeBaseID: "other-kb", KnowledgeTitle: "异库资料"},
+	}
+	service := &Service{knowledgeService: knowledge}
+	answer := `结论一。<kb chunk_id="valid-chunk"/> 结论二。<kb chunk_id="draft-chunk" kb_id="kb"/> 结论三。<kb chunk_id="other-chunk" kb_id="other-kb"/> <web url="https://example.org/private?token=secret"/>`
+	visible := stripIMCitationTags(service.appendOctoSources(octoCitationContext(), answer, refs))
+	require.Contains(t, visible, "结论一。 [来源：有效指南](<"+validURL+">)")
+	require.Equal(t, 1, strings.Count(visible, validURL))
+	require.NotContains(t, visible, "未发布")
+	require.NotContains(t, visible, "异库资料")
+	require.NotContains(t, visible, "other-kb")
+	require.NotContains(t, visible, "token=secret")
+	require.NotContains(t, visible, "<kb")
+	require.NotContains(t, visible, "<web")
+}
+
+func TestOctoCitationSettingOffRemovesInlineTagsAndDoesNotAppendSources(t *testing.T) {
+	ctx := octobusiness.WithRetrievalTrace(octoCitationContext())
+	commit := strings.Repeat("c", 40)
+	url := "https://github.com/example/docs/blob/" + commit + "/README.md"
+	knowledge := &octoCitationKnowledge{rows: map[string]*types.Knowledge{
+		"doc": {ID: "doc", TenantID: 1, KnowledgeBaseID: "kb", Title: "文档", Source: url, EnableStatus: "enabled"},
+	}}
+	refs := []*types.SearchResult{{ID: "chunk", KnowledgeID: "doc", KnowledgeBaseID: "kb", KnowledgeTitle: "文档"}}
+	service := &Service{knowledgeService: knowledge}
+	answer := `答案。<kb chunk_id="chunk" kb_id="kb"/>`
+	octobusiness.SetCitationRenderingEnabled(ctx, false)
+	direct := service.appendOctoSources(ctx, answer, refs)
+	require.Equal(t, "答案。", direct)
+	require.Empty(t, knowledge.requested, "disabled citations must not fetch knowledge")
+	final := service.formatIMStreamFinal(ctx, IMStreamParts{Mode: IMStreamModeAgent, Answer: answer}, refs, nil)
+	require.Equal(t, "答案。", strings.TrimSpace(final))
+	require.NotContains(t, final, url)
+}
+
+func TestOctoInlinePrivateTitleNeverRevealsLocalPathOrToken(t *testing.T) {
+	knowledge := &octoCitationKnowledge{rows: map[string]*types.Knowledge{
+		"doc": {ID: "doc", TenantID: 1, KnowledgeBaseID: "kb", Title: `C:\private\token=secret\ops.md`, Source: "file:///private/ops.md", EnableStatus: "enabled"},
+	}}
+	service := &Service{knowledgeService: knowledge}
+	refs := []*types.SearchResult{{ID: "chunk", KnowledgeID: "doc", KnowledgeBaseID: "kb", KnowledgeTitle: `C:\private\token=secret\ops.md`}}
+	answer := service.appendOctoSources(octoCitationContext(), `答案。<kb chunk_id="chunk" kb_id="kb"/>`, refs)
+	require.Contains(t, answer, "（来源：知识库资料）")
+	require.NotContains(t, answer, `C:\private`)
+	require.NotContains(t, answer, "token=secret")
+	require.NotContains(t, answer, "file://")
+	for _, unsafe := range []string{
+		"Bearer example-secret", "sk-example-secret", "bf_example-secret",
+		"app_example-secret", "uk_example-secret", "C:/Users/Administrator/private/ops.md",
+		"~/private/ops.md", "./private/ops.md", "../private/ops.md",
+		"说明 /home/mlclaw/private/ops.md", "说明 C:/Users/Administrator/private/ops.md",
+	} {
+		require.Equal(t, "知识库资料", safeOctoSourceTitle(unsafe))
+	}
+	require.Equal(t, "源码 src/foo.ts", safeOctoSourceTitle("源码 src/foo.ts"))
+}
+
 func TestOctoCitedPrivateDocumentKeepsSourceTitleWithoutInventedLink(t *testing.T) {
 	knowledge := &octoCitationKnowledge{rows: map[string]*types.Knowledge{
 		"doc": {ID: "doc", TenantID: 1, KnowledgeBaseID: "kb", Title: "内部运维指南", Source: "file:///private/ops.md", EnableStatus: "enabled"},
@@ -249,10 +347,26 @@ func TestOctoOfficialReleaseCitationIsAppendedWithoutModelRefAndRespectsSetting(
 	require.NotContains(t, withoutCitations, url)
 }
 func TestOctoCitationURLsDoNotExposeLocalPathsOrTokens(t *testing.T) {
-	for _, value := range []string{"file:///etc/passwd", "http://public.example", "https://127.0.0.1/private", "https://host.internal/doc", "https://user:pass@example.org/doc", "https://example.org/doc?token=secret", "javascript:alert(1)"} {
+	for _, value := range []string{
+		"file:///etc/passwd", "http://public.example", "https://127.0.0.1/private",
+		"https://host.internal/doc", "https://user:pass@example.org/doc",
+		"https://example.org/doc?token=secret", "javascript:alert(1)",
+		"https://example.org/files/sk-1234567890abcdef1234",
+		"https://example.org/files/bf_1234567890abcdef1234",
+		"https://example.org/files/app_1234567890abcdef1234",
+		"https://example.org/files/uk_1234567890abcdef1234",
+		"https://example.org/file/token%3Dsecret",
+		"https://example.org/file#token=secret",
+		"https://example.org/file#Bearer%20example-secret",
+	} {
 		require.Empty(t, safeOctoSourceURL(value))
 	}
 	require.Equal(t, "https://github.com/org/repo/blob/main/a.go#L1", safeOctoSourceURL("https://github.com/org/repo/blob/main/a.go#L1"))
+	commit := strings.Repeat("a", 40)
+	for _, path := range []string{"src/app_auth.go", "src/uk_channel.go", "src/token.go"} {
+		link := "https://github.com/org/repo/blob/" + commit + "/" + path + "#L2-L5"
+		require.Equal(t, link, safeOctoSourceURL(link), "ordinary pinned GitHub source paths must remain clickable")
+	}
 }
 
 func TestOctoActualSourceHeadingAndQuotedTitlesUseOnlyExactRetrievedWork(t *testing.T) {
