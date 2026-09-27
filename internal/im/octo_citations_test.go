@@ -148,7 +148,7 @@ func TestOctoRawSourceCitationRequiresObservedReadURL(t *testing.T) {
 	require.NotContains(t, stripIMCitationTags(forged), "github.com")
 }
 
-func TestOctoGitHubLineLinksRequireExactCurrentTurnRead(t *testing.T) {
+func TestOctoGitHubLineLinksRequireCurrentTurnReadRange(t *testing.T) {
 	ctx := octobusiness.WithRetrievalTrace(octoCitationContext())
 	revision := strings.Repeat("c", 40)
 	readURL := "https://github.com/test/code/blob/" + revision + "/main.go#L3-L7"
@@ -159,13 +159,15 @@ func TestOctoGitHubLineLinksRequireExactCurrentTurnRead(t *testing.T) {
 	require.NoError(t, err)
 
 	wrongRange := "https://github.com/test/code/blob/" + revision + "/main.go#L10-L20"
+	shortRange := "https://github.com/test/code/blob/" + revision + "/main.go#L4-L4"
 	wrongRepo := "https://github.com/other/code/blob/" + revision + "/main.go#L3-L7"
 	branchLink := "https://github.com/test/code/blob/main/main.go#L3-L7"
 	encodedRange := "https://github.com/test/code/blob/" + revision + "/main.go#%4C10-%4C20"
 	release := "https://github.com/test/code/releases/tag/v1.0"
-	answer := "[已读](" + readURL + ")、[错行](" + wrongRange + ")、[错库](" + wrongRepo + ")、[分支行](" + branchLink + ")、[版本](" + release + ")；裸链 " + wrongRange + "；编码 " + encodedRange + "；HTML <a href=\"" + wrongRepo + "\">代码</a>"
+	answer := "[已读](" + readURL + ")、[短行](" + shortRange + ")、[错行](" + wrongRange + ")、[错库](" + wrongRepo + ")、[分支行](" + branchLink + ")、[版本](" + release + ")；裸链 " + wrongRange + "；编码 " + encodedRange + "；HTML <a href=\"" + wrongRepo + "\">代码</a>"
 	got := sanitizeOctoGitHubLineLinks(ctx, answer)
 	require.Contains(t, got, "[已读]("+readURL+")")
+	require.Contains(t, got, "[短行]("+shortRange+")", "a short line within an authorized read remains clickable")
 	require.Contains(t, got, "错行（源码行号未核验）")
 	require.Contains(t, got, "错库（源码行号未核验）")
 	require.Contains(t, got, "分支行（源码行号未核验）")
@@ -176,6 +178,21 @@ func TestOctoGitHubLineLinksRequireExactCurrentTurnRead(t *testing.T) {
 	require.NotContains(t, got, encodedRange)
 	require.Contains(t, got, "未经核验的源码行号链接已省略")
 	require.Equal(t, answer, sanitizeOctoGitHubLineLinks(context.Background(), answer), "non-Octo answers are untouched")
+}
+
+func TestOctoLineSubsetMustBeShortAndWithinOnePinnedRead(t *testing.T) {
+	revision := strings.Repeat("d", 40)
+	base := "https://github.com/test/code/blob/" + revision + "/src/socket.ts"
+	observed := map[string]bool{base + "#L1-L200": true}
+	require.True(t, octoObservedGitHubLineURL(base+"#L2", observed))
+	require.True(t, octoObservedGitHubLineURL(base+"#L1700", map[string]bool{base + "#L1688-L1778": true}))
+	require.False(t, octoObservedGitHubLineURL(base+"#L1700-L1769", map[string]bool{base + "#L1688-L1778": true}), "the earlier wrong broad range stays untrusted")
+	require.True(t, octoObservedGitHubLineURL(base+"#%4C38", observed), "encoded line markers are parsed but not exempted")
+	require.False(t, octoObservedGitHubLineURL(base+"#L10-L90", observed), "a broad manually written range is not a precise citation")
+	require.False(t, octoObservedGitHubLineURL(base+"#L201", observed))
+	require.False(t, octoObservedGitHubLineURL("https://github.com/other/code/blob/"+revision+"/src/socket.ts#L2", observed))
+	require.False(t, octoObservedGitHubLineURL("https://github.com/test/code/blob/main/src/socket.ts#L2", observed))
+	require.False(t, octoObservedGitHubLineURL(base+"#L0", observed))
 }
 
 func TestOctoStreamingFinalRendersOnlyObservedCodeLineSource(t *testing.T) {
