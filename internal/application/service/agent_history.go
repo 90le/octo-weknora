@@ -32,14 +32,11 @@ var agentHistoryThinkTagRegex = regexp.MustCompile(`(?s)<think>.*?</think>`)
 // chronologically ordered list of chat.Message entries suitable for prepending
 // to the current turn (without system prompt; the engine adds that itself).
 //
-// For each historical turn it emits:
-//  1. A user message (RenderedContent if present, else Content, plus any
-//     image captions appended).
-//  2. For each AgentStep with non-terminal tool calls (i.e. excluding
-//     final_answer), an assistant message carrying the step's thought and
-//     tool_calls, followed by one tool message per tool result.
-//  3. A final assistant message with the canonical answer (msg.Content with
-//     <think> blocks stripped).
+// For each historical turn it emits the user's messages and the canonical
+// final answer. Ordinary Agent sessions also replay intermediate answers and
+// OpenAI-shaped tool calls/results. In a scoped IM knowledge session, previous
+// tool calls/results are omitted: a new turn must retrieve from its currently
+// authorized knowledge scope rather than inherit an old tool transcript.
 //
 // Turns lacking either user or assistant content are skipped. The newest
 // maxRounds turns are returned in chronological order.
@@ -117,10 +114,35 @@ func LoadAgentHistory(
 
 	out := make([]chat.Message, 0, len(completeTurns)*4)
 	for _, t := range completeTurns {
-		out = append(out, buildUserHistoryMessage(t.users[0]))
-		out = append(out, buildTurnBodyMessages(t.assistant, t.users[1:])...)
+		out = append(out, buildHistoricalTurnMessages(ctx, t.users, t.assistant)...)
 	}
 	return out, nil
+}
+
+func buildHistoricalTurnMessages(ctx context.Context, users []*types.Message, assistant *types.Message) []chat.Message {
+	if len(users) == 0 || assistant == nil {
+		return nil
+	}
+	out := []chat.Message{buildUserHistoryMessage(users[0])}
+	if types.HasIMKnowledgeScope(ctx) {
+		// This is a completed historical turn. Keep the user's actual words,
+		// including any mid-run update, but do not re-inject the live steering
+		// wrapper or old tool outputs into the next scoped request.
+		for _, user := range users[1:] {
+			out = append(out, buildUserHistoryMessage(user))
+		}
+		// A failed or cancelled IM turn still gives a follow-up its original
+		// question, but the system's error notice is not an answer to build on.
+		// Exact text handles rows persisted before IsFallback was set.
+		if assistant.Channel == "im" && (assistant.IsFallback || types.IsIMFallbackAnswer(assistant.Content)) {
+			return out
+		}
+		if final := finalAnswerHistoryMessage(assistant); final != nil {
+			out = append(out, *final)
+		}
+		return out
+	}
+	return append(out, buildTurnBodyMessages(assistant, users[1:])...)
 }
 
 // buildTurnBodyMessages replays one turn's assistant work with any mid-run

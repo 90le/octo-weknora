@@ -39,9 +39,9 @@ import (
 )
 
 const (
-	imNoAnswerFallback  = "抱歉，我暂时无法回答这个问题。"
-	imErrorFallback     = "抱歉，处理您的问题时出现了异常，请稍后再试。"
-	imCancelledFallback = "抱歉，回答已被取消。"
+	imNoAnswerFallback  = types.IMNoAnswerFallback
+	imErrorFallback     = types.IMErrorFallback
+	imCancelledFallback = types.IMCancelledFallback
 
 	// dedupTTL is how long processed message IDs are retained.
 	dedupTTL = 5 * time.Minute
@@ -2953,6 +2953,11 @@ loop:
 	noVisibleContent := !streamedAny && strings.TrimSpace(resolvedAnswer) == ""
 	authServices := append([]imMCPAuthService(nil), mcpAuthServices...)
 	bufMu.Unlock()
+	if finalErr != nil {
+		// A partial stream after an error is not a completed answer for a
+		// future conversation turn.
+		assistantMsg.IsFallback = true
+	}
 
 	finalDisplay := cleanIMContent(ctx, FormatIMFinalFromParts(parts), tenant, s.defaultFileSvc, s.storageResolver)
 	if noVisibleContent || finalDisplay == "" {
@@ -2961,6 +2966,7 @@ loop:
 			fallback = imQAFailureReply(finalErr)
 		}
 		finalDisplay = fallback
+		assistantMsg.IsFallback = true
 		if answer == "" {
 			answer = fallback
 		}
@@ -2981,6 +2987,7 @@ loop:
 
 	if answer == "" {
 		answer = imNoAnswerFallback
+		assistantMsg.IsFallback = true
 	}
 
 	assistantMsg.Content = answer
@@ -3166,6 +3173,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 		// Mark assistant message as completed to avoid dangling incomplete records
 		assistantMsg.Content = imCancelledFallback
 		assistantMsg.IsCompleted = true
+		assistantMsg.IsFallback = true
 		// Use a fresh context since the original is cancelled
 		if updateErr := s.messageService.UpdateMessage(context.WithoutCancel(ctx), assistantMsg); updateErr != nil {
 			logger.Warnf(ctx, "[IM] Failed to update cancelled assistant message: %v", updateErr)
@@ -3178,12 +3186,16 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	qaError := qaErr
 	authServices := append([]imMCPAuthService(nil), mcpAuthServices...)
 	answerMu.Unlock()
+	if qaError != nil {
+		assistantMsg.IsFallback = true
+	}
 
 	if answer == "" && qaError != nil {
 		return "", qaError
 	}
 	if answer == "" {
 		answer = imNoAnswerFallback
+		assistantMsg.IsFallback = true
 	}
 	if notice := s.buildIMMCPAuthNotice(ctx, authServices); notice != "" {
 		answer = appendIMAuthNotice(answer, notice)

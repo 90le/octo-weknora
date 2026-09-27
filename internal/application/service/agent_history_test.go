@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -11,6 +12,71 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBuildHistoricalTurnMessagesScopedIMKeepsConversationWithoutPriorTools(t *testing.T) {
+	now := time.Date(2026, 9, 27, 13, 0, 0, 0, time.UTC)
+	users := []*types.Message{
+		{ID: "original", Content: "Octo 和 Loop 的关系？", CreatedAt: now},
+		{ID: "followup", Content: "再讲细一点", CreatedAt: now.Add(time.Second)},
+	}
+	assistant := &types.Message{
+		Content: "Loop 是 Octo 的项目协作模块。",
+		AgentSteps: types.AgentSteps{{
+			Thought:          "old reasoning",
+			ReasoningContent: "old private reasoning",
+			ToolCalls: []types.ToolCall{{
+				ID: "old-call", Name: agenttools.ToolKnowledgeSearch,
+				Result: &types.ToolResult{Success: true, Output: "old source from previous scope"},
+			}},
+		}},
+	}
+
+	scoped := types.WithIMKnowledgeScope(context.Background(), []string{"kb-current"})
+	got := buildHistoricalTurnMessages(scoped, users, assistant)
+	require.Equal(t, []chat.Message{
+		{Role: "user", Content: "Octo 和 Loop 的关系？"},
+		{Role: "user", Content: "再讲细一点"},
+		{Role: "assistant", Content: "Loop 是 Octo 的项目协作模块。"},
+	}, got)
+	for _, msg := range got {
+		assert.Empty(t, msg.ToolCalls)
+		assert.Empty(t, msg.ReasoningContent)
+		assert.NotContains(t, msg.Content, "old source")
+		assert.NotContains(t, msg.Content, "<continue_task>")
+	}
+
+	unscoped := buildHistoricalTurnMessages(context.Background(), users, assistant)
+	require.Len(t, unscoped, 5)
+	assert.Equal(t, "old-call", unscoped[1].ToolCalls[0].ID)
+	assert.Equal(t, "old source from previous scope", unscoped[2].Content)
+	assert.Equal(t, "assistant", unscoped[4].Role)
+}
+
+func TestBuildHistoricalTurnMessagesScopedIMSkipsEmptyFinalAnswer(t *testing.T) {
+	ctx := types.WithIMKnowledgeScope(context.Background(), []string{})
+	got := buildHistoricalTurnMessages(ctx,
+		[]*types.Message{{Content: "What changed?"}},
+		&types.Message{Content: "<think>incomplete</think>", AgentSteps: types.AgentSteps{{Thought: "unfinished tool step"}}},
+	)
+	require.Equal(t, []chat.Message{{Role: "user", Content: "What changed?"}}, got)
+}
+
+func TestBuildHistoricalTurnMessagesScopedIMDoesNotReplayFailureAsAnswer(t *testing.T) {
+	ctx := types.WithIMKnowledgeScope(context.Background(), []string{"kb-current"})
+	user := []*types.Message{{Content: "How does Octo CLI work?"}}
+	for _, assistant := range []*types.Message{
+		{Channel: "im", Content: types.IMErrorFallback}, // legacy row
+		{Channel: "im", Content: types.IMCancelledFallback},
+		{Channel: "im", Content: "A future error notice", IsFallback: true},
+	} {
+		require.Equal(t, []chat.Message{{Role: "user", Content: "How does Octo CLI work?"}},
+			buildHistoricalTurnMessages(ctx, user, assistant))
+	}
+	require.Equal(t, []chat.Message{
+		{Role: "user", Content: "How does Octo CLI work?"},
+		{Role: "assistant", Content: "Install it with npm."},
+	}, buildHistoricalTurnMessages(ctx, user, &types.Message{Channel: "im", Content: "Install it with npm."}))
+}
 
 // TestBuildUserHistoryMessage_IgnoresLegacyRenderedContent verifies that old
 // prompt/context snapshots never re-enter the current model context.

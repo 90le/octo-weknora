@@ -146,10 +146,9 @@ func (s *sessionService) AgentQA(
 	}
 
 	// Load multi-turn history directly from DB (the single source of truth).
-	// AgentSteps on each historical assistant message are expanded into proper
-	// assistant_with_tool_calls + tool messages so the model can see what was
-	// tried last turn — except final_answer, which is replayed as the trailing
-	// canonical assistant message.
+	// Ordinary Agent sessions replay prior tool steps. Scoped IM knowledge
+	// sessions retain the conversation but omit prior tool transcripts so each
+	// new turn retrieves evidence from its current authorized source scope.
 	var llmContext []chat.Message
 	if agentConfig.MultiTurnEnabled {
 		historyTurns := agentConfig.HistoryTurns

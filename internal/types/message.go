@@ -335,7 +335,8 @@ type Message struct {
 	Artifacts MessageArtifacts `json:"artifacts,omitempty" gorm:"type:jsonb;column:artifacts"`
 	// Whether message generation is complete
 	IsCompleted bool `json:"is_completed"`
-	// Whether this response is a fallback (no knowledge base match found)
+	// Whether this response is a fallback rather than a successful answer
+	// (for example, no knowledge match, an IM execution error, or cancellation).
 	IsFallback bool `json:"is_fallback,omitempty"`
 	// Agent total execution duration in milliseconds (from query start to answer start)
 	AgentDurationMs int64 `json:"agent_duration_ms,omitempty" gorm:"column:agent_duration_ms;default:0"`
