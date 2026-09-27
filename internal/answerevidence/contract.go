@@ -451,9 +451,9 @@ func MissingRequiredRepositories(ctx context.Context) []string {
 
 // IntegrationEvidenceObserved preserves ordinary knowledge-base behaviour for
 // generic support questions: a real RAG/Wiki/document body remains usable
-// evidence. It becomes stricter only when a user explicitly names channel
-// repositories: then every named project needs a complete scoped source search
-// and its own source-file read.
+// evidence. When the user explicitly names channel repositories, each project
+// needs its own scoped search and verified source-file read. Search completeness
+// is needed for an absence claim, not for using a file that was actually read.
 func IntegrationEvidenceObserved(ctx context.Context) bool {
 	state := stateFrom(ctx)
 	if state == nil {
@@ -478,8 +478,9 @@ func IntegrationEvidenceObserved(ctx context.Context) bool {
 // RecordSourceSearch records only a successful source_browse search. Matched
 // remains navigation state; no source fact, absence claim, or missing-issue
 // workflow is unlocked until a corresponding source file is read. Repository
-// is optional for a global search, while a complete scoped search is retained
-// for named channel-project evidence.
+// is optional for a global search. A bounded scoped search still establishes
+// which named repository was searched; only a complete search can establish
+// that an absence claim was exhaustively checked.
 func RecordSourceSearch(ctx context.Context, complete, matched bool, repositories ...string) {
 	if state := stateFrom(ctx); state != nil {
 		state.mu.Lock()
@@ -489,11 +490,9 @@ func RecordSourceSearch(ctx context.Context, complete, matched bool, repositorie
 		if state.sourceSearchRepos == nil {
 			state.sourceSearchRepos = make(map[string]bool)
 		}
-		if complete {
-			for _, repository := range repositories {
-				if leaf := repositoryLeaf(repository); leaf != "" {
-					state.sourceSearchRepos[leaf] = true
-				}
+		for _, repository := range repositories {
+			if leaf := repositoryLeaf(repository); leaf != "" {
+				state.sourceSearchRepos[leaf] = true
 			}
 		}
 		state.mu.Unlock()
