@@ -208,12 +208,16 @@ func (binding sourceBrowseBinding) catalog(ref string) sourceBrowseCatalogEntry 
 }
 
 func bindingFromSummary(kbID string, tenant uint64, summary types.SourceSummary) sourceBrowseBinding {
+	repository := summary.Repository
+	if repository == "" && summary.Type != types.ConnectorTypeGitHub {
+		repository = summary.Name // Local folders have a display name, not a GitHub identity.
+	}
 	return sourceBrowseBinding{
 		KnowledgeBaseID: kbID,
 		SourceID:        summary.ID,
 		SnapshotID:      summary.SnapshotID,
 		TenantID:        tenant,
-		Repository:      summary.Name,
+		Repository:      repository,
 		SourceType:      summary.Type,
 		Status:          summary.Status,
 		Revision:        summary.Revision,
@@ -362,7 +366,14 @@ func (t *SourceBrowseTool) listBindings(ctx context.Context, kbIDs []string, que
 		})
 		tenant := t.allowed()[kbID]
 		for _, summary := range summaries {
-			if query != "" && !strings.Contains(strings.ToLower(summary.Name), query) {
+			if query != "" && !strings.Contains(strings.ToLower(summary.Name), query) &&
+				!strings.Contains(strings.ToLower(summary.Repository), query) {
+				continue
+			}
+			if summary.Type == types.ConnectorTypeGitHub && summary.Repository == "" {
+				// A GitHub display name is editable and cannot stand in for a
+				// validated owner/repository identity, even if a snapshot exists.
+				complete = false
 				continue
 			}
 			if summary.ID == "" || summary.SnapshotID == "" {
@@ -583,7 +594,7 @@ func searchAuditFromOutput(out interface{}) *types.SourceBrowseSearchAudit {
 	case sourceBrowseSearch:
 		return &types.SourceBrowseSearchAudit{Repository: result.Repository, Complete: result.Complete, Matched: len(result.Matches) > 0}
 	case sourceBrowseGlobalSearch:
-		return &types.SourceBrowseSearchAudit{Complete: result.Complete, Matched: result.MatchedSources > 0}
+		return &types.SourceBrowseSearchAudit{Global: true, Complete: result.Complete, Matched: result.MatchedSources > 0}
 	default:
 		return nil
 	}

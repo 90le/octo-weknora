@@ -294,7 +294,7 @@ func TestNamedChannelPreflightDoesNotReadFirstGitignoreMatchAsProjectEvidence(t 
 	engine := newTestEngine(t, &mockChat{})
 	engine.toolRegistry = agenttools.NewToolRegistry()
 	engine.toolRegistry.RegisterTool(sourceTool)
-	query := "openclaw-channel-octo 项目负责什么？"
+	query := "Mininglamp-OSS/openclaw-channel-octo 项目负责什么？"
 	ctx := answerevidence.WithContract(context.Background(), query)
 	state := &types.AgentState{}
 	evidence := engine.prepareAnswerEvidencePreflight(ctx, state, query)
@@ -390,6 +390,12 @@ func TestExactSourceReferencesRejectsHiddenOrRepeatedRepositoryLeaves(t *testing
 	const wanted = "hermes-channel-octo"
 	require.Empty(t, exactSourceReferences(`{"sources":[{"source_ref":"s1","repository":"One/hermes-channel-octo"}],"complete":false}`, []string{wanted}))
 	require.Empty(t, exactSourceReferences(`{"sources":[{"source_ref":"s1","repository":"One/hermes-channel-octo"},{"source_ref":"s2","repository":"Two/hermes-channel-octo"},{"source_ref":"s3","repository":"Three/hermes-channel-octo"}],"complete":true}`, []string{wanted}))
+}
+
+func TestExactSourceReferencesMatchesExplicitOwner(t *testing.T) {
+	catalog := `{"sources":[{"source_ref":"s1","repository":"One/openclaw-channel-octo"},{"source_ref":"s2","repository":"Two/openclaw-channel-octo"}],"complete":true}`
+	require.Equal(t, map[string]string{"two/openclaw-channel-octo": "s2"}, exactSourceReferences(catalog, []string{"two/openclaw-channel-octo"}))
+	require.Empty(t, exactSourceReferences(catalog, []string{"openclaw-channel-octo"}), "a bare leaf remains ambiguous")
 }
 
 func TestAnswerEvidencePreflightLeavesAmbiguousReleaseScopeForSafeUnknown(t *testing.T) {

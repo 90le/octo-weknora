@@ -30,6 +30,7 @@ type SourceSnapshot struct {
 type SourceSummary struct {
 	ID         string         `json:"id"`
 	Name       string         `json:"name"`
+	Repository string         `json:"-"` // Canonical GitHub owner/repo from validated source config, not a display name.
 	Type       string         `json:"type"`
 	Status     string         `json:"status"`
 	SnapshotID string         `json:"snapshot_id,omitempty"`
@@ -91,6 +92,7 @@ type SourceBrowseCitation struct {
 // a source fact or authorizes automatic knowledge-gap registration.
 type SourceBrowseSearchAudit struct {
 	Repository string `json:"-"`
+	Global     bool   `json:"-"`
 	Complete   bool   `json:"-"`
 	Matched    bool   `json:"-"`
 }

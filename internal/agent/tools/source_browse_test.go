@@ -15,6 +15,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSearchAuditDistinguishesScopedFromGlobalCompleteness(t *testing.T) {
+	scoped := searchAuditFromOutput(sourceBrowseSearch{Repository: "Mininglamp-OSS/repo", Complete: true})
+	require.NotNil(t, scoped)
+	require.False(t, scoped.Global)
+	require.Equal(t, "Mininglamp-OSS/repo", scoped.Repository)
+
+	global := searchAuditFromOutput(sourceBrowseGlobalSearch{Complete: true})
+	require.NotNil(t, global)
+	require.True(t, global.Global)
+	require.Empty(t, global.Repository)
+}
+
 type sourceToolKB struct {
 	interfaces.KnowledgeBaseService
 }
@@ -93,7 +105,7 @@ func sourceToolContext() context.Context {
 }
 
 func sourceSummary(id, snapshotID, repository string) types.SourceSummary {
-	return types.SourceSummary{ID: id, Name: repository, Type: "github", Status: "active", SnapshotID: snapshotID, Revision: "commit-1", FileCount: 3}
+	return types.SourceSummary{ID: id, Name: repository, Repository: repository, Type: "github", Status: "active", SnapshotID: snapshotID, Revision: "commit-1", FileCount: 3}
 }
 
 func sourceCatalog(t *testing.T, tool *SourceBrowseTool) sourceBrowseCatalog {
@@ -116,6 +128,55 @@ func TestSourceBrowseSchemaExposesOnlySourceRefSelection(t *testing.T) {
 	require.NotContains(t, schema.Properties, "knowledge_base_id")
 	require.NotContains(t, schema.Properties, "source_id")
 	require.NotContains(t, schema.Properties, "snapshot_id")
+}
+
+func TestSourceBrowseUsesConfiguredGitHubIdentityInsteadOfDisplayName(t *testing.T) {
+	summary := sourceSummary("source", "snapshot", "Friendly custom label")
+	summary.Repository = "Mininglamp-OSS/openclaw-channel-octo"
+	reader := &sourceToolReader{summaries: map[string][]types.SourceSummary{"kb": {summary}}}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	listed, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"list","repository_query":"Mininglamp-OSS/openclaw-channel-octo"}`))
+	require.NoError(t, err)
+	require.True(t, listed.Success, listed.Error)
+	var catalog sourceBrowseCatalog
+	require.NoError(t, json.Unmarshal([]byte(listed.Output), &catalog))
+	require.Len(t, catalog.Sources, 1, "canonical identity must be searchable even with a custom display name")
+	require.Equal(t, summary.Repository, catalog.Sources[0].Repository)
+	ref := catalog.Sources[0].SourceRef
+	searched, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"search","source_ref":"`+ref+`","query":"message"}`))
+	require.NoError(t, err)
+	require.True(t, searched.Success, searched.Error)
+	audit, ok := searched.Data[types.SourceBrowseSearchDataKey].(types.SourceBrowseSearchAudit)
+	require.True(t, ok)
+	require.Equal(t, summary.Repository, audit.Repository)
+	read, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"read","source_ref":"`+ref+`","path":"README.md","start_line":1,"end_line":2}`))
+	require.NoError(t, err)
+	require.True(t, read.Success, read.Error)
+	citation, ok := read.Data[types.SourceBrowseCitationDataKey].(types.SourceBrowseCitation)
+	require.True(t, ok)
+	require.Equal(t, summary.Repository, citation.Repository)
+
+	local := bindingFromSummary("kb", 7, types.SourceSummary{Name: "Friendly local folder", Type: "local_folder"})
+	require.Equal(t, "Friendly local folder", local.Repository)
+
+	invalid := sourceSummary("bad", "old-snapshot", "OtherOrg/openclaw-channel-octo")
+	invalid.Repository = ""
+	require.Empty(t, bindingFromSummary("kb", 7, invalid).Repository, "an editable GitHub name is not provenance")
+	badTool := NewSourceBrowseTool(&sourceToolReader{summaries: map[string][]types.SourceSummary{"kb": {invalid}}},
+		&sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	badCatalog := sourceCatalog(t, badTool)
+	require.Empty(t, badCatalog.Sources)
+	require.False(t, badCatalog.Complete, "an unidentifiable GitHub snapshot keeps exhaustive search incomplete")
+	mixedTool := NewSourceBrowseTool(&sourceToolReader{summaries: map[string][]types.SourceSummary{"kb": {invalid, summary}}},
+		&sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	filtered, err := mixedTool.Execute(sourceToolContext(), json.RawMessage(`{"action":"list","repository_query":"Mininglamp-OSS/openclaw-channel-octo"}`))
+	require.NoError(t, err)
+	require.True(t, filtered.Success, filtered.Error)
+	var filteredCatalog sourceBrowseCatalog
+	require.NoError(t, json.Unmarshal([]byte(filtered.Output), &filteredCatalog))
+	require.True(t, filteredCatalog.Complete, "an unrelated invalid source must not poison a named repository lookup")
+	require.Len(t, filteredCatalog.Sources, 1)
+	require.Equal(t, summary.Repository, filteredCatalog.Sources[0].Repository)
 }
 
 func TestSourceBrowseCatalogBindsOpaqueRefAndRedactsInternalIDs(t *testing.T) {

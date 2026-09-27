@@ -13,6 +13,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/datasource"
+	githubConnector "github.com/Tencent/WeKnora/internal/datasource/connector/github"
 	"github.com/Tencent/WeKnora/internal/datasource/connector/localfolder"
 	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -159,6 +160,9 @@ func (s *DataSourceService) ListSourceSnapshots(ctx context.Context, kbID string
 			continue
 		}
 		info := types.SourceSummary{ID: ds.ID, Name: ds.Name, Type: ds.Type, Status: ds.Status}
+		if ds.Type == types.ConnectorTypeGitHub {
+			info.Repository, _ = githubConnector.ConfiguredRepository(cfg)
+		}
 		_, _, m, e := s.sourceSnapshot(ctx, kb.ID, ds.ID, "")
 		if e == nil {
 			info.SnapshotID = m.ID

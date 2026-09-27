@@ -45,6 +45,69 @@ func TestFixedRevisionCitationDoesNotBecomeLatestReleaseRequest(t *testing.T) {
 	require.NotContains(t, Prompt(ctx), "github_release_lookup")
 }
 
+func TestBoundedNamedRepositorySearchAndReadCanAnswerIntegration(t *testing.T) {
+	query := "在 Node.js 如何安装 Octo CLI？openclaw-channel-octo 如何接收 Octo 消息，基础 IM 接入是否依赖 CLI？请分别核对两个仓库的 README／源码后给出固定版本来源。"
+	ctx := WithContract(context.Background(), query)
+	require.True(t, Requires(ctx, IntentSource))
+	require.True(t, Requires(ctx, IntentIntegration))
+	require.False(t, Requires(ctx, IntentRelease))
+	require.Equal(t, []string{"openclaw-channel-octo"}, RequiredRepositories(ctx))
+
+	// A large repository may hit its per-source search limit even after the
+	// relevant README was found. Incompleteness cannot prove absence, but a
+	// trusted read of that repository's actual file can support an answer.
+	RecordSourceSearch(ctx, false, true, "Mininglamp-OSS/openclaw-channel-octo")
+	require.False(t, SourceSearchComplete(ctx))
+	require.False(t, IntegrationEvidenceObserved(ctx), "search alone never proves a source fact")
+	RecordSourceRead(ctx, "Mininglamp-OSS/openclaw-channel-octo")
+	require.True(t, IntegrationEvidenceObserved(ctx))
+	require.False(t, NeedsEvidenceRetry(ctx, "基础 IM 接入使用插件 WebSocket，不依赖 CLI。"))
+	require.False(t, NeedsSynthesisFallback(ctx))
+
+	zeroHit := WithContract(context.Background(), query)
+	RecordSourceSearch(zeroHit, false, false, "Mininglamp-OSS/openclaw-channel-octo")
+	require.False(t, IntegrationEvidenceObserved(zeroHit))
+	require.True(t, NeedsSynthesisFallback(zeroHit), "an incomplete search without a read still cannot support an answer")
+
+	globalPage := WithContract(context.Background(), query)
+	RecordSourceSearch(globalPage, false, true) // a filtered global page has no per-repository audit
+	RecordSourceRead(globalPage, "Mininglamp-OSS/openclaw-channel-octo")
+	require.False(t, IntegrationEvidenceObserved(globalPage), "a global page cannot stand in for a scoped repository search")
+}
+
+func TestScopedZeroHitDoesNotProveGlobalIntegrationAbsence(t *testing.T) {
+	ctx := WithContract(context.Background(), "Claude 支持接入 Octo IM Bot 吗？")
+	RecordSourceSearch(ctx, true, false, "Mininglamp-OSS/one-repository")
+	require.False(t, SourceSearchComplete(ctx), "one repository is not the whole authorized catalog")
+	require.True(t, NeedsEvidenceRetry(ctx, "当前授权资料无法确认是否支持。"))
+	RecordSourceSearch(ctx, true, false) // exhaustive authorized global search
+	require.True(t, SourceSearchComplete(ctx))
+	require.False(t, NeedsEvidenceRetry(ctx, "当前授权资料无法确认是否支持。"))
+}
+
+func TestNamedRepositorySearchAndReadMustHaveSameOwner(t *testing.T) {
+	ctx := WithContract(context.Background(), "openclaw-channel-octo 如何接收消息？")
+	RecordSourceSearch(ctx, false, true, "OtherOrg/openclaw-channel-octo")
+	RecordSourceRead(ctx, "Mininglamp-OSS/openclaw-channel-octo")
+	require.False(t, IntegrationEvidenceObserved(ctx), "matching repository leaves from different owners are not one source")
+	require.Equal(t, []string{"openclaw-channel-octo"}, MissingRequiredRepositories(ctx), "retry must name the still-unverified project")
+	RecordSourceSearch(ctx, false, true, "Mininglamp-OSS/openclaw-channel-octo")
+	require.True(t, IntegrationEvidenceObserved(ctx))
+	require.Empty(t, MissingRequiredRepositories(ctx))
+}
+
+func TestNamedChannelRepositoryPreservesExplicitOwner(t *testing.T) {
+	ctx := WithContract(context.Background(), "OtherOrg/openclaw-channel-octo 如何接收消息？")
+	require.Equal(t, []string{"otherorg/openclaw-channel-octo"}, RequiredRepositories(ctx))
+	RecordSourceSearch(ctx, false, true, "Mininglamp-OSS/openclaw-channel-octo")
+	RecordSourceRead(ctx, "Mininglamp-OSS/openclaw-channel-octo")
+	require.False(t, IntegrationEvidenceObserved(ctx), "another owner's repo cannot satisfy the user's explicit owner")
+	require.Equal(t, []string{"otherorg/openclaw-channel-octo"}, MissingRequiredRepositories(ctx))
+	RecordSourceSearch(ctx, false, true, "OtherOrg/openclaw-channel-octo")
+	RecordSourceRead(ctx, "OtherOrg/openclaw-channel-octo")
+	require.True(t, IntegrationEvidenceObserved(ctx))
+}
+
 func TestRuntimeNameDoesNotForceSourceOnlyFallback(t *testing.T) {
 	query := "在 Node.js 环境如何安装 Octo CLI？请根据知识库回答并给出来源。"
 	ctx := WithContract(context.Background(), query)
@@ -295,13 +358,13 @@ func TestNamedChannelProjectsNeedIndividualSourceReads(t *testing.T) {
 	require.Equal(t, []string{"cc-channel-octo", "codex-channel-octo", "hermes-channel-octo"}, RequiredRepositories(ctx))
 	RecordSourceSearch(ctx, true, true, "Mininglamp-OSS/codex-channel-octo")
 	RecordSourceRead(ctx, "Mininglamp-OSS/codex-channel-octo")
-	RecordSourceSearch(ctx, true, true, "Mininglamp-OSS/cc-channel-octo")
+	RecordSourceSearch(ctx, false, true, "Mininglamp-OSS/cc-channel-octo")
 	RecordSourceRead(ctx, "Mininglamp-OSS/cc-channel-octo")
 	require.False(t, IntegrationEvidenceObserved(ctx))
 	require.Equal(t, []string{"hermes-channel-octo"}, MissingRequiredRepositories(ctx))
 	require.True(t, NeedsEvidenceRetry(ctx, "当前授权资料无法确认是否支持。"), "a single unread named project cannot be hidden behind an uncertainty answer")
 
-	RecordSourceSearch(ctx, true, true, "Mininglamp-OSS/hermes-channel-octo")
+	RecordSourceSearch(ctx, false, true, "Mininglamp-OSS/hermes-channel-octo")
 	RecordSourceRead(ctx, "Mininglamp-OSS/hermes-channel-octo")
 	require.True(t, IntegrationEvidenceObserved(ctx))
 	require.Empty(t, MissingRequiredRepositories(ctx))

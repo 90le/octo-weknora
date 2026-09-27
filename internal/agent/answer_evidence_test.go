@@ -125,6 +125,51 @@ func TestRecordAnswerEvidenceRequiresSearchReadProvenanceAndActualDocumentHit(t 
 	require.True(t, answerevidence.DocumentOrSourceEvidenceObserved(metadataOnlyCtx))
 }
 
+func TestBoundedScopedSearchAndReadUnlocksNamedIntegration(t *testing.T) {
+	ctx := answerevidence.WithContract(context.Background(), "openclaw-channel-octo 如何接收 Octo 消息？")
+	recordAnswerEvidenceFromStep(ctx, types.AgentStep{ToolCalls: []types.ToolCall{{
+		Name: agenttools.ToolSourceBrowse,
+		Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+			types.SourceBrowseSearchDataKey: types.SourceBrowseSearchAudit{
+				Repository: "Mininglamp-OSS/openclaw-channel-octo", Complete: false, Matched: true,
+			},
+		}},
+	}}})
+	require.False(t, answerevidence.SourceSearchComplete(ctx), "bounded search does not prove absence")
+	require.False(t, answerevidence.IntegrationEvidenceObserved(ctx), "search alone is navigation")
+	recordAnswerEvidenceFromStep(ctx, types.AgentStep{ToolCalls: []types.ToolCall{{
+		Name: agenttools.ToolSourceBrowse,
+		Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+			types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{
+				KnowledgeBaseID: "kb", Repository: "Mininglamp-OSS/openclaw-channel-octo",
+				Path: "README.md", Revision: "pinned-commit",
+			},
+		}},
+	}}})
+	require.True(t, answerevidence.IntegrationEvidenceObserved(ctx))
+	require.False(t, answerevidence.NeedsSynthesisFallback(ctx))
+}
+
+func TestSourceSearchAuditKeepsScopedAndGlobalCompletenessSeparate(t *testing.T) {
+	ctx := answerevidence.WithContract(context.Background(), "Claude 支持接入 Octo IM Bot 吗？")
+	recordAnswerEvidenceFromStep(ctx, types.AgentStep{ToolCalls: []types.ToolCall{{
+		Name: agenttools.ToolSourceBrowse,
+		Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+			types.SourceBrowseSearchDataKey: types.SourceBrowseSearchAudit{
+				Repository: "Mininglamp-OSS/one-repository", Complete: true, Matched: false,
+			},
+		}},
+	}}})
+	require.False(t, answerevidence.SourceSearchComplete(ctx))
+	recordAnswerEvidenceFromStep(ctx, types.AgentStep{ToolCalls: []types.ToolCall{{
+		Name: agenttools.ToolSourceBrowse,
+		Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+			types.SourceBrowseSearchDataKey: types.SourceBrowseSearchAudit{Global: true, Complete: true, Matched: false},
+		}},
+	}}})
+	require.True(t, answerevidence.SourceSearchComplete(ctx))
+}
+
 func TestDocumentEvidenceRequiresTypedHitsAndRenderedBody(t *testing.T) {
 	// An untrusted source can contain XML-looking markup or an "Answers:"
 	// string. A successful tool call must still report a real hit in its own

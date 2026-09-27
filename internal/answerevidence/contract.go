@@ -53,19 +53,18 @@ func (needs evidenceNeeds) multiple() bool { return needs != 0 && needs&(needs-1
 // for the duration of one incoming turn and is never persisted or exposed to a
 // model. Tool execution may be parallel, hence the mutex.
 type State struct {
-	mu                sync.RWMutex
-	intent            Intent
-	needs             evidenceNeeds
-	chinese           bool
-	sourceSearch      bool
-	sourceComplete    bool
-	sourceMatched     bool
-	sourceSearchRepos map[string]bool
-	sourceRead        bool
-	sourceReadRepos   map[string]bool
-	// Full normalized repository identities are separate from the leaf-only
-	// map used by the legacy named-channel check. Two owners may have the same
-	// leaf; only full identities can join source and release evidence.
+	mu                     sync.RWMutex
+	intent                 Intent
+	needs                  evidenceNeeds
+	chinese                bool
+	sourceSearch           bool
+	sourceComplete         bool
+	sourceMatched          bool
+	sourceSearchIdentities map[string]bool
+	sourceRead             bool
+	sourceReadRepos        map[string]bool
+	// Full normalized identities prevent a search of one owner's same-named
+	// repository from pairing with another owner's read or release evidence.
 	sourceReadIdentities map[string]bool
 	documentEvidence     bool
 	releaseLookup        bool
@@ -162,24 +161,28 @@ func containsHan(value string) bool {
 	return false
 }
 
-// namedChannelRepositories extracts only explicit *-channel-octo repository
-// names. Generic product words are intentionally ignored: this guard exists to
-// prevent a read of one named channel from being generalized to another named
-// channel, not to guess repository ownership from ordinary prose.
+// namedChannelRepositories extracts explicit *-channel-octo repository names.
+// An owner written by the user remains part of the requirement; a different
+// owner's same-named repository cannot satisfy it. Generic product words are
+// intentionally ignored rather than guessed into repository identities.
 func namedChannelRepositories(query string) []string {
 	tokens := strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' || r == '/')
 	})
 	seen := make(map[string]bool)
 	for _, token := range tokens {
-		if slash := strings.LastIndex(token, "/"); slash >= 0 {
-			token = token[slash+1:]
-		}
-		token = strings.Trim(token, "-_.")
-		if !strings.HasSuffix(token, "-channel-octo") || token == "-channel-octo" {
+		parts := strings.Split(strings.Trim(token, "/"), "/")
+		leaf := strings.Trim(parts[len(parts)-1], "-_.")
+		if !strings.HasSuffix(leaf, "-channel-octo") || leaf == "-channel-octo" {
 			continue
 		}
-		seen[token] = true
+		repository := leaf
+		if len(parts) >= 2 {
+			if owner := strings.Trim(parts[len(parts)-2], "-_."); owner != "" {
+				repository = owner + "/" + leaf
+			}
+		}
+		seen[repository] = true
 	}
 	out := make([]string, 0, len(seen))
 	for repository := range seen {
@@ -299,10 +302,9 @@ func SourceSearchMatched(ctx context.Context) bool {
 	return state.sourceMatched
 }
 
-// SourceSearchComplete reports whether at least one trusted source_browse
-// search finished without a catalog, timeout, or result truncation boundary.
-// An incomplete search may guide a later read, but never justifies treating a
-// zero-hit result as exhaustive.
+// SourceSearchComplete reports whether a trusted source_browse search finished
+// across the entire authorized catalog. A complete search of one repository,
+// or a capped global page, cannot prove that all sources lack an answer.
 func SourceSearchComplete(ctx context.Context) bool {
 	state := stateFrom(ctx)
 	if state == nil {
@@ -430,9 +432,9 @@ func PostPreflightSourceBrowseBudget(ctx context.Context) (active bool, remainin
 	return state.postPreflightSourceBrowseActive, state.postPreflightSourceBrowseRemaining
 }
 
-// MissingRequiredRepositories reports which explicitly named channel projects
-// still lack their own source-file read. It prevents the answerer from reading
-// one adapter README and extrapolating implementation details to its peers.
+// MissingRequiredRepositories uses the same repository-identity gate as answer
+// synthesis, so retry guidance never calls a project complete when search and
+// read came from different owners.
 func MissingRequiredRepositories(ctx context.Context) []string {
 	state := stateFrom(ctx)
 	if state == nil {
@@ -442,7 +444,7 @@ func MissingRequiredRepositories(ctx context.Context) []string {
 	defer state.mu.RUnlock()
 	missing := make([]string, 0)
 	for _, repository := range state.requiredRepos {
-		if !state.sourceReadRepos[repository] {
+		if !namedRepositoryReadAfterSearchLocked(state, repository) {
 			missing = append(missing, repository)
 		}
 	}
@@ -451,9 +453,9 @@ func MissingRequiredRepositories(ctx context.Context) []string {
 
 // IntegrationEvidenceObserved preserves ordinary knowledge-base behaviour for
 // generic support questions: a real RAG/Wiki/document body remains usable
-// evidence. It becomes stricter only when a user explicitly names channel
-// repositories: then every named project needs a complete scoped source search
-// and its own source-file read.
+// evidence. When the user explicitly names channel repositories, each project
+// needs its own scoped search and verified source-file read. Search completeness
+// is needed for an absence claim, not for using a file that was actually read.
 func IntegrationEvidenceObserved(ctx context.Context) bool {
 	state := stateFrom(ctx)
 	if state == nil {
@@ -468,7 +470,7 @@ func IntegrationEvidenceObserved(ctx context.Context) bool {
 		return false
 	}
 	for _, repository := range state.requiredRepos {
-		if !state.sourceSearchRepos[repository] || !state.sourceReadRepos[repository] {
+		if !namedRepositoryReadAfterSearchLocked(state, repository) {
 			return false
 		}
 	}
@@ -478,22 +480,23 @@ func IntegrationEvidenceObserved(ctx context.Context) bool {
 // RecordSourceSearch records only a successful source_browse search. Matched
 // remains navigation state; no source fact, absence claim, or missing-issue
 // workflow is unlocked until a corresponding source file is read. Repository
-// is optional for a global search, while a complete scoped search is retained
-// for named channel-project evidence.
+// is optional for a global search. A bounded scoped search still establishes
+// which named repository was searched; only a complete search can establish
+// that an absence claim was exhaustively checked.
 func RecordSourceSearch(ctx context.Context, complete, matched bool, repositories ...string) {
 	if state := stateFrom(ctx); state != nil {
 		state.mu.Lock()
 		state.sourceSearch = true
-		state.sourceComplete = state.sourceComplete || complete
+		// Only a global search can establish completeness for a general
+		// zero-hit/unknown answer. Scoped searches still support verified reads.
+		state.sourceComplete = state.sourceComplete || (complete && len(repositories) == 0)
 		state.sourceMatched = state.sourceMatched || matched
-		if state.sourceSearchRepos == nil {
-			state.sourceSearchRepos = make(map[string]bool)
+		if state.sourceSearchIdentities == nil {
+			state.sourceSearchIdentities = make(map[string]bool)
 		}
-		if complete {
-			for _, repository := range repositories {
-				if leaf := repositoryLeaf(repository); leaf != "" {
-					state.sourceSearchRepos[leaf] = true
-				}
+		for _, repository := range repositories {
+			if identity := repositoryIdentity(repository); identity != "" {
+				state.sourceSearchIdentities[identity] = true
 			}
 		}
 		state.mu.Unlock()
@@ -782,11 +785,31 @@ func integrationEvidenceObservedLocked(state *State) bool {
 		return false
 	}
 	for _, repository := range state.requiredRepos {
-		if !state.sourceSearchRepos[repository] || !state.sourceReadRepos[repository] {
+		if !namedRepositoryReadAfterSearchLocked(state, repository) {
 			return false
 		}
 	}
 	return true
+}
+
+func namedRepositoryReadAfterSearchLocked(state *State, requiredRepository string) bool {
+	if !state.sourceReadRepos[repositoryLeaf(requiredRepository)] {
+		return false
+	}
+	for identity := range state.sourceReadIdentities {
+		if requiredRepositoryMatches(requiredRepository, identity) && state.sourceSearchIdentities[identity] {
+			return true
+		}
+	}
+	return false
+}
+
+func requiredRepositoryMatches(required, actual string) bool {
+	required = repositoryIdentity(required)
+	if strings.Contains(required, "/") {
+		return required == actual
+	}
+	return required == repositoryLeaf(actual)
 }
 
 func missingEvidenceLabels(ctx context.Context, chinese bool) []string {

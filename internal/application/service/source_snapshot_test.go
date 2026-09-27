@@ -39,10 +39,12 @@ func (s *sourceDSStub) FindByKnowledgeBase(context.Context, string) ([]*types.Da
 func TestSourceReadsRequireNativeKBGrantAndReturnPinnedLines(t *testing.T) {
 	t.Setenv("DATASOURCE_SNAPSHOT_DIR", t.TempDir())
 	kb := &types.KnowledgeBase{ID: "kb", TenantID: 7}
-	cfg := &types.DataSourceConfig{Settings: map[string]interface{}{"mode": "source"}}
+	cfg := &types.DataSourceConfig{Type: types.ConnectorTypeGitHub, Settings: map[string]interface{}{
+		"mode": "source", "repository": "Mininglamp-OSS/openclaw-channel-octo",
+	}}
 	config, err := cfg.ToJSON()
 	require.NoError(t, err)
-	ds := &types.DataSource{ID: "ds", TenantID: 7, KnowledgeBaseID: kb.ID, Type: "github", Config: config}
+	ds := &types.DataSource{ID: "ds", Name: "Friendly source label", TenantID: 7, KnowledgeBaseID: kb.ID, Type: types.ConnectorTypeGitHub, Config: config}
 	store, err := snapshot.FromEnvironment()
 	require.NoError(t, err)
 	builder, err := store.Begin(ds, cfg)
@@ -62,6 +64,11 @@ func TestSourceReadsRequireNativeKBGrantAndReturnPinnedLines(t *testing.T) {
 	grant, err := access.ResolveKB(ctx, access.KBRequest{Caller: types.CallerFromContext(ctx)}, kb, types.OrgRoleViewer, nil, nil)
 	require.NoError(t, err)
 	ctx = grant.Context(ctx)
+	summaries, err := svc.ListSourceSnapshots(ctx, kb.ID)
+	require.NoError(t, err)
+	require.Len(t, summaries, 1)
+	require.Equal(t, "Friendly source label", summaries[0].Name)
+	require.Equal(t, "Mininglamp-OSS/openclaw-channel-octo", summaries[0].Repository)
 	read, err := svc.ReadSourceFile(ctx, kb.ID, ds.ID, "", "src/main.py", 2, 2)
 	require.NoError(t, err)
 	require.Equal(t, "second", read.Content)
