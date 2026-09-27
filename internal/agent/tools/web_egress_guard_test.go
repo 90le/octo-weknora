@@ -83,6 +83,7 @@ func TestGuardedQueriesAreBoundedAndCanReachLaterUserClauses(t *testing.T) {
 	assert.LessOrEqual(t, len([]rune(guard.SearchQuery())), maxGuardedWebQueryRunes)
 	assert.Contains(t, guard.AllowedSearchQueries(), "现在请查 Octo Web 更新")
 	assert.False(t, guard.AllowsSearchQuery(guard.SearchQuery()+" private retrieval"))
+	assert.False(t, guard.AllowsSearchQuery(guard.SearchQuery()+strings.Repeat(" ", 100)+"private retrieval"))
 
 	guard = NewWebEgressGuard("A？B？C？D？E？F？G？H？")
 	assert.LessOrEqual(t, len(guard.AllowedSearchQueries()), maxGuardedWebQueries)

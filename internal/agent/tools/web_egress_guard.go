@@ -185,9 +185,13 @@ func (g *WebEgressGuard) AllowedSearchQueries() []string {
 // ResolveSearchQuery selects one exact original-user-text query. Empty selects
 // the full question. Other model text is rejected, never silently substituted.
 func (g *WebEgressGuard) ResolveSearchQuery(modelQuery string) (string, bool) {
-	// Read one rune beyond the outbound limit so a model cannot append private
-	// text after a 320-rune prefix and have it compare equal by truncation.
-	modelQuery = normalizeGuardedWebQueryUpTo(modelQuery, maxGuardedWebQueryRunes+1)
+	// Validate the entire model argument before comparison. Truncating it at
+	// the public limit could hide an appended private suffix behind whitespace.
+	var valid bool
+	modelQuery, valid = normalizeModelWebQuery(modelQuery)
+	if !valid {
+		return "", false
+	}
 	if g == nil || len(g.queries) == 0 {
 		return "", false
 	}
@@ -200,6 +204,37 @@ func (g *WebEgressGuard) ResolveSearchQuery(modelQuery string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func normalizeModelWebQuery(value string) (string, bool) {
+	if len(value) > 4096 {
+		return "", false
+	}
+	var out strings.Builder
+	count := 0
+	pendingSpace := false
+	for _, r := range value {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			if count > 0 {
+				pendingSpace = true
+			}
+			continue
+		}
+		if pendingSpace {
+			if count >= maxGuardedWebQueryRunes {
+				return "", false
+			}
+			out.WriteByte(' ')
+			count++
+			pendingSpace = false
+		}
+		if count >= maxGuardedWebQueryRunes {
+			return "", false
+		}
+		out.WriteRune(r)
+		count++
+	}
+	return out.String(), true
 }
 
 // AllowsSearchQuery is retained for callers needing only an admission check.
