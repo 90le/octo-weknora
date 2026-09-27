@@ -197,6 +197,23 @@ func TestSourceBrowseCatalogFindsNamedRepositoryBeyondFirstPage(t *testing.T) {
 	require.NotContains(t, filtered.Output, "restricted")
 	require.NotContains(t, reader.listCalls, "restricted")
 
+	// A live Octo turn used repository_query + limit with action=list. These
+	// selectors narrow the same authorized catalog; rejecting them stranded
+	// the agent before it could obtain a source_ref.
+	alias, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"list","repository_query":"TARGET-CHANNEL-OCTO","limit":64}`))
+	require.NoError(t, err)
+	require.True(t, alias.Success, alias.Error)
+	var selectedByAlias sourceBrowseCatalog
+	require.NoError(t, json.Unmarshal([]byte(alias.Output), &selectedByAlias))
+	require.Len(t, selectedByAlias.Sources, 1)
+	require.Equal(t, "github.com/example/target-channel-octo", selectedByAlias.Sources[0].Repository)
+	require.NotContains(t, alias.Output, "restricted")
+
+	conflict, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"list","query":"octo-cli","repository_query":"different"}`))
+	require.NoError(t, err)
+	require.False(t, conflict.Success)
+	require.Contains(t, conflict.Error, "must refer to the same repository")
+
 	read, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"read","source_ref":"`+selected.Sources[0].SourceRef+`","path":"README.md","start_line":1,"end_line":2}`))
 	require.NoError(t, err)
 	require.True(t, read.Success, read.Error)

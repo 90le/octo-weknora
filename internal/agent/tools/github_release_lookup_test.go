@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,16 +36,58 @@ func releaseToolContext() context.Context {
 	return context.WithValue(ctx, types.UserIDContextKey, "release-fixture")
 }
 
-func releaseToolSource(t *testing.T, id, kb, mode string) *types.DataSource {
+func releaseToolSource(t *testing.T, id, kb, mode string, repository ...string) *types.DataSource {
 	t.Helper()
+	repo := "Acme/Widget"
+	if len(repository) > 0 {
+		repo = repository[0]
+	}
 	config := &types.DataSourceConfig{
 		Type:        types.ConnectorTypeGitHub,
 		Credentials: map[string]interface{}{"access_token": "tool-secret"},
-		Settings:    map[string]interface{}{"repository": "Acme/Widget", "mode": mode},
+		Settings:    map[string]interface{}{"repository": repo, "mode": mode},
 	}
 	blob, err := config.ToJSON()
 	require.NoError(t, err)
 	return &types.DataSource{ID: id, TenantID: 7, KnowledgeBaseID: kb, Type: types.ConnectorTypeGitHub, Config: blob, Status: types.DataSourceStatusActive}
+}
+
+func TestGitHubReleaseCatalogPagesAuthorizedRepositories(t *testing.T) {
+	rows := make([]*types.DataSource, 0, 11)
+	for i := 0; i < 11; i++ {
+		rows = append(rows, releaseToolSource(t, fmt.Sprintf("source-%02d", i), "kb", "source", fmt.Sprintf("Acme/Widget-%02d", i)))
+	}
+	tool := NewGitHubReleaseLookupTool(
+		&releaseToolDataSources{rows: map[string][]*types.DataSource{"kb": rows}},
+		&releaseToolKB{},
+		types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "kb", TenantID: 7}},
+		githubconnector.NewReleaseCatalogCache(), nil,
+	)
+	first, err := tool.Execute(releaseToolContext(), json.RawMessage(`{"action":"list","limit":10}`))
+	require.NoError(t, err)
+	require.True(t, first.Success, first.Error)
+	var page githubReleaseCatalog
+	require.NoError(t, json.Unmarshal([]byte(first.Output), &page))
+	require.Len(t, page.Repositories, 10)
+	require.False(t, page.Complete)
+	require.NotNil(t, page.NextOffset)
+	require.Equal(t, 10, *page.NextOffset)
+
+	second, err := tool.Execute(releaseToolContext(), json.RawMessage(`{"action":"list","offset":10,"limit":10}`))
+	require.NoError(t, err)
+	require.True(t, second.Success, second.Error)
+	var last githubReleaseCatalog
+	require.NoError(t, json.Unmarshal([]byte(second.Output), &last))
+	require.Len(t, last.Repositories, 1)
+	require.Equal(t, "Acme/Widget-10", last.Repositories[0].Repository)
+	require.NotEqual(t, page.Repositories[0].ReleaseRef, last.Repositories[0].ReleaseRef)
+	require.Nil(t, last.NextOffset)
+	require.False(t, last.Complete, "a later page does not cover every authorized repository")
+
+	invalid, err := tool.Execute(releaseToolContext(), json.RawMessage(`{"action":"latest","release_ref":"r1","offset":1}`))
+	require.NoError(t, err)
+	require.False(t, invalid.Success)
+	require.Contains(t, invalid.Error, "only valid for list")
 }
 
 func releaseToolCatalog(t *testing.T, tool *GitHubReleaseLookupTool) githubReleaseCatalog {
@@ -71,6 +114,16 @@ func TestGitHubReleaseLookupUsesOpaqueScopeBoundReferences(t *testing.T) {
 	)
 	catalog := releaseToolCatalog(t, tool)
 	require.Equal(t, githubReleaseCatalog{Repositories: []githubReleaseCatalogEntry{{ReleaseRef: "r1", Repository: "Acme/Widget"}}, Complete: true}, catalog)
+	limited, err := tool.Execute(releaseToolContext(), json.RawMessage(`{"action":"list","query":"Widget","limit":10}`))
+	require.NoError(t, err)
+	require.True(t, limited.Success, limited.Error)
+	var limitedCatalog githubReleaseCatalog
+	require.NoError(t, json.Unmarshal([]byte(limited.Output), &limitedCatalog))
+	require.Equal(t, catalog.Repositories, limitedCatalog.Repositories, "a bounded repository list must still return its authorized release_ref")
+	invalid, err := tool.Execute(releaseToolContext(), json.RawMessage(`{"action":"list","limit":11}`))
+	require.NoError(t, err)
+	require.False(t, invalid.Success)
+	require.Contains(t, invalid.Error, "limit from 1 to 10")
 
 	var schema struct {
 		Properties map[string]json.RawMessage `json:"properties"`
