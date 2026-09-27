@@ -1782,6 +1782,16 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 	sessionCtx = withIMIdentity(sessionCtx, tenantID, channelID, msg)
 	if scope != nil {
 		sessionCtx = types.WithIMKnowledgeScope(sessionCtx, scope.KnowledgeBaseIDs)
+		if scope.AllowPublicWeb {
+			admittedFingerprint := scopeFingerprint(scope)
+			sessionCtx = types.WithIMPublicWebAuthorizer(sessionCtx, func(checkCtx context.Context) error {
+				current, err := authorizeExecution(checkCtx, adapter, channel, msg)
+				if err != nil || current == nil || !current.AllowPublicWeb || scopeFingerprint(current) != admittedFingerprint {
+					return ErrScopeDenied
+				}
+				return nil
+			})
+		}
 	}
 
 	// 2. Resolve or create a WeKnora session

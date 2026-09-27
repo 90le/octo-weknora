@@ -47,3 +47,20 @@ func TestReplyAuthorityRejectsDraftAfterManagementRevocationWithReadBindingRetai
 		t.Fatal("explicit management-only asset lost authorized maintenance receipt")
 	}
 }
+
+func TestReplyAuthorityRejectsRevokedPublicWebEvidence(t *testing.T) {
+	old := &im.ExecutionScope{AccountID: "a", ScopeID: "group", Revision: "r", KnowledgeBaseIDs: []string{"kb"}, AllowPublicWeb: true}
+	current := *old
+	if !permitsReply(encodeAuthority(old), &current) {
+		t.Fatal("unchanged public web scope denied")
+	}
+	current.AllowPublicWeb = false
+	if permitsReply(encodeAuthority(old), &current) {
+		t.Fatal("external evidence delivered after public web revocation")
+	}
+	old.AllowPublicWeb = false
+	current.AllowPublicWeb = true
+	if !permitsReply(encodeAuthority(old), &current) {
+		t.Fatal("new grant unnecessarily invalidated already private answer")
+	}
+}

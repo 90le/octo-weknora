@@ -168,25 +168,18 @@ func (h *Handler) Update(c *gin.Context) {
 		InheritParent          *bool  `json:"inherit_parent"`
 		AllowKnowledgeCreation *bool  `json:"allow_knowledge_creation"`
 		AggregateChildIssues   *bool  `json:"aggregate_child_issues"`
+		AllowPublicWeb         *bool  `json:"allow_public_web"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.InheritParent == nil {
 		respond(c, 0, nil, ErrInvalid)
 		return
 	}
-	err := h.store.Update(c.Request.Context(), tenant(c), c.Param("scope_id"), req.DisplayName, *req.InheritParent)
-	if err == nil {
-		values := map[string]any{}
-		if req.AllowKnowledgeCreation != nil {
-			values["allow_knowledge_creation"] = *req.AllowKnowledgeCreation
-		}
-		if req.AggregateChildIssues != nil {
-			values["aggregate_child_issues"] = *req.AggregateChildIssues
-		}
-		if len(values) > 0 {
-			err = h.store.db.WithContext(c.Request.Context()).Model(&Scope{}).Where("tenant_id = ? AND id = ?", tenant(c), c.Param("scope_id")).Updates(values).Error
-		}
-	}
-	respond(c, http.StatusOK, gin.H{"updated": true}, err)
+	row, err := h.store.UpdateSettings(c.Request.Context(), tenant(c), c.Param("scope_id"), ScopeSettings{
+		DisplayName: req.DisplayName, InheritParent: *req.InheritParent,
+		AllowKnowledgeCreation: req.AllowKnowledgeCreation, AggregateChildIssues: req.AggregateChildIssues,
+		AllowPublicWeb: req.AllowPublicWeb,
+	})
+	respond(c, http.StatusOK, row, err)
 }
 
 func (h *Handler) Effective(c *gin.Context) {

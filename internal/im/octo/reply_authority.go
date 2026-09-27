@@ -19,6 +19,11 @@ func permitsReply(authority string, current *im.ExecutionScope) bool {
 	if old.AccountID != current.AccountID || old.ScopeID != current.ScopeID || old.Revision != current.Revision {
 		return false
 	}
+	// An answer may contain external evidence fetched while this grant existed.
+	// Do not deliver it after an administrator revokes public web access.
+	if old.AllowPublicWeb && !current.AllowPublicWeb {
+		return false
+	}
 	// Administrative catalog reads can contain unpublished draft bodies even
 	// when public query access is unchanged. Conservatively retain every original
 	// management grant through delivery; a query binding cannot replace it.

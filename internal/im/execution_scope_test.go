@@ -41,6 +41,11 @@ func TestOctoExecutionRequiresExplicitScope(t *testing.T) {
 	if scopeFingerprint(got) == scopeFingerprint(&other) {
 		t.Fatal("revision not bound")
 	}
+	other = *got
+	other.AllowPublicWeb = true
+	if scopeFingerprint(got) == scopeFingerprint(&other) {
+		t.Fatal("public web permission not bound to scope fingerprint")
+	}
 }
 
 func TestScopedAgentCannotFallBackToAllKnowledge(t *testing.T) {
@@ -88,5 +93,43 @@ func TestScopedAgentPreservesExplicitGitHubReleaseLookup(t *testing.T) {
 	out, err := scopeAgent(agent, &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r"})
 	if err != nil || len(out.Config.AllowedTools) != 1 || out.Config.AllowedTools[0] != "github_release_lookup" {
 		t.Fatal("native GitHub release lookup lost or execution widened")
+	}
+}
+
+func TestScopedAgentPublicWebNeedsExactScopeAndAgentEnablement(t *testing.T) {
+	agent := &types.CustomAgent{Config: types.CustomAgentConfig{WebSearchEnabled: true}}
+	closed, err := scopeAgent(agent, &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r"})
+	if err != nil || closed.Config.WebSearchEnabled || closed.Config.WebFetchEnabled {
+		t.Fatalf("default scoped web was not closed: %+v %v", closed, err)
+	}
+	for _, tool := range closed.Config.AllowedTools {
+		if tool == "web_search" || tool == "web_fetch" {
+			t.Fatal("closed scope exposed a web tool")
+		}
+	}
+	opened, err := scopeAgent(agent, &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r", AllowPublicWeb: true})
+	if err != nil || !opened.Config.WebSearchEnabled || !opened.Config.WebFetchEnabled {
+		t.Fatalf("authorized scope lacked public search/fetch: %+v %v", opened, err)
+	}
+	seen := map[string]bool{}
+	for _, tool := range opened.Config.AllowedTools {
+		seen[tool] = true
+	}
+	if !seen["web_search"] || !seen["web_fetch"] || seen["shell_exec"] {
+		t.Fatalf("unexpected public tool allowlist: %v", opened.Config.AllowedTools)
+	}
+	if agent.Config.WebFetchEnabled || len(agent.Config.AllowedTools) != 0 {
+		t.Fatal("shared Agent was mutated")
+	}
+	agent.Config.WebSearchEnabled = false
+	withoutProvider, err := scopeAgent(agent, &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r", AllowPublicWeb: true})
+	if err != nil || withoutProvider.Config.WebSearchEnabled || withoutProvider.Config.WebFetchEnabled {
+		t.Fatalf("scope bypassed original Agent search gate: %+v %v", withoutProvider, err)
+	}
+	agent.Config.WebSearchEnabled = true
+	agent.Config.AllowedTools = []string{"knowledge_search"}
+	restricted, err := scopeAgent(agent, &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r", AllowPublicWeb: true})
+	if err != nil || len(restricted.Config.AllowedTools) != 1 || restricted.Config.AllowedTools[0] != "knowledge_search" {
+		t.Fatalf("Agent explicit tool selection widened: %+v %v", restricted, err)
 	}
 }

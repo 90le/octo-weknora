@@ -3,6 +3,23 @@ package types
 import "context"
 
 type imKnowledgeScopeKey struct{}
+type imPublicWebAuthorizerKey struct{}
+
+// IMWebAuthorizer rechecks a native IM scope immediately before public network
+// access. It is provided by the admitted channel, not by a model or user prompt.
+type IMWebAuthorizer func(context.Context) error
+
+func WithIMPublicWebAuthorizer(ctx context.Context, authorize IMWebAuthorizer) context.Context {
+	if authorize == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, imPublicWebAuthorizerKey{}, authorize)
+}
+
+func IMPublicWebAuthorizer(ctx context.Context) IMWebAuthorizer {
+	authorize, _ := ctx.Value(imPublicWebAuthorizerKey{}).(IMWebAuthorizer)
+	return authorize
+}
 
 func HasIMKnowledgeScope(ctx context.Context) bool {
 	_, ok := ctx.Value(imKnowledgeScopeKey{}).([]string)
@@ -34,7 +51,9 @@ func RestrictIMAgentConfig(ctx context.Context, config *AgentConfig) *AgentConfi
 		}
 	}
 	out.LocalBrowserEnabled = false
-	out.WebSearchEnabled = false
+	// A saved Agent switch alone never grants a public IM channel network access.
+	// The trusted channel must also attach an exact-scope reauthorizer.
+	out.WebSearchEnabled = out.WebSearchEnabled && IMPublicWebAuthorizer(ctx) != nil
 	out.MCPSelectionMode = "none"
 	out.MCPServices = nil
 	out.PinnedMCPServiceIDs = nil

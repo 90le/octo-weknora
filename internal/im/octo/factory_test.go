@@ -62,6 +62,41 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 	if err != nil || len(got.KnowledgeBaseIDs) != 1 || got.KnowledgeBaseIDs[0] != "kb" {
 		t.Fatalf("valid scope: %v %v", got, err)
 	}
+	if got.AllowPublicWeb {
+		t.Fatal("new group unexpectedly authorized public web")
+	}
+	if err = db.Model(&octointegration.Scope{}).Where("id = ?", scope.ID).Update("allow_public_web", true).Error; err != nil {
+		t.Fatal(err)
+	}
+	webEnabled, err := a.AuthorizeExecution(context.Background(), nil, msg)
+	if err != nil || !webEnabled.AllowPublicWeb || im.ExecutionScopeFingerprint(got) == im.ExecutionScopeFingerprint(webEnabled) {
+		t.Fatalf("policy grant did not reauthorize: %+v %v", webEnabled, err)
+	}
+	child := octointegration.Scope{ID: "child", TenantID: 1, AccountID: "account", GroupID: "group", SubareaID: "123", DisplayName: "child", NameSource: "octo", SyncStatus: "verified", VerifiedAt: &now, InheritParent: true}
+	if err = db.Create(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	childMsg := *msg
+	childMsg.ChatID = "group____123"
+	childMsg.Extra = map[string]string{"octo_channel_id": "group____123", "octo_group_id": "group", "octo_subarea_id": "123", "octo_addressed": "true"}
+	childScope, err := a.AuthorizeExecution(context.Background(), nil, &childMsg)
+	if err != nil || childScope.AllowPublicWeb || len(childScope.KnowledgeBaseIDs) != 1 {
+		t.Fatalf("child inherited parent's web grant or lost KB read inheritance: %+v %v", childScope, err)
+	}
+	if err = db.Model(&octointegration.Scope{}).Where("id = ?", child.ID).Update("allow_public_web", true).Error; err != nil {
+		t.Fatal(err)
+	}
+	childEnabled, err := a.AuthorizeExecution(context.Background(), nil, &childMsg)
+	if err != nil || !childEnabled.AllowPublicWeb {
+		t.Fatalf("explicit child web grant not applied: %+v %v", childEnabled, err)
+	}
+	if err = db.Model(&octointegration.Scope{}).Where("id = ?", scope.ID).Update("allow_public_web", false).Error; err != nil {
+		t.Fatal(err)
+	}
+	webRevoked, err := a.AuthorizeExecution(context.Background(), nil, msg)
+	if err != nil || webRevoked.AllowPublicWeb {
+		t.Fatalf("web revocation not applied to queued reauthorization: %+v %v", webRevoked, err)
+	}
 	if err = db.Exec("UPDATE im_channels SET updated_at='2020-01-01'").Error; err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +132,9 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 	}
 	if dmScope.SenderName != "验收用户" {
 		t.Fatal("native DM name was not resolved")
+	}
+	if dmScope.AllowPublicWeb {
+		t.Fatal("group public web policy leaked into private message")
 	}
 	if err = db.Exec(`UPDATE octo_connections SET token='rotated'`).Error; err != nil {
 		t.Fatal(err)

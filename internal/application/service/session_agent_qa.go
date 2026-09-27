@@ -64,6 +64,12 @@ func (s *sessionService) AgentQA(
 	if err != nil {
 		return err
 	}
+	if types.HasIMKnowledgeScope(ctx) && agentConfig.WebSearchEnabled {
+		if types.IMPublicWebAuthorizer(ctx) == nil {
+			return errors.New("public web permission is unavailable for this IM scope")
+		}
+		ctx = withScopedWebEgress(ctx, req.Query)
+	}
 	// businessContext creates one turn-local retrieval trace before AgentQA
 	// resolves the custom agent. Store the effective citation preference on that
 	// trace so IM can append trusted system-owned release links without bypassing

@@ -58,6 +58,7 @@ type WebSearchTool struct {
 	BaseTool
 	webSearchService interfaces.WebSearchService
 	pages            *WebFetchTool
+	guard            *WebEgressGuard
 	maxResults       int
 	providerID       string // WebSearchProviderEntity ID (resolved from agent config or tenant default)
 }
@@ -87,6 +88,26 @@ func NewWebSearchTool(
 // WithPageReader shares page snapshots and full-output storage with web_fetch.
 func (t *WebSearchTool) WithPageReader(reader *WebFetchTool) *WebSearchTool {
 	t.pages = reader
+	if t.guard != nil && reader != nil {
+		reader.WithEgressGuard(t.guard)
+	}
+	return t
+}
+
+// WithEgressGuard restricts this tool to one original user turn. It must be
+// attached only to a fresh per-turn tool registry, never a shared instance.
+func (t *WebSearchTool) WithEgressGuard(guard *WebEgressGuard) *WebSearchTool {
+	if t.guard == guard {
+		return t
+	}
+	t.guard = guard
+	if guard != nil {
+		t.description += "\n- In this scoped turn, pass the exact original user question (or an empty query). " +
+			"Other model-written query text is rejected before any public provider request."
+	}
+	if t.pages != nil {
+		t.pages.WithEgressGuard(guard)
+	}
 	return t
 }
 
@@ -120,8 +141,16 @@ func (t *WebSearchTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
-	// Parse query
+	// The model chooses whether to search; in a scoped Octo turn it cannot
+	// formulate outbound text from private retrieval/tool results.
 	query := strings.TrimSpace(input.Query)
+	if t.guard != nil {
+		if !t.guard.AllowsSearchQuery(query) {
+			return &types.ToolResult{Success: false,
+				Error: "web search query is not authorized for this user turn; use the original user question"}, nil
+		}
+		query = t.guard.SearchQuery()
+	}
 	if query == "" {
 		logger.Errorf(ctx, "[Tool][WebSearch] Query is required")
 		return &types.ToolResult{
@@ -172,6 +201,20 @@ func (t *WebSearchTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 		resolvedProviderID,
 		searchConfig.MaxResults,
 	)
+	if t.guard != nil {
+		if ctx.Err() != nil {
+			return &types.ToolResult{Success: false,
+				Error: "web search turn was canceled"}, nil
+		}
+		if err := t.guard.Authorize(ctx); err != nil {
+			return &types.ToolResult{Success: false,
+				Error: "web search is no longer authorized for this user turn"}, nil
+		}
+		if ctx.Err() != nil {
+			return &types.ToolResult{Success: false,
+				Error: "web search turn was canceled"}, nil
+		}
+	}
 	webResults, err := t.webSearchService.Search(ctx, resolvedProviderID, searchConfig, query)
 	if err != nil {
 		logger.Errorf(ctx, "[Tool][WebSearch] Web search failed: error_type=%T", err)
@@ -201,6 +244,9 @@ func (t *WebSearchTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 		seen[key] = true
 		copied := *result
 		copied.URL = u.String()
+		if t.guard != nil && !t.guard.AllowSearchResult(copied.URL) {
+			continue
+		}
 		filtered = append(filtered, &copied)
 		if len(filtered) == maxResults {
 			break

@@ -6,7 +6,7 @@ import { resolveBusinessView, scopedIssueFilter, issueFilterKey, scopePath, issu
 const scope = (id: string, name: string, subarea = '', account = 'bot-a'): OctoScope => ({
   id, display_name: name, account_id: account, group_id: 'group-one', subarea_id: subarea,
   name_source: 'octo', sync_status: 'verified', sync_error: '', checked_at: null, verified_at: null,
-  inherit_parent: false, allow_knowledge_creation: false, aggregate_child_issues: false,
+  inherit_parent: false, allow_knowledge_creation: false, aggregate_child_issues: false, allow_public_web: false,
 })
 
 test('controlled views override legacy nested-tab and deep-link selections', () => {

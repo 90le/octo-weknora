@@ -57,6 +57,13 @@ func testStore(t *testing.T) *Store {
 	if err = db.Exec(string(identity)).Error; err != nil {
 		t.Fatal(err)
 	}
+	publicWeb, err := os.ReadFile("../../migrations/sqlite/000028_octo_scope_public_web.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Exec(string(publicWeb)).Error; err != nil {
+		t.Fatal(err)
+	}
 	return NewStore(db)
 }
 
@@ -177,5 +184,64 @@ func TestScopeMutationRollsBackWhenAuditFails(t *testing.T) {
 	rows, err := s.List(ctx, 1, 0)
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("mutation committed without audit: %+v %v", rows, err)
+	}
+}
+
+func TestPublicWebPolicyIsExplicitPerScopeAndRevocable(t *testing.T) {
+	s, ctx := testStore(t), context.Background()
+	parent := createScope(t, s, 1, "bot", "group", "", false)
+	child := createScope(t, s, 1, "bot", "group", "123", true)
+	other := createScope(t, s, 1, "bot", "other", "", false)
+	if parent.AllowPublicWeb || child.AllowPublicWeb || other.AllowPublicWeb {
+		t.Fatal("public web was not default-off")
+	}
+	yes, no := true, false
+	parent, err := s.UpdateSettings(ctx, 1, parent.ID, ScopeSettings{DisplayName: parent.DisplayName, AllowPublicWeb: &yes})
+	if err != nil || !parent.AllowPublicWeb {
+		t.Fatalf("grant was not read back: %+v %v", parent, err)
+	}
+	child, err = s.Get(ctx, 1, child.ID)
+	if err != nil || child.AllowPublicWeb {
+		t.Fatalf("child inherited public web despite explicit scope policy: %+v %v", child, err)
+	}
+	child, err = s.UpdateSettings(ctx, 1, child.ID, ScopeSettings{DisplayName: child.DisplayName, InheritParent: true, AllowPublicWeb: &yes})
+	if err != nil || !child.AllowPublicWeb {
+		t.Fatalf("child explicit grant failed: %+v %v", child, err)
+	}
+	parent, err = s.UpdateSettings(ctx, 1, parent.ID, ScopeSettings{DisplayName: parent.DisplayName, AllowPublicWeb: &no})
+	if err != nil || parent.AllowPublicWeb {
+		t.Fatalf("parent revoke failed: %+v %v", parent, err)
+	}
+	child, err = s.Get(ctx, 1, child.ID)
+	if err != nil || !child.AllowPublicWeb {
+		t.Fatal("parent revoke altered independently authorized child")
+	}
+	other, err = s.Get(ctx, 1, other.ID)
+	if err != nil || other.AllowPublicWeb {
+		t.Fatal("unrelated group was authorized")
+	}
+	if _, err = s.UpdateSettings(ctx, 2, child.ID, ScopeSettings{DisplayName: child.DisplayName, AllowPublicWeb: &no}); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("cross-tenant policy update accepted: %v", err)
+	}
+	// Omitting the field leaves the policy unchanged during ordinary scope edits.
+	child, err = s.UpdateSettings(ctx, 1, child.ID, ScopeSettings{DisplayName: child.DisplayName, InheritParent: false})
+	if err != nil || !child.AllowPublicWeb {
+		t.Fatalf("omitted policy unexpectedly revoked: %+v %v", child, err)
+	}
+}
+
+func TestPublicWebPolicyAndAuditCommitTogether(t *testing.T) {
+	s, ctx := testStore(t), context.Background()
+	scope := createScope(t, s, 1, "bot", "group", "", false)
+	if err := s.db.Exec("DROP TABLE audit_logs").Error; err != nil {
+		t.Fatal(err)
+	}
+	yes := true
+	if _, err := s.UpdateSettings(ctx, 1, scope.ID, ScopeSettings{DisplayName: scope.DisplayName, AllowPublicWeb: &yes}); err == nil {
+		t.Fatal("policy committed without audit")
+	}
+	scope, err := s.Get(ctx, 1, scope.ID)
+	if err != nil || scope.AllowPublicWeb {
+		t.Fatalf("policy survived failed audit: %+v %v", scope, err)
 	}
 }

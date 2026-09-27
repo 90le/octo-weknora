@@ -37,6 +37,9 @@ type ExecutionScope struct {
 	ReadIssueScopeIDs         []string
 	CanManageScope            bool
 	AllowKnowledgeCreation    bool
+	// Exact-scope, default-off public web permission. Included in the scope
+	// fingerprint so revocation invalidates queued work and session reuse.
+	AllowPublicWeb bool
 
 	KnowledgeBaseIDs []string
 	Revision         string
@@ -141,8 +144,11 @@ func scopeAgent(agent *types.CustomAgent, scope *ExecutionScope) (*types.CustomA
 	out.Config.SkillsSelectionMode = "none"
 	out.Config.SelectedSkills = nil
 	out.Config.SandboxConfigID = ""
-	out.Config.WebSearchEnabled = false
-	out.Config.WebFetchEnabled = false
+	// The original Agent's search setting is a second, tenant-controlled gate.
+	// An explicitly authorized Octo scope can also fetch public pages to verify
+	// search results; the runtime tool still enforces public-URL restrictions.
+	out.Config.WebSearchEnabled = scope.AllowPublicWeb && agent.Config.WebSearchEnabled
+	out.Config.WebFetchEnabled = out.Config.WebSearchEnabled
 	out.Config.DataAnalysisEnabled = false
 	off := false
 	out.Config.MemoryEnabled = &off
@@ -150,6 +156,9 @@ func scopeAgent(agent *types.CustomAgent, scope *ExecutionScope) (*types.CustomA
 	// source capabilities. Each keeps its own full-KB grant validation; do not
 	// add a channel-specific file relay or repository identifier input.
 	readTools := []string{"knowledge_search", "get_document_info", "list_knowledge_chunks", "grep_chunks", "source_browse", "github_release_lookup", "wiki_search", "wiki_read_page", "wiki_read_source_doc", "thinking", "todo_write", "octo_knowledge_operations"}
+	if out.Config.WebSearchEnabled {
+		readTools = append(readTools, "web_search", "web_fetch")
+	}
 	out.Config.AllowedTools = nil
 	for _, name := range readTools {
 		if len(agent.Config.AllowedTools) == 0 {
