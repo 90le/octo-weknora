@@ -129,6 +129,36 @@ func TestSourceBrowseReadTracksPrivateProvenanceWithSourceRef(t *testing.T) {
 	require.Equal(t, []SourceCitation{{KnowledgeBaseID: "kb", URL: url, Path: "main.go", Revision: "0123456789012345678901234567890123456789"}}, SourceCitations(ctx))
 }
 
+func TestSourceNavigationAndPartialSearchCannotRegisterKnowledgeGap(t *testing.T) {
+	service := testService(t)
+	for _, action := range []string{"list", "tree", "read"} {
+		t.Run(action, func(t *testing.T) {
+			ctx := WithRetrievalTrace(principalContext(testPrincipal()))
+			tool := &sourceCitationTool{result: &types.ToolResult{Success: true, Output: `{"sources":[]}`}}
+			_, err := TrackRetrieval(tool).Execute(ctx, json.RawMessage(`{"action":"`+action+`"}`))
+			require.NoError(t, err)
+			require.False(t, retrievalReady(ctx), "navigation or one file read is not a completed knowledge search")
+			_, err = service.CreateIssue(ctx, gapInput())
+			require.ErrorIs(t, err, ErrInvalid)
+		})
+	}
+	partial := WithRetrievalTrace(principalContext(testPrincipal()))
+	incomplete := &sourceCitationTool{result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+		types.SourceBrowseSearchDataKey: types.SourceBrowseSearchAudit{Complete: false},
+	}}}
+	_, err := TrackRetrieval(incomplete).Execute(partial, json.RawMessage(`{"action":"search","query":"missing"}`))
+	require.NoError(t, err)
+	require.False(t, retrievalReady(partial), "the search did not cover the whole authorized source scope")
+
+	completed := WithRetrievalTrace(principalContext(testPrincipal()))
+	complete := &sourceCitationTool{result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+		types.SourceBrowseSearchDataKey: types.SourceBrowseSearchAudit{Complete: true, Matched: false},
+	}}}
+	_, err = TrackRetrieval(complete).Execute(completed, json.RawMessage(`{"action":"search","query":"missing"}`))
+	require.NoError(t, err)
+	require.True(t, retrievalReady(completed))
+}
+
 func TestGitHubReleaseLookupTracksTrustedOfficialCitationWithoutChangingRetrievalReady(t *testing.T) {
 	ctx := WithRetrievalTrace(context.Background())
 	url := "https://github.com/example/octo-web/releases/tag/v1.2.3"

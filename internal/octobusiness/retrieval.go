@@ -112,7 +112,7 @@ func (t *trackedRetrieval) Execute(ctx context.Context, args json.RawMessage) (*
 				trace.failed = true
 			}
 		} else {
-			if isKnowledgeRetrieval {
+			if isKnowledgeRetrieval && countsAsCompletedSearch(toolName, result) {
 				trace.succeeded = true
 			}
 			switch toolName {
@@ -141,6 +141,27 @@ func (t *trackedRetrieval) Execute(ctx context.Context, args json.RawMessage) (*
 		trace.mu.Unlock()
 	}
 	return result, err
+}
+
+// A successful source catalog, tree or single-file read is useful navigation,
+// but it does not establish that the authorized source scope was searched for
+// the user's missing answer. A bounded or interrupted search is not exhaustive
+// either. Keep those outcomes out of the missing-issue gate.
+func countsAsCompletedSearch(toolName string, result *types.ToolResult) bool {
+	if toolName != "source_browse" {
+		return true
+	}
+	if result == nil || result.Data == nil {
+		return false
+	}
+	switch audit := result.Data[types.SourceBrowseSearchDataKey].(type) {
+	case types.SourceBrowseSearchAudit:
+		return audit.Complete
+	case *types.SourceBrowseSearchAudit:
+		return audit != nil && audit.Complete
+	default:
+		return false
+	}
 }
 
 func githubReleaseCitation(result *types.ToolResult) (types.GitHubReleaseCitation, bool) {

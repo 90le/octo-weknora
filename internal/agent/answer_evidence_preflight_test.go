@@ -239,6 +239,50 @@ func TestAnswerEvidencePreflightSearchesAndReadsEachNamedChannelBeforeModel(t *t
 	require.Equal(t, 6, remaining, "one focused search/read pair per named repository remains available")
 }
 
+func TestNamedChannelPreflightFindsRepositoryAfterTruncatedCatalog(t *testing.T) {
+	const repository = "Mininglamp-OSS/hermes-channel-octo"
+	sourceTool := newScriptedPreflightTool(agenttools.ToolSourceBrowse, func(args map[string]interface{}) *types.ToolResult {
+		switch args["action"] {
+		case "list":
+			if args["query"] == "hermes-channel-octo" {
+				return &types.ToolResult{Success: true, Output: `{"sources":[{"source_ref":"s-late","repository":"` + repository + `"}],"complete":true}`}
+			}
+			return &types.ToolResult{Success: true, Output: `{"sources":[{"source_ref":"s-early","repository":"Other/hermes-channel-octo"}],"complete":false,"next_offset":64}`}
+		case "search":
+			if args["source_ref"] != "s-late" {
+				return &types.ToolResult{Success: false, Error: "searched wrong source reference"}
+			}
+			return &types.ToolResult{Success: true, Output: `{"matches":[{"path":"README.md","line":1}],"complete":true}`, Data: map[string]interface{}{
+				types.SourceBrowseSearchDataKey: types.SourceBrowseSearchAudit{Repository: repository, Complete: true, Matched: true},
+			}}
+		case "read":
+			if args["source_ref"] != "s-late" {
+				return &types.ToolResult{Success: false, Error: "read wrong source reference"}
+			}
+			return &types.ToolResult{Success: true, Output: `{"repository":"` + repository + `","path":"README.md","content":"Hermes channel bridge","source_url":"https://github.com/` + repository + `/blob/commit/README.md#L1"}`, Data: map[string]interface{}{
+				types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: repository, Path: "README.md", Revision: "commit"},
+			}}
+		}
+		return &types.ToolResult{Success: false, Error: "unexpected action"}
+	})
+	engine := newTestEngine(t, &mockChat{})
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	engine.toolRegistry.RegisterTool(sourceTool)
+	query := "hermes-channel-octo 项目是干嘛的？"
+	ctx := answerevidence.WithContract(context.Background(), query)
+	state := &types.AgentState{}
+	evidence := engine.prepareAnswerEvidencePreflight(ctx, state, query)
+	require.Contains(t, evidence, "Hermes channel bridge")
+	require.Equal(t, []string{"list", "list", "search", "read"}, sourceTool.actions())
+	require.Empty(t, answerevidence.MissingRequiredRepositories(ctx))
+}
+
+func TestExactSourceReferencesRejectsHiddenOrRepeatedRepositoryLeaves(t *testing.T) {
+	const wanted = "hermes-channel-octo"
+	require.Empty(t, exactSourceReferences(`{"sources":[{"source_ref":"s1","repository":"One/hermes-channel-octo"}],"complete":false}`, []string{wanted}))
+	require.Empty(t, exactSourceReferences(`{"sources":[{"source_ref":"s1","repository":"One/hermes-channel-octo"},{"source_ref":"s2","repository":"Two/hermes-channel-octo"},{"source_ref":"s3","repository":"Three/hermes-channel-octo"}],"complete":true}`, []string{wanted}))
+}
+
 func TestAnswerEvidencePreflightLeavesAmbiguousReleaseScopeForSafeUnknown(t *testing.T) {
 	releaseTool := newScriptedPreflightTool(agenttools.ToolGitHubReleaseLookup, func(args map[string]interface{}) *types.ToolResult {
 		if args["action"] == "list" {
