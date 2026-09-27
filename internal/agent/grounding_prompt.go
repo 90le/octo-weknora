@@ -52,8 +52,13 @@ func formatGroundingGuidance(names []string) string {
 	}
 	if slices.Contains(names, tools.ToolSourceBrowse) {
 		b.WriteString("- source_browse is available: for code, configuration, repository responsibility, or implementation questions, " +
-			"select a relevant authorized repository and read its fixed-snapshot file and lines. A directory listing or search match " +
-			"is navigation, not proof. Use document retrieval alongside code when the question also asks about product behavior; " +
+			"select a relevant authorized repository and read its fixed-snapshot file and lines. Once a repository is known, " +
+			"locate likely files with tree, then use focused search/read; stop repeating broad searches " +
+			"when evidence is sufficient, but inspect other authorized repositories when the question needs them. A directory listing or search match " +
+			"is navigation, not proof. A broad source_browse.read can explore context; to cite a specific code claim, " +
+			"read the exact supporting window of at most 12 original lines (unless an existing current-turn read already does), " +
+			"then put that narrow read's <ref id=\"wN\"/> handle beside the claim. Do not cite a broad exploratory handle " +
+			"or handwrite a GitHub line link/range. Use document retrieval alongside code when the question also asks about product behavior; " +
 			"do not infer one repository's implementation from another's README.\n")
 	}
 	if slices.Contains(names, tools.ToolGitHubReleaseLookup) {

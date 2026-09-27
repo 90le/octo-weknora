@@ -20,6 +20,8 @@
 
 `provenance_checked` 只能来自本轮实际授权读取或可信检索记录，不能直接采用模型声称的“已读”。`delivery_attempts`、`latency_ms`、`total_tokens` 可为 `null`；缺少 `review` 或评审值为 `null` 时标为 `pending`。评审者须以 `review.outcome` 判定答复是否符合 `expected_outcome`，并逐项判定事实、相邻证据和权限安全；评分器不会因 URL 真实或关键字相似就判定语义正确。对于预期拒答或部分回答，也用 `checks` 描述该预期并由评审者给出判定。
 
+核对固定 GitHub 源码行号时，先确认来源快照的提交和 Git blob/hash，再对同一提交的原始文件字节用 `nl -ba` 计数，或检查 GitHub 固定提交 blob 页的 `#Lx-Ly` 锚。不要把 `web.run` 抽取视图中的 `L` 行号当作原文件行号；抽取视图可能省略或合并行，造成正确引用被误判为错位。
+
 在仓库根目录运行：
 
 ```text
