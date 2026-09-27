@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/octobusiness"
@@ -23,12 +24,15 @@ var octoGitHubLineFragmentRE = regexp.MustCompile(`^L[0-9]+(?:-L[0-9]+)?$`)
 var octoMarkdownGitHubLinkRE = regexp.MustCompile(`(?i)\[([^\]\r\n]+)\]\((<?https://github\.com/[^\s)]+>?)\)`)
 var octoBareGitHubURLRE = regexp.MustCompile(`(?i)https://github\.com/[^#\s<>"'\])，。；：！？,;:!?]+#(?:L|%4C)[0-9]+(?:-(?:L|%4C)[0-9]+)?`)
 
+const maxOctoObservedLineSubset = 12
+
 type octoCitedSource struct{ title, url string }
 
 // A model may write a plausible GitHub line link without reading that range.
 // Keep such links clickable only when this turn's authorized source_browse read
-// returned the exact pinned URL. This checks provenance, not whether the
-// adjacent claim is semantically supported by the excerpt.
+// returned the exact pinned URL or a pinned range containing a short subset.
+// This checks provenance, not whether the adjacent claim is semantically
+// supported by the excerpt.
 func sanitizeOctoGitHubLineLinks(ctx context.Context, answer string) string {
 	if _, ok := octobusiness.PrincipalFromContext(ctx); !ok {
 		return answer
@@ -53,7 +57,7 @@ func sanitizeOctoGitHubLineLinks(ctx context.Context, answer string) string {
 			return link
 		}
 		candidate := strings.Trim(m[2], "<>")
-		if !isOctoGitHubLineURL(candidate) || allowed[safeOctoSourceURL(candidate)] {
+		if !isOctoGitHubLineURL(candidate) || octoObservedGitHubLineURL(candidate, allowed) {
 			return link
 		}
 		return m[1] + "（源码行号未核验）"
@@ -61,11 +65,56 @@ func sanitizeOctoGitHubLineLinks(ctx context.Context, answer string) string {
 	return octoBareGitHubURLRE.ReplaceAllStringFunc(answer, func(raw string) string {
 		candidate := strings.TrimRight(raw, ".,;:!?。，；：！？\"'`")
 		suffix := raw[len(candidate):]
-		if !isOctoGitHubLineURL(candidate) || allowed[safeOctoSourceURL(candidate)] {
+		if !isOctoGitHubLineURL(candidate) || octoObservedGitHubLineURL(candidate, allowed) {
 			return raw
 		}
 		return "（未经核验的源码行号链接已省略）" + suffix
 	})
+}
+
+func octoGitHubLineRange(fragment string) (start, end int, ok bool) {
+	if !octoGitHubLineFragmentRE.MatchString(fragment) {
+		return 0, 0, false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(fragment, "L"), "-L", 2)
+	start, err := strconv.Atoi(parts[0])
+	if err != nil || start < 1 {
+		return 0, 0, false
+	}
+	end = start
+	if len(parts) == 2 {
+		end, err = strconv.Atoi(parts[1])
+		if err != nil || end < start {
+			return 0, 0, false
+		}
+	}
+	return start, end, true
+}
+
+func octoObservedGitHubLineURL(candidate string, observed map[string]bool) bool {
+	candidate = safeOctoSourceURL(candidate)
+	if candidate == "" || !isPinnedOctoGitHubLineURL(candidate) {
+		return false
+	}
+	if observed[candidate] {
+		return true
+	}
+	parsed, _ := url.Parse(candidate)
+	start, end, ok := octoGitHubLineRange(parsed.Fragment)
+	if !ok || end-start+1 > maxOctoObservedLineSubset {
+		return false
+	}
+	for read := range observed {
+		readURL, err := url.Parse(read)
+		if err != nil || !strings.EqualFold(readURL.Host, parsed.Host) || readURL.EscapedPath() != parsed.EscapedPath() {
+			continue
+		}
+		readStart, readEnd, ok := octoGitHubLineRange(readURL.Fragment)
+		if ok && start >= readStart && end <= readEnd {
+			return true
+		}
+	}
+	return false
 }
 
 func isOctoGitHubLineURL(raw string) bool {
