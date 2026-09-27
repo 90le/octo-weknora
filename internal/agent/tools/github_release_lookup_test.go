@@ -71,6 +71,16 @@ func TestGitHubReleaseLookupUsesOpaqueScopeBoundReferences(t *testing.T) {
 	)
 	catalog := releaseToolCatalog(t, tool)
 	require.Equal(t, githubReleaseCatalog{Repositories: []githubReleaseCatalogEntry{{ReleaseRef: "r1", Repository: "Acme/Widget"}}, Complete: true}, catalog)
+	limited, err := tool.Execute(releaseToolContext(), json.RawMessage(`{"action":"list","query":"Widget","limit":10}`))
+	require.NoError(t, err)
+	require.True(t, limited.Success, limited.Error)
+	var limitedCatalog githubReleaseCatalog
+	require.NoError(t, json.Unmarshal([]byte(limited.Output), &limitedCatalog))
+	require.Equal(t, catalog.Repositories, limitedCatalog.Repositories, "a bounded repository list must still return its authorized release_ref")
+	invalid, err := tool.Execute(releaseToolContext(), json.RawMessage(`{"action":"list","limit":11}`))
+	require.NoError(t, err)
+	require.False(t, invalid.Success)
+	require.Contains(t, invalid.Error, "limit from 1 to 10")
 
 	var schema struct {
 		Properties map[string]json.RawMessage `json:"properties"`
