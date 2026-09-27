@@ -88,10 +88,11 @@ const SourceBrowseSearchDataKey = "_source_browse_search"
 // its key before the result leaves the agent process.
 type SourceBrowseCitation struct {
 	KnowledgeBaseID string `json:"-"`
-	Repository      string `json:"-"`
+	Repository      string `json:"-"` // Canonical GitHub owner/repo from the authorized datasource, never the model.
 	URL             string `json:"-"`
 	Path            string `json:"-"`
 	Revision        string `json:"-"`
+	Citable         bool   `json:"-"` // True only for a nonblank, exact source read of at most 12 returned lines.
 }
 
 // SourceBrowseSearchAudit is intentionally non-serializable. A completed

@@ -368,6 +368,51 @@ func TestNamedChannelProjectsNeedIndividualSourceReads(t *testing.T) {
 	RecordSourceRead(ctx, "Mininglamp-OSS/hermes-channel-octo")
 	require.True(t, IntegrationEvidenceObserved(ctx))
 	require.Empty(t, MissingRequiredRepositories(ctx))
+	require.True(t, ShouldHoldStreamingAnswer(ctx), "even complete multi-repository evidence needs final attribution review before streaming")
+}
+
+func TestStreamingHoldsExplicitAndObservedMultiRepositoryTurns(t *testing.T) {
+	explicit := WithContract(context.Background(), "codex-channel-octo 与 cc-channel-octo 如何接入？")
+	require.Len(t, RequiredRepositories(explicit), 2)
+	require.True(t, ShouldHoldStreamingAnswer(explicit), "explicitly named repositories must hold before the first read")
+	for _, repository := range []string{"Mininglamp-OSS/codex-channel-octo", "Mininglamp-OSS/cc-channel-octo"} {
+		RecordSourceSearch(explicit, true, true, repository)
+		RecordSourceRead(explicit, repository)
+	}
+	require.True(t, IntegrationEvidenceObserved(explicit))
+	require.False(t, NeedsEvidenceRetry(explicit, "两个项目各自接入 Octo。"), "evidence is present; only the stream waits for final attribution")
+	require.True(t, ShouldHoldStreamingAnswer(explicit))
+
+	ordinary := WithContract(context.Background(), "比较这两套方案的差异。")
+	require.Nil(t, stateFrom(ordinary), "ordinary turns must keep their existing intent boundary")
+	require.False(t, ShouldHoldStreamingAnswer(ordinary))
+	RecordSourceRead(ordinary, "Mininglamp-OSS/codex-channel-octo")
+	require.False(t, ShouldHoldStreamingAnswer(ordinary), "one observed repository is not a cross-repository answer")
+	RecordSourceRead(ordinary, "github.com/Mininglamp-OSS/codex-channel-octo")
+	require.False(t, ShouldHoldStreamingAnswer(ordinary), "one GitHub repository written two ways must count once")
+	RecordSourceRead(ordinary, "codex-channel-octo")
+	require.False(t, ShouldHoldStreamingAnswer(ordinary), "an ownerless label is not a canonical repository")
+	RecordSourceRead(ordinary, "Mininglamp-OSS/cc-channel-octo")
+	require.True(t, ShouldHoldStreamingAnswer(ordinary), "actual reads of two canonical repositories hold any turn")
+	require.Empty(t, Prompt(ordinary))
+	require.False(t, NeedsEvidenceRetry(ordinary, "比较结果。"))
+}
+
+func TestStreamingSingleRepositoryRAGAndReleaseKeepExistingBehavior(t *testing.T) {
+	source := WithContract(context.Background(), "cc-channel-octo 的源码如何实现？")
+	RecordSourceSearch(source, true, true, "Mininglamp-OSS/cc-channel-octo")
+	RecordSourceRead(source, "Mininglamp-OSS/cc-channel-octo")
+	require.False(t, ShouldHoldStreamingAnswer(source))
+
+	rag := WithContract(context.Background(), "根据知识库解释产品流程。")
+	require.False(t, ShouldHoldStreamingAnswer(rag))
+	RecordDocumentEvidence(rag)
+	require.False(t, ShouldHoldStreamingAnswer(rag))
+
+	release := WithContract(context.Background(), "octo-android 最新版本是什么？")
+	require.True(t, ShouldHoldStreamingAnswer(release))
+	RecordReleaseEvidence(release, "Mininglamp-OSS/octo-android")
+	require.False(t, ShouldHoldStreamingAnswer(release))
 }
 
 func TestPostPreflightSourceBrowseBudgetOnlyConstrainsCompletedNamedChannelEvidence(t *testing.T) {

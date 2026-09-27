@@ -23,9 +23,11 @@ type RetrievalTrace struct {
 // model forgot to render an inline source handle.
 type SourceCitation struct {
 	KnowledgeBaseID string
+	Repository      string
 	URL             string
 	Path            string
 	Revision        string
+	Citable         bool
 	Title           string
 	OfficialRelease bool
 }
@@ -132,7 +134,7 @@ func (t *trackedRetrieval) Execute(ctx context.Context, args json.RawMessage) (*
 				if json.Unmarshal(args, &input) == nil && input.Action == "read" {
 					if raw, ok := result.Data[types.SourceBrowseCitationDataKey]; ok {
 						if citation, ok := raw.(types.SourceBrowseCitation); ok && citation.KnowledgeBaseID != "" && citation.URL != "" && citation.Path != "" {
-							trace.sources = append(trace.sources, SourceCitation{KnowledgeBaseID: citation.KnowledgeBaseID, URL: citation.URL, Path: citation.Path, Revision: citation.Revision})
+							trace.sources = append(trace.sources, SourceCitation{KnowledgeBaseID: citation.KnowledgeBaseID, Repository: citation.Repository, URL: citation.URL, Path: citation.Path, Revision: citation.Revision, Citable: citation.Citable})
 						}
 					}
 				}

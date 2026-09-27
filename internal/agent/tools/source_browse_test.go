@@ -417,6 +417,59 @@ func TestSourceBrowseReadRetainsPrivateEvidenceForLocalDirectories(t *testing.T)
 	require.Equal(t, "local/project", citation.Repository)
 	require.Equal(t, "main.go", citation.Path)
 	require.Empty(t, citation.URL, "transport may omit a public URL without losing read evidence")
+	require.True(t, citation.Citable, "a precise local read remains usable as business evidence even without a public URL")
+}
+
+func TestSourceBrowsePrivateCitationMarksOnlyExactNarrowReadCitable(t *testing.T) {
+	reader := &sourceToolReader{summaries: map[string][]types.SourceSummary{
+		"kb": {sourceSummary("source", "snapshot", "example/repo")},
+	}}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	ref := sourceCatalog(t, tool).Sources[0].SourceRef
+	reader.readContent = strings.TrimSuffix(strings.Repeat("line\n", 35), "\n")
+	wide, err := tool.Execute(sourceToolContext(), json.RawMessage(fmt.Sprintf(`{"action":"read","source_ref":"%s","path":"main.go","start_line":1,"end_line":35}`, ref)))
+	require.NoError(t, err)
+	require.True(t, wide.Success, wide.Error)
+	wideMarker, ok := wide.Data[types.SourceBrowseCitationDataKey].(types.SourceBrowseCitation)
+	require.True(t, ok, "wide read still carries trusted business provenance")
+	require.Equal(t, "example/repo", wideMarker.Repository)
+	require.False(t, wideMarker.Citable, "wide read cannot authorize a clickable source link")
+
+	reader.readContent = "first\nsecond"
+	narrow, err := tool.Execute(sourceToolContext(), json.RawMessage(fmt.Sprintf(`{"action":"read","source_ref":"%s","path":"main.go","start_line":1,"end_line":2}`, ref)))
+	require.NoError(t, err)
+	require.True(t, narrow.Success, narrow.Error)
+	narrowMarker, ok := narrow.Data[types.SourceBrowseCitationDataKey].(types.SourceBrowseCitation)
+	require.True(t, ok)
+	require.True(t, narrowMarker.Citable)
+	require.Equal(t, "example/repo", narrowMarker.Repository)
+
+	reader.readContent = "first"
+	mismatch, err := tool.Execute(sourceToolContext(), json.RawMessage(fmt.Sprintf(`{"action":"read","source_ref":"%s","path":"main.go","start_line":1,"end_line":2}`, ref)))
+	require.NoError(t, err)
+	require.True(t, mismatch.Success, mismatch.Error)
+	mismatchMarker, ok := mismatch.Data[types.SourceBrowseCitationDataKey].(types.SourceBrowseCitation)
+	require.True(t, ok)
+	require.False(t, mismatchMarker.Citable, "metadata/content mismatch fails closed")
+}
+
+func TestSourceBrowseReadCitableBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name, content string
+		start, end    int
+		want          bool
+	}{
+		{name: "twelve lines", content: strings.TrimSuffix(strings.Repeat("x\n", 12), "\n"), start: 10, end: 21, want: true},
+		{name: "thirteen lines", content: strings.TrimSuffix(strings.Repeat("x\n", 13), "\n"), start: 10, end: 22},
+		{name: "blank", content: " \n\t", start: 10, end: 11},
+		{name: "missing start", content: "x", start: 0, end: 0},
+		{name: "truncated but exact visible window", content: "x\ny", start: 10, end: 11, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sourceBrowseReadCitable(&types.SourceRead{StartLine: tc.start, EndLine: tc.end, Content: tc.content, Truncated: true})
+			require.Equal(t, tc.want, got)
+		})
+	}
 }
 
 func TestSourceBrowseSearchRetainsPrivateAuditWithoutPromotingReadEvidence(t *testing.T) {

@@ -131,11 +131,20 @@ func TestSourceBrowseReadTracksPrivateProvenanceWithSourceRef(t *testing.T) {
 	ctx := WithRetrievalTrace(context.Background())
 	url := "https://github.com/example/repo/blob/0123456789012345678901234567890123456789/main.go#L3-L7"
 	tool := &sourceCitationTool{result: &types.ToolResult{Success: true, Data: map[string]interface{}{
-		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", URL: url, Path: "main.go", Revision: "0123456789012345678901234567890123456789"},
+		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: "example/repo", URL: url, Path: "main.go", Revision: "0123456789012345678901234567890123456789", Citable: true},
 	}}}
 	_, err := TrackRetrieval(tool).Execute(ctx, json.RawMessage(`{"action":"read","source_ref":"s1"}`))
 	require.NoError(t, err)
-	require.Equal(t, []SourceCitation{{KnowledgeBaseID: "kb", URL: url, Path: "main.go", Revision: "0123456789012345678901234567890123456789"}}, SourceCitations(ctx))
+	require.Equal(t, []SourceCitation{{KnowledgeBaseID: "kb", Repository: "example/repo", URL: url, Path: "main.go", Revision: "0123456789012345678901234567890123456789", Citable: true}}, SourceCitations(ctx))
+}
+
+func TestTrackedWideSourceReadRetainsProvenanceWithoutCitableLink(t *testing.T) {
+	ctx := WithRetrievalTrace(context.Background())
+	url := "https://github.com/example/repo/blob/0123456789012345678901234567890123456789/main.go#L1-L35"
+	marker := types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: "example/repo", URL: url, Path: "main.go", Revision: "0123456789012345678901234567890123456789", Citable: false}
+	_, err := TrackRetrieval(&sourceCitationTool{result: &types.ToolResult{Success: true, Data: map[string]interface{}{types.SourceBrowseCitationDataKey: marker}}}).Execute(ctx, json.RawMessage(`{"action":"read","source_ref":"s1"}`))
+	require.NoError(t, err)
+	require.Equal(t, []SourceCitation{{KnowledgeBaseID: "kb", Repository: marker.Repository, URL: url, Path: marker.Path, Revision: marker.Revision, Citable: false}}, SourceCitations(ctx))
 }
 
 func TestTrackedRetrievalForwardsSourceOutputBudget(t *testing.T) {

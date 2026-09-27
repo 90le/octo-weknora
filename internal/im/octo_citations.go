@@ -21,8 +21,8 @@ var octoSourceHeadingRE = regexp.MustCompile(`(?im)^\s*(?:\*\*)?(?:实际来源|
 var octoQuotedSourceTitleRE = regexp.MustCompile(`《([^《》\r\n]{1,400})》`)
 var octoGitCommitRE = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 var octoGitHubLineFragmentRE = regexp.MustCompile(`^L[0-9]+(?:-L[0-9]+)?$`)
-var octoMarkdownGitHubLinkRE = regexp.MustCompile(`(?i)\[([^\]\r\n]+)\]\((<?https://github\.com/[^\s)]+>?)\)`)
-var octoBareGitHubURLRE = regexp.MustCompile(`(?i)https://github\.com/[^#\s<>"'\])，。；：！？,;:!?]+#(?:L|%4C)[0-9]+(?:-(?:L|%4C)[0-9]+)?`)
+var octoMarkdownGitHubLinkRE = regexp.MustCompile(`(?i)\[([^\]\r\n]+)\]\((<?https://(?:www\.)?github\.com\.?/[^\s)]+>?)\)`)
+var octoBareGitHubURLRE = regexp.MustCompile(`(?i)https://(?:www\.)?github\.com\.?/[^#\s<>"'\])，。；：！？,;:!?]+#(?:L|%4C)[0-9]+(?:-(?:L|%4C)[0-9]+)?`)
 var octoBareCredentialRE = regexp.MustCompile(`(?i)(?:^|[\s:=])(?:sk-|bf_|app_|uk_)[a-z0-9_-]{8,}`)
 var octoURLCredentialRE = regexp.MustCompile(`(?i)(?:^|[/#=:])(?:sk-|bf_|app_|uk_)[a-z0-9]{16,}`)
 var octoWindowsSlashPathRE = regexp.MustCompile(`(?i)^[a-z]:/`)
@@ -48,7 +48,7 @@ func sanitizeOctoGitHubLineLinks(ctx context.Context, answer string) string {
 	allowed := make(map[string]bool)
 	for _, source := range octobusiness.SourceCitations(ctx) {
 		if octoAllowedKB(p, source.KnowledgeBaseID) && source.Path != "" && source.Revision != "" {
-			if valid := safeOctoSourceURL(source.URL); valid != "" {
+			if valid := trustedOctoSourceURL(source); valid != "" {
 				if isPinnedOctoGitHubLineURL(valid) {
 					allowed[valid] = true
 				}
@@ -123,7 +123,11 @@ func octoObservedGitHubLineURL(candidate string, observed map[string]bool) bool 
 
 func isOctoGitHubLineURL(raw string) bool {
 	parsed, err := url.Parse(raw)
-	if err != nil || !strings.EqualFold(parsed.Hostname(), "github.com") || !octoGitHubLineFragmentRE.MatchString(parsed.Fragment) {
+	if err != nil {
+		return false
+	}
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if (host != "github.com" && host != "www.github.com") || !octoGitHubLineFragmentRE.MatchString(parsed.Fragment) {
 		return false
 	}
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
@@ -137,6 +141,43 @@ func isPinnedOctoGitHubLineURL(raw string) bool {
 	parsed, _ := url.Parse(raw)
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
 	return octoGitCommitRE.MatchString(parts[3])
+}
+
+// Source browse's private marker, not the model's <web/> tag or Markdown URL,
+// establishes which repository and exact read may be cited. Release citations
+// have their own trusted marker and are deliberately outside this code rule.
+func trustedOctoSourceURL(source octobusiness.SourceCitation) string {
+	valid := safeOctoSourceURL(source.URL)
+	if valid == "" {
+		return ""
+	}
+	if source.OfficialRelease {
+		return valid
+	}
+	if !source.Citable {
+		return ""
+	}
+	parsed, err := url.Parse(valid)
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host != "github.com" {
+		normalHost := strings.TrimSuffix(host, ".")
+		if normalHost == "github.com" || strings.HasSuffix(normalHost, ".github.com") ||
+			normalHost == "githubusercontent.com" || strings.HasSuffix(normalHost, ".githubusercontent.com") {
+			return "" // GitHub aliases cannot bypass canonical owner/repo validation.
+		}
+		return valid
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 5 || parts[2] != "blob" || !octoGitCommitRE.MatchString(parts[3]) ||
+		!strings.EqualFold(parts[0]+"/"+parts[1], source.Repository) ||
+		!strings.EqualFold(parts[3], source.Revision) ||
+		strings.Join(parts[4:], "/") != source.Path {
+		return ""
+	}
+	return valid
 }
 
 func octoCitationAttrs(raw string) map[string]string {
@@ -282,7 +323,13 @@ func (s *Service) appendOctoSources(ctx context.Context, answer string, refs []*
 	}
 	p, err := octobusiness.ValidatedPrincipal(ctx)
 	if err != nil {
-		return answer
+		return imRepositoryMismatchFallback
+	}
+	if strings.TrimSpace(answer) == imRepositoryMismatchFallback {
+		return imRepositoryMismatchFallback
+	}
+	if octoRepositoryAlignmentMismatch(ctx, answer) {
+		return imRepositoryMismatchFallback
 	}
 	answer = sanitizeOctoGitHubLineLinks(ctx, answer)
 	if !octobusiness.CitationRenderingEnabled(ctx) {
@@ -300,7 +347,7 @@ func (s *Service) appendOctoSources(ctx context.Context, answer string, refs []*
 	officialReleaseSources := []octoCitedSource{}
 	for _, source := range octobusiness.SourceCitations(ctx) {
 		if octoAllowedKB(p, source.KnowledgeBaseID) {
-			if valid := safeOctoSourceURL(source.URL); valid != "" {
+			if valid := trustedOctoSourceURL(source); valid != "" {
 				if isOctoGitHubLineURL(valid) && !isPinnedOctoGitHubLineURL(valid) {
 					continue
 				}
