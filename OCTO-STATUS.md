@@ -2,7 +2,19 @@
 
 更新：2026-09-28。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-28；生产 PR #83）
+## 当前状态（2026-09-28；生产 PR #89）
+
+**运行版本：**公开 Octo 小丘的 WeKnora 后端已切到 [PR #89](https://github.com/90le/octo-weknora/pull/89)，业务代码 `a87b85400c99ee7c5139df6c49318d47aa8e71ce`，合并提交 `bbae88c00d30bb6d75a4e6b12fe2215d90a5f7fb`。app Image ID `sha256:3336b5cf539e9bc8d4fcdf6831aa3283bec42b1057c272f5cb8db9463663e140`；UI 仍为 `sha256:dd2bae75c16daf552ee5f3ff00ee4cf42be852c128ed3ca9b23ae15d92866eb1`，容器内二进制 SHA-256 为 `a29f2a32ca116f4b10ed03aa34bc583a84029af2739c9dfbb741ca5bfd2cdba7`。独立回读：健康 200、迁移 `107|f`、4 个知识库、5 个 Octo 区域、1495 条活动知识、区域公网搜索开启数 0；OpenClaw Gateway 与 Octo daemon active。私人小丘、其他 Bot、前端、知识库绑定和模型配置均未切换。
+
+**已交付的 Agent 质量改动：**[PR #85](https://github.com/90le/octo-weknora/pull/85) 提供独立多来源评测夹具；[#86](https://github.com/90le/octo-weknora/pull/86) 增加逐处来源链接、源码原始行号与单快照搜索分页；[#87](https://github.com/90le/octo-weknora/pull/87) 修复目录树分页并引导精确引用；[#88](https://github.com/90le/octo-weknora/pull/88) 从注册层限定只有真实返回的最多 12 行源码才有可引用句柄；[#89](https://github.com/90le/octo-weknora/pull/89) 把可信仓库身份和窄读资格带到 Octo 出站，遇到明确的“讲 A 仓却引 B 仓”时，最终回复改为不确定答复并标记 fallback、清空知识引用。多仓回合在归属核验前只展示工具状态，不乐观流出模型正文。它是确定性归属防线，**不能**证明同仓来源在语义上支持每句话；无明确归属的比较句和无引用断言仍需主张级评测。
+
+**真实验收：**9 项冻结夹具 SHA-256 为 `3dc25a58a51beafef8a327a01167dbf43e1aeb22a8b8ad80f87171ee197b81a8`，私有观察在 2 TB 数据盘 `operations/octo-agent-eval-20260928-r1` 至 `r5`，原始聊天未入 Git。首轮源码题曾被误判行号：网页抽取视图压缩了空行；已用相同提交 Git blob 原始字节更正，并保留原报告。#86 后 CLI 文档题质量通过，源码题仍有宽引用；#87 独立源码题事实正确但宽引用；#88 旧源码题出现 4 条短行链接，约 26.4 秒／143145 token，超 10 万成本阈值。#88 独立双仓题在 cc 段落误引 codex，约 70.5 秒／726328 token，**未通过**。#89 后新双仓 SDK 小题一次投递，两个仓库的固定提交短行链接均经 Git blob 核验，约 27.6 秒／183855 token；旧错误答复的私有回放也被归属检查识别。#89 后普通 CLI 文档题内容与相邻来源正确、一次投递，但约 117.5 秒／161139 token，时延和成本未达标：首轮模型 `finish=length`，用满 32768 completion token，工具参数被截断而未执行；下一轮重发检索才成功。九题尚有 6 项未跑，Wiki 项因无可用已发布页面跳过；上述样本不代表全场景通过。
+
+**发布与恢复：**#86–#89 相关 CI 最终均通过；#88 App 首次 CI 的异步技能安装测试出现状态竞争，同测试在服务器连续 10 次通过，失败 job 重跑通过，原失败证据保留。每轮切换前在 2 TB 数据盘建立新的 PostgreSQL／文件／来源快照／Compose／环境备份，并从新备份恢复内部网络候选，核对登录、系统、知识库、区域、8 个解析引擎、迁移和资产数量。#89 备份在服务器私有 `/home/mlclaw/agent-data/operations/release-agent-pr89-20260928/backup-current`，**不含 Milvus／Neo4j 卷**；正式 Compose 仅改 app 镜像。候选与旧构建副本已定点清理，保留 #88 app 镜像作直接回退和共同运行底座。最后回读根盘约余 13 GB、2 TB 盘约用 59 GB，均为时点值。
+
+**下一步：**以独立问题集设计有界的“主张→同仓同版本摘录”核验和最多一次修复，替代继续堆仓库名／Markdown 格式规则。#88 双仓样本的 726328 token 中 721034 是累计 prompt，13 轮 69 次源码工具调用，工具耗时合计不足 0.9 秒；应验证受权的批量字面查询、稳定缓存前缀和模型输出截断的受控恢复，不直接缩小 1M 上下文或删减必要证据。600／6000 来源容量、发布 tag→源码提交对齐、真实 AIBP 资料、生产新文档解析及公网问答仍未整体验收；更多边界见下方历史记录和[计划](OCTO-PLAN.md)。
+
+## 2026-09-28 PR #83 发布后快照（历史）
 
 **运行版本：**[PR #83](https://github.com/90le/octo-weknora/pull/83) 已合并并切到生产后端，业务代码提交为 [`642f8c26d38fcff6ac5ce397e4b542b1f246e45e`](https://github.com/90le/octo-weknora/commit/642f8c26d38fcff6ac5ce397e4b542b1f246e45e)，app Image ID `sha256:5b417ce6b9ea5329bea84bf4a591b1733a69ae788694a63653b86112ff05ac36`；UI 仍为 `sha256:dd2bae75c16daf552ee5f3ff00ee4cf42be852c128ed3ca9b23ae15d92866eb1`。运行中的 `/app/WeKnora` 与本轮编译产物 SHA-256 均为 `b80a8627c768734f7a2606601f1fbd01dd73dd785c0d711deec88a49f121e08d`。独立回读确认 app 健康 200、迁移 `107|f`、4 个知识库、5 个 Octo 区域、1495 条活动知识、公网搜索开启数 0，OpenClaw Gateway 与 Octo daemon active。私人小丘与其他 Bot 未切换。
 
