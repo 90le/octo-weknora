@@ -94,13 +94,17 @@ type sourceBrowseSearch struct {
 }
 
 type sourceBrowseGlobalSearch struct {
-	Sources         []sourceBrowseSearch `json:"sources"`
-	RepositoryQuery string               `json:"repository_query,omitempty"`
-	Offset          int                  `json:"offset,omitempty"`
-	NextOffset      *int                 `json:"next_offset,omitempty"`
-	ScannedSources  int                  `json:"scanned_sources"`
-	MatchedSources  int                  `json:"matched_sources"`
-	Complete        bool                 `json:"complete"`
+	Sources []sourceBrowseSearch `json:"sources"`
+	// Only successfully searched, authorized bindings enter this private
+	// ledger. A model-supplied repository_query is never proof that a repo was
+	// actually searched. The ledger is not serialized to the model or history.
+	SearchedRepositories []string `json:"-"`
+	RepositoryQuery      string   `json:"repository_query,omitempty"`
+	Offset               int      `json:"offset,omitempty"`
+	NextOffset           *int     `json:"next_offset,omitempty"`
+	ScannedSources       int      `json:"scanned_sources"`
+	MatchedSources       int      `json:"matched_sources"`
+	Complete             bool     `json:"complete"`
 }
 
 // sourceBrowseRead deliberately omits the internal datasource and snapshot
@@ -592,6 +596,9 @@ func (t *SourceBrowseTool) globalSearch(ctx context.Context, query, prefix, repo
 			continue
 		}
 		out.ScannedSources++
+		if repository := jobs[index].binding.Repository; repository != "" {
+			out.SearchedRepositories = append(out.SearchedRepositories, repository)
+		}
 		if !result.Complete {
 			out.Complete = false
 		}
@@ -628,7 +635,7 @@ func searchAuditFromOutput(out interface{}) *types.SourceBrowseSearchAudit {
 	case sourceBrowseSearch:
 		return &types.SourceBrowseSearchAudit{Repository: result.Repository, Complete: result.Complete, Matched: len(result.Matches) > 0}
 	case sourceBrowseGlobalSearch:
-		return &types.SourceBrowseSearchAudit{Global: true, Complete: result.Complete, Matched: result.MatchedSources > 0}
+		return &types.SourceBrowseSearchAudit{Global: true, Complete: result.Complete, Matched: result.MatchedSources > 0, Repositories: append([]string(nil), result.SearchedRepositories...)}
 	default:
 		return nil
 	}

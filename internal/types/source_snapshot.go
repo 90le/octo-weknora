@@ -98,10 +98,11 @@ type SourceBrowseCitation struct {
 // zero-hit search proves only that a bounded lookup ran; it never establishes
 // a source fact or authorizes automatic knowledge-gap registration.
 type SourceBrowseSearchAudit struct {
-	Repository string `json:"-"`
-	Global     bool   `json:"-"`
-	Complete   bool   `json:"-"`
-	Matched    bool   `json:"-"`
+	Repository   string   `json:"-"`
+	Repositories []string `json:"-"`
+	Global       bool     `json:"-"`
+	Complete     bool     `json:"-"`
+	Matched      bool     `json:"-"`
 }
 
 type SourceMatch struct {

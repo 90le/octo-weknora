@@ -23,10 +23,11 @@ func TestSearchAuditDistinguishesScopedFromGlobalCompleteness(t *testing.T) {
 	require.False(t, scoped.Global)
 	require.Equal(t, "Mininglamp-OSS/repo", scoped.Repository)
 
-	global := searchAuditFromOutput(sourceBrowseGlobalSearch{Complete: true})
+	global := searchAuditFromOutput(sourceBrowseGlobalSearch{Complete: true, SearchedRepositories: []string{"Mininglamp-OSS/repo"}})
 	require.NotNil(t, global)
 	require.True(t, global.Global)
 	require.Empty(t, global.Repository)
+	require.Equal(t, []string{"Mininglamp-OSS/repo"}, global.Repositories)
 }
 
 type sourceToolKB struct {
@@ -447,6 +448,8 @@ func TestSourceBrowseGlobalSearchSelectsNamedRepositoryBeyondFirstPage(t *testin
 	require.True(t, ok)
 	require.False(t, audit.Complete)
 	require.True(t, audit.Matched)
+	require.Equal(t, []string{"github.com/example/target-channel-octo"}, audit.Repositories)
+	require.NotContains(t, result.Output, "searched_repositories", "repository identities are private audit data")
 
 	read, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"read","source_ref":"`+search.Sources[0].SourceRef+`","path":"README.md","start_line":1,"end_line":6}`))
 	require.NoError(t, err)

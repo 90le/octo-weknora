@@ -35,6 +35,13 @@ func recordAnswerEvidenceFromStep(ctx context.Context, step types.AgentStep) {
 			if search, ok := sourceBrowseSearchAudit(call.Result); ok {
 				if search.Global {
 					answerevidence.RecordSourceSearch(ctx, search.Complete, search.Matched)
+					// A repository-filtered global search can legitimately precede
+					// a read. Register only server-audited repositories that were
+					// actually searched, never the model's filter string or a
+					// merely listed repository. Keep global completeness separate.
+					for _, repository := range search.Repositories {
+						answerevidence.RecordSourceSearch(ctx, false, false, repository)
+					}
 				} else {
 					answerevidence.RecordSourceSearch(ctx, search.Complete, search.Matched, search.Repository)
 				}
