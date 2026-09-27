@@ -22,12 +22,25 @@ func TestClassifyKeepsSourceFactsSeparateFromReleaseQuestions(t *testing.T) {
 		{"这个方法先讨论一下", IntentNone},
 		{"最新版本的源码里这个函数如何实现？", IntentSource},
 		{"知识发布流程是什么？", IntentNone},
+		{"在 Node.js 环境如何安装 Octo CLI？请根据知识库回答并给出来源。", IntentNone},
+		{"Vue.js 安装方式是什么？", IntentNone},
+		{"请读取 src/index.js 文件中的源码实现。", IntentSource},
 	}
 	for _, tc := range cases {
 		t.Run(tc.query, func(t *testing.T) {
 			require.Equal(t, tc.want, Classify(tc.query))
 		})
 	}
+}
+
+func TestRuntimeNameDoesNotForceSourceOnlyFallback(t *testing.T) {
+	query := "在 Node.js 环境如何安装 Octo CLI？请根据知识库回答并给出来源。"
+	ctx := WithContract(context.Background(), query)
+	require.Equal(t, IntentNone, IntentFromContext(ctx))
+	require.False(t, Requires(ctx, IntentSource))
+	require.False(t, ShouldHoldStreamingAnswer(ctx))
+	require.False(t, NeedsEvidenceRetry(ctx, "npm install -g @mininglamp-oss/octo-cli"))
+	require.Empty(t, FallbackReply(ctx))
 }
 
 func TestCompoundReleaseAndSourceRequireBothTrustedProofs(t *testing.T) {
