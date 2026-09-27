@@ -33,6 +33,68 @@ func TestGuardedSearchRejectsModelExfiltrationBeforeProvider(t *testing.T) {
 	assert.Equal(t, 1, svc.calls)
 }
 
+func TestGuardedSearchCanChooseSeparateUserQuestionClauses(t *testing.T) {
+	svc := &searchOnlyWebService{}
+	guard := NewWebEgressGuard("Octo 安卓最新版本是什么？Web 最新版本更新了什么？")
+	search := NewWebSearchTool(svc, 5, "provider").WithEgressGuard(guard)
+	require.Equal(t, []string{
+		"Octo 安卓最新版本是什么？Web 最新版本更新了什么？",
+		"Octo 安卓最新版本是什么",
+		"Web 最新版本更新了什么",
+	}, guard.AllowedSearchQueries())
+	assert.Contains(t, search.Description(), `"Web 最新版本更新了什么"`)
+
+	result, err := search.Execute(guardedWebContext(t), []byte(`{"query":"Octo 安卓最新版本是什么"}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	assert.Equal(t, "Octo 安卓最新版本是什么", svc.query)
+
+	result, err = search.Execute(guardedWebContext(t), []byte(`{"query":"Web 最新版本更新了什么"}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	assert.Equal(t, "Web 最新版本更新了什么", svc.query)
+	assert.Equal(t, 2, svc.calls)
+
+	result, err = search.Execute(guardedWebContext(t), []byte(`{"query":"Web 最新版本更新了什么 private KB secret"}`))
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	assert.Equal(t, 2, svc.calls, "model-added text must be denied before the provider")
+	assert.NotContains(t, result.Error, "private KB secret")
+	result, err = search.Execute(guardedWebContext(t), []byte(`{"query":"Web 最新版本更新了什么","freshness":"2030-01-01to2030-01-02"}`))
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	assert.Equal(t, 2, svc.calls, "model-written filters must not bypass the query guard")
+
+	choices := guard.AllowedSearchQueries()
+	choices[1] = "changed outside the guard"
+	assert.Equal(t, "Octo 安卓最新版本是什么", guard.AllowedSearchQueries()[1])
+
+	search.WithEgressGuard(NewWebEgressGuard("另一个用户的问题？"))
+	assert.NotContains(t, search.Description(), "Web 最新版本更新了什么")
+	result, err = search.Execute(guardedWebContext(t), []byte(`{"query":"Web 最新版本更新了什么"}`))
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	assert.Equal(t, 2, svc.calls, "a reused tool cannot authorize a prior turn's query")
+}
+
+func TestGuardedQueriesAreBoundedAndCanReachLaterUserClauses(t *testing.T) {
+	longIntroduction := strings.Repeat("背景", 170)
+	guard := NewWebEgressGuard(longIntroduction + "。现在请查 Octo Web 更新？")
+	assert.LessOrEqual(t, len([]rune(guard.SearchQuery())), maxGuardedWebQueryRunes)
+	assert.Contains(t, guard.AllowedSearchQueries(), "现在请查 Octo Web 更新")
+	assert.False(t, guard.AllowsSearchQuery(guard.SearchQuery()+" private retrieval"))
+	assert.False(t, guard.AllowsSearchQuery(guard.SearchQuery()+strings.Repeat(" ", 100)+"private retrieval"))
+
+	guard = NewWebEgressGuard("A？B？C？D？E？F？G？H？")
+	assert.LessOrEqual(t, len(guard.AllowedSearchQueries()), maxGuardedWebQueries)
+	assert.True(t, guard.AllowsSearchQuery("H"), "a final question remains available after earlier clauses")
+	assert.False(t, guard.AllowsSearchQuery("C"), "unlisted clauses are not public search authority")
+	assert.False(t, NewWebEgressGuard(" \n ").AllowsSearchQuery(""))
+
+	guard = NewWebEgressGuard(strings.Repeat("甲", maxGuardedWebSourceRunes) + "。边界外问题？")
+	assert.False(t, guard.AllowsSearchQuery("边界外问题"), "text beyond the source scan limit cannot become public search authority")
+}
+
 func TestGuardedFetchAllowsOnlyOriginalUserURLOrThisTurnsSearchResults(t *testing.T) {
 	const userURL = "https://example.com/user-doc"
 	const resultURL = "https://example.com/search-result?section=public"

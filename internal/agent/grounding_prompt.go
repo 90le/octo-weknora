@@ -50,6 +50,17 @@ func formatGroundingGuidance(names []string) string {
 			"entries are routing hints, not retrieved evidence; do not exhaust unrelated bases. " +
 			"Choose an available search or reader appropriate to the scope.\n")
 	}
+	if slices.Contains(names, tools.ToolSourceBrowse) {
+		b.WriteString("- source_browse is available: for code, configuration, repository responsibility, or implementation questions, " +
+			"select a relevant authorized repository and read its fixed-snapshot file and lines. A directory listing or search match " +
+			"is navigation, not proof. Use document retrieval alongside code when the question also asks about product behavior; " +
+			"do not infer one repository's implementation from another's README.\n")
+	}
+	if slices.Contains(names, tools.ToolGitHubReleaseLookup) {
+		b.WriteString("- github_release_lookup is available: current published-version claims need the official release record. " +
+			"A default-branch source snapshot alone does not establish what a release tag contains; keep those facts separate " +
+			"unless their commits are aligned.\n")
+	}
 	if slices.Contains(names, tools.ToolWebSearch) {
 		b.WriteString("- web_search is available: use it when relevant local evidence is missing, " +
 			"insufficient, or needs external/current verification. Prefer authoritative sources and " +
