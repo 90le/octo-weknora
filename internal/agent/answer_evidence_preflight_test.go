@@ -96,6 +96,35 @@ func TestAnswerEvidencePreflightReadsAuthorizedLatestReleaseBeforeModel(t *testi
 	require.Len(t, state.RoundSteps[0].ToolCalls, 2, "preflight remains auditable in the agent state")
 }
 
+func TestCompoundSourceQuestionStillPreflightsNamedRelease(t *testing.T) {
+	checkedAt := time.Date(2026, time.September, 22, 10, 0, 0, 0, time.UTC)
+	releaseTool := newScriptedPreflightTool(agenttools.ToolGitHubReleaseLookup, func(args map[string]interface{}) *types.ToolResult {
+		switch args["action"] {
+		case "list":
+			return &types.ToolResult{Success: true, Output: `{"repositories":[{"release_ref":"r1","repository":"ExampleOrg/octo-android"}],"complete":true}`}
+		case "latest":
+			return &types.ToolResult{Success: true, Output: `{"repository":"ExampleOrg/octo-android","latest_stable":{"tag_name":"v9.1.0"}}`, Data: map[string]interface{}{
+				types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{KnowledgeBaseID: "kb", DataSourceID: "ds", Repository: "ExampleOrg/octo-android", TagName: "v9.1.0", URL: "https://github.com/ExampleOrg/octo-android/releases/tag/v9.1.0", PublishedAt: checkedAt, CheckedAt: checkedAt},
+			}}
+		default:
+			return &types.ToolResult{Success: false, Error: "unexpected action"}
+		}
+	})
+	engine := newTestEngine(t, &mockChat{})
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	engine.toolRegistry.RegisterTool(releaseTool)
+	query := "octo-android 最新版本的源码如何实现？"
+	ctx := answerevidence.WithContract(context.Background(), query)
+	state := &types.AgentState{}
+
+	evidence := engine.prepareAnswerEvidencePreflight(ctx, state, query)
+	require.Equal(t, answerevidence.IntentSource, answerevidence.IntentFromContext(ctx))
+	require.Equal(t, []string{"list", "latest"}, releaseTool.actions())
+	require.Contains(t, evidence, "v9.1.0")
+	require.True(t, answerevidence.ReleaseEvidenceObserved(ctx))
+	require.True(t, answerevidence.NeedsEvidenceRetry(ctx, "源码这样实现。"), "the source body is still required")
+}
+
 func TestExecutePreservesIngressEvidenceContractWithoutResettingIt(t *testing.T) {
 	query := "octo-android 最新版本更新了什么？"
 	ctx := answerevidence.WithContract(context.Background(), query)
@@ -120,7 +149,7 @@ func TestExecutePreservesIngressEvidenceContractWithoutResettingIt(t *testing.T)
 func TestExecuteDoesNotReclassifyOrdinaryQuestionFromGroupRules(t *testing.T) {
 	original := "Octo 和 Loop 的关系是什么？"
 	ctx := answerevidence.WithContract(context.Background(), original)
-	modelQuery := original + "\n\nGROUP.md：联系人仅作指引，不主动通知、催办或发布。"
+	modelQuery := original + "\n\nGROUP.md：联系人仅作指引；版本发布问题请核对资料，不主动通知或催办。"
 	require.Equal(t, answerevidence.IntentRelease, answerevidence.Classify(modelQuery))
 	answer := "Loop 是 Octo 内的项目与任务协作模块。"
 	model := &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{{

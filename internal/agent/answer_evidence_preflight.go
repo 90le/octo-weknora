@@ -94,10 +94,10 @@ func (e *AgentEngine) prepareAnswerEvidencePreflight(ctx context.Context, state 
 		ToolCalls: make([]types.ToolCall, 0),
 	}}
 
-	switch answerevidence.IntentFromContext(ctx) {
-	case answerevidence.IntentRelease:
+	if answerevidence.Requires(ctx, answerevidence.IntentRelease) {
 		e.preflightNamedReleaseEvidence(preflightCtx, query, &preflight)
-	case answerevidence.IntentIntegration:
+	}
+	if answerevidence.Requires(ctx, answerevidence.IntentIntegration) {
 		e.preflightNamedChannelEvidence(preflightCtx, query, &preflight)
 	}
 
@@ -105,7 +105,7 @@ func (e *AgentEngine) prepareAnswerEvidencePreflight(ctx context.Context, state 
 		return ""
 	}
 	recordAnswerEvidenceFromStep(ctx, preflight.step)
-	if answerevidence.IntentFromContext(ctx) == answerevidence.IntentIntegration &&
+	if answerevidence.Requires(ctx, answerevidence.IntentIntegration) &&
 		len(answerevidence.RequiredRepositories(ctx)) > 0 &&
 		answerevidence.IntegrationEvidenceObserved(ctx) {
 		answerevidence.ActivatePostPreflightSourceBrowseBudget(ctx, postPreflightSourceBrowseBudget(len(answerevidence.RequiredRepositories(ctx))))

@@ -23,12 +23,39 @@ const (
 	IntentIntegration Intent = "integration"
 )
 
+// evidenceNeeds is a set of independent proof obligations. Intent remains the
+// legacy primary route, but a question can require more than one kind of
+// evidence (for example the latest release *and* its source implementation).
+type evidenceNeeds uint8
+
+const (
+	needSource evidenceNeeds = 1 << iota
+	needRelease
+	needIntegration
+)
+
+func (needs evidenceNeeds) has(intent Intent) bool {
+	switch intent {
+	case IntentSource:
+		return needs&needSource != 0
+	case IntentRelease:
+		return needs&needRelease != 0
+	case IntentIntegration:
+		return needs&needIntegration != 0
+	default:
+		return false
+	}
+}
+
+func (needs evidenceNeeds) multiple() bool { return needs != 0 && needs&(needs-1) != 0 }
+
 // State is request-local mutable evidence state. It is placed in Context only
 // for the duration of one incoming turn and is never persisted or exposed to a
 // model. Tool execution may be parallel, hence the mutex.
 type State struct {
 	mu                sync.RWMutex
 	intent            Intent
+	needs             evidenceNeeds
 	chinese           bool
 	sourceSearch      bool
 	sourceComplete    bool
@@ -36,10 +63,15 @@ type State struct {
 	sourceSearchRepos map[string]bool
 	sourceRead        bool
 	sourceReadRepos   map[string]bool
-	documentEvidence  bool
-	releaseLookup     bool
-	releaseEvidence   bool
-	requiredRepos     []string
+	// Full normalized repository identities are separate from the leaf-only
+	// map used by the legacy named-channel check. Two owners may have the same
+	// leaf; only full identities can join source and release evidence.
+	sourceReadIdentities map[string]bool
+	documentEvidence     bool
+	releaseLookup        bool
+	releaseEvidence      bool
+	releaseIdentities    map[string]bool
+	requiredRepos        []string
 	// postPreflightSourceBrowse is deliberately separate from the normal
 	// source-evidence ledger. It is enabled only after the system has already
 	// searched and read every explicitly named channel repository. At that
@@ -60,11 +92,12 @@ type classifiedNoneKey struct{}
 // distinct from support/integration questions: the former need release
 // provenance, while the latter need actual documentation or source evidence.
 // Broad product words alone do not turn a request into a source-code claim.
-func Classify(query string) Intent {
+func classifyNeeds(query string) evidenceNeeds {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
-		return IntentNone
+		return 0
 	}
+	var needs evidenceNeeds
 	if containsAny(q,
 		"源码", "源代码", "代码", "函数", "接口实现", "具体实现", "实现细节", "调用链", "字段", "变量",
 		"类定义", "类名", "方法名", "方法实现", "调用方法",
@@ -72,20 +105,39 @@ func Classify(query string) Intent {
 		"source code", "function", "method", "class ", "implementation", "call stack", "stack trace",
 		"error code", "repository", ".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".php", ".rs", ".swift", ".kt", ".yaml", ".yml",
 	) {
-		return IntentSource
+		needs |= needSource
 	}
 	if containsAny(q,
-		"最新版本", "当前版本", "版本", "更新日志", "更新了什么", "更新内容", "发布", "发行", "release", "changelog", "release note",
+		"最新版本", "当前版本", "版本", "更新日志", "更新了什么", "更新内容", "发布版本", "版本发布", "发布记录", "发布说明", "发布日志", "发布了什么", "发行版本", "release", "changelog", "release note",
 	) {
-		return IntentRelease
+		needs |= needRelease
 	}
 	if containsAny(q,
-		"是否支持", "支持", "接入", "集成", "兼容", "对接", "原生接入", "channel-octo", "octo-channel", "github.com/",
+		"是否支持", "支持", "接入", "集成", "兼容", "对接", "原生接入", "channel-octo", "octo-channel",
 		"integration", "integrate", "compatible", "support",
-	) {
-		return IntentIntegration
+	) || (needs == 0 && strings.Contains(q, "github.com/")) {
+		// A bare GitHub URL can identify an integration project, but it must
+		// not turn a release URL or named source-file question into an extra
+		// support claim the user did not request.
+		needs |= needIntegration
 	}
-	return IntentNone
+	return needs
+}
+
+// Classify preserves the primary route for callers that display one intent.
+// The turn-local contract uses the full set returned by classifyNeeds instead.
+func Classify(query string) Intent {
+	needs := classifyNeeds(query)
+	switch {
+	case needs.has(IntentSource):
+		return IntentSource
+	case needs.has(IntentRelease):
+		return IntentRelease
+	case needs.has(IntentIntegration):
+		return IntentIntegration
+	default:
+		return IntentNone
+	}
 }
 
 func containsAny(value string, terms ...string) bool {
@@ -141,6 +193,10 @@ func repositoryLeaf(repository string) string {
 	return strings.Trim(repository, "-_.")
 }
 
+func repositoryIdentity(repository string) string {
+	return strings.ToLower(strings.Trim(strings.TrimSpace(repository), "/"))
+}
+
 // WithContract classifies one incoming turn and starts its evidence ledger.
 // It is idempotent: an ingress such as Octo IM may establish the contract
 // after normalizing an addressed message, while AgentEngine.Execute establishes
@@ -155,12 +211,14 @@ func WithContract(ctx context.Context, query string) context.Context {
 	if stateFrom(ctx) != nil || ctx.Value(classifiedNoneKey{}) != nil {
 		return ctx
 	}
+	needs := classifyNeeds(query)
 	intent := Classify(query)
 	if intent == IntentNone {
 		return context.WithValue(ctx, classifiedNoneKey{}, true)
 	}
 	return context.WithValue(ctx, stateKey{}, &State{
 		intent:        intent,
+		needs:         needs,
 		chinese:       containsHan(query),
 		requiredRepos: namedChannelRepositories(query),
 	})
@@ -178,6 +236,28 @@ func IntentFromContext(ctx context.Context) Intent {
 		return state.intent
 	}
 	return IntentNone
+}
+
+// Requires reads the original user's locked, turn-local proof obligations.
+// Later quoted messages, GROUP.md content and retrieved data cannot add one.
+func Requires(ctx context.Context, intent Intent) bool {
+	state := stateFrom(ctx)
+	if state == nil {
+		return false
+	}
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	return state.needs.has(intent)
+}
+
+func multipleNeeds(ctx context.Context) bool {
+	state := stateFrom(ctx)
+	if state == nil {
+		return false
+	}
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	return state.needs.multiple()
 }
 
 func SourceReadObserved(ctx context.Context) bool {
@@ -427,9 +507,15 @@ func RecordSourceRead(ctx context.Context, repositories ...string) {
 		if state.sourceReadRepos == nil {
 			state.sourceReadRepos = make(map[string]bool)
 		}
+		if state.sourceReadIdentities == nil {
+			state.sourceReadIdentities = make(map[string]bool)
+		}
 		for _, repository := range repositories {
 			if leaf := repositoryLeaf(repository); leaf != "" {
 				state.sourceReadRepos[leaf] = true
+			}
+			if identity := repositoryIdentity(repository); identity != "" {
+				state.sourceReadIdentities[identity] = true
 			}
 		}
 		state.mu.Unlock()
@@ -452,10 +538,18 @@ func RecordDocumentEvidence(ctx context.Context) {
 // this only after server code has validated its provenance marker. It is a
 // separate record so RAG/source results cannot accidentally establish a
 // "latest release" conclusion.
-func RecordReleaseEvidence(ctx context.Context) {
+func RecordReleaseEvidence(ctx context.Context, repositories ...string) {
 	if state := stateFrom(ctx); state != nil {
 		state.mu.Lock()
 		state.releaseEvidence = true
+		if state.releaseIdentities == nil {
+			state.releaseIdentities = make(map[string]bool)
+		}
+		for _, repository := range repositories {
+			if identity := repositoryIdentity(repository); identity != "" {
+				state.releaseIdentities[identity] = true
+			}
+		}
 		state.mu.Unlock()
 	}
 }
@@ -477,6 +571,9 @@ func RecordReleaseLookup(ctx context.Context) {
 // released as normal; only version or integration conclusions are retried or
 // replaced when their intent-specific evidence is missing.
 func ShouldHoldStreamingAnswer(ctx context.Context) bool {
+	if multipleNeeds(ctx) {
+		return !allRequiredEvidenceObserved(ctx)
+	}
 	switch IntentFromContext(ctx) {
 	case IntentSource:
 		return !SourceReadObserved(ctx)
@@ -501,10 +598,35 @@ func CanRetryEvidence(ctx context.Context) bool {
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	if state.needs.has(IntentSource) && state.needs.has(IntentRelease) &&
+		state.sourceRead && state.releaseEvidence {
+		// The current release marker carries a tag but no resolved tag commit.
+		// Repeating source/release tools cannot prove that a default-branch
+		// snapshot implements that release. Stop immediately with the precise
+		// repository/alignment fallback instead of burning four model rounds.
+		return false
+	}
 	maxRetries := 1
-	switch state.intent {
-	case IntentRelease, IntentIntegration:
+	switch {
+	case state.needs.multiple():
+		// A compound request may need two catalog/reader pairs. Keep the
+		// budget finite rather than letting the model loop without evidence.
+		maxRetries = 4
+	case state.intent == IntentRelease || state.intent == IntentIntegration:
 		maxRetries = 2
+	}
+	if state.needs.multiple() && state.needs.has(IntentRelease) &&
+		state.releaseLookup && !state.releaseEvidence {
+		otherMissing := state.needs.has(IntentSource) && !state.sourceRead
+		if state.needs.has(IntentIntegration) {
+			otherMissing = otherMissing || !integrationEvidenceObservedLocked(state)
+		}
+		if !otherMissing {
+			// The trusted latest endpoint already ran but did not return
+			// verifiable stable-release provenance. No more release retries.
+			return false
+		}
+		maxRetries = 2 // reserve only a search/read pair for other needs
 	}
 	if state.nudgeCount >= maxRetries {
 		return false
@@ -532,6 +654,12 @@ func NeedsEvidenceRetry(ctx context.Context, answer string) bool {
 	answer = strings.TrimSpace(answer)
 	if answer == "" {
 		return false
+	}
+	if multipleNeeds(ctx) {
+		// We cannot validate which clause of a free-form answer is merely an
+		// uncertainty statement. Until each required proof is present, hold
+		// the whole answer and return a bounded, explicit fallback.
+		return !allRequiredEvidenceObserved(ctx)
 	}
 	switch IntentFromContext(ctx) {
 	case IntentSource:
@@ -568,6 +696,9 @@ func NeedsEvidenceRetry(ctx context.Context, answer string) bool {
 // NeedsSynthesisFallback prevents max-iteration synthesis from inventing a
 // conclusion after the run has already failed to obtain the required evidence.
 func NeedsSynthesisFallback(ctx context.Context) bool {
+	if multipleNeeds(ctx) {
+		return !allRequiredEvidenceObserved(ctx)
+	}
 	switch IntentFromContext(ctx) {
 	case IntentSource:
 		return !SourceReadObserved(ctx)
@@ -585,6 +716,9 @@ func NeedsSynthesisFallback(ctx context.Context) bool {
 // ran; this method adds the stronger contract-specific proof so a source
 // search without an actual read cannot be mislabeled as a knowledge gap.
 func AllowsMissingIssue(ctx context.Context) bool {
+	if multipleNeeds(ctx) {
+		return allRequiredEvidenceObserved(ctx)
+	}
 	switch IntentFromContext(ctx) {
 	case IntentSource:
 		return SourceReadObserved(ctx)
@@ -595,6 +729,100 @@ func AllowsMissingIssue(ctx context.Context) bool {
 	default:
 		return true
 	}
+}
+
+func allRequiredEvidenceObserved(ctx context.Context) bool {
+	// Each kind is observed from trusted tools in the authorized turn. For a
+	// source+release question, even matching full repository identities do not
+	// unlock the conclusion: no trusted tag-to-snapshot commit alignment exists
+	// yet, so that composite path deliberately remains fail-closed.
+	if Requires(ctx, IntentSource) && !SourceReadObserved(ctx) {
+		return false
+	}
+	if Requires(ctx, IntentRelease) && !ReleaseEvidenceObserved(ctx) {
+		return false
+	}
+	if Requires(ctx, IntentIntegration) && !IntegrationEvidenceObserved(ctx) {
+		return false
+	}
+	if Requires(ctx, IntentSource) && Requires(ctx, IntentRelease) {
+		// Matching repository identity is necessary but insufficient: a
+		// GitHub Release tag has not been resolved to a commit and compared
+		// with the read-only snapshot revision. Never unlock a free-form
+		// "latest release's source implementation" conclusion on that basis.
+		return false
+	}
+	return true
+}
+
+func sameRepositoryEvidenceObserved(ctx context.Context) bool {
+	state := stateFrom(ctx)
+	if state == nil {
+		return false
+	}
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	for repository := range state.sourceReadIdentities {
+		if state.releaseIdentities[repository] {
+			return true
+		}
+	}
+	return false
+}
+
+func integrationEvidenceObservedLocked(state *State) bool {
+	if len(state.requiredRepos) == 0 {
+		return state.sourceRead || state.documentEvidence
+	}
+	if !state.sourceSearch || !state.sourceRead {
+		return false
+	}
+	for _, repository := range state.requiredRepos {
+		if !state.sourceSearchRepos[repository] || !state.sourceReadRepos[repository] {
+			return false
+		}
+	}
+	return true
+}
+
+func missingEvidenceLabels(ctx context.Context, chinese bool) []string {
+	var missing []string
+	if Requires(ctx, IntentSource) && !SourceReadObserved(ctx) {
+		if chinese {
+			missing = append(missing, "源码文件及行段")
+		} else {
+			missing = append(missing, "source file and lines")
+		}
+	}
+	if Requires(ctx, IntentRelease) && !ReleaseEvidenceObserved(ctx) {
+		if chinese {
+			missing = append(missing, "可核验的发布记录")
+		} else {
+			missing = append(missing, "verifiable release record")
+		}
+	}
+	if Requires(ctx, IntentIntegration) && !IntegrationEvidenceObserved(ctx) {
+		if chinese {
+			missing = append(missing, "接入能力的资料或源码正文")
+		} else {
+			missing = append(missing, "integration documentation or source body")
+		}
+	}
+	if Requires(ctx, IntentSource) && Requires(ctx, IntentRelease) &&
+		SourceReadObserved(ctx) && ReleaseEvidenceObserved(ctx) {
+		if !sameRepositoryEvidenceObserved(ctx) {
+			if chinese {
+				missing = append(missing, "同一仓库的源码与发布来源")
+			} else {
+				missing = append(missing, "source and release evidence from the same repository")
+			}
+		} else if chinese {
+			missing = append(missing, "发布标签与源码快照的提交对应关系")
+		} else {
+			missing = append(missing, "release tag to source snapshot commit alignment")
+		}
+	}
+	return missing
 }
 
 // ClaimsUnsupported detects only categorical negative assertions. It is not a
@@ -657,6 +885,38 @@ func isApprovedUncertaintyAnswer(answer string, approved ...string) bool {
 // source hard gate below is still authoritative; this prompt helps the model
 // choose the right tool before the gate needs to intervene.
 func Prompt(ctx context.Context) string {
+	if multipleNeeds(ctx) {
+		if isChinese(ctx) {
+			var rules []string
+			if Requires(ctx, IntentSource) {
+				rules = append(rules, "源码实现需要 source_browse 搜索并 read 实际文件和行段。")
+			}
+			if Requires(ctx, IntentRelease) {
+				rules = append(rules, "最新版本、发布日期和更新内容需要 github_release_lookup 的官方发布来源。")
+			}
+			if Requires(ctx, IntentIntegration) {
+				rules = append(rules, "支持或接入结论需要当前授权范围的资料正文或源码正文。")
+			}
+			if Requires(ctx, IntentSource) && Requires(ctx, IntentRelease) {
+				rules = append(rules, "同仓库仍不等于同版本；未核实发布标签对应提交与源码快照提交一致时，不得说‘最新版源码如此实现’，两类来源只能视为各自独立的记录。")
+			}
+			return "<answer_evidence_contract>\n本回合有多项独立证据需求，须分别核验后才能给出整体结论。" + strings.Join(rules, "") + "不能用一个来源替代另一个，也不能把一仓结论套用到另一仓。工具成功、目录、标题、RAG 未命中和历史对话都不等于完整证据。任一必要证据缺失时，先补查；仍无法取得时，系统将说明缺项而不输出未经核实的整体结论。\n</answer_evidence_contract>"
+		}
+		var rules []string
+		if Requires(ctx, IntentSource) {
+			rules = append(rules, "Source implementation requires source_browse search and a read of actual file lines.")
+		}
+		if Requires(ctx, IntentRelease) {
+			rules = append(rules, "Latest version, date and changes require an official github_release_lookup result.")
+		}
+		if Requires(ctx, IntentIntegration) {
+			rules = append(rules, "Support or integration requires an authorized document or source body.")
+		}
+		if Requires(ctx, IntentSource) && Requires(ctx, IntentRelease) {
+			rules = append(rules, "The same repository is not the same version: unless the release tag's commit has been verified against the source snapshot commit, do not say this is how the latest release is implemented; treat the obtained sources as independent records.")
+		}
+		return "<answer_evidence_contract>\nThis turn has independent evidence needs. " + strings.Join(rules, " ") + " One source cannot substitute for another, and one repository cannot establish facts about another. Tool success, catalogs, titles, RAG misses and history are not complete evidence. If any required evidence is missing, retrieve it first; if it remains unavailable, the system will name the gap instead of emitting an unverified overall conclusion.\n</answer_evidence_contract>"
+	}
 	switch IntentFromContext(ctx) {
 	case IntentSource:
 		if isChinese(ctx) {
@@ -701,6 +961,19 @@ This turn asks about support, integration, or compatibility. Both affirmative an
 }
 
 func RetryNudge(ctx context.Context) string {
+	if multipleNeeds(ctx) {
+		missing := missingEvidenceLabels(ctx, isChinese(ctx))
+		if Requires(ctx, IntentRelease) && ReleaseLookupObserved(ctx) && !ReleaseEvidenceObserved(ctx) {
+			if isChinese(ctx) {
+				return "官方最新发布来源已查询，但未取得可核验的稳定发布；不要重复相同查询或断言没有发布。仅补查其它仍缺少的证据：" + strings.Join(missing, "、") + "。"
+			}
+			return "The official latest-release source was queried but no verifiable stable release was obtained. Do not repeat the same lookup or claim no release exists. Retrieve only the other missing evidence: " + strings.Join(missing, ", ") + "."
+		}
+		if isChinese(ctx) {
+			return "本轮仍缺少独立的证据：" + strings.Join(missing, "、") + "。请仅在授权范围内补查相应工具并读取正文；不要把其他来源、检索摘要或工具成功当成证明。"
+		}
+		return "This turn still lacks independent evidence: " + strings.Join(missing, ", ") + ". Use the corresponding authorized tools and read source bodies; do not treat other sources, search summaries or tool success as proof."
+	}
 	switch IntentFromContext(ctx) {
 	case IntentSource:
 		if isChinese(ctx) {
@@ -727,6 +1000,38 @@ func RetryNudge(ctx context.Context) string {
 }
 
 func FallbackReply(ctx context.Context) string {
+	if multipleNeeds(ctx) {
+		missing := missingEvidenceLabels(ctx, isChinese(ctx))
+		if Requires(ctx, IntentRelease) && ReleaseLookupObserved(ctx) && !ReleaseEvidenceObserved(ctx) {
+			if isChinese(ctx) {
+				if SourceReadObserved(ctx) {
+					return "已查询官方最新发布来源，也已读取源码，但未取得可核验的稳定发布记录，不能把这份源码认定为最新发布版本的实现。"
+				}
+				return "已查询官方最新发布来源，但未取得可核验的稳定发布记录；同时还缺少" + strings.Join(missing, "、") + "，目前不能完整核实。"
+			}
+			if SourceReadObserved(ctx) {
+				return "I checked the official latest-release source and read source code, but obtained no verifiable stable release record. I cannot identify that source snapshot as the latest released implementation."
+			}
+			return "The official latest-release source was queried, but no verifiable stable release record was obtained. Other evidence is still missing: " + strings.Join(missing, ", ") + "."
+		}
+		if Requires(ctx, IntentSource) && Requires(ctx, IntentRelease) &&
+			SourceReadObserved(ctx) && ReleaseEvidenceObserved(ctx) {
+			if !sameRepositoryEvidenceObserved(ctx) {
+				if isChinese(ctx) {
+					return "已读取源码并取得发布记录，但二者来自不同仓库或仓库身份无法对应，不能把一个仓库的实现归到另一个仓库的发布版本。"
+				}
+				return "Source and release evidence were obtained, but their repositories differ or cannot be matched. I cannot attribute one repository's implementation to another repository's release."
+			}
+			if isChinese(ctx) {
+				return "已分别读取同一仓库的源码与官方发布记录，但尚未核实发布标签对应的提交是否等于源码快照提交，因此不能确认这份源码就是该发布版本的实现。"
+			}
+			return "I read source code and an official release record from the same repository, but have not verified that the release tag resolves to the source snapshot commit. I cannot identify that snapshot as the released implementation."
+		}
+		if isChinese(ctx) {
+			return "当前还缺少" + strings.Join(missing, "、") + "，因此不能完整核实这个问题。请提供更具体的目标仓库、版本或资料范围，或稍后重试。"
+		}
+		return "I could not fully verify this question because evidence is missing for " + strings.Join(missing, ", ") + ". Please provide a more specific repository, version or source scope, or try again later."
+	}
 	switch IntentFromContext(ctx) {
 	case IntentSource:
 		if isChinese(ctx) {
