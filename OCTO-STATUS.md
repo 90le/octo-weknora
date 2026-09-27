@@ -2,9 +2,13 @@
 
 更新：2026-09-27。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-27；本轮发布后回读）
+## 当前状态（2026-09-27；PR #71 发布后回读）
 
-**代码与生产边界：**主线及生产 app 代码均为 [`c1489d2e0350d4d4d292a4e7fb135a727f8d94ce`](https://github.com/90le/octo-weknora/commit/c1489d2e0350d4d4d292a4e7fb135a727f8d94ce)，涵盖 [PR #64](https://github.com/90le/octo-weknora/pull/64)、[#66](https://github.com/90le/octo-weknora/pull/66)、[#67](https://github.com/90le/octo-weknora/pull/67)、[#68](https://github.com/90le/octo-weknora/pull/68)、[#69](https://github.com/90le/octo-weknora/pull/69)。app Image ID `sha256:b6ebcf714303a4307f28401459a03d6fa7f9e99153b2eb158d0387d2b5e325ea`；前端源码未变，保留已验证 UI Image ID `sha256:33fa85acef00c767ca2fdcaab69487046b65ada7a5963a56007d9bcf58ea1734`。API／UI 均健康 200，PostgreSQL migration `106` 非 dirty。OpenClaw Gateway、Octo daemon 均 active，未替换私人小丘或其他 Bot。
+**代码与生产边界：**主线与现行 app／UI 的业务源码为 [`a653db1bd7f290ef81ee5ebdae8a9525cfc65ee1`](https://github.com/90le/octo-weknora/commit/a653db1bd7f290ef81ee5ebdae8a9525cfc65ee1)，包含 [PR #71](https://github.com/90le/octo-weknora/pull/71)。运行 app Image ID `sha256:21c6f7724dac6aee78da2293e7f677723d59c727bebfb89520ec7c3df336c45d`，UI Image ID `sha256:dd2bae75c16daf552ee5f3ff00ee4cf42be852c128ed3ca9b23ae15d92866eb1`；先前 app/UI 镜像保留作回退。API／UI 健康均为 200，PostgreSQL migration `107` 非 dirty，5 个 Octo 区域的 `allow_public_web` 全为关闭。OpenClaw Gateway、Octo daemon 均 active；私人小丘和其他 Bot 未切换到 WeKnora。
+
+**#71 发布证据与限制：**完整 Docker Hub 发布工作流在登录阶段失败，没有产出可拉取的全量镜像；根盘当时约余 18 GB。本次按[受审阅的例外条件](OCTO-DEPLOYMENT.md)从合并提交在 2 TB 数据盘重新编译带 Anydoc 的 Go 应用并构建前端，沿用此前已验证的运行底座；新 app 镜像同时复制并核验完整 migrations 目录，包含 `000107`，而非只覆盖二进制，也不冒称进行了上游 Dockerfile 全量构建。隔离库来自本次新的 PostgreSQL 导出及应用文件／来源快照：迁移 `106→107` 后，候选登录、4 个知识库、5 个区域和 Anydoc Available 均通过；旧 app 镜像在该隔离 `107` 库上也完成登录读取和原样保存区域规则。切换脚本最后的磁盘显示命令因文件末尾 CRLF 返回非零，但在其前已打印 `release=ok`；随后独立回读两张运行镜像、健康、迁移 `107|f`、4 个知识库、1495 条已完成知识、5 个关闭的公网开关及磁盘，确认切换成功，并已修正该私有脚本的行尾。根盘约 18 GB 可用、2 TB 数据盘约用 41 GB。生产资料新解析格式、草稿越权和公网检索尚未在本次发布后逐项验收；该备份不含 Milvus／Neo4j 卷，恢复前须核对各存储写入边界。
+
+**真实 Octo 回归：**在「Steward 联调群」直接发送 `QA-A653-01` 的 Node.js 安装问题，未 @ Bot；小丘在真实客户端回复 `npm install -g @mininglamp-oss/octo-cli`、固定提交的 GitHub README 来源，原生引用并 @ 回提问者。对应 inbox 为 `delivered`、`attempts=1`。这验证该常规知识问答与投递路径，**不验证本轮公网搜索**；群／子区的公网开关仍全部关闭。
 
 **本轮可观察结果：**只读源码目录现可按仓库名过滤和分页；知识缺口不再因列目录、读一份文件或不完整源码搜索而放行登记。复合发布／源码问题分别要求证据，未证明发布 tag 与源码快照为同一提交时保持未核实。Octo 处理中反馈通过原生 typing 实现：在「Steward 联调群」真实提问时，客户端曾显示 Octo 小丘的三点输入状态，最终答复后消失，不生成额外聊天消息。Linux App 全量检查、适配器专项与 lint 对应 PR 均通过；这些不是 600／6000 来源容量或所有业务问答的证明。
 
@@ -12,9 +16,7 @@
 
 **容量与恢复：**目标知识库活动知识 1447 条（均 `completed`），60 条 GitHub 来源 active（文档／源码各 30），逐来源最近日志均 `success`；当前同步、文档任务为 0。根盘 100 GB 中约 18 GB 可用，2 TB 数据盘约使用 43 GB。当前发布的私有阶段目录在 2 TB 盘，已制作 PostgreSQL 一致性导出、应用文件／来源快照和 Compose／环境恢复点，并把该 PostgreSQL 导出完整恢复到隔离库验证 migration `106`、4 个知识库及目标 1447 条知识；Milvus／Neo4j 不在此恢复点内，镜像回退与其数据恢复不是同一动作。保留现行 app 和上一版已验证镜像，不做宽范围 prune。
 
-**仍未完成：**PR #60 的可选共享 Git 物理缓存虽在代码中，生产仍默认关闭；无目标源码全局搜索仍最多覆盖 64 条来源。600／6000 来源的受权选仓索引、仓库级同步、缓存回收和容量压测尚未完成。公共 Octo 会话仍由服务端关闭 `web_search`／`web_fetch`，需按群／子区授权并约束外发文本后才能开放；生产虽有同租户默认搜索提供方，不能仅改 Agent 开关。发布 tag→源码 commit 对齐、逐主张证据核对、真实产品 AIBP 资料接入、完整生产新文档解析及本轮草稿／越权路径复测仍待进行，顺序见 [实施计划](OCTO-PLAN.md)。
-
-**正在验证的下一项，未上线：**[PR #71](https://github.com/90le/octo-weknora/pull/71) 将公共联网做成群／子区独立默认关闭的权限，加上每轮搜索与网页读取外发约束、动态授权复核及管理界面；这不改变本页上述生产版本和“仍未完成”的判断。前端类型检查、定向区域测试与生产构建已通过；Go 测试等待 Linux CI，随后还需隔离数据库候选及真实 Octo 群验收。
+**仍未完成：**PR #60 的可选共享 Git 物理缓存虽在代码中，生产仍默认关闭；无目标源码全局搜索仍最多覆盖 64 条来源。当前 60 是数据源行（文档／源码各 30），不等于已验证 60 个独立仓库；600／6000 来源的受权选仓索引、仓库级同步、缓存回收和容量压测尚未完成。受控公网工具代码已发布但所有区域仍关闭，真实群外网问答、外发审计和多子问题公开检索仍待验收／设计。发布 tag→源码 commit 对齐、逐主张证据核对、真实产品 AIBP 资料接入、完整生产新文档解析及草稿／越权路径复测仍待进行，顺序见 [实施计划](OCTO-PLAN.md)。
 
 ## 2026-09-27 早些时候的来源恢复与发布证据（历史快照）
 
