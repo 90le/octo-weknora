@@ -150,6 +150,33 @@ func TestBoundedScopedSearchAndReadUnlocksNamedIntegration(t *testing.T) {
 	require.False(t, answerevidence.NeedsSynthesisFallback(ctx))
 }
 
+func TestAuditedFilteredGlobalSearchAndReadUnlocksNamedIntegration(t *testing.T) {
+	query := "openclaw-channel-octo 的源码里连接 Octo IM 使用什么 WebSocket 客户端？"
+	ctx := answerevidence.WithContract(context.Background(), query)
+	require.True(t, answerevidence.Requires(ctx, answerevidence.IntentSource))
+	require.True(t, answerevidence.Requires(ctx, answerevidence.IntentIntegration))
+	search := types.SourceBrowseSearchAudit{Global: true, Complete: false, Matched: true, Repositories: []string{"Mininglamp-OSS/openclaw-channel-octo"}}
+	recordAnswerEvidenceFromStep(ctx, types.AgentStep{ToolCalls: []types.ToolCall{{Name: agenttools.ToolSourceBrowse, Result: &types.ToolResult{Success: true, Data: map[string]interface{}{types.SourceBrowseSearchDataKey: search}}}}})
+	require.False(t, answerevidence.IntegrationEvidenceObserved(ctx), "a search is navigation, not content evidence")
+	require.False(t, answerevidence.SourceSearchComplete(ctx), "a repository filter is not an exhaustive global absence search")
+	read := types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: "Mininglamp-OSS/openclaw-channel-octo", Path: "src/socket.ts", Revision: "pinned-commit"}
+	recordAnswerEvidenceFromStep(ctx, types.AgentStep{ToolCalls: []types.ToolCall{{Name: agenttools.ToolSourceBrowse, Result: &types.ToolResult{Success: true, Data: map[string]interface{}{types.SourceBrowseCitationDataKey: read}}}}})
+	require.True(t, answerevidence.IntegrationEvidenceObserved(ctx), "the actual audited repository was searched and read")
+	require.False(t, answerevidence.NeedsSynthesisFallback(ctx))
+
+	wrongOwner := answerevidence.WithContract(context.Background(), query)
+	search.Repositories = []string{"OtherOrg/openclaw-channel-octo"}
+	recordAnswerEvidenceFromStep(wrongOwner, types.AgentStep{ToolCalls: []types.ToolCall{{Name: agenttools.ToolSourceBrowse, Result: &types.ToolResult{Success: true, Data: map[string]interface{}{types.SourceBrowseSearchDataKey: search}}}}})
+	recordAnswerEvidenceFromStep(wrongOwner, types.AgentStep{ToolCalls: []types.ToolCall{{Name: agenttools.ToolSourceBrowse, Result: &types.ToolResult{Success: true, Data: map[string]interface{}{types.SourceBrowseCitationDataKey: read}}}}})
+	require.False(t, answerevidence.IntegrationEvidenceObserved(wrongOwner), "a same-named repository from another owner is not proof")
+
+	unattributed := answerevidence.WithContract(context.Background(), query)
+	search.Repositories = nil
+	recordAnswerEvidenceFromStep(unattributed, types.AgentStep{ToolCalls: []types.ToolCall{{Name: agenttools.ToolSourceBrowse, Result: &types.ToolResult{Success: true, Data: map[string]interface{}{types.SourceBrowseSearchDataKey: search}}}}})
+	recordAnswerEvidenceFromStep(unattributed, types.AgentStep{ToolCalls: []types.ToolCall{{Name: agenttools.ToolSourceBrowse, Result: &types.ToolResult{Success: true, Data: map[string]interface{}{types.SourceBrowseCitationDataKey: read}}}}})
+	require.False(t, answerevidence.IntegrationEvidenceObserved(unattributed), "the model's filter alone cannot prove a repository was searched")
+}
+
 func TestSourceSearchAuditKeepsScopedAndGlobalCompletenessSeparate(t *testing.T) {
 	ctx := answerevidence.WithContract(context.Background(), "Claude 支持接入 Octo IM Bot 吗？")
 	recordAnswerEvidenceFromStep(ctx, types.AgentStep{ToolCalls: []types.ToolCall{{
