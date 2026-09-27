@@ -63,6 +63,22 @@ func systemMessage(t *testing.T, call []chat.Message) string {
 	return ""
 }
 
+func TestPreflightRequiresNarrowCitationOnlyAfterSourceRead(t *testing.T) {
+	source := answerEvidencePreflight{totalLimit: 1000, evidence: []string{
+		"Authorized source read for example/repo:\n" + `{"path":"src/main.go","start_line":1,"end_line":40}`,
+	}}
+	guidance := source.render()
+	require.Contains(t, guidance, "broad preflight source read is for orientation")
+	require.Contains(t, guidance, "at most 12 original lines")
+	require.Contains(t, guidance, `new current-turn <ref id="wN"/> handle`)
+	require.Contains(t, guidance, "Do not handwrite a source_url, GitHub link or line range")
+
+	release := answerEvidencePreflight{totalLimit: 1000, evidence: []string{
+		"Official GitHub Release lookup for example/repo:\n" + `{"url":"https://github.com/example/repo/releases/tag/v1"}`,
+	}}
+	require.NotContains(t, release.render(), "at most 12 original lines", "release-only work must not require a source tool")
+}
+
 func TestAnswerEvidencePreflightReadsAuthorizedLatestReleaseBeforeModel(t *testing.T) {
 	checkedAt := time.Date(2026, time.September, 22, 10, 0, 0, 0, time.UTC)
 	releaseTool := newScriptedPreflightTool(agenttools.ToolGitHubReleaseLookup, func(args map[string]interface{}) *types.ToolResult {

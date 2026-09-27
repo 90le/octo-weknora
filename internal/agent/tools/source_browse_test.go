@@ -51,6 +51,8 @@ type sourceToolReader struct {
 	summaries     map[string][]types.SourceSummary
 	listCalls     []string
 	treeCalls     []sourceToolCall
+	treeOffsets   []int
+	treeEntries   []types.SourceTreeEntry
 	readCalls     []sourceToolCall
 	searches      []sourceToolCall
 	results       map[string]*types.SourceSearch
@@ -67,11 +69,23 @@ func (r *sourceToolReader) ListSourceSnapshots(_ context.Context, kbID string) (
 	return append([]types.SourceSummary(nil), r.summaries[kbID]...), nil
 }
 
-func (r *sourceToolReader) SourceTree(_ context.Context, kbID, sourceID, snapshotID, _ string, _ int) (*types.SourceTree, error) {
+func (r *sourceToolReader) SourceTree(ctx context.Context, kbID, sourceID, snapshotID, _ string, offset int) (*types.SourceTree, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.requireGrant && !access.HasKBGrant(ctx, kbID, 7, types.OrgRoleViewer) {
+		return nil, fmt.Errorf("missing KB grant for %s", kbID)
+	}
 	r.treeCalls = append(r.treeCalls, sourceToolCall{KnowledgeBaseID: kbID, SourceID: sourceID, SnapshotID: snapshotID})
-	return &types.SourceTree{SnapshotID: snapshotID, Entries: []types.SourceTreeEntry{{Path: "src", Directory: true}}, Total: 1}, nil
+	r.treeOffsets = append(r.treeOffsets, offset)
+	entries := r.treeEntries
+	if entries == nil {
+		entries = []types.SourceTreeEntry{{Path: "src", Directory: true}}
+	}
+	if offset > len(entries) {
+		offset = len(entries)
+	}
+	end := min(offset+200, len(entries))
+	return &types.SourceTree{SnapshotID: snapshotID, Entries: append([]types.SourceTreeEntry(nil), entries[offset:end]...), Total: len(entries)}, nil
 }
 
 func (r *sourceToolReader) ReadSourceFile(_ context.Context, kbID, sourceID, snapshotID, p string, start, end int) (*types.SourceRead, error) {
@@ -224,6 +238,100 @@ func TestSourceBrowseCatalogBindsOpaqueRefAndRedactsInternalIDs(t *testing.T) {
 	serialized, err := json.Marshal(read)
 	require.NoError(t, err)
 	require.NotContains(t, string(serialized), "kb-uuid", "private provenance must not serialize with a live ToolResult")
+}
+
+func TestSourceBrowseTreePagesOnlyAuthorizedDirectoryAndKeepsDefault(t *testing.T) {
+	entries := make([]types.SourceTreeEntry, 145)
+	for i := range entries {
+		entries[i] = types.SourceTreeEntry{Path: fmt.Sprintf("src/file-%03d.go", i)}
+	}
+	reader := &sourceToolReader{
+		summaries: map[string][]types.SourceSummary{
+			"kb-allowed":    {sourceSummary("source", "snapshot", "github.com/example/allowed")},
+			"kb-restricted": {sourceSummary("other", "other-snapshot", "github.com/example/restricted")},
+		},
+		treeEntries:  entries,
+		requireGrant: true,
+	}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{
+		{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb-allowed"},
+		{Type: types.SearchTargetTypeKnowledge, TenantID: 7, KnowledgeBaseID: "kb-restricted", KnowledgeIDs: []string{"one-file"}},
+	})
+	ref := sourceCatalog(t, tool).Sources[0].SourceRef
+	registry := NewToolRegistry()
+	registry.RegisterTool(tool)
+	for _, tc := range []struct {
+		offset, count, next int
+	}{
+		{offset: 0, count: 64, next: 64},
+		{offset: 64, count: 64, next: 128},
+		{offset: 128, count: 17, next: -1},
+		{offset: 200, count: 0, next: -1},
+	} {
+		result, err := registry.ExecuteTool(sourceToolContext(), ToolSourceBrowse, json.RawMessage(fmt.Sprintf(`{"action":"tree","source_ref":"%s","limit":64,"offset":%d}`, ref, tc.offset)))
+		require.NoError(t, err)
+		require.True(t, result.Success, result.Error)
+		var page sourceBrowseTree
+		require.NoError(t, json.Unmarshal([]byte(result.Output), &page))
+		require.Equal(t, 145, page.Total)
+		require.Equal(t, tc.offset, page.Offset)
+		require.Len(t, page.Entries, tc.count)
+		if tc.count > 0 {
+			require.Equal(t, entries[tc.offset].Path, page.Entries[0].Path)
+		}
+		if tc.next < 0 {
+			require.Nil(t, page.NextOffset)
+		} else {
+			require.NotNil(t, page.NextOffset)
+			require.Equal(t, tc.next, *page.NextOffset)
+		}
+		require.NotContains(t, result.Output, "kb-allowed")
+		require.NotContains(t, result.Output, "kb-restricted")
+		require.NotContains(t, result.Output, "other-snapshot")
+	}
+	legacy, err := tool.Execute(sourceToolContext(), json.RawMessage(fmt.Sprintf(`{"action":"tree","source_ref":"%s"}`, ref)))
+	require.NoError(t, err)
+	require.True(t, legacy.Success, legacy.Error)
+	var full sourceBrowseTree
+	require.NoError(t, json.Unmarshal([]byte(legacy.Output), &full))
+	require.Len(t, full.Entries, 145, "omitted limit preserves the original up-to-200-entry behavior")
+	require.Nil(t, full.NextOffset)
+	require.NotContains(t, legacy.Output, `"next_offset"`)
+	zero, err := tool.Execute(sourceToolContext(), json.RawMessage(fmt.Sprintf(`{"action":"tree","source_ref":"%s","limit":0}`, ref)))
+	require.NoError(t, err)
+	require.True(t, zero.Success, zero.Error)
+	require.JSONEq(t, legacy.Output, zero.Output, "the Go zero-value limit keeps the legacy projection")
+	require.Equal(t, []int{0, 64, 128, 200, 0, 0}, reader.treeOffsets)
+	for _, call := range reader.treeCalls {
+		require.Equal(t, "kb-allowed", call.KnowledgeBaseID)
+		require.Equal(t, "source", call.SourceID)
+	}
+	require.NotContains(t, reader.listCalls, "kb-restricted")
+}
+
+func TestSourceBrowseTreeRejectsInvalidOrUnauthorizedPage(t *testing.T) {
+	reader := &sourceToolReader{summaries: map[string][]types.SourceSummary{
+		"kb-allowed":    {sourceSummary("source", "snapshot", "github.com/example/allowed")},
+		"kb-restricted": {sourceSummary("other", "other-snapshot", "github.com/example/restricted")},
+	}}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{
+		{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb-allowed"},
+		{Type: types.SearchTargetTypeKnowledge, TenantID: 7, KnowledgeBaseID: "kb-restricted", KnowledgeIDs: []string{"one-file"}},
+	})
+	_ = sourceCatalog(t, tool)
+	for _, args := range []string{
+		`{"action":"tree","source_ref":"s1","limit":65}`,
+		`{"action":"tree","source_ref":"s1","limit":-1}`,
+		`{"action":"tree","source_ref":"s1","offset":-1}`,
+		`{"action":"tree","source_ref":"s2","limit":1}`,
+		`{"action":"tree","knowledge_base_id":"kb-restricted","source_id":"other","limit":1}`,
+		`{"action":"read","source_ref":"s1","path":"README.md","limit":1}`,
+	} {
+		result, err := tool.Execute(sourceToolContext(), json.RawMessage(args))
+		require.NoError(t, err)
+		require.False(t, result.Success, args)
+	}
+	require.Empty(t, reader.treeCalls, "invalid and unauthorized selectors cannot reach the reader")
 }
 
 func TestSourceBrowseCatalogFindsNamedRepositoryBeyondFirstPage(t *testing.T) {

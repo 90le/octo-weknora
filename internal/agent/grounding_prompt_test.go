@@ -60,12 +60,12 @@ func TestGroundingUsesRegistryInsteadOfConfiguration(t *testing.T) {
 		{"wiki", []string{tools.ToolWikiReadPage, tools.ToolWikiSearch}, false,
 			[]string{"Available knowledge tools: wiki_search, wiki_read_page"}, []string{"knowledge_search", "web_search is available"}},
 		{"source and release", []string{tools.ToolSourceBrowse, tools.ToolGitHubReleaseLookup}, false,
-			[]string{"source_browse is available", "read its fixed-snapshot file and lines", "github_release_lookup is available"},
+			[]string{"source_browse is available", "read its fixed-snapshot file and lines", "locate likely files with tree", "at most 12 original lines", "narrow read's <ref id=\"wN\"/>", "github_release_lookup is available"},
 			[]string{"Available knowledge tools:", "web_search is available"}},
 		{"registered web", []string{tools.ToolWebSearch, tools.ToolWebFetch}, false,
 			[]string{"web_search is available", "web_fetch is available"}, []string{"Available knowledge tools:"}},
 		{"no tools", nil, false, nil,
-			[]string{"Available knowledge tools:", "web_search is available", "web_fetch is available"}},
+			[]string{"Available knowledge tools:", "web_search is available", "web_fetch is available", "at most 12 original lines"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := newTestEngine(t, &mockChat{})
