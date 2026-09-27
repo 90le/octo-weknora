@@ -2,7 +2,15 @@
 
 更新：2026-09-28。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-28；生产 PR #81）
+## 当前状态（2026-09-28；生产 PR #83）
+
+**运行版本：**[PR #83](https://github.com/90le/octo-weknora/pull/83) 已合并并切到生产后端，业务代码提交为 [`642f8c26d38fcff6ac5ce397e4b542b1f246e45e`](https://github.com/90le/octo-weknora/commit/642f8c26d38fcff6ac5ce397e4b542b1f246e45e)，app Image ID `sha256:5b417ce6b9ea5329bea84bf4a591b1733a69ae788694a63653b86112ff05ac36`；UI 仍为 `sha256:dd2bae75c16daf552ee5f3ff00ee4cf42be852c128ed3ca9b23ae15d92866eb1`。运行中的 `/app/WeKnora` 与本轮编译产物 SHA-256 均为 `b80a8627c768734f7a2606601f1fbd01dd73dd785c0d711deec88a49f121e08d`。独立回读确认 app 健康 200、迁移 `107|f`、4 个知识库、5 个 Octo 区域、1495 条活动知识、公网搜索开启数 0，OpenClaw Gateway 与 Octo daemon active。私人小丘与其他 Bot 未切换。
+
+**此次增量：**#83 修复 Agent 已标记的“证据不足／其他 fallback”答复在 IM 历史中仍被存成 `is_fallback=false` 的问题；流式和非流式消息都保留最终答复事件的 fallback 标记，正常答案保持 false。自动测试覆盖两条路径的消息持久化、正常与 fallback 四种组合；App、Octo 适配器及 lint CI 均通过。新的 2 TB 数据盘备份位于服务器私有 `/home/mlclaw/agent-data/operations/release-agent-pr83-20260928/backup-current`，隔离候选从该备份恢复并通过登录、系统／知识库／区域／解析接口及资产数量核对；正式 Compose 仅变更后端镜像。候选容器、网络及临时源码副本已定点清理，保留 #81 镜像作立即回退。最后一次磁盘回读为根盘约余 14 GB、2 TB 盘约用 56 GB，均为时点值。
+
+**验收边界与下一步：**#81 的真实群 `QA-2E9B-03` 已验证源码答案与固定提交短行号链接；#83 仅改变历史元数据，尚未人为制造新的线上 fallback 来复测，以免新增测试缺口记录。#79 的已存测试消息不会自动回填。下一步仍是独立多来源问题集与逐主张语义支持验证；当前可确认的是来源行段确实本轮已读，不能据此推断所有答案都正确。既有发布、同步容量、真实 AIBP 资料及外网问答限制见下方 #81 快照与 [计划](OCTO-PLAN.md)。
+
+## 2026-09-28 PR #81 发布后快照（历史）
 
 **代码与运行边界：**[PR #79](https://github.com/90le/octo-weknora/pull/79)、[#80](https://github.com/90le/octo-weknora/pull/80)、[#81](https://github.com/90le/octo-weknora/pull/81) 均已合并，生产后端对应 [#81 合并提交 `2e9b53c53b0ba38417448ea598420b25c039020b`](https://github.com/90le/octo-weknora/commit/2e9b53c53b0ba38417448ea598420b25c039020b)，运行 Image ID `sha256:ae29e192684f9234768d0070c9352723b0f01e070e77e82af418ceb8d230ef91`。前端未变，仍为 `sha256:dd2bae75c16daf552ee5f3ff00ee4cf42be852c128ed3ca9b23ae15d92866eb1`。独立回读确认后端健康 200、迁移 `107|f`、4 个知识库、5 个 Octo 区域、1495 条活动知识、区域公网搜索开启数 0、待处理 Octo inbox 0；OpenClaw Gateway 与 Octo daemon 均 active。此次仅切换公开「Octo 小丘」使用的 WeKnora 后端，私人小丘和其他 Bot 未切换。
 
