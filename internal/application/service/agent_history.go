@@ -125,17 +125,21 @@ func buildHistoricalTurnMessages(ctx context.Context, users []*types.Message, as
 	}
 	out := []chat.Message{buildUserHistoryMessage(users[0])}
 	if types.HasIMKnowledgeScope(ctx) {
-		final := finalAnswerHistoryMessage(assistant)
-		if final == nil {
-			return nil
-		}
 		// This is a completed historical turn. Keep the user's actual words,
 		// including any mid-run update, but do not re-inject the live steering
 		// wrapper or old tool outputs into the next scoped request.
 		for _, user := range users[1:] {
 			out = append(out, buildUserHistoryMessage(user))
 		}
-		out = append(out, *final)
+		// A failed or cancelled IM turn still gives a follow-up its original
+		// question, but the system's error notice is not an answer to build on.
+		// Exact text handles rows persisted before IsFallback was set.
+		if assistant.Channel == "im" && (assistant.IsFallback || types.IsIMFallbackAnswer(assistant.Content)) {
+			return out
+		}
+		if final := finalAnswerHistoryMessage(assistant); final != nil {
+			out = append(out, *final)
+		}
 		return out
 	}
 	return append(out, buildTurnBodyMessages(assistant, users[1:])...)

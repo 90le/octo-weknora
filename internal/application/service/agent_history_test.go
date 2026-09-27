@@ -58,7 +58,24 @@ func TestBuildHistoricalTurnMessagesScopedIMSkipsEmptyFinalAnswer(t *testing.T) 
 		[]*types.Message{{Content: "What changed?"}},
 		&types.Message{Content: "<think>incomplete</think>", AgentSteps: types.AgentSteps{{Thought: "unfinished tool step"}}},
 	)
-	require.Empty(t, got)
+	require.Equal(t, []chat.Message{{Role: "user", Content: "What changed?"}}, got)
+}
+
+func TestBuildHistoricalTurnMessagesScopedIMDoesNotReplayFailureAsAnswer(t *testing.T) {
+	ctx := types.WithIMKnowledgeScope(context.Background(), []string{"kb-current"})
+	user := []*types.Message{{Content: "How does Octo CLI work?"}}
+	for _, assistant := range []*types.Message{
+		{Channel: "im", Content: types.IMErrorFallback}, // legacy row
+		{Channel: "im", Content: types.IMCancelledFallback},
+		{Channel: "im", Content: "A future error notice", IsFallback: true},
+	} {
+		require.Equal(t, []chat.Message{{Role: "user", Content: "How does Octo CLI work?"}},
+			buildHistoricalTurnMessages(ctx, user, assistant))
+	}
+	require.Equal(t, []chat.Message{
+		{Role: "user", Content: "How does Octo CLI work?"},
+		{Role: "assistant", Content: "Install it with npm."},
+	}, buildHistoricalTurnMessages(ctx, user, &types.Message{Channel: "im", Content: "Install it with npm."}))
 }
 
 // TestBuildUserHistoryMessage_IgnoresLegacyRenderedContent verifies that old
