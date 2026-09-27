@@ -1,8 +1,20 @@
 # 项目进度
 
-更新：2026-09-27。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
+更新：2026-09-28。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-27；生产 PR #77）
+## 当前状态（2026-09-28；生产 PR #81）
+
+**代码与运行边界：**[PR #79](https://github.com/90le/octo-weknora/pull/79)、[#80](https://github.com/90le/octo-weknora/pull/80)、[#81](https://github.com/90le/octo-weknora/pull/81) 均已合并，生产后端对应 [#81 合并提交 `2e9b53c53b0ba38417448ea598420b25c039020b`](https://github.com/90le/octo-weknora/commit/2e9b53c53b0ba38417448ea598420b25c039020b)，运行 Image ID `sha256:ae29e192684f9234768d0070c9352723b0f01e070e77e82af418ceb8d230ef91`。前端未变，仍为 `sha256:dd2bae75c16daf552ee5f3ff00ee4cf42be852c128ed3ca9b23ae15d92866eb1`。独立回读确认后端健康 200、迁移 `107|f`、4 个知识库、5 个 Octo 区域、1495 条活动知识、区域公网搜索开启数 0、待处理 Octo inbox 0；OpenClaw Gateway 与 Octo daemon 均 active。此次仅切换公开「Octo 小丘」使用的 WeKnora 后端，私人小丘和其他 Bot 未切换。
+
+**本轮能力变化：**#79 让 `source_browse.read` 的完整 JSON 穿过检索包装和工具预算；超预算明确失败，返回的末行及固定提交 URL 只覆盖模型实际拿到的完整行。过长预检摘录不再作为已展示的证据；Octo 流式与非流式终稿清除未经本轮读取的 GitHub 行号链接。模型网关明确拒绝可选 thinking 字段且无字段重试成功后，同一个模型实例的后续 Agent 轮次不再重复发送该字段，不改持久模型配置。#80 把仓库过滤的全局搜索实际扫描过的受权仓库身份写入私有证据审计，后续读取同仓源码可通过接入证据门槛；模型仅填写过滤词、只列目录或另一归属的同名仓库仍不能冒充证据。#81 允许固定提交、同文件、落在本轮已读范围内的至多 12 行短链接；未读范围、其他仓库、可变分支与宽泛手写行段仍会被拦下。
+
+**真实群验收及失败样本：**在「Steward 联调群」使用原生「Octo 小测」Bot 身份发问，核对了真实消息和持久 inbox。#79 的 `QA-2279-01` 虽实际搜索、读取源码，却因过滤搜索未登记仓库身份而在 17 步、约 52 秒、416660 token 后错误兜底；这促成 #80。#80 的 `QA-DB264-02` 已在约 13 秒内一次投递实质答案，但第 2／1700／38 行的短链接被标为“未核验”；这促成 #81。#81 的 `QA-2E9B-03` 在约 15 秒内一次投递，5 个 Agent 步骤、60445 token，明确回答 `ws` 包，并保留可点击的固定提交 [导入行 `src/socket.ts:2`](https://github.com/Mininglamp-OSS/openclaw-channel-octo/blob/d824ba53ccac358a87b590c1e52f190fdd01e64d/src/socket.ts#L2-L2) 和 [实例创建行 `src/socket.ts:423`](https://github.com/Mininglamp-OSS/openclaw-channel-octo/blob/d824ba53ccac358a87b590c1e52f190fdd01e64d/src/socket.ts#L423-L423)；两处代码已与官方仓库固定提交对照。上述三条已成为开发样本，不能再当作独立验收集，也不证明所有回答的逐主张语义支持。
+
+**发布、空间与恢复：**三次合并提交均通过各自 CI；每次都在 2 TB 数据盘建立新的 PostgreSQL／文件备份和内部网络隔离候选，并在切换前核对同步、文档解析、inbox 排空。#79 首个候选暴露分词词典编译路径错误，已按运行镜像的 `/go/pkg/mod` 路径重编译并在候选登录、读接口通过后才切换；#80／#81 候选也通过登录及系统、知识库、区域、解析引擎接口检查。正式 Compose 仅改后端镜像；最近一次备份位于服务器私有 `/home/mlclaw/agent-data/operations/release-agent-pr81-20260928/backup-current`，覆盖 PostgreSQL、应用文件、来源快照、Compose／环境，不含 Milvus／Neo4j 卷。隔离候选容器、内部网络、候选数据克隆与临时源码测试副本已定点清理；保留现行 #81、上一版 #80 回退镜像及运行底座。最后一次回读根盘约余 15 GB、2 TB 盘约使用 55 GB，均为时点值。
+
+**尚未完成：**本轮确认的是“链接确实指向本轮已读行段”，不是“每条结论都被紧邻行段语义支持”。下一步建立独立问题集，分别验证源码、RAG 文档、Wiki、发布版本、跨仓复合提问、追问、错误和越权路径的事实与逐主张来源；再决定是否增加有界的主张核验／补读步骤。模型可选 thinking 字段的实例级回退只减少同次请求的重复 400，不代表所有模型接口兼容性已验收。GitHub 发布 tag→源码 commit 对齐、PR #60 默认关闭的共享 Git 物理缓存与安全回收、600／6000 来源选仓与同步容量、生产新文档解析、草稿／越权复测、真实 AIBP 资料接入仍待完成。受控公网工具虽已发布，所有区域仍关闭，真实群外网问答未验收。旧 `knowledge-source-sync.service` 自 2026-09-20 起处于 timeout/failed，是本次发布前的历史状态，应与当前应用内来源定时任务分开诊断。
+
+## 2026-09-27 PR #77 发布后快照（历史）
 
 **代码与运行边界：**主线及生产 app 已切到 [PR #77](https://github.com/90le/octo-weknora/pull/77) 的合并提交 [`4925c30a7764c3162738626abc19c035cc774552`](https://github.com/90le/octo-weknora/commit/4925c30a7764c3162738626abc19c035cc774552)，此前 [#73](https://github.com/90le/octo-weknora/pull/73) 至 [#76](https://github.com/90le/octo-weknora/pull/76) 也已合并。生产 app Image ID 为 `sha256:5480aa9ef941b3d415eb916cd4492abdbec543a7227cd380b57076082f5dc1ef`，UI 未改，仍为 `sha256:dd2bae75c16daf552ee5f3ff00ee4cf42be852c128ed3ca9b23ae15d92866eb1`。本轮有新的 2 TB 数据盘备份并通过隔离候选检查；独立生产回读确认 app／UI 健康 200、PostgreSQL migration `107|f`、4 个知识库、5 个 Octo 区域公网搜索开关仍关闭、1495 条已完成知识，OpenClaw Gateway 与 Octo daemon active；私人小丘及其他 Bot 未切换。以上是运行状态与资产回读，不是问答质量验收。
 
