@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -317,6 +318,133 @@ func TestSourceBrowseGlobalSearchCoversAllAuthorizedSnapshotsWithoutScopeWidenin
 	require.NoError(t, err)
 	require.True(t, tree.Success, tree.Error)
 	require.Equal(t, sourceToolCall{KnowledgeBaseID: "kb-authorized", SourceID: "source-37", SnapshotID: "snapshot-37"}, reader.treeCalls[len(reader.treeCalls)-1])
+}
+
+func TestSourceBrowseGlobalSearchSelectsNamedRepositoryBeyondFirstPage(t *testing.T) {
+	summaries := make([]types.SourceSummary, 0, 121)
+	for i := 0; i < 120; i++ {
+		summaries = append(summaries, sourceSummary(fmt.Sprintf("source-%03d", i), fmt.Sprintf("snapshot-%03d", i), fmt.Sprintf("github.com/example/repo-%03d", i)))
+	}
+	summaries = append(summaries, sourceSummary("source-target", "snapshot-target", "github.com/example/target-channel-octo"))
+	reader := &sourceToolReader{
+		summaries: map[string][]types.SourceSummary{
+			"kb-authorized": summaries,
+			"kb-restricted": {sourceSummary("source-restricted", "snapshot-restricted", "github.com/example/target-channel-octo")},
+		},
+		results: map[string]*types.SourceSearch{
+			"source-target": {SnapshotID: "snapshot-target", Matches: []types.SourceMatch{{Path: "README.md", Line: 4, Text: "bridge fact"}}, ScannedFiles: 1, Complete: true},
+		},
+		requireGrant: true,
+	}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{
+		{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb-authorized"},
+		{Type: types.SearchTargetTypeKnowledge, TenantID: 7, KnowledgeBaseID: "kb-restricted", KnowledgeIDs: []string{"one-file"}},
+	})
+	result, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"search","query":"bridge fact","repository_query":"TARGET-CHANNEL-OCTO"}`))
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+	var search sourceBrowseGlobalSearch
+	require.NoError(t, json.Unmarshal([]byte(result.Output), &search))
+	require.Equal(t, "TARGET-CHANNEL-OCTO", search.RepositoryQuery)
+	require.False(t, search.Complete, "a named repository search is not an exhaustive all-source search")
+	require.Nil(t, search.NextOffset)
+	require.Equal(t, 1, search.ScannedSources)
+	require.Equal(t, 1, search.MatchedSources)
+	require.Len(t, search.Sources, 1)
+	require.Equal(t, "github.com/example/target-channel-octo", search.Sources[0].Repository)
+	require.Equal(t, "bridge fact", search.Sources[0].Matches[0].Text)
+	require.Equal(t, []sourceToolCall{{KnowledgeBaseID: "kb-authorized", SourceID: "source-target", SnapshotID: "snapshot-target"}}, reader.searches)
+	require.NotContains(t, reader.listCalls, "kb-restricted")
+	require.NotContains(t, result.Output, "kb-authorized")
+	require.NotContains(t, result.Output, "source-target")
+	require.NotContains(t, result.Output, "snapshot-target")
+	audit, ok := result.Data[types.SourceBrowseSearchDataKey].(types.SourceBrowseSearchAudit)
+	require.True(t, ok)
+	require.False(t, audit.Complete)
+	require.True(t, audit.Matched)
+
+	read, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"read","source_ref":"`+search.Sources[0].SourceRef+`","path":"README.md","start_line":1,"end_line":6}`))
+	require.NoError(t, err)
+	require.True(t, read.Success, read.Error)
+	require.Contains(t, read.Output, "https://github.com/example/repo/blob/commit-1/README.md")
+	require.Equal(t, "source-target", reader.readCalls[len(reader.readCalls)-1].SourceID)
+}
+
+func TestSourceBrowseGlobalSearchPagesAuthorizedSourcesWithoutClaimingFullCoverage(t *testing.T) {
+	summaries := make([]types.SourceSummary, 0, 120)
+	for i := 0; i < 120; i++ {
+		summaries = append(summaries, sourceSummary(fmt.Sprintf("source-%03d", i), fmt.Sprintf("snapshot-%03d", i), fmt.Sprintf("github.com/example/repo-%03d", i)))
+	}
+	reader := &sourceToolReader{summaries: map[string][]types.SourceSummary{"kb": summaries}, results: map[string]*types.SourceSearch{
+		"source-100": {SnapshotID: "snapshot-100", Matches: []types.SourceMatch{{Path: "late.go", Line: 7, Text: "needle"}}, ScannedFiles: 1, Complete: true},
+	}}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	for _, tc := range []struct {
+		offset      int
+		wantNext    int
+		wantMatches int
+	}{
+		{offset: 0, wantNext: 16},
+		{offset: 96, wantNext: 112, wantMatches: 1},
+		{offset: 112, wantNext: 0},
+	} {
+		result, err := tool.Execute(sourceToolContext(), json.RawMessage(fmt.Sprintf(`{"action":"search","query":"needle","offset":%d,"limit":16}`, tc.offset)))
+		require.NoError(t, err)
+		require.True(t, result.Success, result.Error)
+		var search sourceBrowseGlobalSearch
+		require.NoError(t, json.Unmarshal([]byte(result.Output), &search))
+		require.Equal(t, tc.offset, search.Offset)
+		require.False(t, search.Complete, "a partial page cannot prove a source fact is absent")
+		require.Equal(t, tc.wantMatches, search.MatchedSources)
+		if tc.wantNext > 0 {
+			require.NotNil(t, search.NextOffset)
+			require.Equal(t, tc.wantNext, *search.NextOffset)
+		} else {
+			require.Nil(t, search.NextOffset)
+		}
+		audit, ok := result.Data[types.SourceBrowseSearchDataKey].(types.SourceBrowseSearchAudit)
+		require.True(t, ok)
+		require.False(t, audit.Complete)
+	}
+}
+
+func TestSourceBrowseGlobalSearchRejectsUnsafePageSelectors(t *testing.T) {
+	reader := &sourceToolReader{}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	for _, args := range []string{
+		`{"action":"search","query":"needle","offset":-1}`,
+		`{"action":"search","query":"needle","limit":65}`,
+		`{"action":"search","query":"needle","repository_query":"` + strings.Repeat("x", 129) + `"}`,
+		`{"action":"search","source_ref":"s1","query":"needle","repository_query":"repo"}`,
+		`{"action":"search","source_ref":"s1","query":"needle","offset":1}`,
+		`{"action":"tree","source_ref":"s1","repository_query":"repo"}`,
+		`{"action":"read","source_ref":"s1","path":"README.md","limit":1}`,
+	} {
+		result, err := tool.Execute(sourceToolContext(), json.RawMessage(args))
+		require.NoError(t, err)
+		require.False(t, result.Success, args)
+	}
+	require.Empty(t, reader.listCalls)
+	require.Empty(t, reader.searches)
+}
+
+func TestSourceBrowseGlobalSearchEmptyRepositoryFilterIsNotExhaustive(t *testing.T) {
+	reader := &sourceToolReader{summaries: map[string][]types.SourceSummary{
+		"kb": {sourceSummary("source", "snapshot", "github.com/example/known")},
+	}}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	result, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"search","query":"needle","repository_query":"missing"}`))
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+	var search sourceBrowseGlobalSearch
+	require.NoError(t, json.Unmarshal([]byte(result.Output), &search))
+	require.Equal(t, "missing", search.RepositoryQuery)
+	require.False(t, search.Complete)
+	require.Zero(t, search.ScannedSources)
+	require.Empty(t, reader.searches)
+	audit, ok := result.Data[types.SourceBrowseSearchDataKey].(types.SourceBrowseSearchAudit)
+	require.True(t, ok)
+	require.False(t, audit.Complete)
 }
 
 func TestSourceBrowseGlobalSearchMarksConfiguredUnsyncedSourceIncomplete(t *testing.T) {

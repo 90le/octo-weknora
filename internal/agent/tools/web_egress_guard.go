@@ -12,9 +12,11 @@ import (
 )
 
 const (
-	maxGuardedWebQueryRunes = 320
-	maxUserWebURLScanBytes  = 16384
-	maxExplicitWebURLs      = 16
+	maxGuardedWebQueryRunes  = 320
+	maxGuardedWebSourceRunes = 2048
+	maxGuardedWebQueries     = 6
+	maxUserWebURLScanBytes   = 16384
+	maxExplicitWebURLs       = 16
 )
 
 var userWebURLPattern = regexp.MustCompile(`(?i)https?://[^\s<>"']+`)
@@ -23,11 +25,11 @@ var userWebURLPattern = regexp.MustCompile(`(?i)https?://[^\s<>"']+`)
 // from the original user message, before private knowledge/tool output enters
 // the model context. Never share a guard across turns or tenants.
 //
-// A model may decide to search, but its query cannot contribute outbound text:
-// only the bounded, normalized user message can. Fetches are limited to URLs
-// explicitly present in that message or returned by this turn's search.
+// A model may decide to search and select one of the bounded, normalized
+// original-user-text queries. It cannot contribute new outbound text. Fetches
+// are limited to URLs in the user message or returned by this turn's search.
 type WebEgressGuard struct {
-	query string
+	queries []string
 	// authorizer is assigned once before the per-turn tools can execute.
 	authorizer func(context.Context) error
 	mu         sync.RWMutex
@@ -56,8 +58,8 @@ func (g *WebEgressGuard) Authorize(ctx context.Context) error {
 // search is unavailable for this turn; explicit public URLs can still be read.
 func NewWebEgressGuard(originalUserTurn string) *WebEgressGuard {
 	guard := &WebEgressGuard{
-		query: normalizeGuardedWebQuery(originalUserTurn),
-		urls:  make(map[string]struct{}),
+		queries: guardedWebQueries(originalUserTurn),
+		urls:    make(map[string]struct{}),
 	}
 	if len(originalUserTurn) > maxUserWebURLScanBytes {
 		originalUserTurn = originalUserTurn[:maxUserWebURLScanBytes]
@@ -67,6 +69,72 @@ func NewWebEgressGuard(originalUserTurn string) *WebEgressGuard {
 		guard.allowURL(candidate)
 	}
 	return guard
+}
+
+// guardedWebQueries offers the full question and a few literal clauses from
+// the same user turn. After private retrieval the model can choose among
+// these strings, but cannot invent a public query with retrieved material.
+func guardedWebQueries(original string) []string {
+	full := normalizeGuardedWebQuery(original)
+	if full == "" {
+		return nil
+	}
+	queries := make([]string, 0, maxGuardedWebQueries)
+	queries = append(queries, full)
+
+	// Collect literal clauses from a bounded prefix, then sample across their
+	// positions. Taking only the first few would lose a final question after
+	// several context clauses, a common shape of a longer user turn.
+	clauses := make([]string, 0)
+	clauseSeen := make(map[string]struct{})
+	addClause := func(value string) {
+		query := normalizeGuardedWebQuery(value)
+		if query == "" || query == full {
+			return
+		}
+		if _, exists := clauseSeen[query]; exists {
+			return
+		}
+		clauseSeen[query] = struct{}{}
+		clauses = append(clauses, query)
+	}
+	var clause strings.Builder
+	count := 0
+	for _, r := range original {
+		if count >= maxGuardedWebSourceRunes {
+			break
+		}
+		count++
+		if isGuardedWebClauseBoundary(r) {
+			addClause(clause.String())
+			clause.Reset()
+			continue
+		}
+		clause.WriteRune(r)
+	}
+	addClause(clause.String())
+	slots := maxGuardedWebQueries - len(queries)
+	if len(clauses) <= slots {
+		queries = append(queries, clauses...)
+		return queries
+	}
+	for i := 0; i < slots; i++ {
+		index := 0
+		if slots > 1 {
+			index = i * (len(clauses) - 1) / (slots - 1)
+		}
+		queries = append(queries, clauses[index])
+	}
+	return queries
+}
+
+func isGuardedWebClauseBoundary(r rune) bool {
+	switch r {
+	case '\n', '\r', '。', '！', '？', '!', '?', '；', ';', '，', ',', '、':
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeGuardedWebQuery(value string) string {
@@ -98,24 +166,46 @@ func normalizeGuardedWebQueryUpTo(value string, limit int) string {
 	return strings.TrimSpace(out.String())
 }
 
-// SearchQuery returns the only query this turn may send to a web provider.
+// SearchQuery is the default query for an empty model argument.
 func (g *WebEgressGuard) SearchQuery() string {
-	if g == nil {
+	if g == nil || len(g.queries) == 0 {
 		return ""
 	}
-	return g.query
+	return g.queries[0]
 }
 
-// AllowsSearchQuery returns true for the exact normalized user message or an
-// empty model query. Empty lets the model choose the search tool without
-// constructing outbound text. All other model text is rejected, not silently
-// substituted, so attempted egress has zero provider requests.
-func (g *WebEgressGuard) AllowsSearchQuery(modelQuery string) bool {
+// AllowedSearchQueries returns a copy of the pre-authorized user-text queries.
+func (g *WebEgressGuard) AllowedSearchQueries() []string {
+	if g == nil {
+		return nil
+	}
+	return append([]string(nil), g.queries...)
+}
+
+// ResolveSearchQuery selects one exact original-user-text query. Empty selects
+// the full question. Other model text is rejected, never silently substituted.
+func (g *WebEgressGuard) ResolveSearchQuery(modelQuery string) (string, bool) {
 	// Read one rune beyond the outbound limit so a model cannot append private
 	// text after a 320-rune prefix and have it compare equal by truncation.
 	modelQuery = normalizeGuardedWebQueryUpTo(modelQuery, maxGuardedWebQueryRunes+1)
-	return g != nil && g.query != "" &&
-		(modelQuery == "" || modelQuery == g.query)
+	if g == nil || len(g.queries) == 0 {
+		return "", false
+	}
+	if modelQuery == "" {
+		return g.queries[0], true
+	}
+	for _, query := range g.queries {
+		if modelQuery == query {
+			return query, true
+		}
+	}
+	return "", false
+}
+
+// AllowsSearchQuery is retained for callers needing only an admission check.
+func (g *WebEgressGuard) AllowsSearchQuery(modelQuery string) bool {
+	_, ok := g.ResolveSearchQuery(modelQuery)
+	return ok
 }
 
 // AllowSearchResult grants a URL returned by this turn's search provider.

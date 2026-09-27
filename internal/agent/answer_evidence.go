@@ -40,7 +40,7 @@ func recordAnswerEvidenceFromStep(ctx context.Context, step types.AgentStep) {
 			}
 			continue
 		}
-		if hasDocumentEvidence(call.Name, call.Result.Output) {
+		if hasDocumentEvidence(call.Name, call.Result) {
 			answerevidence.RecordDocumentEvidence(ctx)
 		}
 	}
@@ -144,27 +144,53 @@ func sourceBrowseSearchAudit(result *types.ToolResult) (types.SourceBrowseSearch
 // hasDocumentEvidence deliberately treats a zero-hit search as no evidence.
 // Tool success merely proves that a request ran; it does not prove that a
 // release, integration, or capability was found.
-func hasDocumentEvidence(toolName, output string) bool {
-	output = strings.TrimSpace(output)
-	if output == "" {
+func hasDocumentEvidence(toolName string, result *types.ToolResult) bool {
+	if result == nil || !result.Success || strings.TrimSpace(result.Output) == "" || result.Data == nil {
 		return false
 	}
 	switch toolName {
-	case agenttools.ToolKnowledgeSearch, agenttools.ToolGrepChunks, agenttools.ToolListKnowledgeChunks:
-		lower := strings.ToLower(output)
-		// Native renderers normally add attributes after <chunk>/<faq>, but
-		// accept the minimal valid tags too so evidence classification follows
-		// the returned result rather than one presentation detail.
-		return strings.Contains(lower, "<chunk") || strings.Contains(lower, "<faq")
+	case agenttools.ToolKnowledgeSearch:
+		return positiveEvidenceCount(result.Data["count"]) &&
+			(strings.Contains(result.Output, "<content>") || strings.Contains(result.Output, "<answer>"))
+	case agenttools.ToolGrepChunks:
+		return positiveEvidenceCount(result.Data["result_count"]) && strings.Contains(result.Output, "<match_snippet>")
+	case agenttools.ToolListKnowledgeChunks:
+		return positiveEvidenceCount(result.Data["fetched_chunks"]) && strings.Contains(result.Output, "<content>")
 	case agenttools.ToolGetDocumentInfo:
-		// The normal knowledge-id path exposes document metadata only. FAQ
-		// entries additionally include their answer body, which is actual
-		// document evidence; a title, path, or metadata record is not.
-		return strings.Contains(output, "Answers:")
-	case agenttools.ToolWikiReadPage, agenttools.ToolWikiReadSourceDoc:
-		return true
+		// A document title is only navigation. An FAQ answer is a body, and
+		// its typed data cannot be forged by an unrelated document's text.
+		if !strings.Contains(result.Output, "Answers:") {
+			return false
+		}
+		if docs, ok := result.Data["documents"].([]map[string]interface{}); ok {
+			for _, doc := range docs {
+				if answers, ok := doc["faq_answers"].([]string); ok && len(answers) > 0 {
+					return true
+				}
+			}
+		}
+		return false
+	case agenttools.ToolWikiReadPage:
+		found, ok := result.Data["found_kbs"].(map[string][]string)
+		return ok && len(found) > 0 && strings.Contains(result.Output, "<wiki_page>")
+	case agenttools.ToolWikiReadSourceDoc:
+		return positiveEvidenceCount(result.Data["fetched_chunks"])
 	case agenttools.ToolWebFetch:
-		return strings.Contains(output, "Content (untrusted evidence):")
+		return positiveEvidenceCount(result.Data["successful_count"]) &&
+			strings.Contains(result.Output, "Content (untrusted evidence):")
+	default:
+		return false
+	}
+}
+
+func positiveEvidenceCount(value interface{}) bool {
+	switch count := value.(type) {
+	case int:
+		return count > 0
+	case int64:
+		return count > 0
+	case float64:
+		return count > 0
 	default:
 		return false
 	}

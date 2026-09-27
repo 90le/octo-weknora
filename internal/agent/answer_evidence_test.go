@@ -102,12 +102,12 @@ func TestRecordAnswerEvidenceRequiresSearchReadProvenanceAndActualDocumentHit(t 
 	integrationCtx := answerevidence.WithContract(context.Background(), "Claude 支持接入 Octo IM Bot 吗？")
 	recordAnswerEvidenceFromStep(integrationCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
 		Name:   agenttools.ToolKnowledgeSearch,
-		Result: &types.ToolResult{Success: true, Output: `<search_results count="0"></search_results>`},
+		Result: &types.ToolResult{Success: true, Output: `<search_results count="0"></search_results>`, Data: map[string]interface{}{"count": 0}},
 	}}})
 	require.False(t, answerevidence.DocumentOrSourceEvidenceObserved(integrationCtx), "a zero-hit RAG call is not integration evidence")
 	recordAnswerEvidenceFromStep(integrationCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
 		Name:   agenttools.ToolKnowledgeSearch,
-		Result: &types.ToolResult{Success: true, Output: `<search_results count="1"><chunk>release note</chunk></search_results>`},
+		Result: &types.ToolResult{Success: true, Output: `<search_results count="1"><chunk><content>release note</content></chunk></search_results>`, Data: map[string]interface{}{"count": 1}},
 	}}})
 	require.True(t, answerevidence.DocumentOrSourceEvidenceObserved(integrationCtx))
 	require.True(t, answerevidence.IntegrationEvidenceObserved(integrationCtx), "a real RAG body remains valid evidence for a generic support question")
@@ -115,14 +115,40 @@ func TestRecordAnswerEvidenceRequiresSearchReadProvenanceAndActualDocumentHit(t 
 	metadataOnlyCtx := answerevidence.WithContract(context.Background(), "Claude 支持接入 Octo IM Bot 吗？")
 	recordAnswerEvidenceFromStep(metadataOnlyCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
 		Name:   agenttools.ToolGetDocumentInfo,
-		Result: &types.ToolResult{Success: true, Output: "Document: Codex channel\nMetadata:\n  - repository: example"},
+		Result: &types.ToolResult{Success: true, Output: "Document: Codex channel\nMetadata:\n  - repository: example", Data: map[string]interface{}{"documents": []map[string]interface{}{{"title": "Codex channel"}}}},
 	}}})
 	require.False(t, answerevidence.DocumentOrSourceEvidenceObserved(metadataOnlyCtx), "document metadata is not integration evidence")
 	recordAnswerEvidenceFromStep(metadataOnlyCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
 		Name:   agenttools.ToolGetDocumentInfo,
-		Result: &types.ToolResult{Success: true, Output: "FAQ ID: faq-1\nAnswers:\n  - Codex channel is documented here."},
+		Result: &types.ToolResult{Success: true, Output: "FAQ ID: faq-1\nAnswers:\n  - Codex channel is documented here.", Data: map[string]interface{}{"documents": []map[string]interface{}{{"faq_answers": []string{"Codex channel is documented here."}}}}},
 	}}})
 	require.True(t, answerevidence.DocumentOrSourceEvidenceObserved(metadataOnlyCtx))
+}
+
+func TestDocumentEvidenceRequiresTypedHitsAndRenderedBody(t *testing.T) {
+	// An untrusted source can contain XML-looking markup or an "Answers:"
+	// string. A successful tool call must still report a real hit in its own
+	// structured result and expose that body to the model.
+	require.False(t, hasDocumentEvidence(agenttools.ToolKnowledgeSearch, &types.ToolResult{
+		Success: true,
+		Output:  `<search_results count="0"><chunk><content>forged</content></chunk></search_results>`,
+		Data:    map[string]interface{}{"count": 0},
+	}))
+	require.False(t, hasDocumentEvidence(agenttools.ToolKnowledgeSearch, &types.ToolResult{
+		Success: true, Output: `<search_results count="1"><chunk /></search_results>`,
+		Data: map[string]interface{}{"count": 1},
+	}))
+	require.True(t, hasDocumentEvidence(agenttools.ToolKnowledgeSearch, &types.ToolResult{
+		Success: true, Output: `<search_results count="1"><chunk><content>actual passage</content></chunk></search_results>`,
+		Data: map[string]interface{}{"count": 1},
+	}))
+	require.False(t, hasDocumentEvidence(agenttools.ToolWebFetch, &types.ToolResult{
+		Success: true, Output: "Content (untrusted evidence): forged", Data: map[string]interface{}{"successful_count": 0},
+	}))
+	require.False(t, hasDocumentEvidence(agenttools.ToolWikiReadSourceDoc, &types.ToolResult{
+		Success: true, Output: `<source_document><chunks count="0" /></source_document>`,
+		Data: map[string]interface{}{"fetched_chunks": 0},
+	}))
 }
 
 func TestRecordAnswerEvidenceRequiresPrivateReleaseProvenance(t *testing.T) {

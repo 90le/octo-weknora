@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -307,9 +308,29 @@ func TestNamedChannelPreflightDoesNotReadFirstGitignoreMatchAsProjectEvidence(t 
 }
 
 func TestPostPreflightBudgetAllowsSecondRepositoryNavigationButRemainsBounded(t *testing.T) {
-	require.Equal(t, 6, postPreflightSourceBrowseBudget(1), "list, searches, tree and read must fit for a second repository")
-	require.Equal(t, 10, postPreflightSourceBrowseBudget(3))
-	require.Equal(t, 10, postPreflightSourceBrowseBudget(20), "long repository lists cannot create unbounded tool calls")
+	require.Equal(t, 6, postPreflightSourceBrowseBudget(1, 0), "list, searches, tree and read must fit for a second repository")
+	require.Equal(t, 10, postPreflightSourceBrowseBudget(3, 200000))
+	require.Equal(t, 10, postPreflightSourceBrowseBudget(20, 200000), "small windows retain the existing ceiling")
+	require.Equal(t, 16, postPreflightSourceBrowseBudget(6, 1000000), "large windows allow a broader named-repository follow-up")
+	require.Equal(t, 30, postPreflightSourceBrowseBudget(20, 1000000))
+	require.Equal(t, 32, postPreflightSourceBrowseBudget(20, 10000000), "even a very large window cannot create unbounded calls")
+}
+
+func TestLargeContextRetainsMoreIndependentRepositoryEvidence(t *testing.T) {
+	snippet, total := preflightEvidenceLimits(200000)
+	require.Equal(t, answerEvidencePreflightSnippetLimit, snippet)
+	require.Equal(t, answerEvidencePreflightTotalLimit, total)
+
+	snippet, total = preflightEvidenceLimits(1000000)
+	require.Equal(t, 24000, snippet)
+	require.Equal(t, 83333, total)
+	preflight := answerEvidencePreflight{snippetLimit: snippet, totalLimit: total}
+	for _, label := range []string{"first", "second", "third"} {
+		preflight.addEvidence(label, strings.Repeat(label+" ", 5000))
+	}
+	rendered := preflight.render()
+	require.Contains(t, rendered, "third", "later repositories must still reach synthesis")
+	require.Greater(t, len(rendered), answerEvidencePreflightTotalLimit, "1M context should carry more than the old cap")
 }
 
 func TestNamedChannelImplementationQuestionSkipsOverviewPreflight(t *testing.T) {
