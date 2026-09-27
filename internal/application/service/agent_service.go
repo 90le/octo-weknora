@@ -1095,15 +1095,23 @@ func (s *agentService) registerTools(
 		case tools.ToolDatabaseQuery:
 			toolToRegister = tools.NewDatabaseQueryTool(s.db, config.SearchTargets)
 		case tools.ToolWebSearch:
-			toolToRegister = tools.NewWebSearchTool(
+			search := tools.NewWebSearchTool(
 				s.webSearchService,
 				config.WebSearchMaxResults,
 				config.WebSearchProviderID,
 			)
+			if guard := scopedWebEgressGuard(ctx); guard != nil {
+				search.WithEgressGuard(guard)
+			}
+			toolToRegister = search
 			logger.Infof(ctx, "Registered web_search tool for session: %s, maxResults: %d, providerID: %s", sessionID, config.WebSearchMaxResults, config.WebSearchProviderID)
 
 		case tools.ToolWebFetch:
-			toolToRegister = tools.NewWebFetchTool()
+			fetch := tools.NewWebFetchTool()
+			if guard := scopedWebEgressGuard(ctx); guard != nil {
+				fetch.WithEgressGuard(guard)
+			}
+			toolToRegister = fetch
 			logger.Infof(ctx, "Registered web_fetch tool for session: %s", sessionID)
 
 		case tools.ToolDataAnalysis:

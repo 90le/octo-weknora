@@ -245,7 +245,7 @@ func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint6
 		}
 		// Names and metadata refresh timestamps are not permission changes.
 		// KB IDs participate in the native scope fingerprint separately.
-		out := &im.ExecutionScope{ManageKnowledgeBaseIDs: managed, AccountID: account, ScopeID: stored.ID, ScopeName: stored.DisplayName, CanManageScope: canManage, AllowKnowledgeCreation: canManage && stored.AllowKnowledgeCreation, Revision: fmt.Sprint(channel.ID, channel.AgentID, connection.UpdatedAt, stored.ID), SenderName: senderName}
+		out := &im.ExecutionScope{ManageKnowledgeBaseIDs: managed, AccountID: account, ScopeID: stored.ID, ScopeName: stored.DisplayName, CanManageScope: canManage, AllowKnowledgeCreation: canManage && stored.AllowKnowledgeCreation, AllowPublicWeb: stored.AllowPublicWeb, Revision: fmt.Sprint(channel.ID, channel.AgentID, connection.UpdatedAt, stored.ID), SenderName: senderName}
 		for _, binding := range bindings {
 			out.KnowledgeBaseIDs = append(out.KnowledgeBaseIDs, binding.KnowledgeBaseID)
 

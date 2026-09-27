@@ -76,10 +76,11 @@
           </section>
 
           <section class="policy-section">
-            <div class="section-heading"><div><h4>区域规则</h4><p>知识继承、问题汇总和群内建库是独立的选项。</p></div><t-button variant="outline" :disabled="!policiesChanged || saving" :loading="saving" @click="saveScope">保存规则</t-button></div>
+            <div class="section-heading"><div><h4>区域规则</h4><p>知识继承、问题汇总、群内建库与公网搜索按区域分别配置。</p></div><t-button variant="outline" :disabled="!policiesChanged || saving" :loading="saving" @click="saveScope">保存规则</t-button></div>
             <div v-if="selected.subarea_id" class="policy-row"><div><strong>继承主群知识库</strong><p>增加可查询范围，不继承维护授权、对话或问题记录。</p></div><t-switch v-model="editInherit" aria-label="继承主群知识库" /></div>
             <div v-else class="policy-row"><div><strong>汇总子区问题</strong><p>允许主群查询该群子区的问题记录，不增加子区知识或维护权限。</p></div><t-switch v-model="editAggregate" aria-label="汇总子区问题" /></div>
             <div class="policy-row"><div><strong>允许管理者在群内建库</strong><p>只作用于当前区域；管理者仍需通过原生身份核验，其他工作区资产不会因此开放。</p></div><t-switch v-model="editCreation" aria-label="允许管理者在群内建库" /></div>
+            <div class="policy-row"><div><strong>允许当前区域公网搜索</strong><p>默认关闭，不继承到子区。仅在智能体也开启联网、工作区配置搜索提供方时生效；外部搜索只使用当前用户提问，不发送知识库或源码片段。</p></div><t-switch v-model="editPublicWeb" aria-label="允许当前区域公网搜索" /></div>
           </section>
 
           <details class="diagnostics" :open="detailsOpen" @toggle="detailsOpen = ($event.target as HTMLDetailsElement).open">
@@ -126,7 +127,7 @@ const loading = ref(false), saving = ref(false), bindingLoading = ref(false)
 const error = ref(''), bindingError = ref(''), search = ref('')
 const showCreate = ref(false), showBind = ref(false), showConnection = ref(false), detailsOpen = ref(false)
 const kbToBind = ref(''), grantOnBind = ref(false)
-const editInherit = ref(false), editCreation = ref(false), editAggregate = ref(false)
+const editInherit = ref(false), editCreation = ref(false), editAggregate = ref(false), editPublicWeb = ref(false)
 const roleUID = ref(''), roleResult = ref(''), roleLoading = ref(false)
 const connections = ref<Array<{account_id:string;updated_at:string}>>([])
 const collapsedGroups = ref(new Set<string>())
@@ -142,7 +143,7 @@ const queryCount = computed(() => knowledgeRows.value.filter(row => row.query !=
 const managementCount = computed(() => knowledgeRows.value.filter(row => row.managed).length)
 const parentScope = computed(() => selected.value?.subarea_id ? scopes.value.find(scope => !scope.subarea_id && scope.account_id===selected.value?.account_id && scope.group_id===selected.value?.group_id) : undefined)
 const kbOptions = computed(() => kbs.value.filter(kb => !bindings.value.some(binding => !binding.inherited && binding.knowledge_base_id===kb.id)).map(kb => ({label:kb.name,value:kb.id})))
-const policiesChanged = computed(() => Boolean(selected.value) && (editInherit.value!==Boolean(selected.value?.inherit_parent) || editCreation.value!==Boolean(selected.value?.allow_knowledge_creation) || editAggregate.value!==Boolean(selected.value?.aggregate_child_issues)))
+const policiesChanged = computed(() => Boolean(selected.value) && (editInherit.value!==Boolean(selected.value?.inherit_parent) || editCreation.value!==Boolean(selected.value?.allow_knowledge_creation) || editAggregate.value!==Boolean(selected.value?.aggregate_child_issues) || editPublicWeb.value!==Boolean(selected.value?.allow_public_web)))
 const statusLabel = (status:string) => ({verified:'已验证',error:'同步失败',needs_refresh:'待重新验证',unverified:'未验证'}[status] || '未验证')
 const expanded = (id:string) => Boolean(search.value.trim()) || !collapsedGroups.value.has(id)
 function toggleGroup(id:string) { const next=new Set(collapsedGroups.value); next.has(id) ? next.delete(id) : next.add(id); collapsedGroups.value=next }
@@ -172,7 +173,7 @@ async function load() {
 
 async function select(scope:OctoScope) {
   const version=++selectionVersion
-  selected.value=scope;editInherit.value=Boolean(scope.inherit_parent);editCreation.value=Boolean(scope.allow_knowledge_creation);editAggregate.value=Boolean(scope.aggregate_child_issues)
+  selected.value=scope;editInherit.value=Boolean(scope.inherit_parent);editCreation.value=Boolean(scope.allow_knowledge_creation);editAggregate.value=Boolean(scope.aggregate_child_issues);editPublicWeb.value=Boolean(scope.allow_public_web)
   roleUID.value='';roleResult.value='';roleLoading.value=false;detailsOpen.value=false;showBind.value=false
   bindings.value=[];managed.value=[];bindingError.value='';kbToBind.value='';bindingLoading.value=true
   try {
@@ -191,7 +192,7 @@ async function mutate(operation:()=>Promise<unknown>,success='配置已更新') 
   catch {if(tenant===auth.currentTenantId) await MessagePlugin.error('操作未完成，请检查当前权限、连接与服务状态。')}
   finally {saving.value=false}
 }
-function saveScope() {const scope=selected.value;if(scope)return mutate(()=>updateScope(scope.id,scope.display_name,editInherit.value,editCreation.value,editAggregate.value),'区域规则已保存')}
+function saveScope() {const scope=selected.value;if(scope)return mutate(()=>updateScope(scope.id,scope.display_name,editInherit.value,editCreation.value,editAggregate.value,editPublicWeb.value),'区域规则已保存')}
 function bindQuery(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>bindKB(id,kb),'查询绑定已更新')}
 function removeBinding(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>unbindKB(id,kb),'查询绑定已解除；独立维护授权保持不变')}
 function grantManagement(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>bindKB(id,kb,true),'本区域维护授权已更新')}

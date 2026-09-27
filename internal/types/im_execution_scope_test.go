@@ -24,3 +24,17 @@ func TestIMScopeRestrictsRuntimeWithoutMutatingAgent(t *testing.T) {
 		t.Fatal("shared config changed")
 	}
 }
+
+func TestIMPublicWebNeedsTrustedAuthorizerAndSavedAgentSwitch(t *testing.T) {
+	base := WithIMKnowledgeScope(context.Background(), []string{"kb"})
+	authorized := WithIMPublicWebAuthorizer(base, func(context.Context) error { return nil })
+	if got := RestrictIMAgentConfig(authorized, &AgentConfig{WebSearchEnabled: true}); !got.WebSearchEnabled {
+		t.Fatal("explicit native public-web permission was discarded")
+	}
+	if got := RestrictIMAgentConfig(authorized, &AgentConfig{WebSearchEnabled: false}); got.WebSearchEnabled {
+		t.Fatal("scope permission overrode the saved Agent switch")
+	}
+	if IMPublicWebAuthorizer(base) != nil {
+		t.Fatal("unconfigured scope has a public-web authorizer")
+	}
+}

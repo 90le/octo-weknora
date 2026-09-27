@@ -66,6 +66,7 @@ type webFetchItemResult struct {
 type WebFetchTool struct {
 	BaseTool
 	fetcher  webContentFetcher
+	guard    *WebEgressGuard
 	mu       sync.Mutex
 	pages    map[string]webPageSnapshot
 	inflight map[string]*pageFlight
@@ -106,6 +107,20 @@ type pageFlight struct {
 // WithPageSource adds complete page storage independently of the in-memory cache.
 func (t *WebFetchTool) WithPageSource(source WebPageSource) *WebFetchTool {
 	t.source = source
+	return t
+}
+
+// WithEgressGuard limits reads to public URLs from this turn's user message or
+// this turn's web_search results. Attach only to a fresh per-turn registry.
+func (t *WebFetchTool) WithEgressGuard(guard *WebEgressGuard) *WebFetchTool {
+	if t.guard == guard {
+		return t
+	}
+	t.guard = guard
+	if guard != nil {
+		t.description += "\n- In this scoped turn, only URLs explicitly supplied by the user or returned " +
+			"by this turn's web_search can be fetched. Other URLs are denied before network access."
+	}
 	return t
 }
 
@@ -161,11 +176,30 @@ func snapshotWaitTimeoutError(err error) error {
 	}
 }
 
-// storePage downloads independently of the caller's deadline so a short
-// content=true timeout cannot cancel a shared fetch for concurrent web_fetch.
+// For ordinary sessions a short content=true timeout cannot cancel a shared
+// fetch. Scoped Octo web reads preserve cancellation so /stop or revoked turn
+// work cannot initiate another outbound request.
 func (t *WebFetchTool) storePage(ctx context.Context, rawURL string) (webPageSnapshot, error) {
-	fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), webPageFetchTimeout)
+	baseCtx := context.WithoutCancel(ctx)
+	if t.guard != nil {
+		baseCtx = ctx
+	}
+	fetchCtx, cancel := context.WithTimeout(baseCtx, webPageFetchTimeout)
 	defer cancel()
+	if err := fetchCtx.Err(); err != nil {
+		return webPageSnapshot{}, snapshotWaitTimeoutError(err)
+	}
+	if t.guard != nil {
+		if err := t.guard.Authorize(fetchCtx); err != nil {
+			return webPageSnapshot{}, &webfetch.FetchError{
+				Code: "web_egress_denied", Retryable: false,
+				Err: fmt.Errorf("web fetch is no longer authorized for this user turn"),
+			}
+		}
+	}
+	if err := fetchCtx.Err(); err != nil {
+		return webPageSnapshot{}, snapshotWaitTimeoutError(err)
+	}
 	content, err := t.fetcher.Fetch(fetchCtx, rawURL)
 	if err != nil {
 		return webPageSnapshot{}, err
@@ -228,6 +262,10 @@ func (t *WebFetchTool) Execute(ctx context.Context, args json.RawMessage) (*type
 	pageBudget := min(8000, available/len(input.Items))
 	var first, later []int
 	for index, item := range input.Items {
+		if t.guard != nil && !t.guard.AllowsFetch(strings.TrimSpace(item.URL)) {
+			results[index] = deniedWebFetchResult()
+			continue
+		}
 		canonicalURL := fmt.Sprintf("%s:%d:%d", canonicalFetchURL(item.URL), item.Offset, item.Limit)
 		if _, duplicate := seenURLs[canonicalURL]; duplicate {
 			results[index] = duplicateWebFetchResult(item)
@@ -264,6 +302,14 @@ func runWebFetchItems(
 
 func (t *WebFetchTool) fetchItem(ctx context.Context, item WebFetchItem, budget int) *webFetchItemResult {
 	displayURL := strings.TrimSpace(item.URL)
+	if t.guard != nil && !t.guard.AllowsFetch(displayURL) {
+		return deniedWebFetchResult()
+	}
+	if t.guard != nil {
+		if err := t.guard.Authorize(ctx); err != nil {
+			return deniedWebFetchResult()
+		}
+	}
 	u, err := url.Parse(displayURL)
 	if err != nil || len(displayURL) > 2048 || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return failedWebFetchResult(displayURL, false, "invalid_url",
@@ -314,6 +360,11 @@ func (t *WebFetchTool) fetchItem(ctx context.Context, item WebFetchItem, budget 
 		output += fmt.Sprintf("Truncated; continue with the same url and offset=%d.\n", end)
 	}
 	return &webFetchItemResult{output: output, data: data, status: "success"}
+}
+
+func deniedWebFetchResult() *webFetchItemResult {
+	return failedWebFetchResult("", false, "web_egress_denied",
+		"URL is not authorized for this user turn")
 }
 
 func failedWebFetchResult(rawURL string, retryable bool, code, message string) *webFetchItemResult {

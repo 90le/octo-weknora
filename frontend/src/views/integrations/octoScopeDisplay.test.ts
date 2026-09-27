@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import type { OctoScope } from '@/api/octo'
 import { groupScopes, scopeKnowledgeRows } from './octoScopeDisplay'
 
-const scope = (id:string, group_id:string, subarea_id='', account_id='bot', display_name=id):OctoScope => ({id,group_id,subarea_id,account_id,display_name,name_source:'octo',sync_status:'verified',sync_error:'',checked_at:null,verified_at:null,inherit_parent:false,allow_knowledge_creation:false,aggregate_child_issues:false})
+const scope = (id:string, group_id:string, subarea_id='', account_id='bot', display_name=id):OctoScope => ({id,group_id,subarea_id,account_id,display_name,name_source:'octo',sync_status:'verified',sync_error:'',checked_at:null,verified_at:null,inherit_parent:false,allow_knowledge_creation:false,aggregate_child_issues:false,allow_public_web:false})
 
 test('group hierarchy keeps exact account and parent identity, including search',()=>{
   const records=[scope('parent','g'),scope('child','g','1','bot','产品子区'),scope('other-account','g','','another'),scope('other-child','g','2','another')]

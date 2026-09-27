@@ -32,8 +32,11 @@ type Scope struct {
 	InheritParent          bool       `json:"inherit_parent"`
 	AllowKnowledgeCreation bool       `json:"allow_knowledge_creation"`
 	AggregateChildIssues   bool       `json:"aggregate_child_issues"`
-	CreatedAt              time.Time  `json:"created_at"`
-	UpdatedAt              time.Time  `json:"updated_at"`
+	// Public web access is an explicit capability of this exact group or
+	// subarea. Knowledge inheritance never carries it to a child scope.
+	AllowPublicWeb bool      `json:"allow_public_web"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 func (Scope) TableName() string { return "octo_scopes" }
@@ -92,6 +95,9 @@ func (s *Store) Create(ctx context.Context, scope Scope) (*Scope, error) {
 	scope.ID = uuid.NewString()
 	scope.NameSource = "configured"
 	scope.SyncStatus = "unverified"
+	// Scope creation cannot authorize external retrieval, including when an
+	// internal caller supplies a populated Scope rather than the HTTP DTO.
+	scope.AllowPublicWeb = false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if scope.SubareaID != "" {
 			var parent Scope
@@ -125,25 +131,55 @@ func (s *Store) List(ctx context.Context, tenant uint64, offset int) ([]Scope, e
 	return rows, err
 }
 
+type ScopeSettings struct {
+	DisplayName            string
+	InheritParent          bool
+	AllowKnowledgeCreation *bool
+	AggregateChildIssues   *bool
+	AllowPublicWeb         *bool
+}
+
 func (s *Store) Update(ctx context.Context, tenant uint64, id, name string, inherit bool) error {
-	scope, err := s.Get(ctx, tenant, id)
-	if err != nil {
-		return err
-	}
-	if scope.NameSource == "octo" && name != scope.DisplayName {
-		return ErrInvalid
-	}
-	scope.DisplayName, scope.InheritParent = name, inherit
-	if err := validateScope(*scope); err != nil {
-		return err
-	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&Scope{}).Where("tenant_id = ? AND id = ?", tenant, id).
-			Updates(map[string]interface{}{"display_name": name, "inherit_parent": inherit}).Error; err != nil {
+	_, err := s.UpdateSettings(ctx, tenant, id, ScopeSettings{DisplayName: name, InheritParent: inherit})
+	return err
+}
+
+// UpdateSettings commits the scope policy and its audit record together. A
+// missing optional flag preserves its current value; explicit false revokes it.
+func (s *Store) UpdateSettings(ctx context.Context, tenant uint64, id string, settings ScopeSettings) (*Scope, error) {
+	var updated *Scope
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		scope, err := NewStore(tx).Get(ctx, tenant, id)
+		if err != nil {
 			return err
 		}
-		return audit(tx, ctx, tenant, id, "octo.scope.updated", map[string]interface{}{"display_name": name, "inherit_parent": inherit})
+		if scope.NameSource == "octo" && settings.DisplayName != scope.DisplayName {
+			return ErrInvalid
+		}
+		scope.DisplayName, scope.InheritParent = settings.DisplayName, settings.InheritParent
+		if err := validateScope(*scope); err != nil {
+			return err
+		}
+		values := map[string]interface{}{"display_name": settings.DisplayName, "inherit_parent": settings.InheritParent}
+		if settings.AllowKnowledgeCreation != nil {
+			values["allow_knowledge_creation"] = *settings.AllowKnowledgeCreation
+		}
+		if settings.AggregateChildIssues != nil {
+			values["aggregate_child_issues"] = *settings.AggregateChildIssues
+		}
+		if settings.AllowPublicWeb != nil {
+			values["allow_public_web"] = *settings.AllowPublicWeb
+		}
+		if err := tx.Model(&Scope{}).Where("tenant_id = ? AND id = ?", tenant, id).Updates(values).Error; err != nil {
+			return err
+		}
+		if err := audit(tx, ctx, tenant, id, "octo.scope.updated", values); err != nil {
+			return err
+		}
+		updated, err = NewStore(tx).Get(ctx, tenant, id)
+		return err
 	})
+	return updated, err
 }
 
 // SetBinding never deletes a KB. The caller must already pass native KB write
