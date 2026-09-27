@@ -103,8 +103,12 @@ func classifyNeeds(query string) evidenceNeeds {
 		"类定义", "类名", "方法名", "方法实现", "调用方法",
 		"错误码", "堆栈", "栈追踪", "哪个文件", "文件里", "文件中", "行号", "仓库里面", "仓库中", "仓库内",
 		"source code", "function", "method", "class ", "implementation", "call stack", "stack trace",
-		"error code", "repository", ".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".java", ".php", ".rs", ".swift", ".kt", ".yaml", ".yml",
+		"error code", "repository",
 	) {
+		// A file suffix alone is not a source-code request: Node.js, Vue.js
+		// and similar product names previously forced ordinary knowledge-base
+		// questions into the source-read fallback. Explicit file/code wording
+		// above keeps source questions protected without that false positive.
 		needs |= needSource
 	}
 	if containsAny(q,
