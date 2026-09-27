@@ -142,6 +142,11 @@ func sourceCatalog(t *testing.T, tool *SourceBrowseTool) sourceBrowseCatalog {
 
 func TestSourceBrowseSchemaExposesOnlySourceRefSelection(t *testing.T) {
 	tool := NewSourceBrowseTool(&sourceToolReader{}, &sourceToolKB{}, nil)
+	description := tool.Description()
+	require.Contains(t, description, "more than 12 original lines is for exploration and has no citation_ref")
+	require.Contains(t, description, "exact start_line/end_line spanning at most 12 original lines")
+	require.Contains(t, description, `current-turn <ref id="wN"/> handle`)
+	require.NotContains(t, description, "state the snapshot revision without inventing a repository URL")
 	var schema struct {
 		Properties map[string]json.RawMessage `json:"properties"`
 	}
