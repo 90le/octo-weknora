@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -38,6 +39,10 @@ type RemoteAPIChat struct {
 	adapter providerAdapter
 	// thinkingOverride 来自 extra_config.thinking_control，非 nil 时覆盖 adapter.Thinking()。
 	thinkingOverride ThinkingStrategy
+	// Remember an explicitly configured optional field rejected by this gateway
+	// only for this model instance. Agent rounds reuse the instance, while a new
+	// request gets a fresh one and can probe again after a gateway upgrade.
+	unsupportedOptionalThinkingControl atomic.Bool
 }
 
 // NewRemoteAPIChat 创建远程 API 聊天实例
@@ -131,6 +136,9 @@ func (c *RemoteAPIChat) shapedRequest(messages []Message, opts *ChatOptions, isS
 
 func (c *RemoteAPIChat) activeThinkingStrategy() ThinkingStrategy {
 	if c.thinkingOverride != nil {
+		if c.unsupportedOptionalThinkingControl.Load() {
+			return noThinking{}
+		}
 		return c.thinkingOverride
 	}
 	return c.adapter.Thinking()
@@ -181,9 +189,9 @@ func (c *RemoteAPIChat) buildOutboundWithThinking(
 
 // retryOutboundWithoutConfiguredThinking prepares one retry after a gateway
 // explicitly rejects a thinking-control field configured in model extra_config.
-// It never changes the persisted model configuration; the downgrade applies to
-// this request only. Provider-default thinking is intentionally excluded because
-// it may be required by that provider rather than an optional user override.
+// It never changes the persisted model configuration; after a successful retry,
+// later calls on this instance omit the rejected field. Provider-default
+// thinking is excluded because it may be required by that provider.
 func (c *RemoteAPIChat) retryOutboundWithoutConfiguredThinking(
 	ctx context.Context, messages []Message, opts *ChatOptions, isStream bool, requestErr error,
 ) (body any, endpoint string, retry bool, err error) {
@@ -299,6 +307,7 @@ func (c *RemoteAPIChat) Chat(ctx context.Context, messages []Message, opts *Chat
 		if retryErr != nil {
 			return nil, fmt.Errorf("chat completion failed after retrying without optional thinking control: %w", retryErr)
 		}
+		c.unsupportedOptionalThinkingControl.Store(true)
 		return result, nil
 	}
 
@@ -411,6 +420,8 @@ func (c *RemoteAPIChat) ChatStream(ctx context.Context, messages []Message, opts
 				ch, err = c.chatStreamWithRawHTTP(timeoutCtx, retryEndpoint, retryBody, opts)
 				if err != nil {
 					err = fmt.Errorf("chat completion stream failed after retrying without optional thinking control: %w", err)
+				} else {
+					c.unsupportedOptionalThinkingControl.Store(true)
 				}
 			}
 		}

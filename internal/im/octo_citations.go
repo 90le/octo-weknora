@@ -19,8 +19,72 @@ var octoSourceAttrRE = regexp.MustCompile(`([A-Za-z_]+)\s*=\s*(?:"([^"]*)"|'([^'
 var octoSourceHeadingRE = regexp.MustCompile(`(?im)^\s*(?:\*\*)?(?:实际来源|来源|参考资料|参考|资料依据|sources?|references?)\s*(?:\*\*)?\s*[:：]\s*(?:\*\*)?`)
 var octoQuotedSourceTitleRE = regexp.MustCompile(`《([^《》\r\n]{1,400})》`)
 var octoGitCommitRE = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+var octoGitHubLineFragmentRE = regexp.MustCompile(`^L[0-9]+(?:-L[0-9]+)?$`)
+var octoMarkdownGitHubLinkRE = regexp.MustCompile(`(?i)\[([^\]\r\n]+)\]\((<?https://github\.com/[^\s)]+>?)\)`)
+var octoBareGitHubURLRE = regexp.MustCompile(`(?i)https://github\.com/[^#\s<>"'\])，。；：！？,;:!?]+#(?:L|%4C)[0-9]+(?:-(?:L|%4C)[0-9]+)?`)
 
 type octoCitedSource struct{ title, url string }
+
+// A model may write a plausible GitHub line link without reading that range.
+// Keep such links clickable only when this turn's authorized source_browse read
+// returned the exact pinned URL. This checks provenance, not whether the
+// adjacent claim is semantically supported by the excerpt.
+func sanitizeOctoGitHubLineLinks(ctx context.Context, answer string) string {
+	if _, ok := octobusiness.PrincipalFromContext(ctx); !ok {
+		return answer
+	}
+	p, err := octobusiness.ValidatedPrincipal(ctx)
+	if err != nil {
+		return answer
+	}
+	allowed := make(map[string]bool)
+	for _, source := range octobusiness.SourceCitations(ctx) {
+		if octoAllowedKB(p, source.KnowledgeBaseID) && source.Path != "" && source.Revision != "" {
+			if valid := safeOctoSourceURL(source.URL); valid != "" {
+				if isPinnedOctoGitHubLineURL(valid) {
+					allowed[valid] = true
+				}
+			}
+		}
+	}
+	answer = octoMarkdownGitHubLinkRE.ReplaceAllStringFunc(answer, func(link string) string {
+		m := octoMarkdownGitHubLinkRE.FindStringSubmatch(link)
+		if len(m) != 3 {
+			return link
+		}
+		candidate := strings.Trim(m[2], "<>")
+		if !isOctoGitHubLineURL(candidate) || allowed[safeOctoSourceURL(candidate)] {
+			return link
+		}
+		return m[1] + "（源码行号未核验）"
+	})
+	return octoBareGitHubURLRE.ReplaceAllStringFunc(answer, func(raw string) string {
+		candidate := strings.TrimRight(raw, ".,;:!?。，；：！？\"'`")
+		suffix := raw[len(candidate):]
+		if !isOctoGitHubLineURL(candidate) || allowed[safeOctoSourceURL(candidate)] {
+			return raw
+		}
+		return "（未经核验的源码行号链接已省略）" + suffix
+	})
+}
+
+func isOctoGitHubLineURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(parsed.Hostname(), "github.com") || !octoGitHubLineFragmentRE.MatchString(parsed.Fragment) {
+		return false
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	return len(parts) >= 5 && parts[2] == "blob"
+}
+
+func isPinnedOctoGitHubLineURL(raw string) bool {
+	if !isOctoGitHubLineURL(raw) {
+		return false
+	}
+	parsed, _ := url.Parse(raw)
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	return octoGitCommitRE.MatchString(parts[3])
+}
 
 func octoCitationAttrs(raw string) map[string]string {
 	attrs := map[string]string{}
@@ -103,6 +167,9 @@ func persistedOctoSource(k *types.Knowledge) string {
 	if candidate == "" {
 		return ""
 	}
+	if isOctoGitHubLineURL(candidate) && !isPinnedOctoGitHubLineURL(candidate) {
+		return ""
+	}
 	if commit := metadata.GitHubCommit; commit != "" {
 		parsed, _ := url.Parse(candidate)
 		if !octoGitCommitRE.MatchString(commit) || !strings.EqualFold(parsed.Hostname(), "github.com") || !strings.Contains(parsed.Path, "/blob/"+commit+"/") {
@@ -128,6 +195,7 @@ func (s *Service) appendOctoSources(ctx context.Context, answer string, refs []*
 	if err != nil {
 		return answer
 	}
+	answer = sanitizeOctoGitHubLineLinks(ctx, answer)
 	cited := map[string]*types.SearchResult{}
 	ordered := []string{}
 	addRef := func(ref *types.SearchResult) {
@@ -141,6 +209,9 @@ func (s *Service) appendOctoSources(ctx context.Context, answer string, refs []*
 	for _, source := range octobusiness.SourceCitations(ctx) {
 		if octoAllowedKB(p, source.KnowledgeBaseID) {
 			if valid := safeOctoSourceURL(source.URL); valid != "" {
+				if isOctoGitHubLineURL(valid) && !isPinnedOctoGitHubLineURL(valid) {
+					continue
+				}
 				rawSources[valid] = source
 				// A github_release_lookup citation is not a model-generated web
 				// tag: it comes from the system-owned latest-release preflight for

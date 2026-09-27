@@ -146,6 +146,11 @@ func formatIMOutboundAnswer(ctx context.Context, raw string, tenant *types.Tenan
 	return cleanIMContent(ctx, FormatIMDisplayContent(raw, StreamDisplayFinal), tenant, defaultFileSvc, storageResolvers...)
 }
 
+func (s *Service) formatIMStreamFinal(ctx context.Context, parts IMStreamParts, refs []*types.SearchResult, tenant *types.Tenant) string {
+	answer := s.appendOctoSources(ctx, FormatIMFinalFromParts(parts), refs)
+	return cleanIMContent(ctx, answer, tenant, s.defaultFileSvc, s.storageResolver)
+}
+
 // formatIMOutboundAnswerOrFallback guarantees that cleanup cannot turn a
 // non-empty model payload (for example, a think-only response) into an empty IM
 // message. Callers may pass imErrorFallback or imCancelledFallback as raw when
@@ -2915,7 +2920,7 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 			displaySource = displaySource[:cut]
 		}
 
-		display := cleanIMContent(ctx, displaySource, tenant, s.defaultFileSvc, s.storageResolver)
+		display := cleanIMContent(ctx, sanitizeOctoGitHubLineLinks(ctx, displaySource), tenant, s.defaultFileSvc, s.storageResolver)
 		if err := streamer.UpdateStreamContent(ctx, msg, streamID, display); err != nil {
 			logger.Warnf(ctx, "[IM] UpdateStreamContent failed: %v", err)
 		}
@@ -2945,9 +2950,10 @@ loop:
 		agentLiveAnswer.String(),
 		agentCompleteFinalAnswer,
 	)
-	if parts.Answer == "" {
-		parts.Answer = resolvedAnswer
-	}
+	// Use the same selected answer for the final IM frame and message history.
+	// IM-only source rendering below may add trusted links to the visible frame;
+	// the stored answer remains the canonical raw answer with citation tags.
+	parts.Answer = resolvedAnswer
 	answer := resolvedAnswer
 	finalErr := qaErr
 	noVisibleContent := !streamedAny && strings.TrimSpace(resolvedAnswer) == ""
@@ -2959,7 +2965,8 @@ loop:
 		assistantMsg.IsFallback = true
 	}
 
-	finalDisplay := cleanIMContent(ctx, FormatIMFinalFromParts(parts), tenant, s.defaultFileSvc, s.storageResolver)
+	answer = sanitizeOctoGitHubLineLinks(ctx, answer)
+	finalDisplay := s.formatIMStreamFinal(ctx, parts, []*types.SearchResult(assistantMsg.KnowledgeReferences), tenant)
 	if noVisibleContent || finalDisplay == "" {
 		fallback := imNoAnswerFallback
 		if finalErr != nil {
@@ -3200,6 +3207,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	if notice := s.buildIMMCPAuthNotice(ctx, authServices); notice != "" {
 		answer = appendIMAuthNotice(answer, notice)
 	}
+	answer = sanitizeOctoGitHubLineLinks(ctx, answer)
 
 	// Update assistant message with the full answer (including citation tags for web rendering).
 	assistantMsg.Content = answer

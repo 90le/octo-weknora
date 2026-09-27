@@ -82,6 +82,15 @@ func retrievalReady(ctx context.Context) bool {
 
 type trackedRetrieval struct{ types.Tool }
 
+// ToolRegistry checks this optional capability on the registered tool. Keep a
+// wrapped source_browse read's larger, tool-enforced JSON budget intact.
+func (t *trackedRetrieval) OutputLimitChars(args json.RawMessage) int {
+	if provider, ok := t.Tool.(interface{ OutputLimitChars(json.RawMessage) int }); ok {
+		return provider.OutputLimitChars(args)
+	}
+	return 0
+}
+
 func TrackRetrieval(tool types.Tool) types.Tool {
 	if tool == nil {
 		return nil

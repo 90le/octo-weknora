@@ -275,6 +275,39 @@ func lineURL(base string, start, end int) string {
 	}
 	return fmt.Sprintf("%s#L%d-L%d", base, start, end)
 }
+
+const maxSourceReadContentBytes = 65536
+
+// A read citation must cover only complete lines actually returned to the
+// model. Cutting a byte prefix out of a long read would leave the original
+// end_line and source URL pointing at lines the model never saw.
+func boundedSourceLines(lines []string, start, end int) (string, int, bool, error) {
+	if end < start {
+		return "", end, false, nil
+	}
+	var content strings.Builder
+	visibleEnd := start - 1
+	for i := start - 1; i < end; i++ {
+		line := lines[i]
+		separator := 0
+		if i > start-1 {
+			separator = 1
+		}
+		if content.Len()+separator+len(line) > maxSourceReadContentBytes {
+			if visibleEnd < start {
+				return "", visibleEnd, false, fmt.Errorf("%w: line %d is longer than %d bytes", types.ErrSourceReadLineTooLong, start, maxSourceReadContentBytes)
+			}
+			return content.String(), visibleEnd, true, nil
+		}
+		if separator != 0 {
+			content.WriteByte('\n')
+		}
+		content.WriteString(line)
+		visibleEnd = i + 1
+	}
+	return content.String(), visibleEnd, false, nil
+}
+
 func (s *DataSourceService) ReadSourceFile(ctx context.Context, kbID, sourceID, version, p string, start, end int) (*types.SourceRead, error) {
 	if !snapshot.SafePath(p) {
 		return nil, access.ErrNotFound
@@ -307,17 +340,15 @@ func (s *DataSourceService) ReadSourceFile(ctx context.Context, kbID, sourceID, 
 	if end > len(lines) {
 		end = len(lines)
 	}
-	if start > len(lines)+1 {
+	if start > len(lines) {
 		return nil, errors.New("line start exceeds file length")
 	}
-	content := ""
-	if end >= start {
-		content = strings.Join(lines[start-1:end], "\n")
+	content, visibleEnd, contentTruncated, err := boundedSourceLines(lines, start, end)
+	if err != nil {
+		return nil, err
 	}
-	if len(content) > 65536 {
-		content = truncateSourceText(content, 65536)
-		truncated = true
-	}
+	end = visibleEnd
+	truncated = truncated || contentTruncated
 	revision := f.Revision
 	if revision == "" {
 		revision = "snapshot:" + m.ID

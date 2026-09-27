@@ -1,6 +1,13 @@
 package types
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrSourceReadLineTooLong means a complete source line cannot fit in a read
+// result. A partial line must not be returned with a citation to the full line.
+var ErrSourceReadLineTooLong = errors.New("source line exceeds the read limit")
 
 // SourceFile is a text file in an immutable source snapshot. Object is a content
 // hash, never a caller-supplied filesystem path.

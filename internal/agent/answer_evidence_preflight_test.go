@@ -269,6 +269,37 @@ func TestAnswerEvidencePreflightSearchesAndReadsEachNamedChannelBeforeModel(t *t
 	require.Equal(t, 10, remaining, "named projects leave room for a complementary repository read")
 }
 
+func TestNamedChannelPreflightDoesNotPresentPartialSourceJSONAsEvidence(t *testing.T) {
+	const repository = "Mininglamp-OSS/codex-channel-octo"
+	sourceTool := newScriptedPreflightTool(agenttools.ToolSourceBrowse, func(args map[string]interface{}) *types.ToolResult {
+		switch args["action"] {
+		case "list":
+			return &types.ToolResult{Success: true, Output: `{"sources":[{"source_ref":"s1","repository":"` + repository + `"}],"complete":true}`}
+		case "search":
+			return &types.ToolResult{Success: true, Output: `{"matches":[{"path":"README.md","line":1}],"complete":true}`}
+		case "read":
+			body, _ := json.Marshal(map[string]any{"repository": repository, "path": "README.md", "start_line": 1, "end_line": 40, "content": strings.Repeat("source body ", 700), "source_url": "https://github.com/" + repository + "/blob/commit/README.md#L1-L40"})
+			return &types.ToolResult{Success: true, Output: string(body)}
+		}
+		return &types.ToolResult{Success: false, Error: "unexpected action"}
+	})
+	engine := newTestEngine(t, &mockChat{})
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	engine.toolRegistry.RegisterTool(sourceTool)
+	query := "codex-channel-octo 项目负责什么？"
+	ctx := answerevidence.WithContract(context.Background(), query)
+	state := &types.AgentState{}
+	require.Empty(t, engine.prepareAnswerEvidencePreflight(ctx, state, query))
+	require.Len(t, state.RoundSteps, 1)
+	read := state.RoundSteps[0].ToolCalls[len(state.RoundSteps[0].ToolCalls)-1]
+	require.Equal(t, "read", read.Args["action"])
+	require.EqualValues(t, 40, read.Args["end_line"])
+	require.False(t, read.Result.Success)
+	require.Empty(t, read.Result.Output)
+	require.Contains(t, read.Result.Error, "narrower line range")
+	require.False(t, answerevidence.IntegrationEvidenceObserved(ctx), "an excerpt hidden from the model cannot satisfy the evidence gate")
+}
+
 func TestNamedChannelPreflightDoesNotReadFirstGitignoreMatchAsProjectEvidence(t *testing.T) {
 	repository := "Mininglamp-OSS/openclaw-channel-octo"
 	sourceTool := newScriptedPreflightTool(agenttools.ToolSourceBrowse, func(args map[string]interface{}) *types.ToolResult {

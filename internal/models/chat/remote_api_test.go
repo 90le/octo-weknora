@@ -59,7 +59,7 @@ func TestRemoteAPIChat_RetriesUnsupportedConfiguredThinkingControl(t *testing.T)
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
 		requests = append(requests, request)
 
-		if len(requests) == 1 {
+		if _, hasThinkingField := request["chat_template_kwargs"]; hasThinkingField {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":{"message":"Unknown parameter: 'chat_template_kwargs'"}}`))
 			return
@@ -84,6 +84,23 @@ func TestRemoteAPIChat_RetriesUnsupportedConfiguredThinkingControl(t *testing.T)
 	require.Len(t, requests, 2, "only one retry is allowed")
 	assert.Contains(t, requests[0], "chat_template_kwargs")
 	assert.NotContains(t, requests[1], "chat_template_kwargs")
+
+	response, err = chat.Chat(context.Background(), []Message{{Role: "user", Content: "next round"}}, &ChatOptions{
+		Thinking: ptrBool(true),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	require.Len(t, requests, 3, "the same Agent turn should not repeat the rejected request")
+	assert.NotContains(t, requests[2], "chat_template_kwargs")
+
+	freshChat := newThinkingFallbackTestChat(t, server.URL)
+	_, err = freshChat.Chat(context.Background(), []Message{{Role: "user", Content: "new turn"}}, &ChatOptions{
+		Thinking: ptrBool(true),
+	})
+	require.NoError(t, err)
+	require.Len(t, requests, 5, "a new model instance must probe again after gateway changes")
+	assert.Contains(t, requests[3], "chat_template_kwargs")
+	assert.NotContains(t, requests[4], "chat_template_kwargs")
 }
 
 func TestRemoteAPIChat_DoesNotRetryUnrelatedBadRequest(t *testing.T) {
@@ -110,7 +127,7 @@ func TestRemoteAPIChat_StreamRetriesUnsupportedConfiguredThinkingControl(t *test
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
 		requests = append(requests, request)
 
-		if len(requests) == 1 {
+		if _, hasThinkingField := request["chat_template_kwargs"]; hasThinkingField {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":{"message":"Unsupported parameter: chat_template_kwargs"}}`))
 			return
@@ -138,6 +155,44 @@ func TestRemoteAPIChat_StreamRetriesUnsupportedConfiguredThinkingControl(t *test
 	require.NotEmpty(t, responses)
 	assert.Contains(t, responses[0].Content, "fallback stream")
 	assert.True(t, responses[len(responses)-1].Done)
+
+	stream, err = chat.ChatStream(context.Background(), []Message{{Role: "user", Content: "next round"}}, &ChatOptions{
+		Thinking: ptrBool(true),
+	})
+	require.NoError(t, err)
+	for range stream {
+	}
+	require.Len(t, requests, 3, "later Agent rounds must omit a previously rejected optional field")
+	assert.NotContains(t, requests[2], "chat_template_kwargs")
+}
+
+func TestRemoteAPIChat_DoesNotRememberUnsupportedThinkingWhenFallbackFails(t *testing.T) {
+	var requests []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		requests = append(requests, request)
+		if _, hasThinkingField := request["chat_template_kwargs"]; hasThinkingField {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Unknown parameter: 'chat_template_kwargs'"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	chat := newThinkingFallbackTestChat(t, server.URL)
+	for range 2 {
+		_, err := chat.Chat(context.Background(), []Message{{Role: "user", Content: "hello"}}, &ChatOptions{
+			Thinking: ptrBool(true),
+		})
+		require.Error(t, err)
+	}
+	require.Len(t, requests, 4, "failed fallback must not mark the optional field unsupported for later calls")
+	assert.Contains(t, requests[0], "chat_template_kwargs")
+	assert.NotContains(t, requests[1], "chat_template_kwargs")
+	assert.Contains(t, requests[2], "chat_template_kwargs")
+	assert.NotContains(t, requests[3], "chat_template_kwargs")
 }
 
 func TestBuildChatCompletionRequest_ParallelToolCalls(t *testing.T) {

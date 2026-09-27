@@ -28,6 +28,15 @@ type sourceCitationTool struct {
 	result *types.ToolResult
 }
 
+type sourceBudgetTool struct{ sourceCitationTool }
+
+func (*sourceBudgetTool) OutputLimitChars(args json.RawMessage) int {
+	if string(args) == `{"action":"read"}` {
+		return 140000
+	}
+	return 0
+}
+
 type githubReleaseCitationTool struct {
 	types.Tool
 	result *types.ToolResult
@@ -127,6 +136,17 @@ func TestSourceBrowseReadTracksPrivateProvenanceWithSourceRef(t *testing.T) {
 	_, err := TrackRetrieval(tool).Execute(ctx, json.RawMessage(`{"action":"read","source_ref":"s1"}`))
 	require.NoError(t, err)
 	require.Equal(t, []SourceCitation{{KnowledgeBaseID: "kb", URL: url, Path: "main.go", Revision: "0123456789012345678901234567890123456789"}}, SourceCitations(ctx))
+}
+
+func TestTrackedRetrievalForwardsSourceOutputBudget(t *testing.T) {
+	wrapped := TrackRetrieval(&sourceBudgetTool{})
+	provider, ok := wrapped.(interface{ OutputLimitChars(json.RawMessage) int })
+	require.True(t, ok)
+	require.Equal(t, 140000, provider.OutputLimitChars(json.RawMessage(`{"action":"read"}`)))
+	require.Zero(t, provider.OutputLimitChars(json.RawMessage(`{"action":"list"}`)))
+	ordinary, ok := TrackRetrieval(&sourceCitationTool{}).(interface{ OutputLimitChars(json.RawMessage) int })
+	require.True(t, ok)
+	require.Zero(t, ordinary.OutputLimitChars(json.RawMessage(`{"action":"read"}`)))
 }
 
 func TestSourceNavigationAndPartialSearchCannotRegisterKnowledgeGap(t *testing.T) {
