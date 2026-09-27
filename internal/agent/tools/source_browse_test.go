@@ -167,6 +167,16 @@ func TestSourceBrowseUsesConfiguredGitHubIdentityInsteadOfDisplayName(t *testing
 	badCatalog := sourceCatalog(t, badTool)
 	require.Empty(t, badCatalog.Sources)
 	require.False(t, badCatalog.Complete, "an unidentifiable GitHub snapshot keeps exhaustive search incomplete")
+	mixedTool := NewSourceBrowseTool(&sourceToolReader{summaries: map[string][]types.SourceSummary{"kb": {invalid, summary}}},
+		&sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	filtered, err := mixedTool.Execute(sourceToolContext(), json.RawMessage(`{"action":"list","repository_query":"Mininglamp-OSS/openclaw-channel-octo"}`))
+	require.NoError(t, err)
+	require.True(t, filtered.Success, filtered.Error)
+	var filteredCatalog sourceBrowseCatalog
+	require.NoError(t, json.Unmarshal([]byte(filtered.Output), &filteredCatalog))
+	require.True(t, filteredCatalog.Complete, "an unrelated invalid source must not poison a named repository lookup")
+	require.Len(t, filteredCatalog.Sources, 1)
+	require.Equal(t, summary.Repository, filteredCatalog.Sources[0].Repository)
 }
 
 func TestSourceBrowseCatalogBindsOpaqueRefAndRedactsInternalIDs(t *testing.T) {

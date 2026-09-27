@@ -366,14 +366,14 @@ func (t *SourceBrowseTool) listBindings(ctx context.Context, kbIDs []string, que
 		})
 		tenant := t.allowed()[kbID]
 		for _, summary := range summaries {
+			if query != "" && !strings.Contains(strings.ToLower(summary.Name), query) &&
+				!strings.Contains(strings.ToLower(summary.Repository), query) {
+				continue
+			}
 			if summary.Type == types.ConnectorTypeGitHub && summary.Repository == "" {
 				// A GitHub display name is editable and cannot stand in for a
 				// validated owner/repository identity, even if a snapshot exists.
 				complete = false
-				continue
-			}
-			if query != "" && !strings.Contains(strings.ToLower(summary.Name), query) &&
-				!strings.Contains(strings.ToLower(summary.Repository), query) {
 				continue
 			}
 			if summary.ID == "" || summary.SnapshotID == "" {
