@@ -33,7 +33,11 @@ func recordAnswerEvidenceFromStep(ctx context.Context, step types.AgentStep) {
 		}
 		if call.Name == agenttools.ToolSourceBrowse {
 			if search, ok := sourceBrowseSearchAudit(call.Result); ok {
-				answerevidence.RecordSourceSearch(ctx, search.Complete, search.Matched, search.Repository)
+				if search.Global {
+					answerevidence.RecordSourceSearch(ctx, search.Complete, search.Matched)
+				} else {
+					answerevidence.RecordSourceSearch(ctx, search.Complete, search.Matched, search.Repository)
+				}
 			}
 			if citation, ok := sourceBrowseReadCitation(call.Result); ok {
 				answerevidence.RecordSourceRead(ctx, citation.Repository)

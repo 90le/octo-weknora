@@ -91,6 +91,7 @@ type SourceBrowseCitation struct {
 // a source fact or authorizes automatic knowledge-gap registration.
 type SourceBrowseSearchAudit struct {
 	Repository string `json:"-"`
+	Global     bool   `json:"-"`
 	Complete   bool   `json:"-"`
 	Matched    bool   `json:"-"`
 }

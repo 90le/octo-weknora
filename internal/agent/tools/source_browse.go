@@ -583,7 +583,7 @@ func searchAuditFromOutput(out interface{}) *types.SourceBrowseSearchAudit {
 	case sourceBrowseSearch:
 		return &types.SourceBrowseSearchAudit{Repository: result.Repository, Complete: result.Complete, Matched: len(result.Matches) > 0}
 	case sourceBrowseGlobalSearch:
-		return &types.SourceBrowseSearchAudit{Complete: result.Complete, Matched: result.MatchedSources > 0}
+		return &types.SourceBrowseSearchAudit{Global: true, Complete: result.Complete, Matched: result.MatchedSources > 0}
 	default:
 		return nil
 	}

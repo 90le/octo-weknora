@@ -53,19 +53,18 @@ func (needs evidenceNeeds) multiple() bool { return needs != 0 && needs&(needs-1
 // for the duration of one incoming turn and is never persisted or exposed to a
 // model. Tool execution may be parallel, hence the mutex.
 type State struct {
-	mu                sync.RWMutex
-	intent            Intent
-	needs             evidenceNeeds
-	chinese           bool
-	sourceSearch      bool
-	sourceComplete    bool
-	sourceMatched     bool
-	sourceSearchRepos map[string]bool
-	sourceRead        bool
-	sourceReadRepos   map[string]bool
-	// Full normalized repository identities are separate from the leaf-only
-	// map used by the legacy named-channel check. Two owners may have the same
-	// leaf; only full identities can join source and release evidence.
+	mu                     sync.RWMutex
+	intent                 Intent
+	needs                  evidenceNeeds
+	chinese                bool
+	sourceSearch           bool
+	sourceComplete         bool
+	sourceMatched          bool
+	sourceSearchIdentities map[string]bool
+	sourceRead             bool
+	sourceReadRepos        map[string]bool
+	// Full normalized identities prevent a search of one owner's same-named
+	// repository from pairing with another owner's read or release evidence.
 	sourceReadIdentities map[string]bool
 	documentEvidence     bool
 	releaseLookup        bool
@@ -299,10 +298,9 @@ func SourceSearchMatched(ctx context.Context) bool {
 	return state.sourceMatched
 }
 
-// SourceSearchComplete reports whether at least one trusted source_browse
-// search finished without a catalog, timeout, or result truncation boundary.
-// An incomplete search may guide a later read, but never justifies treating a
-// zero-hit result as exhaustive.
+// SourceSearchComplete reports whether a trusted source_browse search finished
+// across the entire authorized catalog. A complete search of one repository,
+// or a capped global page, cannot prove that all sources lack an answer.
 func SourceSearchComplete(ctx context.Context) bool {
 	state := stateFrom(ctx)
 	if state == nil {
@@ -468,7 +466,7 @@ func IntegrationEvidenceObserved(ctx context.Context) bool {
 		return false
 	}
 	for _, repository := range state.requiredRepos {
-		if !state.sourceSearchRepos[repository] || !state.sourceReadRepos[repository] {
+		if !namedRepositoryReadAfterSearchLocked(state, repository) {
 			return false
 		}
 	}
@@ -485,14 +483,16 @@ func RecordSourceSearch(ctx context.Context, complete, matched bool, repositorie
 	if state := stateFrom(ctx); state != nil {
 		state.mu.Lock()
 		state.sourceSearch = true
-		state.sourceComplete = state.sourceComplete || complete
+		// Only a global search can establish completeness for a general
+		// zero-hit/unknown answer. Scoped searches still support verified reads.
+		state.sourceComplete = state.sourceComplete || (complete && len(repositories) == 0)
 		state.sourceMatched = state.sourceMatched || matched
-		if state.sourceSearchRepos == nil {
-			state.sourceSearchRepos = make(map[string]bool)
+		if state.sourceSearchIdentities == nil {
+			state.sourceSearchIdentities = make(map[string]bool)
 		}
 		for _, repository := range repositories {
-			if leaf := repositoryLeaf(repository); leaf != "" {
-				state.sourceSearchRepos[leaf] = true
+			if identity := repositoryIdentity(repository); identity != "" {
+				state.sourceSearchIdentities[identity] = true
 			}
 		}
 		state.mu.Unlock()
@@ -781,11 +781,23 @@ func integrationEvidenceObservedLocked(state *State) bool {
 		return false
 	}
 	for _, repository := range state.requiredRepos {
-		if !state.sourceSearchRepos[repository] || !state.sourceReadRepos[repository] {
+		if !namedRepositoryReadAfterSearchLocked(state, repository) {
 			return false
 		}
 	}
 	return true
+}
+
+func namedRepositoryReadAfterSearchLocked(state *State, requiredLeaf string) bool {
+	if !state.sourceReadRepos[requiredLeaf] {
+		return false
+	}
+	for identity := range state.sourceReadIdentities {
+		if repositoryLeaf(identity) == requiredLeaf && state.sourceSearchIdentities[identity] {
+			return true
+		}
+	}
+	return false
 }
 
 func missingEvidenceLabels(ctx context.Context, chinese bool) []string {

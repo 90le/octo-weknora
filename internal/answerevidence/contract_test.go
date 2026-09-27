@@ -75,6 +75,25 @@ func TestBoundedNamedRepositorySearchAndReadCanAnswerIntegration(t *testing.T) {
 	require.False(t, IntegrationEvidenceObserved(globalPage), "a global page cannot stand in for a scoped repository search")
 }
 
+func TestScopedZeroHitDoesNotProveGlobalIntegrationAbsence(t *testing.T) {
+	ctx := WithContract(context.Background(), "Claude 支持接入 Octo IM Bot 吗？")
+	RecordSourceSearch(ctx, true, false, "Mininglamp-OSS/one-repository")
+	require.False(t, SourceSearchComplete(ctx), "one repository is not the whole authorized catalog")
+	require.True(t, NeedsEvidenceRetry(ctx, "当前授权资料无法确认是否支持。"))
+	RecordSourceSearch(ctx, true, false) // exhaustive authorized global search
+	require.True(t, SourceSearchComplete(ctx))
+	require.False(t, NeedsEvidenceRetry(ctx, "当前授权资料无法确认是否支持。"))
+}
+
+func TestNamedRepositorySearchAndReadMustHaveSameOwner(t *testing.T) {
+	ctx := WithContract(context.Background(), "openclaw-channel-octo 如何接收消息？")
+	RecordSourceSearch(ctx, false, true, "OtherOrg/openclaw-channel-octo")
+	RecordSourceRead(ctx, "Mininglamp-OSS/openclaw-channel-octo")
+	require.False(t, IntegrationEvidenceObserved(ctx), "matching repository leaves from different owners are not one source")
+	RecordSourceSearch(ctx, false, true, "Mininglamp-OSS/openclaw-channel-octo")
+	require.True(t, IntegrationEvidenceObserved(ctx))
+}
+
 func TestRuntimeNameDoesNotForceSourceOnlyFallback(t *testing.T) {
 	query := "在 Node.js 环境如何安装 Octo CLI？请根据知识库回答并给出来源。"
 	ctx := WithContract(context.Background(), query)

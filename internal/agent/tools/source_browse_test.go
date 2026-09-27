@@ -15,6 +15,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSearchAuditDistinguishesScopedFromGlobalCompleteness(t *testing.T) {
+	scoped := searchAuditFromOutput(sourceBrowseSearch{Repository: "Mininglamp-OSS/repo", Complete: true})
+	require.NotNil(t, scoped)
+	require.False(t, scoped.Global)
+	require.Equal(t, "Mininglamp-OSS/repo", scoped.Repository)
+
+	global := searchAuditFromOutput(sourceBrowseGlobalSearch{Complete: true})
+	require.NotNil(t, global)
+	require.True(t, global.Global)
+	require.Empty(t, global.Repository)
+}
+
 type sourceToolKB struct {
 	interfaces.KnowledgeBaseService
 }
