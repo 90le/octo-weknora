@@ -80,7 +80,7 @@
             <div v-if="selected.subarea_id" class="policy-row"><div><strong>继承主群知识库</strong><p>增加可查询范围，不继承维护授权、对话或问题记录。</p></div><t-switch v-model="editInherit" aria-label="继承主群知识库" /></div>
             <div v-else class="policy-row"><div><strong>汇总子区问题</strong><p>允许主群查询该群子区的问题记录，不增加子区知识或维护权限。</p></div><t-switch v-model="editAggregate" aria-label="汇总子区问题" /></div>
             <div class="policy-row"><div><strong>允许管理者在群内建库</strong><p>只作用于当前区域；管理者仍需通过原生身份核验，其他工作区资产不会因此开放。</p></div><t-switch v-model="editCreation" aria-label="允许管理者在群内建库" /></div>
-            <div class="policy-row"><div><strong>允许当前区域公网搜索</strong><p>默认关闭，不继承到子区。仅在智能体也开启联网、工作区配置搜索提供方时生效；外部搜索只使用当前用户提问，不发送知识库或源码片段。</p></div><t-switch v-model="editPublicWeb" aria-label="允许当前区域公网搜索" /></div>
+            <div class="policy-row"><div><strong>允许当前区域公网搜索</strong><p>默认关闭，不继承到子区。仅在智能体也开启联网、工作区配置搜索提供方时生效；外部搜索只发送当前用户原问题，不自动附加知识库或源码内容。</p></div><t-switch v-model="editPublicWeb" aria-label="允许当前区域公网搜索" /></div>
           </section>
 
           <details class="diagnostics" :open="detailsOpen" @toggle="detailsOpen = ($event.target as HTMLDetailsElement).open">
