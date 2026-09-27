@@ -249,12 +249,16 @@ func TestNamedChannelPreflightFindsRepositoryAfterTruncatedCatalog(t *testing.T)
 			}
 			return &types.ToolResult{Success: true, Output: `{"sources":[{"source_ref":"s-early","repository":"Other/hermes-channel-octo"}],"complete":false,"next_offset":64}`}
 		case "search":
-			require.Equal(t, "s-late", args["source_ref"])
+			if args["source_ref"] != "s-late" {
+				return &types.ToolResult{Success: false, Error: "searched wrong source reference"}
+			}
 			return &types.ToolResult{Success: true, Output: `{"matches":[{"path":"README.md","line":1}],"complete":true}`, Data: map[string]interface{}{
 				types.SourceBrowseSearchDataKey: types.SourceBrowseSearchAudit{Repository: repository, Complete: true, Matched: true},
 			}}
 		case "read":
-			require.Equal(t, "s-late", args["source_ref"])
+			if args["source_ref"] != "s-late" {
+				return &types.ToolResult{Success: false, Error: "read wrong source reference"}
+			}
 			return &types.ToolResult{Success: true, Output: `{"repository":"` + repository + `","path":"README.md","content":"Hermes channel bridge","source_url":"https://github.com/` + repository + `/blob/commit/README.md#L1"}`, Data: map[string]interface{}{
 				types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: repository, Path: "README.md", Revision: "commit"},
 			}}
