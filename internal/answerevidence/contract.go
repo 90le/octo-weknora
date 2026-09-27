@@ -112,7 +112,7 @@ func classifyNeeds(query string) evidenceNeeds {
 		needs |= needSource
 	}
 	if containsAny(q,
-		"最新版本", "当前版本", "版本", "更新日志", "更新了什么", "更新内容", "发布版本", "版本发布", "发布记录", "发布说明", "发布日志", "发布了什么", "发行版本", "release", "changelog", "release note",
+		"最新版本", "最新版", "当前版本", "版本号", "版本是什么", "版本是多少", "哪个版本", "版本更新", "更新日志", "更新了什么", "更新内容", "发布版本", "版本发布", "发布记录", "发布说明", "发布日志", "发布了什么", "发行版本", "release", "changelog", "release note",
 	) {
 		needs |= needRelease
 	}
