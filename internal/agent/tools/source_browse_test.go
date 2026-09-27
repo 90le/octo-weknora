@@ -10,6 +10,8 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/datasource/snapshot"
+	"github.com/Tencent/WeKnora/internal/modelcontext"
+	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
@@ -54,6 +56,7 @@ type sourceToolReader struct {
 	requireGrant  bool
 	omitSourceURL bool
 	readErr       error
+	readContent   string
 }
 
 func (r *sourceToolReader) ListSourceSnapshots(_ context.Context, kbID string) ([]types.SourceSummary, error) {
@@ -81,7 +84,11 @@ func (r *sourceToolReader) ReadSourceFile(_ context.Context, kbID, sourceID, sna
 	if !r.omitSourceURL {
 		url = "https://github.com/example/repo/blob/commit-1/" + p
 	}
-	return &types.SourceRead{DataSourceID: sourceID, SnapshotID: snapshotID, Path: p, Revision: "commit-1", StartLine: start, EndLine: end, TotalLines: 12, Content: "source body", SourceURL: url, PreviewURL: "/platform/knowledge-bases/" + kbID + "?source_id=" + sourceID + "&snapshot_id=" + snapshotID}, nil
+	content := r.readContent
+	if content == "" {
+		content = "source body"
+	}
+	return &types.SourceRead{DataSourceID: sourceID, SnapshotID: snapshotID, Path: p, Revision: "commit-1", StartLine: start, EndLine: end, TotalLines: 12, Content: content, SourceURL: url, PreviewURL: "/platform/knowledge-bases/" + kbID + "?source_id=" + sourceID + "&snapshot_id=" + snapshotID}, nil
 }
 
 func (r *sourceToolReader) SearchSourceFiles(ctx context.Context, kbID, sourceID, snapshotID, _ string, _ string) (*types.SourceSearch, error) {
@@ -581,6 +588,91 @@ func TestSourceBrowseReadExplainsMissingPathWithoutSuggestingRefRetry(t *testing
 	require.Contains(t, result.Error, "path is unavailable")
 	require.Contains(t, result.Error, "tree or search")
 	require.NotContains(t, result.Error, "copy a returned source_ref")
+}
+
+func TestSourceBrowseReadKeepsLargeJSONIntactThroughRegistry(t *testing.T) {
+	reader := &sourceToolReader{
+		summaries:   map[string][]types.SourceSummary{"kb": {sourceSummary("source", "snapshot", "github.com/example/repo")}},
+		readContent: strings.Repeat("x", 40000),
+	}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	_ = sourceCatalog(t, tool)
+	args := json.RawMessage(`{"action":"read","source_ref":"s1","path":"main.go","start_line":1,"end_line":1}`)
+	require.Equal(t, maxSourceBrowseReadOutputRunes, tool.OutputLimitChars(args))
+	require.Zero(t, tool.OutputLimitChars(json.RawMessage(`{"action":"list"}`)))
+	registry := NewToolRegistry()
+	registry.RegisterTool(tool)
+	result, err := registry.ExecuteTool(sourceToolContext(), ToolSourceBrowse, args)
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+	require.Greater(t, len(result.Output), DefaultMaxToolOutput)
+	var read sourceBrowseRead
+	require.NoError(t, json.Unmarshal([]byte(result.Output), &read), "registry must not cut structured JSON")
+	require.Equal(t, reader.readContent, read.Content)
+	require.Contains(t, result.Data, types.SourceBrowseCitationDataKey)
+}
+
+func TestTrackedLargeSourceReadRetainsModelCitationHandle(t *testing.T) {
+	reader := &sourceToolReader{
+		summaries:   map[string][]types.SourceSummary{"kb": {sourceSummary("source", "snapshot", "github.com/example/repo")}},
+		readContent: strings.Repeat("a", 32000) + "citation-tail",
+	}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	_ = sourceCatalog(t, tool)
+	registry := NewToolRegistry()
+	registry.RegisterTool(octobusiness.TrackRetrieval(tool))
+	ctx := octobusiness.WithRetrievalTrace(sourceToolContext())
+	result, err := registry.ExecuteTool(ctx, ToolSourceBrowse, json.RawMessage(`{"action":"read","source_ref":"s1","path":"main.go","start_line":1,"end_line":1}`))
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+	require.Len(t, octobusiness.SourceCitations(ctx), 1)
+	model := modelcontext.NewRegistry(true).ModelToolResultForTool(ToolSourceBrowse, result)
+	require.Contains(t, model, `citation_ref":"w1`) // JSON metadata retains the current-turn handle.
+	require.Contains(t, model, "citation-tail")
+}
+
+func TestSourceBrowseReadOverBudgetFailsWithoutPartialJSONOrCitation(t *testing.T) {
+	reader := &sourceToolReader{
+		summaries:   map[string][]types.SourceSummary{"kb": {sourceSummary("source", "snapshot", "github.com/example/repo")}},
+		readContent: strings.Repeat("x", maxSourceBrowseReadOutputRunes),
+	}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	_ = sourceCatalog(t, tool)
+	registry := NewToolRegistry()
+	registry.RegisterTool(tool)
+	result, err := registry.ExecuteTool(sourceToolContext(), ToolSourceBrowse, json.RawMessage(`{"action":"read","source_ref":"s1","path":"main.go","start_line":1,"end_line":1}`))
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	require.Empty(t, result.Output)
+	require.Empty(t, result.Data)
+	require.Contains(t, result.Error, "request fewer lines")
+}
+
+func TestSourceBrowseReadExplainsOversizedSingleLine(t *testing.T) {
+	reader := &sourceToolReader{
+		summaries: map[string][]types.SourceSummary{"kb": {sourceSummary("source", "snapshot", "github.com/example/repo")}},
+		readErr:   types.ErrSourceReadLineTooLong,
+	}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	_ = sourceCatalog(t, tool)
+	result, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"read","source_ref":"s1","path":"main.go","start_line":1,"end_line":1}`))
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	require.Contains(t, result.Error, "too long")
+	require.Empty(t, result.Data)
+}
+
+func TestSourceBrowseBlankReadDoesNotCreateEvidenceCitation(t *testing.T) {
+	reader := &sourceToolReader{
+		summaries:   map[string][]types.SourceSummary{"kb": {sourceSummary("source", "snapshot", "github.com/example/repo")}},
+		readContent: "   ",
+	}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	_ = sourceCatalog(t, tool)
+	result, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"read","source_ref":"s1","path":"main.go","start_line":1,"end_line":1}`))
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.NotContains(t, result.Data, types.SourceBrowseCitationDataKey)
 }
 
 func TestSourceToolNeverWidensFileOrTagScope(t *testing.T) {

@@ -148,6 +148,56 @@ func TestOctoRawSourceCitationRequiresObservedReadURL(t *testing.T) {
 	require.NotContains(t, stripIMCitationTags(forged), "github.com")
 }
 
+func TestOctoGitHubLineLinksRequireExactCurrentTurnRead(t *testing.T) {
+	ctx := octobusiness.WithRetrievalTrace(octoCitationContext())
+	revision := strings.Repeat("c", 40)
+	readURL := "https://github.com/test/code/blob/" + revision + "/main.go#L3-L7"
+	result, _ := json.Marshal(types.SourceRead{Path: "main.go", SourceURL: readURL, Revision: revision})
+	_, err := octobusiness.TrackRetrieval(&octoCitationSourceTool{output: string(result), data: map[string]interface{}{
+		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", URL: readURL, Path: "main.go", Revision: revision},
+	}}).Execute(ctx, []byte(`{"action":"read","source_ref":"s1"}`))
+	require.NoError(t, err)
+
+	wrongRange := "https://github.com/test/code/blob/" + revision + "/main.go#L10-L20"
+	wrongRepo := "https://github.com/other/code/blob/" + revision + "/main.go#L3-L7"
+	branchLink := "https://github.com/test/code/blob/main/main.go#L3-L7"
+	encodedRange := "https://github.com/test/code/blob/" + revision + "/main.go#%4C10-%4C20"
+	release := "https://github.com/test/code/releases/tag/v1.0"
+	answer := "[已读](" + readURL + ")、[错行](" + wrongRange + ")、[错库](" + wrongRepo + ")、[分支行](" + branchLink + ")、[版本](" + release + ")；裸链 " + wrongRange + "；编码 " + encodedRange + "；HTML <a href=\"" + wrongRepo + "\">代码</a>"
+	got := sanitizeOctoGitHubLineLinks(ctx, answer)
+	require.Contains(t, got, "[已读]("+readURL+")")
+	require.Contains(t, got, "错行（源码行号未核验）")
+	require.Contains(t, got, "错库（源码行号未核验）")
+	require.Contains(t, got, "分支行（源码行号未核验）")
+	require.Contains(t, got, "[版本]("+release+")")
+	require.NotContains(t, got, wrongRange)
+	require.NotContains(t, got, wrongRepo)
+	require.NotContains(t, got, branchLink)
+	require.NotContains(t, got, encodedRange)
+	require.Contains(t, got, "未经核验的源码行号链接已省略")
+	require.Equal(t, answer, sanitizeOctoGitHubLineLinks(context.Background(), answer), "non-Octo answers are untouched")
+}
+
+func TestOctoStreamingFinalRendersOnlyObservedCodeLineSource(t *testing.T) {
+	ctx := octobusiness.WithRetrievalTrace(octoCitationContext())
+	revision := strings.Repeat("a", 40)
+	readURL := "https://github.com/test/code/blob/" + revision + "/main.go#L3-L7"
+	wrongURL := "https://github.com/test/code/blob/" + revision + "/main.go#L30-L70"
+	result, _ := json.Marshal(types.SourceRead{Path: "main.go", SourceURL: readURL, Revision: revision})
+	_, err := octobusiness.TrackRetrieval(&octoCitationSourceTool{output: string(result), data: map[string]interface{}{
+		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", URL: readURL, Path: "main.go", Revision: revision},
+	}}).Execute(ctx, []byte(`{"action":"read","source_ref":"s1"}`))
+	require.NoError(t, err)
+	service := &Service{}
+	parts := IMStreamParts{Mode: IMStreamModeAgent, Answer: "结论。<web title=\"main.go\" url=\"" + readURL + "\"/> [错误引用](" + wrongURL + ")"}
+	final := service.formatIMStreamFinal(ctx, parts, nil, nil)
+	require.Contains(t, final, "结论。")
+	require.Contains(t, final, readURL)
+	require.Contains(t, final, "错误引用（源码行号未核验）")
+	require.NotContains(t, final, wrongURL)
+	require.NotContains(t, final, "<web")
+}
+
 func TestOctoOfficialReleaseCitationIsAppendedWithoutModelRefAndRespectsSetting(t *testing.T) {
 	ctx := octobusiness.WithRetrievalTrace(octoCitationContext())
 	url := "https://github.com/test/octo-web/releases/tag/v1.2.3"
