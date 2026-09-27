@@ -2913,6 +2913,7 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 		agentRunning := useAgent && !agentDone
 		bufMu.Unlock()
 
+		octoHoldUnverifiedIntermediate(ctx, useAgent, &parts)
 		displaySource := FormatIMIntermediateFromParts(parts, agentRunning)
 		if displaySource == "" {
 			return
@@ -2955,6 +2956,7 @@ loop:
 	// Use the same selected answer for the final IM frame and message history.
 	// IM-only source rendering below may add trusted links to the visible frame;
 	// the stored answer remains the canonical raw answer with citation tags.
+	resolvedAnswer = octoGuardStoredAnswer(ctx, resolvedAnswer, assistantMsg)
 	parts.Answer = resolvedAnswer
 	answer := resolvedAnswer
 	finalErr := qaErr
@@ -3213,6 +3215,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	if notice := s.buildIMMCPAuthNotice(ctx, authServices); notice != "" {
 		answer = appendIMAuthNotice(answer, notice)
 	}
+	answer = octoGuardStoredAnswer(ctx, answer, assistantMsg)
 	answer = sanitizeOctoGitHubLineLinks(ctx, answer)
 
 	// Update assistant message with the full answer (including citation tags for web rendering).

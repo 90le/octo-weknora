@@ -83,7 +83,7 @@ func TestOctoStreamingFinalKeepsTrustedKBAndSourceLinksBesideTheirClaims(t *test
 	read, err := json.Marshal(types.SourceRead{Path: "src/socket.go", SourceURL: codeURL, Revision: commit})
 	require.NoError(t, err)
 	_, err = octobusiness.TrackRetrieval(&octoCitationSourceTool{output: string(read), data: map[string]interface{}{
-		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", URL: codeURL, Path: "src/socket.go", Revision: commit},
+		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: "example/code", URL: codeURL, Path: "src/socket.go", Revision: commit, Citable: true},
 	}}).Execute(ctx, []byte(`{"action":"read","source_ref":"s1"}`))
 	require.NoError(t, err)
 	service := &Service{knowledgeService: knowledge}
@@ -237,7 +237,7 @@ func TestOctoRawSourceCitationRequiresObservedReadURL(t *testing.T) {
 	ctx := octobusiness.WithRetrievalTrace(octoCitationContext())
 	url := "https://github.com/test/code/blob/" + strings.Repeat("c", 40) + "/main.go#L3-L7"
 	result, _ := json.Marshal(types.SourceRead{Path: "main.go", SourceURL: url, Revision: strings.Repeat("c", 40)})
-	_, err := octobusiness.TrackRetrieval(&octoCitationSourceTool{output: string(result), data: map[string]interface{}{types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", URL: url, Path: "main.go", Revision: strings.Repeat("c", 40)}}}).Execute(ctx, []byte(`{"action":"read","source_ref":"s1"}`))
+	_, err := octobusiness.TrackRetrieval(&octoCitationSourceTool{output: string(result), data: map[string]interface{}{types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: "test/code", URL: url, Path: "main.go", Revision: strings.Repeat("c", 40), Citable: true}}}).Execute(ctx, []byte(`{"action":"read","source_ref":"s1"}`))
 	require.NoError(t, err)
 	service := &Service{}
 	answer := service.appendOctoSources(ctx, `answer <web title="main.go" url="`+url+`"/>`, nil)
@@ -246,13 +246,56 @@ func TestOctoRawSourceCitationRequiresObservedReadURL(t *testing.T) {
 	require.NotContains(t, stripIMCitationTags(forged), "github.com")
 }
 
+func TestOctoCodeLinksRequireNarrowReadAndTrustedRepository(t *testing.T) {
+	revision := strings.Repeat("a", 40)
+	base := "https://github.com/test/code/blob/" + revision + "/src/main.go"
+	wideURL := base + "#L1-L35"
+	narrowURL := base + "#L4-L5"
+	shortURL := base + "#L4-L4"
+	ctx := octobusiness.WithRetrievalTrace(octoCitationContext())
+	track := func(marker types.SourceBrowseCitation) {
+		t.Helper()
+		_, err := octobusiness.TrackRetrieval(&octoCitationSourceTool{data: map[string]interface{}{types.SourceBrowseCitationDataKey: marker}}).Execute(ctx, []byte(`{"action":"read","source_ref":"s1"}`))
+		require.NoError(t, err)
+	}
+	track(types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: "test/code", URL: wideURL, Path: "src/main.go", Revision: revision, Citable: false})
+	service := &Service{}
+	wide := service.appendOctoSources(ctx, `宽读说明。<web url="`+wideURL+`"/> [看第4行](`+shortURL+`)`, nil)
+	require.NotContains(t, wide, wideURL, "a 35-line exploratory read cannot become a clickable web source")
+	require.NotContains(t, wide, shortURL, "nor can a handwritten subset borrow its provenance")
+	require.Contains(t, wide, "看第4行（源码行号未核验）")
+	require.NotContains(t, wide, "\n来源：", "rejected source cannot reappear in the tail list")
+
+	track(types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: "test/code", URL: narrowURL, Path: "src/main.go", Revision: revision, Citable: true})
+	narrow := service.appendOctoSources(ctx, `窄读说明。<web url="`+narrowURL+`"/> [看第4行](`+shortURL+`)`, nil)
+	require.Contains(t, narrow, narrowURL)
+	require.Contains(t, narrow, "[看第4行]("+shortURL+")")
+	aliasURL := strings.Replace(shortURL, "https://github.com/", "https://www.github.com/", 1)
+	alias := service.appendOctoSources(ctx, `别名。<web url="`+aliasURL+`"/> [别名行](`+aliasURL+`)`, nil)
+	require.NotContains(t, alias, aliasURL, "alternate GitHub hosts cannot bypass canonical repository checks")
+	require.Contains(t, alias, "别名行（源码行号未核验）")
+	dottedURL := strings.Replace(shortURL, "github.com/", "github.com./", 1)
+	dotted := service.appendOctoSources(ctx, `[尾点域名](`+dottedURL+`)`, nil)
+	require.NotContains(t, dotted, dottedURL)
+
+	forgedCtx := octobusiness.WithRetrievalTrace(octoCitationContext())
+	_, err := octobusiness.TrackRetrieval(&octoCitationSourceTool{data: map[string]interface{}{
+		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: "other/repo", URL: narrowURL, Path: "src/main.go", Revision: revision, Citable: true},
+	}}).Execute(forgedCtx, []byte(`{"action":"read","source_ref":"s1"}`))
+	require.NoError(t, err)
+	forged := service.appendOctoSources(forgedCtx, `错误归属。<web url="`+narrowURL+`"/> [看第4行](`+shortURL+`)`, nil)
+	require.NotContains(t, forged, narrowURL, "URL owner/repo must match the trusted marker")
+	require.NotContains(t, forged, shortURL)
+	require.NotContains(t, forged, "\n来源：")
+}
+
 func TestOctoGitHubLineLinksRequireCurrentTurnReadRange(t *testing.T) {
 	ctx := octobusiness.WithRetrievalTrace(octoCitationContext())
 	revision := strings.Repeat("c", 40)
 	readURL := "https://github.com/test/code/blob/" + revision + "/main.go#L3-L7"
 	result, _ := json.Marshal(types.SourceRead{Path: "main.go", SourceURL: readURL, Revision: revision})
 	_, err := octobusiness.TrackRetrieval(&octoCitationSourceTool{output: string(result), data: map[string]interface{}{
-		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", URL: readURL, Path: "main.go", Revision: revision},
+		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: "test/code", URL: readURL, Path: "main.go", Revision: revision, Citable: true},
 	}}).Execute(ctx, []byte(`{"action":"read","source_ref":"s1"}`))
 	require.NoError(t, err)
 
@@ -300,7 +343,7 @@ func TestOctoStreamingFinalRendersOnlyObservedCodeLineSource(t *testing.T) {
 	wrongURL := "https://github.com/test/code/blob/" + revision + "/main.go#L30-L70"
 	result, _ := json.Marshal(types.SourceRead{Path: "main.go", SourceURL: readURL, Revision: revision})
 	_, err := octobusiness.TrackRetrieval(&octoCitationSourceTool{output: string(result), data: map[string]interface{}{
-		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", URL: readURL, Path: "main.go", Revision: revision},
+		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: "test/code", URL: readURL, Path: "main.go", Revision: revision, Citable: true},
 	}}).Execute(ctx, []byte(`{"action":"read","source_ref":"s1"}`))
 	require.NoError(t, err)
 	service := &Service{}
@@ -318,7 +361,7 @@ func TestOctoBranchLineURLIsNotAStableSourceEvenWhenRead(t *testing.T) {
 	branchURL := "https://github.com/test/code/blob/main/main.go#L3-L7"
 	result, _ := json.Marshal(types.SourceRead{Path: "main.go", SourceURL: branchURL, Revision: "snapshot:current"})
 	_, err := octobusiness.TrackRetrieval(&octoCitationSourceTool{output: string(result), data: map[string]interface{}{
-		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", URL: branchURL, Path: "main.go", Revision: "snapshot:current"},
+		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: "test/code", URL: branchURL, Path: "main.go", Revision: "snapshot:current", Citable: true},
 	}}).Execute(ctx, []byte(`{"action":"read","source_ref":"s1"}`))
 	require.NoError(t, err)
 	answer := (&Service{}).appendOctoSources(ctx, "结论。<web title=\"main.go\" url=\""+branchURL+"\"/> [源码]("+branchURL+")", nil)

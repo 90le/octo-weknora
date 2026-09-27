@@ -25,6 +25,7 @@ const (
 	maxSourceBrowseSearchWorkers  = 6
 	maxSourceBrowseSearchMatches  = 80
 	sourceBrowseSearchDeadline    = 8 * time.Second
+	maxCitableSourceReadLines     = 12
 	// A 200-line source read can carry 64 KiB of text before JSON escaping.
 	// Preserve that one structured result without the registry's head/tail cut.
 	maxSourceBrowseReadOutputRunes = 140000
@@ -125,6 +126,17 @@ type sourceBrowseRead struct {
 	Content    string               `json:"content"`
 	Truncated  bool                 `json:"truncated"`
 	SourceURL  string               `json:"source_url,omitempty"`
+}
+
+// A broad read still counts as an authorized source inspection for business
+// evidence, but it cannot authorize a clickable code citation. Keep this
+// boundary aligned with modelcontext's wN registration and IM's short links.
+func sourceBrowseReadCitable(read *types.SourceRead) bool {
+	if read == nil || strings.TrimSpace(read.Content) == "" || read.StartLine < 1 || read.EndLine < read.StartLine {
+		return false
+	}
+	span := read.EndLine - read.StartLine
+	return span < maxCitableSourceReadLines && span == strings.Count(read.Content, "\n")
 }
 
 // Legacy identifiers are accepted only as a migration path for non-model
@@ -757,7 +769,7 @@ func (t *SourceBrowseTool) Execute(ctx context.Context, args json.RawMessage) (*
 				// only render the URL when it is safe, while the agent evidence
 				// contract still needs to distinguish a real read from list/search.
 				if strings.TrimSpace(read.Content) != "" {
-					citation = &types.SourceBrowseCitation{KnowledgeBaseID: binding.KnowledgeBaseID, Repository: binding.Repository, URL: read.SourceURL, Path: read.Path, Revision: read.Revision}
+					citation = &types.SourceBrowseCitation{KnowledgeBaseID: binding.KnowledgeBaseID, Repository: binding.Repository, URL: read.SourceURL, Path: read.Path, Revision: read.Revision, Citable: sourceBrowseReadCitable(read)}
 				}
 			} else if errors.Is(err, access.ErrNotFound) {
 				return sourceBrowsePathUnavailableError(), nil

@@ -84,6 +84,15 @@ type State struct {
 
 type stateKey struct{}
 type classifiedNoneKey struct{}
+type streamingReadsKey struct{}
+
+// Keep streaming protection separate from the evidence contract: an ordinary
+// question still has IntentNone, but a turn that actually reads two distinct
+// repositories must not stream an unchecked cross-repository answer early.
+type streamingReads struct {
+	mu           sync.RWMutex
+	repositories map[string]bool
+}
 
 // Classify uses deliberately narrow cues. A source classification has
 // precedence because a version question that explicitly asks about code still
@@ -204,6 +213,24 @@ func repositoryIdentity(repository string) string {
 	return strings.ToLower(strings.Trim(strings.TrimSpace(repository), "/"))
 }
 
+func streamingRepositoryIdentity(repository string) string {
+	identity := repositoryIdentity(repository)
+	identity = strings.TrimPrefix(strings.TrimPrefix(identity, "https://"), "http://")
+	// Source configuration may use either owner/repo or github.com/owner/repo.
+	// They identify one repository for this streaming-only counter.
+	identity = strings.TrimPrefix(identity, "github.com/")
+	parts := strings.Split(identity, "/")
+	if len(parts) != 2 && (len(parts) != 3 || !strings.Contains(parts[0], ".")) {
+		return ""
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, " \t\r\n?#") {
+			return ""
+		}
+	}
+	return identity
+}
+
 // WithContract classifies one incoming turn and starts its evidence ledger.
 // It is idempotent: an ingress such as Octo IM may establish the contract
 // after normalizing an addressed message, while AgentEngine.Execute establishes
@@ -220,6 +247,7 @@ func WithContract(ctx context.Context, query string) context.Context {
 	}
 	needs := classifyNeeds(query)
 	intent := Classify(query)
+	ctx = context.WithValue(ctx, streamingReadsKey{}, &streamingReads{repositories: make(map[string]bool)})
 	if intent == IntentNone {
 		return context.WithValue(ctx, classifiedNoneKey{}, true)
 	}
@@ -508,6 +536,15 @@ func RecordSourceSearch(ctx context.Context, complete, matched bool, repositorie
 // is optional for ordinary source questions; an integration question with
 // explicit named projects uses it to require a read for every project.
 func RecordSourceRead(ctx context.Context, repositories ...string) {
+	if reads, ok := ctx.Value(streamingReadsKey{}).(*streamingReads); ok && reads != nil {
+		reads.mu.Lock()
+		for _, repository := range repositories {
+			if identity := streamingRepositoryIdentity(repository); identity != "" {
+				reads.repositories[identity] = true
+			}
+		}
+		reads.mu.Unlock()
+	}
 	if state := stateFrom(ctx); state != nil {
 		state.mu.Lock()
 		state.sourceRead = true
@@ -574,10 +611,26 @@ func RecordReleaseLookup(ctx context.Context) {
 }
 
 // ShouldHoldStreamingAnswer prevents an unverified natural answer from being
-// optimistically exposed in a stream. A safe explicit unknown is later
-// released as normal; only version or integration conclusions are retried or
-// replaced when their intent-specific evidence is missing.
+// optimistically exposed in a stream. Cross-repository turns stay held even
+// after their individual reads succeed, so final attribution can be checked
+// before display. Single-repository and ordinary intent gates stay unchanged.
 func ShouldHoldStreamingAnswer(ctx context.Context) bool {
+	if state := stateFrom(ctx); state != nil {
+		state.mu.RLock()
+		multipleRequested := len(state.requiredRepos) >= 2
+		state.mu.RUnlock()
+		if multipleRequested {
+			return true
+		}
+	}
+	if reads, ok := ctx.Value(streamingReadsKey{}).(*streamingReads); ok && reads != nil {
+		reads.mu.RLock()
+		multipleRead := len(reads.repositories) >= 2
+		reads.mu.RUnlock()
+		if multipleRead {
+			return true
+		}
+	}
 	if multipleNeeds(ctx) {
 		return !allRequiredEvidenceObserved(ctx)
 	}
