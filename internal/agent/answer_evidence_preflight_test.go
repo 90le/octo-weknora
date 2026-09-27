@@ -265,7 +265,60 @@ func TestAnswerEvidencePreflightSearchesAndReadsEachNamedChannelBeforeModel(t *t
 	require.Len(t, state.RoundSteps[0].ToolCalls, 7)
 	active, remaining := answerevidence.PostPreflightSourceBrowseBudget(ctx)
 	require.True(t, active)
-	require.Equal(t, 6, remaining, "one focused search/read pair per named repository remains available")
+	require.Equal(t, 8, remaining, "named projects leave room for a complementary repository read")
+}
+
+func TestNamedChannelPreflightDoesNotReadFirstGitignoreMatchAsProjectEvidence(t *testing.T) {
+	repository := "Mininglamp-OSS/openclaw-channel-octo"
+	sourceTool := newScriptedPreflightTool(agenttools.ToolSourceBrowse, func(args map[string]interface{}) *types.ToolResult {
+		switch args["action"] {
+		case "list":
+			return &types.ToolResult{Success: true, Output: `{"sources":[{"source_ref":"s1","repository":"` + repository + `"}],"complete":true}`}
+		case "search":
+			return &types.ToolResult{Success: true, Output: `{"matches":[{"path":".gitignore","line":1}],"complete":true}`, Data: map[string]interface{}{
+				types.SourceBrowseSearchDataKey: types.SourceBrowseSearchAudit{Repository: repository, Complete: true, Matched: true},
+			}}
+		case "tree":
+			return &types.ToolResult{Success: true, Output: `{"entries":[{"path":".gitignore","directory":false},{"path":"README.md","directory":false}]}`}
+		case "read":
+			if args["path"] != "README.md" {
+				return &types.ToolResult{Success: false, Error: "project overview read an unrelated file"}
+			}
+			return &types.ToolResult{Success: true, Output: `{"repository":"` + repository + `","path":"README.md","content":"OpenClaw channel plugin for Octo. Connects via WebSocket for real-time messaging."}`, Data: map[string]interface{}{
+				types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: repository, Path: "README.md", Revision: "commit"},
+			}}
+		}
+		return &types.ToolResult{Success: false, Error: "unexpected action"}
+	})
+	engine := newTestEngine(t, &mockChat{})
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	engine.toolRegistry.RegisterTool(sourceTool)
+	query := "openclaw-channel-octo 项目负责什么？"
+	ctx := answerevidence.WithContract(context.Background(), query)
+	state := &types.AgentState{}
+	evidence := engine.prepareAnswerEvidencePreflight(ctx, state, query)
+	require.Contains(t, evidence, "Connects via WebSocket")
+	require.NotContains(t, evidence, ".gitignore")
+	require.Equal(t, []string{"list", "search", "tree", "read"}, sourceTool.actions())
+	require.True(t, answerevidence.IntegrationEvidenceObserved(ctx))
+	active, remaining := answerevidence.PostPreflightSourceBrowseBudget(ctx)
+	require.True(t, active)
+	require.Equal(t, 4, remaining)
+}
+
+func TestNamedChannelImplementationQuestionSkipsOverviewPreflight(t *testing.T) {
+	sourceTool := newScriptedPreflightTool(agenttools.ToolSourceBrowse, func(map[string]interface{}) *types.ToolResult {
+		return &types.ToolResult{Success: false, Error: "overview preflight must not run for implementation question"}
+	})
+	engine := newTestEngine(t, &mockChat{})
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	engine.toolRegistry.RegisterTool(sourceTool)
+	query := "openclaw-channel-octo 的源码函数如何实现？"
+	ctx := answerevidence.WithContract(context.Background(), query)
+	require.True(t, answerevidence.Requires(ctx, answerevidence.IntentSource))
+	require.True(t, answerevidence.Requires(ctx, answerevidence.IntentIntegration))
+	require.Empty(t, engine.prepareAnswerEvidencePreflight(ctx, &types.AgentState{}, query))
+	require.Empty(t, sourceTool.actions())
 }
 
 func TestNamedChannelPreflightFindsRepositoryAfterTruncatedCatalog(t *testing.T) {

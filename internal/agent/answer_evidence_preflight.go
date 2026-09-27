@@ -29,12 +29,12 @@ const (
 	// repository. Run independent repositories together so a three-repository
 	// question does not consume the entire turn budget as a serial chain.
 	answerEvidencePreflightNamedChannelWorkers = 3
-	// The model may make focused follow-up reads after the system has already
-	// read every named repository. Keep that allowance narrow: it avoids a
-	// repeated source_browse storm while leaving one search/read pair per
-	// requested repository (capped for pathological long lists).
+	// A question may also name a non-channel repository alongside a channel
+	// adapter. Leave a small extra search/read pair for that source instead of
+	// exhausting the model's budget on the named channel alone.
 	answerEvidencePostPreflightSourceBrowsePerRepo = 2
-	answerEvidencePostPreflightSourceBrowseMax     = 6
+	answerEvidencePostPreflightSourceBrowseExtra   = 2
+	answerEvidencePostPreflightSourceBrowseMax     = 8
 )
 
 type answerEvidencePreflight struct {
@@ -97,7 +97,10 @@ func (e *AgentEngine) prepareAnswerEvidencePreflight(ctx context.Context, state 
 	if answerevidence.Requires(ctx, answerevidence.IntentRelease) {
 		e.preflightNamedReleaseEvidence(preflightCtx, query, &preflight)
 	}
-	if answerevidence.Requires(ctx, answerevidence.IntentIntegration) {
+	if answerevidence.Requires(ctx, answerevidence.IntentIntegration) &&
+		!answerevidence.Requires(ctx, answerevidence.IntentSource) {
+		// Project-overview preflight reads a README. An explicit implementation
+		// question needs model-directed file search instead of that overview.
 		e.preflightNamedChannelEvidence(preflightCtx, query, &preflight)
 	}
 
@@ -106,6 +109,7 @@ func (e *AgentEngine) prepareAnswerEvidencePreflight(ctx context.Context, state 
 	}
 	recordAnswerEvidenceFromStep(ctx, preflight.step)
 	if answerevidence.Requires(ctx, answerevidence.IntentIntegration) &&
+		!answerevidence.Requires(ctx, answerevidence.IntentSource) &&
 		len(answerevidence.RequiredRepositories(ctx)) > 0 &&
 		answerevidence.IntegrationEvidenceObserved(ctx) {
 		answerevidence.ActivatePostPreflightSourceBrowseBudget(ctx, postPreflightSourceBrowseBudget(len(answerevidence.RequiredRepositories(ctx))))
@@ -118,7 +122,7 @@ func postPreflightSourceBrowseBudget(repositories int) int {
 	if repositories <= 0 {
 		return 0
 	}
-	budget := repositories * answerEvidencePostPreflightSourceBrowsePerRepo
+	budget := answerEvidencePostPreflightSourceBrowseExtra + repositories*answerEvidencePostPreflightSourceBrowsePerRepo
 	if budget > answerEvidencePostPreflightSourceBrowseMax {
 		return answerEvidencePostPreflightSourceBrowseMax
 	}
@@ -337,6 +341,15 @@ func readmePathFromTree(output string) string {
 	return ""
 }
 
+func isReadmePath(filePath string) bool {
+	switch strings.ToLower(path.Base(filePath)) {
+	case "readme.md", "readme.mdx", "readme":
+		return true
+	default:
+		return false
+	}
+}
+
 func sourceSearchMatch(output string) (path string, line int) {
 	var search sourceSearchPreflight
 	if json.Unmarshal([]byte(output), &search) != nil || len(search.Matches) == 0 {
@@ -412,19 +425,28 @@ func (e *AgentEngine) preflightNamedChannelEvidence(ctx context.Context, query s
 				return
 			}
 			filePath, line := sourceSearchMatch(search.Result.Output)
-			if filePath == "" {
+			if !isReadmePath(filePath) {
 				tree := e.preflightToolCall(ctx, agenttools.ToolSourceBrowse, map[string]interface{}{"action": "tree", "source_ref": ref, "path": ""}, 2)
 				calls = append(calls, tree)
 				if tree.Result == nil || !tree.Result.Success {
 					results[index].calls = calls
 					return
 				}
+				// A repository-name text hit in .gitignore, CI config, or a
+				// generated file is navigation, not project-role evidence. Prefer
+				// the root README; without one, let the model investigate rather
+				// than automatically promoting an arbitrary first match.
 				filePath = readmePathFromTree(tree.Result.Output)
 				line = 1
 			}
 			if filePath == "" {
 				results[index].calls = calls
 				return
+			}
+			// Project-role questions need the introductory README context even
+			// when the repository name happens to match much later in the file.
+			if isReadmePath(filePath) {
+				line = 1
 			}
 			start := line - 8
 			if start < 1 {
