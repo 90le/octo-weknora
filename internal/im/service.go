@@ -2611,6 +2611,7 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 		pipelineToolSteps []IMToolStep
 
 		agentCompleteFinalAnswer string
+		agentAnswerFallback      bool
 		streamedAny              bool
 
 		// mcpAuthServices collects OAuth services that need out-of-band
@@ -2672,6 +2673,7 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 		}
 
 		bufMu.Lock()
+		agentAnswerFallback = agentAnswerFallback || data.IsFallback
 		if useAgent && !agentDone {
 			if data.Content != "" {
 				agentLiveAnswer.WriteString(data.Content)
@@ -2956,10 +2958,11 @@ loop:
 	parts.Answer = resolvedAnswer
 	answer := resolvedAnswer
 	finalErr := qaErr
+	wasFallback := agentAnswerFallback
 	noVisibleContent := !streamedAny && strings.TrimSpace(resolvedAnswer) == ""
 	authServices := append([]imMCPAuthService(nil), mcpAuthServices...)
 	bufMu.Unlock()
-	if finalErr != nil {
+	if finalErr != nil || wasFallback {
 		// A partial stream after an error is not a completed answer for a
 		// future conversation turn.
 		assistantMsg.IsFallback = true
@@ -3035,6 +3038,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	var answerMu sync.Mutex
 	var answerBuilder strings.Builder
 	var qaErr error
+	var answerFallback bool
 	var mcpAuthServices []imMCPAuthService
 	mcpAuthSeen := make(map[string]bool)
 	done := make(chan struct{})
@@ -3050,6 +3054,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 			return nil
 		}
 		answerMu.Lock()
+		answerFallback = answerFallback || data.IsFallback
 		answerBuilder.WriteString(data.Content)
 		answerMu.Unlock()
 		if data.Done {
@@ -3191,9 +3196,10 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	answerMu.Lock()
 	answer := answerBuilder.String()
 	qaError := qaErr
+	wasFallback := answerFallback
 	authServices := append([]imMCPAuthService(nil), mcpAuthServices...)
 	answerMu.Unlock()
-	if qaError != nil {
+	if qaError != nil || wasFallback {
 		assistantMsg.IsFallback = true
 	}
 

@@ -34,6 +34,7 @@ type fullOutputSessionService struct {
 	interfaces.SessionService
 	order           *fullOutputOrder
 	answer          string
+	fallback        bool
 	hangUntilCancel bool
 	started         chan struct{}
 }
@@ -52,14 +53,17 @@ func (s *fullOutputSessionService) KnowledgeQA(ctx context.Context, req *types.Q
 		Type:      event.EventAgentFinalAnswer,
 		SessionID: req.Session.ID,
 		Data: event.AgentFinalAnswerData{
-			Content: s.answer,
-			Done:    true,
+			Content:    s.answer,
+			Done:       true,
+			IsFallback: s.fallback,
 		},
 	})
 }
 
 type fullOutputMessageService struct {
 	interfaces.MessageService
+	mu      sync.Mutex
+	updated *types.Message
 }
 
 func (s *fullOutputMessageService) CreateMessage(_ context.Context, msg *types.Message) (*types.Message, error) {
@@ -68,8 +72,22 @@ func (s *fullOutputMessageService) CreateMessage(_ context.Context, msg *types.M
 	return &created, nil
 }
 
-func (s *fullOutputMessageService) UpdateMessage(_ context.Context, _ *types.Message) error {
+func (s *fullOutputMessageService) UpdateMessage(_ context.Context, msg *types.Message) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	copy := *msg
+	s.updated = &copy
 	return nil
+}
+
+func (s *fullOutputMessageService) latestUpdate() *types.Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.updated == nil {
+		return nil
+	}
+	copy := *s.updated
+	return &copy
 }
 
 type fullOutputStreamManager struct {
@@ -198,6 +216,43 @@ func newFullOutputHarness(answer string) (*Service, *fullOutputAdapter, *fullOut
 		streamManager:  &fullOutputStreamManager{},
 	}
 	return service, adapter, sessionSvc, order
+}
+
+func TestIMAnswerFallbackFlagSurvivesStreamAndNonStreamPersistence(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		for _, fallback := range []bool{false, true} {
+			name := "nonstream-normal"
+			if streaming {
+				name = "stream-normal"
+			}
+			if fallback {
+				name += "-fallback"
+			}
+			t.Run(name, func(t *testing.T) {
+				service, adapter, sessionSvc, _ := newFullOutputHarness("当前资料不足")
+				sessionSvc.fallback = fallback
+				ctx := context.Background()
+				session := &types.Session{ID: "fallback-session"}
+				var err error
+				if streaming {
+					msg := &IncomingMessage{Platform: PlatformFeishu, UserID: "user-1", Content: "问题"}
+					err = service.handleMessageStream(ctx, msg, session, nil, nil, nil, nil, adapter, adapter, "fallback-user", nil)
+				} else {
+					_, err = service.runQA(ctx, session, "问题", nil, nil, nil, nil, "fallback-user", nil)
+				}
+				if err != nil {
+					t.Fatalf("QA error: %v", err)
+				}
+				stored := service.messageService.(*fullOutputMessageService).latestUpdate()
+				if stored == nil || !stored.IsCompleted || stored.IsFallback != fallback || stored.Content != "当前资料不足" {
+					t.Fatalf("stored answer = %+v, want completed fallback=%v", stored, fallback)
+				}
+				if streaming && adapter.finalContent != "当前资料不足" {
+					t.Fatalf("stream final content = %q", adapter.finalContent)
+				}
+			})
+		}
+	}
 }
 
 func TestHandleMessageFullOutputShowsPlaceholderWithoutIntermediateUpdates(t *testing.T) {
