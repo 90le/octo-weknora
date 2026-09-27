@@ -336,7 +336,10 @@ func exactSourceReferences(output string, wanted []string) map[string]string {
 			continue
 		}
 		for _, candidate := range wanted {
-			if candidate != leaf {
+			wantedIdentity := strings.ToLower(strings.Trim(strings.TrimSpace(candidate), "/"))
+			actualIdentity := strings.ToLower(strings.Trim(strings.TrimSpace(entry.Repository), "/"))
+			if (strings.Contains(wantedIdentity, "/") && wantedIdentity != actualIdentity) ||
+				(!strings.Contains(wantedIdentity, "/") && wantedIdentity != leaf) {
 				continue
 			}
 			if ambiguous[candidate] {

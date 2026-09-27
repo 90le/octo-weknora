@@ -130,6 +130,36 @@ func TestSourceBrowseSchemaExposesOnlySourceRefSelection(t *testing.T) {
 	require.NotContains(t, schema.Properties, "snapshot_id")
 }
 
+func TestSourceBrowseUsesConfiguredGitHubIdentityInsteadOfDisplayName(t *testing.T) {
+	summary := sourceSummary("source", "snapshot", "Friendly custom label")
+	summary.Repository = "Mininglamp-OSS/openclaw-channel-octo"
+	reader := &sourceToolReader{summaries: map[string][]types.SourceSummary{"kb": {summary}}}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	listed, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"list","repository_query":"Mininglamp-OSS/openclaw-channel-octo"}`))
+	require.NoError(t, err)
+	require.True(t, listed.Success, listed.Error)
+	var catalog sourceBrowseCatalog
+	require.NoError(t, json.Unmarshal([]byte(listed.Output), &catalog))
+	require.Len(t, catalog.Sources, 1, "canonical identity must be searchable even with a custom display name")
+	require.Equal(t, summary.Repository, catalog.Sources[0].Repository)
+	ref := catalog.Sources[0].SourceRef
+	searched, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"search","source_ref":"`+ref+`","query":"message"}`))
+	require.NoError(t, err)
+	require.True(t, searched.Success, searched.Error)
+	audit, ok := searched.Data[types.SourceBrowseSearchDataKey].(types.SourceBrowseSearchAudit)
+	require.True(t, ok)
+	require.Equal(t, summary.Repository, audit.Repository)
+	read, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"read","source_ref":"`+ref+`","path":"README.md","start_line":1,"end_line":2}`))
+	require.NoError(t, err)
+	require.True(t, read.Success, read.Error)
+	citation, ok := read.Data[types.SourceBrowseCitationDataKey].(types.SourceBrowseCitation)
+	require.True(t, ok)
+	require.Equal(t, summary.Repository, citation.Repository)
+
+	local := bindingFromSummary("kb", 7, types.SourceSummary{Name: "Friendly local folder", Type: "local_folder"})
+	require.Equal(t, "Friendly local folder", local.Repository)
+}
+
 func TestSourceBrowseCatalogBindsOpaqueRefAndRedactsInternalIDs(t *testing.T) {
 	reader := &sourceToolReader{summaries: map[string][]types.SourceSummary{
 		"kb-uuid": {sourceSummary("source-uuid", "snapshot-uuid", "github.com/example/repo")},

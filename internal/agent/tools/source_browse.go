@@ -208,12 +208,16 @@ func (binding sourceBrowseBinding) catalog(ref string) sourceBrowseCatalogEntry 
 }
 
 func bindingFromSummary(kbID string, tenant uint64, summary types.SourceSummary) sourceBrowseBinding {
+	repository := summary.Repository
+	if repository == "" {
+		repository = summary.Name // Local folders have a display name, not a GitHub identity.
+	}
 	return sourceBrowseBinding{
 		KnowledgeBaseID: kbID,
 		SourceID:        summary.ID,
 		SnapshotID:      summary.SnapshotID,
 		TenantID:        tenant,
-		Repository:      summary.Name,
+		Repository:      repository,
 		SourceType:      summary.Type,
 		Status:          summary.Status,
 		Revision:        summary.Revision,
@@ -362,7 +366,8 @@ func (t *SourceBrowseTool) listBindings(ctx context.Context, kbIDs []string, que
 		})
 		tenant := t.allowed()[kbID]
 		for _, summary := range summaries {
-			if query != "" && !strings.Contains(strings.ToLower(summary.Name), query) {
+			if query != "" && !strings.Contains(strings.ToLower(summary.Name), query) &&
+				!strings.Contains(strings.ToLower(summary.Repository), query) {
 				continue
 			}
 			if summary.ID == "" || summary.SnapshotID == "" {
