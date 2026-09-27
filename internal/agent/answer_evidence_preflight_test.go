@@ -265,7 +265,7 @@ func TestAnswerEvidencePreflightSearchesAndReadsEachNamedChannelBeforeModel(t *t
 	require.Len(t, state.RoundSteps[0].ToolCalls, 7)
 	active, remaining := answerevidence.PostPreflightSourceBrowseBudget(ctx)
 	require.True(t, active)
-	require.Equal(t, 8, remaining, "named projects leave room for a complementary repository read")
+	require.Equal(t, 10, remaining, "named projects leave room for a complementary repository read")
 }
 
 func TestNamedChannelPreflightDoesNotReadFirstGitignoreMatchAsProjectEvidence(t *testing.T) {
@@ -303,7 +303,13 @@ func TestNamedChannelPreflightDoesNotReadFirstGitignoreMatchAsProjectEvidence(t 
 	require.True(t, answerevidence.IntegrationEvidenceObserved(ctx))
 	active, remaining := answerevidence.PostPreflightSourceBrowseBudget(ctx)
 	require.True(t, active)
-	require.Equal(t, 4, remaining)
+	require.Equal(t, 6, remaining, "one named adapter must leave room to inspect another repository")
+}
+
+func TestPostPreflightBudgetAllowsSecondRepositoryNavigationButRemainsBounded(t *testing.T) {
+	require.Equal(t, 6, postPreflightSourceBrowseBudget(1), "list, searches, tree and read must fit for a second repository")
+	require.Equal(t, 10, postPreflightSourceBrowseBudget(3))
+	require.Equal(t, 10, postPreflightSourceBrowseBudget(20), "long repository lists cannot create unbounded tool calls")
 }
 
 func TestNamedChannelImplementationQuestionSkipsOverviewPreflight(t *testing.T) {
