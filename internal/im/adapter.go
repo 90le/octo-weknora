@@ -173,6 +173,15 @@ type FullOutputProgressSender interface {
 	SupportsFullOutputProgress() bool
 }
 
+// ProcessingNotifier is an optional, non-message progress hint for platforms
+// that can show a native typing state. StartProcessing is called only after a
+// queued request begins authorized QA work. Its returned stop function must be
+// safe to call when the request finishes or is cancelled. A notification error
+// must never change the answer or cause a retry of the user's message.
+type ProcessingNotifier interface {
+	StartProcessing(ctx context.Context, incoming *IncomingMessage) (stop func())
+}
+
 // FileDownloader is an optional interface that adapters can implement to support
 // downloading file attachments from the IM platform. It allows file/image
 // messages to be supplied to QA as attachments; when a knowledge_base_id is

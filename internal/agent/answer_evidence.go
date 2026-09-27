@@ -26,8 +26,8 @@ func recordAnswerEvidenceFromStep(ctx context.Context, step types.AgentStep) {
 			if hasGitHubReleaseLookupAudit(call.Result) {
 				answerevidence.RecordReleaseLookup(ctx)
 			}
-			if hasGitHubReleaseProvenance(call.Result) {
-				answerevidence.RecordReleaseEvidence(ctx)
+			if citation, ok := githubReleaseCitation(call.Result); ok {
+				answerevidence.RecordReleaseEvidence(ctx, citation.Repository)
 			}
 			continue
 		}
@@ -46,25 +46,27 @@ func recordAnswerEvidenceFromStep(ctx context.Context, step types.AgentStep) {
 	}
 }
 
-// hasGitHubReleaseProvenance accepts only the typed, private marker attached
-// by trusted release lookup code. A public tag in tool text, an arbitrary RAG
+// githubReleaseCitation accepts only the typed, private marker attached by
+// trusted release lookup code. A public tag in tool text, an arbitrary RAG
 // chunk, or a source snapshot cannot set the latest-release evidence ledger.
-func hasGitHubReleaseProvenance(result *types.ToolResult) bool {
+func githubReleaseCitation(result *types.ToolResult) (types.GitHubReleaseCitation, bool) {
 	if result == nil || !result.Success || result.Data == nil {
-		return false
+		return types.GitHubReleaseCitation{}, false
 	}
 	raw, ok := result.Data[types.GitHubReleaseCitationDataKey]
 	if !ok {
-		return false
+		return types.GitHubReleaseCitation{}, false
 	}
 	switch citation := raw.(type) {
 	case types.GitHubReleaseCitation:
-		return validGitHubReleaseCitation(citation)
+		return citation, validGitHubReleaseCitation(citation)
 	case *types.GitHubReleaseCitation:
-		return citation != nil && validGitHubReleaseCitation(*citation)
+		if citation != nil {
+			return *citation, validGitHubReleaseCitation(*citation)
+		}
 	default:
-		return false
 	}
+	return types.GitHubReleaseCitation{}, false
 }
 
 func hasGitHubReleaseLookupAudit(result *types.ToolResult) bool {

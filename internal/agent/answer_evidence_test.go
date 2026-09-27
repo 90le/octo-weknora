@@ -191,6 +191,35 @@ func TestRecordAnswerEvidenceRequiresPrivateReleaseProvenance(t *testing.T) {
 	require.False(t, answerevidence.ReleaseEvidenceObserved(noStableCtx), "a no-stable fallback cannot establish the current release")
 }
 
+func TestCompoundEvidenceUsesPrivateRepositoryIdentity(t *testing.T) {
+	checkedAt := time.Date(2026, time.September, 22, 9, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name, sourceRepository, fallbackPart string
+	}{
+		{"different owners", "OtherOrg/octo-android", "不同仓库"},
+		{"same repository but unaligned commit", "Mininglamp-OSS/octo-android", "发布标签对应的提交"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := answerevidence.WithContract(context.Background(), "octo-android 最新版本的源码如何实现？")
+			recordAnswerEvidenceFromStep(ctx, types.AgentStep{ToolCalls: []types.ToolCall{{
+				Name: agenttools.ToolSourceBrowse,
+				Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+					types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", Repository: tc.sourceRepository, Path: "cmd/api.go", Revision: "snapshot-sha"},
+				}},
+			}, {
+				Name: agenttools.ToolGitHubReleaseLookup,
+				Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+					types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{KnowledgeBaseID: "kb", DataSourceID: "source", Repository: "Mininglamp-OSS/octo-android", TagName: "v1.2.3", URL: "https://example.test/release", PublishedAt: checkedAt, CheckedAt: checkedAt},
+				}},
+			}}})
+			require.True(t, answerevidence.SourceReadObserved(ctx))
+			require.True(t, answerevidence.ReleaseEvidenceObserved(ctx))
+			require.True(t, answerevidence.NeedsEvidenceRetry(ctx, "最新版代码如此实现。"))
+			require.Contains(t, answerevidence.FallbackReply(ctx), tc.fallbackPart)
+		})
+	}
+}
+
 func TestExecuteLoopStopsUnevidencedSourceClaimWithDeterministicFallback(t *testing.T) {
 	model := &mockChat{responses: []mockResponse{
 		{chunks: []types.StreamResponse{{ResponseType: types.ResponseTypeAnswer, Content: "实现细节一。", Done: true, FinishReason: "stop"}}},

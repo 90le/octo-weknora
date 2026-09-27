@@ -13,7 +13,7 @@ func TestBuildAgentModelInputKeepsPolicyQuerySeparateFromQuotedContext(t *testin
 	original := "Octo 和 Loop 的关系是什么？"
 	req := &types.QARequest{
 		Query:         original,
-		QuotedContext: "GROUP.md：联系人仅作指引，不主动通知、催办或发布。",
+		QuotedContext: "GROUP.md：联系人仅作指引；版本发布问题请核对资料，不主动通知或催办。",
 	}
 	ctx, modelQuery, imageURLs := buildAgentModelInput(context.Background(), req, false, nil)
 	require.Empty(t, imageURLs)

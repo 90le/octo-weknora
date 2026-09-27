@@ -98,6 +98,31 @@ type fullOutputAdapter struct {
 	sendErr      error
 }
 
+type processingFullOutputAdapter struct {
+	*fullOutputAdapter
+}
+
+func (a *processingFullOutputAdapter) StartProcessing(_ context.Context, _ *IncomingMessage) func() {
+	a.order.add("processing-start")
+	return func() { a.order.add("processing-stop") }
+}
+
+type revokedProcessingAdapter struct {
+	*processingFullOutputAdapter
+}
+
+func (a *revokedProcessingAdapter) AuthorizeExecution(context.Context, *IMChannel, *IncomingMessage) (*ExecutionScope, error) {
+	return nil, ErrScopeDenied
+}
+
+type nilStopProcessingAdapter struct {
+	*fullOutputAdapter
+}
+
+func (a *nilStopProcessingAdapter) StartProcessing(context.Context, *IncomingMessage) func() {
+	return nil
+}
+
 func (a *fullOutputAdapter) SendReply(ctx context.Context, _ *IncomingMessage, reply *ReplyMessage) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -333,6 +358,55 @@ func TestExecuteQARequestFullOutputDispatchesToProgressSender(t *testing.T) {
 	}
 	if adapter.plainReplies != 0 {
 		t.Fatalf("plain fallback replies = %d, want 0", adapter.plainReplies)
+	}
+}
+
+func TestExecuteQARequestNativeProcessingFeedbackStopsAfterFinalReply(t *testing.T) {
+	service, inner, _, order := newFullOutputHarness("最终答案")
+	adapter := &processingFullOutputAdapter{fullOutputAdapter: inner}
+	ctx, cancel := context.WithCancel(context.Background())
+	service.executeQARequest(&qaRequest{
+		ctx: ctx, cancel: cancel,
+		msg:     &IncomingMessage{Platform: PlatformFeishu, UserID: "user-1", Content: "问题"},
+		session: &types.Session{ID: "session-1"}, adapter: adapter,
+		channel: &IMChannel{OutputMode: "full"}, userKey: "user-key",
+	})
+	wantOrder := []string{"processing-start", "start", "qa", "finalize", "end", "processing-stop"}
+	if got := order.snapshot(); !reflect.DeepEqual(got, wantOrder) {
+		t.Fatalf("native feedback lifecycle = %v, want %v", got, wantOrder)
+	}
+}
+
+func TestExecuteQARequestRevokedScopeDoesNotShowProcessing(t *testing.T) {
+	service, inner, _, order := newFullOutputHarness("最终答案")
+	adapter := &revokedProcessingAdapter{processingFullOutputAdapter: &processingFullOutputAdapter{fullOutputAdapter: inner}}
+	ctx, cancel := context.WithCancel(context.Background())
+	service.executeQARequest(&qaRequest{
+		ctx: ctx, cancel: cancel,
+		msg:     &IncomingMessage{Platform: "octo", UserID: "user-1", Content: "问题"},
+		session: &types.Session{ID: "session-1"}, adapter: adapter,
+		channel: &IMChannel{Platform: "octo", OutputMode: "full"},
+		scope:   &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "before"},
+		userKey: "user-key",
+	})
+	if got := order.snapshot(); len(got) != 0 {
+		t.Fatalf("revoked request produced visible feedback: %v", got)
+	}
+}
+
+func TestExecuteQARequestAllowsNotifierWithoutStopFunction(t *testing.T) {
+	service, inner, _, order := newFullOutputHarness("最终答案")
+	adapter := &nilStopProcessingAdapter{fullOutputAdapter: inner}
+	ctx, cancel := context.WithCancel(context.Background())
+	service.executeQARequest(&qaRequest{
+		ctx: ctx, cancel: cancel,
+		msg:     &IncomingMessage{Platform: PlatformFeishu, UserID: "user-1", Content: "问题"},
+		session: &types.Session{ID: "session-1"}, adapter: adapter,
+		channel: &IMChannel{OutputMode: "full"}, userKey: "user-key",
+	})
+	wantOrder := []string{"start", "qa", "finalize", "end"}
+	if got := order.snapshot(); !reflect.DeepEqual(got, wantOrder) {
+		t.Fatalf("nil notifier stop changed QA = %v, want %v", got, wantOrder)
 	}
 }
 

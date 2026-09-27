@@ -21,12 +21,102 @@ func TestClassifyKeepsSourceFactsSeparateFromReleaseQuestions(t *testing.T) {
 		{"这个类明天怎么安排？", IntentNone},
 		{"这个方法先讨论一下", IntentNone},
 		{"最新版本的源码里这个函数如何实现？", IntentSource},
+		{"知识发布流程是什么？", IntentNone},
 	}
 	for _, tc := range cases {
 		t.Run(tc.query, func(t *testing.T) {
 			require.Equal(t, tc.want, Classify(tc.query))
 		})
 	}
+}
+
+func TestCompoundReleaseAndSourceRequireBothTrustedProofs(t *testing.T) {
+	ctx := WithContract(context.Background(), "octo-android 最新版本的源码如何实现？")
+	require.Equal(t, IntentSource, IntentFromContext(ctx), "the legacy primary route remains source")
+	require.True(t, Requires(ctx, IntentSource))
+	require.True(t, Requires(ctx, IntentRelease))
+	require.False(t, Requires(ctx, IntentIntegration))
+	require.Contains(t, Prompt(ctx), "source_browse")
+	require.Contains(t, Prompt(ctx), "github_release_lookup")
+	require.True(t, ShouldHoldStreamingAnswer(ctx))
+	require.True(t, NeedsEvidenceRetry(ctx, "最新版通过该函数实现。"))
+	for n := 0; n < 4; n++ {
+		require.True(t, CanRetryEvidence(ctx), "compound catalog/reader pairs need a bounded retry budget")
+	}
+	require.False(t, CanRetryEvidence(ctx))
+
+	RecordSourceRead(ctx, "ExampleOrg/octo-android")
+	require.True(t, NeedsEvidenceRetry(ctx, "最新版通过该函数实现。"), "source alone cannot prove which release is latest")
+	require.False(t, AllowsMissingIssue(ctx))
+	require.Contains(t, RetryNudge(ctx), "发布记录")
+	RecordReleaseLookup(ctx)
+	require.True(t, NeedsEvidenceRetry(ctx, "当前无法确认最新版，但源码如此实现。"), "a lookup without release provenance is not enough")
+	require.Contains(t, FallbackReply(ctx), "发布记录")
+
+	RecordReleaseEvidence(ctx, "ExampleOrg/octo-android")
+	require.True(t, sameRepositoryEvidenceObserved(ctx), "full repository identities can be joined without confusing owners")
+	require.True(t, ShouldHoldStreamingAnswer(ctx), "same repository does not prove the release tag matches the snapshot commit")
+	require.True(t, NeedsEvidenceRetry(ctx, "最新版通过该函数实现。"))
+	require.False(t, CanRetryEvidence(ctx), "the existing tools cannot resolve a release tag to the read snapshot commit")
+	require.True(t, NeedsSynthesisFallback(ctx))
+	require.False(t, AllowsMissingIssue(ctx))
+	require.Contains(t, FallbackReply(ctx), "发布标签对应的提交")
+}
+
+func TestCompoundSourceAndReleaseRejectDifferentRepositories(t *testing.T) {
+	ctx := WithContract(context.Background(), "octo-android 最新版本的源码如何实现？")
+	RecordSourceRead(ctx, "OtherOrg/octo-android")
+	RecordReleaseEvidence(ctx, "ExampleOrg/octo-android")
+	require.False(t, sameRepositoryEvidenceObserved(ctx), "same leaf under a different owner is not the same repository")
+	require.True(t, NeedsEvidenceRetry(ctx, "最新版源码如此实现。"))
+	require.False(t, CanRetryEvidence(ctx), "repeating unchanged source/release calls cannot repair an unsupported association")
+	require.Contains(t, FallbackReply(ctx), "不同仓库")
+}
+
+func TestCompoundReleaseLookupWithoutStableProvenanceStopsPointlessRetries(t *testing.T) {
+	ctx := WithContract(context.Background(), "octo-android 最新版本的源码如何实现？")
+	RecordSourceRead(ctx, "ExampleOrg/octo-android")
+	RecordReleaseLookup(ctx)
+	require.True(t, NeedsEvidenceRetry(ctx, "该源码是最新版实现。"))
+	require.False(t, CanRetryEvidence(ctx), "trusted latest endpoint already ran; do not spend four rounds repeating it")
+	require.Contains(t, FallbackReply(ctx), "已查询官方最新发布来源")
+	require.Contains(t, FallbackReply(ctx), "未取得可核验的稳定发布记录")
+	require.NotContains(t, FallbackReply(ctx), "没有发布版本")
+
+	unqueried := WithContract(context.Background(), "octo-android 最新版本的源码如何实现？")
+	RecordSourceRead(unqueried, "ExampleOrg/octo-android")
+	require.NotContains(t, FallbackReply(unqueried), "已查询官方最新发布来源")
+
+	missingSource := WithContract(context.Background(), "octo-android 最新版本的源码如何实现？")
+	RecordReleaseLookup(missingSource)
+	require.True(t, CanRetryEvidence(missingSource))
+	require.True(t, CanRetryEvidence(missingSource))
+	require.False(t, CanRetryEvidence(missingSource), "only one search/read pair remains after a failed latest lookup")
+}
+
+func TestKnowledgePublicationWorkflowDoesNotRequireGitHubRelease(t *testing.T) {
+	query := "知识发布流程是什么？"
+	ctx := WithContract(context.Background(), query)
+	require.Equal(t, IntentNone, IntentFromContext(ctx))
+	require.False(t, Requires(ctx, IntentRelease))
+	require.Empty(t, Prompt(ctx))
+	require.False(t, NeedsEvidenceRetry(ctx, "知识草稿需要审核后发布。"))
+	// A later GROUP.md or quoted message is model context, not this turn's
+	// question. It cannot introduce a release requirement retroactively.
+	again := WithContract(ctx, query+"\nGROUP.md：最新版本请核对发布记录。")
+	require.Same(t, ctx, again)
+	require.False(t, Requires(again, IntentRelease))
+}
+
+func TestCompoundReleaseAndIntegrationRequireIndependentProofs(t *testing.T) {
+	ctx := WithContract(context.Background(), "最新版本是否支持新的 IM 接入？")
+	require.Equal(t, IntentRelease, IntentFromContext(ctx))
+	require.True(t, Requires(ctx, IntentRelease))
+	require.True(t, Requires(ctx, IntentIntegration))
+	RecordReleaseEvidence(ctx)
+	require.True(t, NeedsEvidenceRetry(ctx, "最新版本支持该接入。"), "a release tag is not proof of support")
+	RecordDocumentEvidence(ctx)
+	require.False(t, NeedsEvidenceRetry(ctx, "最新版本支持该接入。"))
 }
 
 func TestWithContractPreservesExistingTurnState(t *testing.T) {
@@ -52,7 +142,7 @@ func TestWithContractLocksOrdinaryQuestionBeforeModelOnlyContext(t *testing.T) {
 		misIntent  Intent
 	}{
 		{"release rules", original + "\n\nGROUP.md：版本、发布问题请核对证据。\n引用：最新版是多少？", IntentRelease},
-		{"old group rule", original + "\n\nGROUP.md：联系人仅作指引，不主动通知、催办或发布。", IntentRelease},
+		{"old group rule", original + "\n\nGROUP.md：联系人仅作指引；版本发布问题请核对资料，不主动通知或催办。", IntentRelease},
 		{"source rules", original + "\n\nGROUP.md：源码问题请读取文件和行号。", IntentSource},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
