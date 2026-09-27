@@ -156,6 +156,52 @@ func TestSourceBrowseCatalogBindsOpaqueRefAndRedactsInternalIDs(t *testing.T) {
 	require.NotContains(t, string(serialized), "kb-uuid", "private provenance must not serialize with a live ToolResult")
 }
 
+func TestSourceBrowseCatalogFindsNamedRepositoryBeyondFirstPage(t *testing.T) {
+	summaries := make([]types.SourceSummary, 0, 101)
+	for i := 0; i < 100; i++ {
+		summaries = append(summaries, sourceSummary(fmt.Sprintf("source-%03d", i), fmt.Sprintf("snapshot-%03d", i), fmt.Sprintf("github.com/example/repo-%03d", i)))
+	}
+	summaries = append(summaries, sourceSummary("source-target", "snapshot-target", "github.com/example/target-channel-octo"))
+	reader := &sourceToolReader{summaries: map[string][]types.SourceSummary{
+		"kb":         summaries,
+		"restricted": {sourceSummary("other", "other-snapshot", "github.com/example/target-channel-octo")},
+	}}
+	tool := NewSourceBrowseTool(reader, &sourceToolKB{}, types.SearchTargets{
+		{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"},
+		{Type: types.SearchTargetTypeKnowledge, TenantID: 7, KnowledgeBaseID: "restricted", KnowledgeIDs: []string{"one-file"}},
+	})
+	first := sourceCatalog(t, tool)
+	require.Len(t, first.Sources, maxSourceBrowseCatalogEntries)
+	require.False(t, first.Complete)
+	require.NotNil(t, first.NextOffset)
+	require.Equal(t, maxSourceBrowseCatalogEntries, *first.NextOffset)
+
+	page, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"list","offset":64}`))
+	require.NoError(t, err)
+	require.True(t, page.Success, page.Error)
+	var second sourceBrowseCatalog
+	require.NoError(t, json.Unmarshal([]byte(page.Output), &second))
+	require.Len(t, second.Sources, 37)
+	require.True(t, second.Complete)
+	require.Nil(t, second.NextOffset)
+
+	filtered, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"list","query":"TARGET-CHANNEL-OCTO"}`))
+	require.NoError(t, err)
+	require.True(t, filtered.Success, filtered.Error)
+	var selected sourceBrowseCatalog
+	require.NoError(t, json.Unmarshal([]byte(filtered.Output), &selected))
+	require.True(t, selected.Complete)
+	require.Len(t, selected.Sources, 1)
+	require.Equal(t, "github.com/example/target-channel-octo", selected.Sources[0].Repository)
+	require.NotContains(t, filtered.Output, "restricted")
+	require.NotContains(t, reader.listCalls, "restricted")
+
+	read, err := tool.Execute(sourceToolContext(), json.RawMessage(`{"action":"read","source_ref":"`+selected.Sources[0].SourceRef+`","path":"README.md","start_line":1,"end_line":2}`))
+	require.NoError(t, err)
+	require.True(t, read.Success, read.Error)
+	require.Equal(t, "source-target", reader.readCalls[len(reader.readCalls)-1].SourceID)
+}
+
 func TestSourceBrowseReadRetainsPrivateEvidenceForLocalDirectories(t *testing.T) {
 	reader := &sourceToolReader{omitSourceURL: true, summaries: map[string][]types.SourceSummary{
 		"kb-uuid": {sourceSummary("source-uuid", "snapshot-uuid", "local/project")},

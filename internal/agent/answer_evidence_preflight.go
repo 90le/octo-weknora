@@ -54,6 +54,7 @@ type sourceCatalogPreflight struct {
 		SourceRef  string `json:"source_ref"`
 		Repository string `json:"repository"`
 	} `json:"sources"`
+	Complete bool `json:"complete"`
 }
 
 type sourceSearchPreflight struct {
@@ -290,10 +291,13 @@ func (e *AgentEngine) preflightNamedReleaseEvidence(ctx context.Context, query s
 
 func exactSourceReferences(output string, wanted []string) map[string]string {
 	var catalog sourceCatalogPreflight
-	if json.Unmarshal([]byte(output), &catalog) != nil {
+	if json.Unmarshal([]byte(output), &catalog) != nil || !catalog.Complete {
+		// A truncated catalog may hide a second authorized repository with
+		// the same leaf. Resolve it with a targeted list instead of guessing.
 		return nil
 	}
 	refs := make(map[string]string)
+	ambiguous := make(map[string]bool)
 	for _, entry := range catalog.Sources {
 		leaf := repositoryLeafForPreflight(entry.Repository)
 		if entry.SourceRef == "" || leaf == "" {
@@ -303,8 +307,12 @@ func exactSourceReferences(output string, wanted []string) map[string]string {
 			if candidate != leaf {
 				continue
 			}
+			if ambiguous[candidate] {
+				continue
+			}
 			if existing, found := refs[candidate]; found && existing != entry.SourceRef {
 				delete(refs, candidate) // ambiguous leaf across authorized sources
+				ambiguous[candidate] = true
 			} else if !found {
 				refs[candidate] = entry.SourceRef
 			}
@@ -348,10 +356,28 @@ func (e *AgentEngine) preflightNamedChannelEvidence(ctx context.Context, query s
 	}
 	list := e.preflightToolCall(ctx, agenttools.ToolSourceBrowse, map[string]interface{}{"action": "list"}, len(preflight.step.ToolCalls)+1)
 	preflight.add(list)
-	if list.Result == nil || !list.Result.Success {
-		return
+	var refs map[string]string
+	if list.Result != nil && list.Result.Success {
+		refs = exactSourceReferences(list.Result.Output, wanted)
 	}
-	refs := exactSourceReferences(list.Result.Output, wanted)
+	if len(refs) < len(wanted) {
+		if refs == nil {
+			refs = make(map[string]string)
+		}
+		for _, repository := range wanted {
+			if refs[repository] != "" {
+				continue
+			}
+			filtered := e.preflightToolCall(ctx, agenttools.ToolSourceBrowse, map[string]interface{}{"action": "list", "query": repository}, len(preflight.step.ToolCalls)+1)
+			preflight.add(filtered)
+			if filtered.Result == nil || !filtered.Result.Success {
+				continue
+			}
+			for candidate, ref := range exactSourceReferences(filtered.Result.Output, []string{repository}) {
+				refs[candidate] = ref
+			}
+		}
+	}
 	type repositoryResult struct {
 		calls    []types.ToolCall
 		evidence string
