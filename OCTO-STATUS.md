@@ -2,7 +2,21 @@
 
 更新：2026-09-27。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-27；PR #71 发布后回读）
+## 当前状态（2026-09-27；生产 PR #75）
+
+**代码与运行边界：**主线及生产 app 已切到合并提交 [`38d5011e9`](https://github.com/90le/octo-weknora/commit/38d5011e9)，包含 [PR #73](https://github.com/90le/octo-weknora/pull/73)、[#74](https://github.com/90le/octo-weknora/pull/74)、[#75](https://github.com/90le/octo-weknora/pull/75)。生产 app Image ID 为 `sha256:d9d41258410b95c0eb4a1ffd9f30eda0b5bacde2940fcec0caab2b0a2457fcc0`，UI 仍为 `sha256:dd2bae75c16daf552ee5f3ff00ee4cf42be852c128ed3ca9b23ae15d92866eb1`。独立回读确认 app／UI 健康 200、PostgreSQL migration `107|f`、5 个 Octo 区域公网搜索开关仍关闭，OpenClaw Gateway 与 Octo daemon active；私人小丘及其他 Bot 未切换。
+
+**本轮完成的代码与发布：**#73 按实际模型上下文扩大点名仓库的受权检索和来源读取预算，并给源码目录增加仓库过滤／分页、给受控公网查询补严格的原问题边界；#74 修正“固定版本资料”被误认成最新发布查询；#75 使源码目录接受模型实际发出的 `query`／`repository_query` 与分页参数，发布目录支持分页并返回可诊断的参数错误。#75 的 app 使用经核验底座和新编译二进制构建扁平镜像，含完整 migrations；2 TB 数据盘上的新备份和隔离候选分别通过 migration、认证读取、区域配置及 Anydoc 状态检查。构建／CI、候选和生产健康均不能替代真实问答验收。
+
+**真实问答失败与当前阻塞：**`QA-95A-01` 的复合问题误走最新发布兜底，促成 #74；`QA-B2B-01` 又暴露目录工具参数被拒绝，促成 #75。#75 上线后同题 `QA-38D-01` 出现通用错误回复：日志显示模型首请求 HTTP 400，去掉可选 thinking 控制后重试仍为 400，Agent 无有效步骤；该条不能算成功验收。使用同一 Agent 的新 WeKnora 私有网页会话可正常回复 `OK`，而失败的群会话在首轮请求前加载了大量历史消息，因此目前只能判定故障与该群调用上下文有关，尚未证明具体根因。[PR #76](https://github.com/90le/octo-weknora/pull/76) 已提交历史工具轨迹与失败答复重放的缓解改动，**尚未发布，也未证明能消除 400**；在完成诊断前停止重复向联调群发送同题。先前 `QA-A653-01` 的安装问答和原生 typing／引用／@ 验收仍成立，但不能覆盖这次失败。
+
+**模型与容量：**生产 Octo 小丘 Agent 当前配置为 `gpt-5.6-luna`、上下文 1,000,000、`max_completion_tokens=32768`、最多 30 次 Agent 迭代，历史轮数 12。增加模型预算不能替代受权选仓、证据核对及历史消息治理。本轮最新发布回读时根盘约余 16 GB、2 TB 数据盘约使用 47 GB；这只是时点值。60 条 GitHub 来源是文档／源码各 30 条数据源行，并非已验证的 60 个独立仓库或 600／6000 条容量证明。
+
+**尚未完成：**先定位和修复群会话模型 400，再做同问题的受控真实群验收与独立问答集；持续验证逐主张证据、版本 tag→源码 commit 关系及多来源选仓。PR #60 的共享 Git 物理缓存仍默认关闭；仓库级同步、缓存安全回收、600／6000 来源容量压测、完整生产新文档解析、草稿／越权复测、真实 AIBP 资料接入仍待完成。受控公网工具虽已发布，所有区域仍关闭，真实群外网问答及外发审计未验收。发布与恢复仍按 [部署契约](OCTO-DEPLOYMENT.md) 进行，不能把健康检查、候选测试或单条历史成功答复当作全部验收。
+
+## 2026-09-27 PR #71 发布后回读（历史快照）
+
+本节保留 #71 时点的发布证据；其中“当前”“本轮”“现行”均指该历史时点，最新状态以上方为准。
 
 **代码与生产边界：**主线与现行 app／UI 的业务源码为 [`a653db1bd7f290ef81ee5ebdae8a9525cfc65ee1`](https://github.com/90le/octo-weknora/commit/a653db1bd7f290ef81ee5ebdae8a9525cfc65ee1)，包含 [PR #71](https://github.com/90le/octo-weknora/pull/71)。运行 app Image ID `sha256:21c6f7724dac6aee78da2293e7f677723d59c727bebfb89520ec7c3df336c45d`，UI Image ID `sha256:dd2bae75c16daf552ee5f3ff00ee4cf42be852c128ed3ca9b23ae15d92866eb1`；先前 app/UI 镜像保留作回退。API／UI 健康均为 200，PostgreSQL migration `107` 非 dirty，5 个 Octo 区域的 `allow_public_web` 全为关闭。OpenClaw Gateway、Octo daemon 均 active；私人小丘和其他 Bot 未切换到 WeKnora。
 
