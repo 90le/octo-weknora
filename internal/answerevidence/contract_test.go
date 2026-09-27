@@ -90,7 +90,21 @@ func TestNamedRepositorySearchAndReadMustHaveSameOwner(t *testing.T) {
 	RecordSourceSearch(ctx, false, true, "OtherOrg/openclaw-channel-octo")
 	RecordSourceRead(ctx, "Mininglamp-OSS/openclaw-channel-octo")
 	require.False(t, IntegrationEvidenceObserved(ctx), "matching repository leaves from different owners are not one source")
+	require.Equal(t, []string{"openclaw-channel-octo"}, MissingRequiredRepositories(ctx), "retry must name the still-unverified project")
 	RecordSourceSearch(ctx, false, true, "Mininglamp-OSS/openclaw-channel-octo")
+	require.True(t, IntegrationEvidenceObserved(ctx))
+	require.Empty(t, MissingRequiredRepositories(ctx))
+}
+
+func TestNamedChannelRepositoryPreservesExplicitOwner(t *testing.T) {
+	ctx := WithContract(context.Background(), "OtherOrg/openclaw-channel-octo 如何接收消息？")
+	require.Equal(t, []string{"otherorg/openclaw-channel-octo"}, RequiredRepositories(ctx))
+	RecordSourceSearch(ctx, false, true, "Mininglamp-OSS/openclaw-channel-octo")
+	RecordSourceRead(ctx, "Mininglamp-OSS/openclaw-channel-octo")
+	require.False(t, IntegrationEvidenceObserved(ctx), "another owner's repo cannot satisfy the user's explicit owner")
+	require.Equal(t, []string{"otherorg/openclaw-channel-octo"}, MissingRequiredRepositories(ctx))
+	RecordSourceSearch(ctx, false, true, "OtherOrg/openclaw-channel-octo")
+	RecordSourceRead(ctx, "OtherOrg/openclaw-channel-octo")
 	require.True(t, IntegrationEvidenceObserved(ctx))
 }
 

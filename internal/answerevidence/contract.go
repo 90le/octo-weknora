@@ -161,24 +161,28 @@ func containsHan(value string) bool {
 	return false
 }
 
-// namedChannelRepositories extracts only explicit *-channel-octo repository
-// names. Generic product words are intentionally ignored: this guard exists to
-// prevent a read of one named channel from being generalized to another named
-// channel, not to guess repository ownership from ordinary prose.
+// namedChannelRepositories extracts explicit *-channel-octo repository names.
+// An owner written by the user remains part of the requirement; a different
+// owner's same-named repository cannot satisfy it. Generic product words are
+// intentionally ignored rather than guessed into repository identities.
 func namedChannelRepositories(query string) []string {
 	tokens := strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' || r == '/')
 	})
 	seen := make(map[string]bool)
 	for _, token := range tokens {
-		if slash := strings.LastIndex(token, "/"); slash >= 0 {
-			token = token[slash+1:]
-		}
-		token = strings.Trim(token, "-_.")
-		if !strings.HasSuffix(token, "-channel-octo") || token == "-channel-octo" {
+		parts := strings.Split(strings.Trim(token, "/"), "/")
+		leaf := strings.Trim(parts[len(parts)-1], "-_.")
+		if !strings.HasSuffix(leaf, "-channel-octo") || leaf == "-channel-octo" {
 			continue
 		}
-		seen[token] = true
+		repository := leaf
+		if len(parts) >= 2 {
+			if owner := strings.Trim(parts[len(parts)-2], "-_."); owner != "" {
+				repository = owner + "/" + leaf
+			}
+		}
+		seen[repository] = true
 	}
 	out := make([]string, 0, len(seen))
 	for repository := range seen {
@@ -428,9 +432,9 @@ func PostPreflightSourceBrowseBudget(ctx context.Context) (active bool, remainin
 	return state.postPreflightSourceBrowseActive, state.postPreflightSourceBrowseRemaining
 }
 
-// MissingRequiredRepositories reports which explicitly named channel projects
-// still lack their own source-file read. It prevents the answerer from reading
-// one adapter README and extrapolating implementation details to its peers.
+// MissingRequiredRepositories uses the same repository-identity gate as answer
+// synthesis, so retry guidance never calls a project complete when search and
+// read came from different owners.
 func MissingRequiredRepositories(ctx context.Context) []string {
 	state := stateFrom(ctx)
 	if state == nil {
@@ -440,7 +444,7 @@ func MissingRequiredRepositories(ctx context.Context) []string {
 	defer state.mu.RUnlock()
 	missing := make([]string, 0)
 	for _, repository := range state.requiredRepos {
-		if !state.sourceReadRepos[repository] {
+		if !namedRepositoryReadAfterSearchLocked(state, repository) {
 			missing = append(missing, repository)
 		}
 	}
@@ -788,16 +792,24 @@ func integrationEvidenceObservedLocked(state *State) bool {
 	return true
 }
 
-func namedRepositoryReadAfterSearchLocked(state *State, requiredLeaf string) bool {
-	if !state.sourceReadRepos[requiredLeaf] {
+func namedRepositoryReadAfterSearchLocked(state *State, requiredRepository string) bool {
+	if !state.sourceReadRepos[repositoryLeaf(requiredRepository)] {
 		return false
 	}
 	for identity := range state.sourceReadIdentities {
-		if repositoryLeaf(identity) == requiredLeaf && state.sourceSearchIdentities[identity] {
+		if requiredRepositoryMatches(requiredRepository, identity) && state.sourceSearchIdentities[identity] {
 			return true
 		}
 	}
 	return false
+}
+
+func requiredRepositoryMatches(required, actual string) bool {
+	required = repositoryIdentity(required)
+	if strings.Contains(required, "/") {
+		return required == actual
+	}
+	return required == repositoryLeaf(actual)
 }
 
 func missingEvidenceLabels(ctx context.Context, chinese bool) []string {
