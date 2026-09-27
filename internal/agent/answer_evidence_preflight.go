@@ -30,11 +30,11 @@ const (
 	// question does not consume the entire turn budget as a serial chain.
 	answerEvidencePreflightNamedChannelWorkers = 3
 	// A question may also name a non-channel repository alongside a channel
-	// adapter. Leave a small extra search/read pair for that source instead of
-	// exhausting the model's budget on the named channel alone.
+	// adapter. Leave room to list it, locate a relevant file and read it;
+	// the cap still stops repeated source-wide tool storms.
 	answerEvidencePostPreflightSourceBrowsePerRepo = 2
-	answerEvidencePostPreflightSourceBrowseExtra   = 2
-	answerEvidencePostPreflightSourceBrowseMax     = 8
+	answerEvidencePostPreflightSourceBrowseExtra   = 4
+	answerEvidencePostPreflightSourceBrowseMax     = 10
 )
 
 type answerEvidencePreflight struct {
