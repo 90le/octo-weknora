@@ -14,6 +14,7 @@ func TestClassifyKeepsSourceFactsSeparateFromReleaseQuestions(t *testing.T) {
 	}{
 		{"apiSecretsForRequest 在哪个文件、如何实现？", IntentSource},
 		{"octo-android 最新版本更新了什么？", IntentRelease},
+		{"Octo 安卓版本是多少？", IntentRelease},
 		{"Octo 支持 Codex 接入 IM Bot 吗？", IntentIntegration},
 		{"codex-channel-octo、cc-channel-octo 和 hermes-channel-octo 项目是干嘛的？", IntentIntegration},
 		{"最新版本是否支持新的 IM 接入？", IntentRelease},
@@ -25,12 +26,23 @@ func TestClassifyKeepsSourceFactsSeparateFromReleaseQuestions(t *testing.T) {
 		{"在 Node.js 环境如何安装 Octo CLI？请根据知识库回答并给出来源。", IntentNone},
 		{"Vue.js 安装方式是什么？", IntentNone},
 		{"请读取 src/index.js 文件中的源码实现。", IntentSource},
+		{"请给出固定版本来源。", IntentNone},
+		{"请结合两个仓库的 README／源码给固定版本来源。", IntentSource},
 	}
 	for _, tc := range cases {
 		t.Run(tc.query, func(t *testing.T) {
 			require.Equal(t, tc.want, Classify(tc.query))
 		})
 	}
+}
+
+func TestFixedRevisionCitationDoesNotBecomeLatestReleaseRequest(t *testing.T) {
+	query := "在 Node.js 如何安装 Octo CLI？openclaw-channel-octo 如何接收 Octo 消息，基础 IM 接入是否依赖 CLI？请分别核对两个仓库的 README／源码后给出固定版本来源。"
+	ctx := WithContract(context.Background(), query)
+	require.True(t, Requires(ctx, IntentSource))
+	require.True(t, Requires(ctx, IntentIntegration))
+	require.False(t, Requires(ctx, IntentRelease), "a pinned source citation is not a request for the latest published release")
+	require.NotContains(t, Prompt(ctx), "github_release_lookup")
 }
 
 func TestRuntimeNameDoesNotForceSourceOnlyFallback(t *testing.T) {
