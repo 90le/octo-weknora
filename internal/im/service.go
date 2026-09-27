@@ -2010,6 +2010,16 @@ func (s *Service) executeQARequest(req *qaRequest) {
 		)
 	}
 
+	// Give platforms with a native, non-message progress signal feedback while
+	// the authorized QA run is active. This is deliberately after the queued
+	// scope recheck and attachment admission, so ignored or rejected messages
+	// do not generate a visible status or an extra chat message.
+	if notifier, ok := req.adapter.(ProcessingNotifier); ok {
+		if stop := notifier.StartProcessing(ctx, req.msg); stop != nil {
+			defer stop()
+		}
+	}
+
 	// Determine output mode from channel config.
 	streamDisabled := req.channel.OutputMode == "full"
 
