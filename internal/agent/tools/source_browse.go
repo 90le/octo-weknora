@@ -209,7 +209,7 @@ func (binding sourceBrowseBinding) catalog(ref string) sourceBrowseCatalogEntry 
 
 func bindingFromSummary(kbID string, tenant uint64, summary types.SourceSummary) sourceBrowseBinding {
 	repository := summary.Repository
-	if repository == "" {
+	if repository == "" && summary.Type != types.ConnectorTypeGitHub {
 		repository = summary.Name // Local folders have a display name, not a GitHub identity.
 	}
 	return sourceBrowseBinding{
@@ -366,6 +366,12 @@ func (t *SourceBrowseTool) listBindings(ctx context.Context, kbIDs []string, que
 		})
 		tenant := t.allowed()[kbID]
 		for _, summary := range summaries {
+			if summary.Type == types.ConnectorTypeGitHub && summary.Repository == "" {
+				// A GitHub display name is editable and cannot stand in for a
+				// validated owner/repository identity, even if a snapshot exists.
+				complete = false
+				continue
+			}
 			if query != "" && !strings.Contains(strings.ToLower(summary.Name), query) &&
 				!strings.Contains(strings.ToLower(summary.Repository), query) {
 				continue

@@ -105,7 +105,7 @@ func sourceToolContext() context.Context {
 }
 
 func sourceSummary(id, snapshotID, repository string) types.SourceSummary {
-	return types.SourceSummary{ID: id, Name: repository, Type: "github", Status: "active", SnapshotID: snapshotID, Revision: "commit-1", FileCount: 3}
+	return types.SourceSummary{ID: id, Name: repository, Repository: repository, Type: "github", Status: "active", SnapshotID: snapshotID, Revision: "commit-1", FileCount: 3}
 }
 
 func sourceCatalog(t *testing.T, tool *SourceBrowseTool) sourceBrowseCatalog {
@@ -158,6 +158,15 @@ func TestSourceBrowseUsesConfiguredGitHubIdentityInsteadOfDisplayName(t *testing
 
 	local := bindingFromSummary("kb", 7, types.SourceSummary{Name: "Friendly local folder", Type: "local_folder"})
 	require.Equal(t, "Friendly local folder", local.Repository)
+
+	invalid := sourceSummary("bad", "old-snapshot", "OtherOrg/openclaw-channel-octo")
+	invalid.Repository = ""
+	require.Empty(t, bindingFromSummary("kb", 7, invalid).Repository, "an editable GitHub name is not provenance")
+	badTool := NewSourceBrowseTool(&sourceToolReader{summaries: map[string][]types.SourceSummary{"kb": {invalid}}},
+		&sourceToolKB{}, types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, TenantID: 7, KnowledgeBaseID: "kb"}})
+	badCatalog := sourceCatalog(t, badTool)
+	require.Empty(t, badCatalog.Sources)
+	require.False(t, badCatalog.Complete, "an unidentifiable GitHub snapshot keeps exhaustive search incomplete")
 }
 
 func TestSourceBrowseCatalogBindsOpaqueRefAndRedactsInternalIDs(t *testing.T) {
