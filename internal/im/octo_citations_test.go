@@ -198,6 +198,20 @@ func TestOctoStreamingFinalRendersOnlyObservedCodeLineSource(t *testing.T) {
 	require.NotContains(t, final, "<web")
 }
 
+func TestOctoBranchLineURLIsNotAStableSourceEvenWhenRead(t *testing.T) {
+	ctx := octobusiness.WithRetrievalTrace(octoCitationContext())
+	branchURL := "https://github.com/test/code/blob/main/main.go#L3-L7"
+	result, _ := json.Marshal(types.SourceRead{Path: "main.go", SourceURL: branchURL, Revision: "snapshot:current"})
+	_, err := octobusiness.TrackRetrieval(&octoCitationSourceTool{output: string(result), data: map[string]interface{}{
+		types.SourceBrowseCitationDataKey: types.SourceBrowseCitation{KnowledgeBaseID: "kb", URL: branchURL, Path: "main.go", Revision: "snapshot:current"},
+	}}).Execute(ctx, []byte(`{"action":"read","source_ref":"s1"}`))
+	require.NoError(t, err)
+	answer := (&Service{}).appendOctoSources(ctx, "结论。<web title=\"main.go\" url=\""+branchURL+"\"/> [源码]("+branchURL+")", nil)
+	require.NotContains(t, answer, branchURL)
+	require.Contains(t, answer, "源码（源码行号未核验）")
+	require.Empty(t, persistedOctoSource(&types.Knowledge{Source: branchURL}))
+}
+
 func TestOctoOfficialReleaseCitationIsAppendedWithoutModelRefAndRespectsSetting(t *testing.T) {
 	ctx := octobusiness.WithRetrievalTrace(octoCitationContext())
 	url := "https://github.com/test/octo-web/releases/tag/v1.2.3"
