@@ -2,15 +2,33 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var ErrKnowledgeBaseNotFound = errors.New("knowledge base not found")
+var ErrKnowledgeBaseInUse = errors.New("knowledge base is still used by an Octo scope")
+
+type verifiedOctoScopeDeletionKey struct{}
+type verifiedOctoScopeDeletion struct {
+	tenantID uint64
+	scopeID  string
+	actorUID string
+}
+
+// WithVerifiedOctoScopeDeletion is only for a server-verified Octo knowledge
+// proposal. It does not authorize a caller: the business service must first
+// recheck the native sender/role, exact scope and KB management grant. The
+// repository rechecks that exact grant while holding the KB row lock.
+func WithVerifiedOctoScopeDeletion(ctx context.Context, tenantID uint64, scopeID, actorUID string) context.Context {
+	return context.WithValue(ctx, verifiedOctoScopeDeletionKey{}, verifiedOctoScopeDeletion{tenantID: tenantID, scopeID: scopeID, actorUID: actorUID})
+}
 
 // knowledgeBaseRepository implements the KnowledgeBaseRepository interface
 type knowledgeBaseRepository struct {
@@ -172,9 +190,84 @@ func (r *knowledgeBaseRepository) UpdateKnowledgeBase(ctx context.Context, kb *t
 	return r.db.WithContext(ctx).Save(kb).Error
 }
 
-// DeleteKnowledgeBase deletes a knowledge base
+// DeleteKnowledgeBase serializes a soft-delete with Octo scope binding. Both
+// this operation and SetBinding lock the active KB row before inspecting or
+// changing scope references, so a concurrent bind cannot commit after the
+// dependency check but before the soft-delete. SQLite serializes writes at
+// database level; PostgreSQL uses the explicit FOR UPDATE row lock.
 func (r *knowledgeBaseRepository) DeleteKnowledgeBase(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.KnowledgeBase{}).Error
+	tenantID := types.MustTenantIDFromContext(ctx)
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var kb types.KnowledgeBase
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND tenant_id = ?", id, tenantID).First(&kb).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrKnowledgeBaseNotFound
+			}
+			return err
+		}
+		request, scoped := ctx.Value(verifiedOctoScopeDeletionKey{}).(verifiedOctoScopeDeletion)
+		if scoped && (request.tenantID != tenantID || request.scopeID == "" || request.actorUID == "") {
+			return ErrKnowledgeBaseInUse
+		}
+		if scoped {
+			var granted int64
+			if err := tx.Table("octo_scope_knowledge_grants").Where("tenant_id = ? AND scope_id = ? AND knowledge_base_id = ?", tenantID, request.scopeID, id).Count(&granted).Error; err != nil {
+				return err
+			}
+			if granted != 1 {
+				return ErrKnowledgeBaseInUse
+			}
+		}
+		for _, table := range []string{"octo_scope_bindings", "octo_scope_knowledge_grants"} {
+			query := tx.Table(table).Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, id)
+			if scoped {
+				query = query.Where("scope_id <> ?", request.scopeID)
+			}
+			var count int64
+			if err := query.Limit(1).Count(&count).Error; err != nil {
+				return err
+			}
+			if count != 0 {
+				return ErrKnowledgeBaseInUse
+			}
+		}
+		if scoped {
+			// Remove only the verified scope's own references, atomically with
+			// the KB soft-delete. A parent may have read-only inheriting children;
+			// their access ends when this one direct binding is removed.
+			bound := tx.Exec("DELETE FROM octo_scope_bindings WHERE tenant_id = ? AND scope_id = ? AND knowledge_base_id = ?", tenantID, request.scopeID, id)
+			if bound.Error != nil {
+				return bound.Error
+			}
+			granted := tx.Exec("DELETE FROM octo_scope_knowledge_grants WHERE tenant_id = ? AND scope_id = ? AND knowledge_base_id = ?", tenantID, request.scopeID, id)
+			if granted.Error != nil {
+				return granted.Error
+			}
+			if granted.RowsAffected != 1 {
+				return ErrKnowledgeBaseInUse
+			}
+			details, err := json.Marshal(map[string]any{"knowledge_base_id": id, "read_binding_removed": bound.RowsAffected == 1, "management_grant_removed": true})
+			if err != nil {
+				return err
+			}
+			if err := tx.Create(&types.AuditLog{
+				TenantID: tenantID, ActorUserID: request.actorUID, ActorRole: "octo",
+				Action: "octo.scope.authorization_removed_for_kb_delete", ScopeType: "octo_scope", ScopeID: request.scopeID,
+				TargetType: "knowledge_base", TargetID: id, Details: types.JSON(details), CreatedAt: time.Now(),
+			}).Error; err != nil {
+				return err
+			}
+		}
+		deleted := tx.Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&types.KnowledgeBase{})
+		if deleted.Error != nil {
+			return deleted.Error
+		}
+		if deleted.RowsAffected != 1 {
+			return ErrKnowledgeBaseNotFound
+		}
+		return nil
+	})
 }
 
 // CountByVectorStoreID counts active knowledge bases that are bound to the

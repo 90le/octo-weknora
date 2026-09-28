@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { OctoScope } from '@/api/octo'
-import { groupScopes, scopeKnowledgeRows } from './octoScopeDisplay'
+import { filterScopeKnowledgeRows, groupScopes, scopeKnowledgeRows } from './octoScopeDisplay'
 
 const scope = (id:string, group_id:string, subarea_id='', account_id='bot', display_name=id):OctoScope => ({id,group_id,subarea_id,account_id,display_name,name_source:'octo',sync_status:'verified',sync_error:'',checked_at:null,verified_at:null,inherit_parent:false,allow_knowledge_creation:false,aggregate_child_issues:false,allow_public_web:false})
 
@@ -29,4 +29,12 @@ test('direct binding wins once and missing names never become a fake group name'
   ],[],[])
   assert.equal(rows.length,1);assert.equal(rows[0]!.query,'direct');assert.equal(rows[0]!.sourceScopeId,'current')
   assert.equal(rows[0]!.name,'知识库名称暂不可用')
+})
+
+test('scope knowledge filtering searches names and IDs while keeping a stable name order',()=>{
+  const rows=scopeKnowledgeRows([],['kb-z','kb-a','kb-b'],[{id:'kb-z',name:'产品乙'},{id:'kb-a',name:'产品甲'},{id:'kb-b',name:'产品丙'}])
+  const sorted=filterScopeKnowledgeRows(rows)
+  assert.deepEqual(sorted.map(row=>row.name),['产品丙','产品甲','产品乙'])
+  assert.deepEqual(filterScopeKnowledgeRows(rows,'kb-z').map(row=>row.knowledgeBaseId),['kb-z'])
+  assert.deepEqual(filterScopeKnowledgeRows(rows,'产品甲').map(row=>row.knowledgeBaseId),['kb-a'])
 })

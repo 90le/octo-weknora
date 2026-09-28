@@ -43,4 +43,5 @@ func RegisterOctoRoutes(r *gin.RouterGroup, h *octointegration.Handler, g *rbacG
 	admin.PUT("/scopes/:scope_id/knowledge-bases/:id", g.KBAccessWrite("id"), h.Bind)
 	admin.DELETE("/scopes/:scope_id/knowledge-bases/:id", g.KBAccessWrite("id"), h.Unbind)
 	admin.GET("/knowledge-bases/:id/scopes", g.KBAccessRead("id"), h.Uses)
+	admin.GET("/knowledge-bases/:id/effective-scopes", g.KBAccessRead("id"), h.EffectiveUses)
 }

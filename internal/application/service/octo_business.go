@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/octointegration"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -100,6 +102,10 @@ func NewOctoBusiness(db *gorm.DB, kbs interfaces.KnowledgeBaseService, knowledge
 		if err != nil {
 			return nil, err
 		}
+		effectiveUses, err := store.EffectiveUses(ctx, p.TenantID, kb.ID)
+		if err != nil {
+			return nil, err
+		}
 		var inheritedScopes []struct {
 			ID        string
 			UpdatedAt time.Time
@@ -109,7 +115,7 @@ func NewOctoBusiness(db *gorm.DB, kbs interfaces.KnowledgeBaseService, knowledge
 				return nil, err
 			}
 		}
-		revision := octoManagementRevision(scope, kb.ID, kb.UpdatedAt, uses, currentManaged, inheritedScopes)
+		revision := octoManagementRevision(scope, kb.ID, kb.UpdatedAt, uses, currentManaged, inheritedScopes, effectiveUses)
 		if in.ExpectedRevision != "" && in.ExpectedRevision != revision {
 			return nil, octobusiness.ErrConflict
 		}
@@ -123,10 +129,21 @@ func NewOctoBusiness(db *gorm.DB, kbs interfaces.KnowledgeBaseService, knowledge
 		if in.Action != "delete_kb" {
 			return nil, octobusiness.ErrInvalid
 		}
-		for _, use := range uses {
-			if use.ScopeID != p.ScopeID {
-				return nil, errors.New("此知识库还被其他区域使用；可解绑本区，删除整个库请在管理页面核对影响")
+		inheritingSubareas := 0
+		for _, use := range effectiveUses {
+			if use.ScopeID == p.ScopeID {
+				continue
 			}
+			// A child that only inherits this exact parent's read binding loses
+			// that read access together with the parent. Keep the existing chat
+			// deletion policy, but show its actual impact in the preview.
+			if use.QueryMode == "inherited" && use.FromScopeID == p.ScopeID && !use.CanManage {
+				inheritingSubareas++
+				continue
+			}
+			// Direct, independent inherited, or management-only use belongs to
+			// another scope and requires administrator review before deletion.
+			return nil, errors.New("此知识库还被其他区域读取或维护；可解绑本区，删除整个库请在管理页面核对影响")
 		}
 		// A scoped group grant must not remove a knowledge asset shared with an
 		// organization or directly attached to an independent IM channel.
@@ -141,13 +158,21 @@ func NewOctoBusiness(db *gorm.DB, kbs interfaces.KnowledgeBaseService, knowledge
 			return nil, errors.New("此知识库还被组织共享或直接渠道配置使用；请在管理页面核对所有影响后删除。")
 		}
 		if preview {
-			return map[string]any{"action": in.Action, "knowledge_base_id": kb.ID, "name": kb.Name, "inheriting_subareas": len(inheritedScopes), "revision": revision, "notice": "删除知识库及其生成索引、资料副本；保留服务器原始文件和远程仓库。此操作无法通过聊天撤销。"}, nil
+			return map[string]any{"action": in.Action, "knowledge_base_id": kb.ID, "name": kb.Name, "inheriting_subareas": inheritingSubareas, "revision": revision, "notice": "删除知识库及其生成索引、资料副本；保留服务器原始文件和远程仓库。此操作无法通过聊天撤销。"}, nil
 		}
 		grant, err := access.ResolveKB(ctx, access.KBRequest{Caller: types.CallerFromContext(ctx)}, &kb, types.OrgRoleEditor, nil, nil)
 		if err != nil {
 			return nil, err
 		}
-		err = kbs.DeleteKnowledgeBase(grant.Context(ctx), kb.ID)
+		// The proposal has revalidated the native sender, exact scope and
+		// management grant. The repository repeats the grant check while
+		// holding the KB lock, then removes only this scope's references in
+		// the same transaction as the soft-delete.
+		deleteCtx := repository.WithVerifiedOctoScopeDeletion(grant.Context(ctx), p.TenantID, p.ScopeID, p.UserID)
+		err = kbs.DeleteKnowledgeBase(deleteCtx, kb.ID)
+		if errors.Is(err, repository.ErrKnowledgeBaseInUse) {
+			return nil, fmt.Errorf("%w: 知识库仍有其他 Octo 区域在查询或维护，或本区维护授权已变化；请核对使用范围后再删除", octobusiness.ErrConflict)
+		}
 		return map[string]any{"knowledge_base_id": kb.ID, "deletion_requested": err == nil}, err
 	}
 	return s

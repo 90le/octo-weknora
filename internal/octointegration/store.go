@@ -70,6 +70,24 @@ type EffectiveBinding struct {
 	Inherited       bool   `json:"inherited"`
 }
 
+// EffectiveUse is the reverse view of one KB's Octo usage. QueryMode is
+// direct, inherited or none; a none row has an exact-scope maintenance grant
+// but no read binding. Management never follows a parent read binding.
+type EffectiveUse struct {
+	ScopeID       string     `json:"scope_id"`
+	DisplayName   string     `json:"display_name"`
+	AccountID     string     `json:"account_id"`
+	GroupID       string     `json:"group_id"`
+	SubareaID     string     `json:"subarea_id"`
+	InheritParent bool       `json:"inherit_parent"`
+	QueryMode     string     `json:"query_mode"`
+	FromScopeID   string     `json:"from_scope_id"`
+	CanManage     bool       `json:"can_manage"`
+	NameSource    string     `json:"name_source"`
+	SyncStatus    string     `json:"sync_status"`
+	VerifiedAt    *time.Time `json:"verified_at"`
+}
+
 type Store struct{ db *gorm.DB }
 
 func NewStore(db *gorm.DB) *Store { return &Store{db: db} }
@@ -195,12 +213,13 @@ func (s *Store) SetBinding(ctx context.Context, tenant uint64, scopeID, kbID str
 			}
 			return audit(tx, ctx, tenant, scopeID, "octo.binding.removed", map[string]interface{}{"knowledge_base_id": kbID})
 		}
-		var count int64
-		if err := tx.Table("knowledge_bases").Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", kbID, tenant).Count(&count).Error; err != nil {
+		// The KB repository uses the same row lock before its dependency
+		// check and soft-delete. Recheck active state only after acquiring it.
+		var kb struct{ ID string }
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Table("knowledge_bases").
+			Select("id").Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", kbID, tenant).
+			Take(&kb).Error; err != nil {
 			return err
-		}
-		if count != 1 {
-			return gorm.ErrRecordNotFound
 		}
 		b := Binding{TenantID: tenant, ScopeID: scopeID, KnowledgeBaseID: kbID}
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&b).Error; err != nil {
@@ -313,5 +332,56 @@ func (s *Store) Uses(ctx context.Context, tenant uint64, kb string) ([]ScopeUse,
 	}
 	rows := []ScopeUse{}
 	err := s.db.WithContext(ctx).Table("octo_scope_bindings AS b").Select("b.scope_id, s.display_name, s.account_id, s.group_id, s.subarea_id").Joins("JOIN octo_scopes AS s ON s.id = b.scope_id AND s.tenant_id = b.tenant_id").Where("b.tenant_id = ? AND b.knowledge_base_id = ?", tenant, kb).Order("s.account_id, s.group_id, s.subarea_id").Scan(&rows).Error
+	return rows, err
+}
+
+// EffectiveUses is an administrative impact projection, not retrieval
+// authorization. It includes direct readers, children inheriting a parent
+// read binding, and scopes holding only an exact maintenance grant. A single
+// joined query avoids per-scope lookups as the number of groups grows.
+func (s *Store) EffectiveUses(ctx context.Context, tenant uint64, kb string) ([]EffectiveUse, error) {
+	if tenant == 0 || !validID(kb) {
+		return nil, ErrInvalid
+	}
+	rows := []EffectiveUse{}
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Table("knowledge_bases").Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", kb, tenant).Count(&count).Error; err != nil {
+			return err
+		}
+		if count != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Raw(`
+SELECT s.id AS scope_id, s.display_name, s.account_id, s.group_id,
+       s.subarea_id, s.inherit_parent, s.name_source, s.sync_status, s.verified_at,
+       CASE WHEN direct.scope_id IS NOT NULL THEN 'direct'
+            WHEN inherited.scope_id IS NOT NULL THEN 'inherited'
+            ELSE 'none' END AS query_mode,
+       CASE WHEN direct.scope_id IS NOT NULL THEN s.id
+            WHEN inherited.scope_id IS NOT NULL THEN parent.id
+            ELSE '' END AS from_scope_id,
+       CASE WHEN management.scope_id IS NOT NULL THEN TRUE ELSE FALSE END AS can_manage
+FROM octo_scopes AS s
+JOIN knowledge_bases AS kb
+  ON kb.id = ? AND kb.tenant_id = s.tenant_id AND kb.deleted_at IS NULL
+LEFT JOIN octo_scope_bindings AS direct
+  ON direct.tenant_id = s.tenant_id AND direct.scope_id = s.id
+ AND direct.knowledge_base_id = ?
+LEFT JOIN octo_scopes AS parent
+  ON s.subarea_id <> '' AND s.inherit_parent = TRUE
+ AND parent.tenant_id = s.tenant_id AND parent.account_id = s.account_id
+ AND parent.group_id = s.group_id AND parent.subarea_id = ''
+LEFT JOIN octo_scope_bindings AS inherited
+  ON inherited.tenant_id = s.tenant_id AND inherited.scope_id = parent.id
+ AND inherited.knowledge_base_id = ?
+LEFT JOIN octo_scope_knowledge_grants AS management
+  ON management.tenant_id = s.tenant_id AND management.scope_id = s.id
+ AND management.knowledge_base_id = ?
+WHERE s.tenant_id = ?
+  AND (direct.scope_id IS NOT NULL OR inherited.scope_id IS NOT NULL
+       OR management.scope_id IS NOT NULL)
+ORDER BY s.account_id, s.group_id, s.subarea_id, s.id`, kb, kb, kb, kb, tenant).Scan(&rows).Error
+	})
 	return rows, err
 }

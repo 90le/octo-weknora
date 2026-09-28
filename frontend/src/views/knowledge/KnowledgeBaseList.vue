@@ -693,10 +693,28 @@
         <span class="del-circle-txt">
           {{ $t('knowledgeList.delete.confirmMessage', { name: deletingKb?.name ?? '' }) }}
         </span>
+        <div v-if="canInspectOctoImpact" class="octo-delete-impact">
+          <p v-if="deleteImpactStatus === 'loading'" role="status">正在核对 Octo 群与子区的使用范围…</p>
+          <t-alert v-else-if="deleteImpactStatus === 'unavailable'" theme="error">
+            无法核对 Octo 使用范围，已暂停删除。请稍后重试，避免误删仍供群聊使用的知识库。
+            <t-button variant="text" @click="loadDeleteImpact">重新核对</t-button>
+          </t-alert>
+          <template v-else-if="deleteImpactStatus === 'ready' && deleteImpactRows.length">
+            <t-alert theme="warning">此知识库仍涉及 {{ deleteImpactRows.length }} 个 Octo 群／子区。请先解除所有直接查询绑定和独立维护授权；继承查询会随主群绑定解除。当前不能删除。</t-alert>
+            <ul class="octo-impact-list">
+              <li v-for="use in deleteImpactRows" :key="use.scope_id">
+                <strong>{{ use.display_name }}</strong>
+                <span>{{ use.subarea_id ? '子区' : '主群' }} · {{ octoImpactLabel(use) }} · Bot：{{ use.account_id }}</span>
+                <router-link :to="{ name: 'octoGroups', query: { scope: use.query_mode === 'inherited' ? use.from_scope_id : use.scope_id } }">{{ use.query_mode === 'inherited' ? '查看主群绑定' : '查看区域设置' }}</router-link>
+              </li>
+            </ul>
+          </template>
+          <p v-else-if="deleteImpactStatus === 'ready'" class="octo-impact-clear">已核对：当前无 Octo 群或子区依赖。</p>
+        </div>
+        <t-alert v-else theme="info" class="octo-delete-impact">当前账号无法预览 Octo 使用范围。如仍有群／子区依赖，服务端会阻止删除；请联系工作区管理员核对。</t-alert>
         <div class="circle-btn">
-          <span class="circle-btn-txt" @click="deleteVisible = false">{{ $t('common.cancel') }}</span>
-          <span class="circle-btn-txt confirm" @click="confirmDelete">{{ $t('knowledgeList.delete.confirmButton')
-          }}</span>
+          <button type="button" class="circle-btn-txt" :disabled="deletePending" @click="deleteVisible = false">{{ $t('common.cancel') }}</button>
+          <button type="button" class="circle-btn-txt confirm" :disabled="!canConfirmDelete" @click="confirmDelete">{{ $t('knowledgeList.delete.confirmButton') }}</button>
         </div>
       </div>
     </t-dialog>
@@ -787,6 +805,7 @@ import { onMounted, onUnmounted, ref, computed, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { MessagePlugin, Icon as TIcon } from 'tdesign-vue-next'
 import { deleteKnowledgeBase, duplicateKnowledgeBase, togglePinKnowledgeBase } from '@/api/knowledge-base'
+import { effectiveKBUses, type EffectiveScopeUse } from '@/api/octo'
 import { useChatResourcesStore } from '@/stores/chatResources'
 import { formatStringDate } from '@/utils/index'
 import { useUIStore } from '@/stores/ui'
@@ -806,6 +825,7 @@ import { useTenantModelReadiness } from '@/composables/useTenantModelReadiness'
 import { useI18n } from 'vue-i18n'
 import { useListUrlState } from '@/composables/useListUrlState'
 import { useResourcePins } from '@/composables/useResourcePins'
+import { sortedDeletionImpact } from '@/views/integrations/octoKBUsesDisplay'
 
 const router = useRouter()
 const route = useRoute()
@@ -876,6 +896,17 @@ const kbs = ref<KB[]>([])
 const loading = ref(false)
 const deleteVisible = ref(false)
 const deletingKb = ref<KB | null>(null)
+const deletePending = ref(false)
+const deleteImpactStatus = ref<'idle' | 'loading' | 'ready' | 'unavailable'>('idle')
+const deleteImpactRows = ref<EffectiveScopeUse[]>([])
+const canInspectOctoImpact = computed(() => authStore.hasRole('admin') || authStore.canAccessAllTenants)
+const canConfirmDelete = computed(() => !deletePending.value && (!canInspectOctoImpact.value || (deleteImpactStatus.value === 'ready' && deleteImpactRows.value.length === 0)))
+let deleteImpactVersion = 0
+watch(deleteVisible, open => {
+  if (open) void loadDeleteImpact()
+  else { deleteImpactVersion++; deleteImpactStatus.value = 'idle'; deleteImpactRows.value = [] }
+})
+watch(() => authStore.currentTenantId, () => { deleteVisible.value = false; deleteImpactVersion++; deleteImpactRows.value = [] })
 const currentMoreIndex = ref<number>(-1)
 const highlightedKbId = ref<string | null>(null)
 const highlightedCardRef = ref<HTMLElement | null>(null)
@@ -1535,21 +1566,60 @@ const handleDelete = (kb: KB) => {
   deleteVisible.value = true
 }
 
-const confirmDelete = () => {
-  if (!deletingKb.value) return
+function octoImpactLabel(use: EffectiveScopeUse): string {
+  return { direct: '直接查询', inherited: '继承主群查询', none: '仅维护授权' }[use.query_mode]
+}
 
-  deleteKnowledgeBase(deletingKb.value.id).then((res: any) => {
-    if (res.success) {
-      MessagePlugin.success(t('knowledgeList.messages.deleted'))
-      deleteVisible.value = false
-      deletingKb.value = null
-      fetchList(true)
-    } else {
-      MessagePlugin.error(res.message || t('knowledgeList.messages.deleteFailed'))
+async function loadDeleteImpact() {
+  const kbId = deletingKb.value?.id, tenant = authStore.currentTenantId, version = ++deleteImpactVersion
+  deleteImpactRows.value = []
+  if (!kbId || !canInspectOctoImpact.value) { deleteImpactStatus.value = 'idle'; return }
+  deleteImpactStatus.value = 'loading'
+  try {
+    const result = await effectiveKBUses(kbId)
+    if (result.success !== true || !Array.isArray(result.data)) throw new Error('invalid Octo usage projection')
+    if (version === deleteImpactVersion && tenant === authStore.currentTenantId && kbId === deletingKb.value?.id) {
+      deleteImpactRows.value = sortedDeletionImpact(result.data)
+      deleteImpactStatus.value = 'ready'
     }
-  }).catch((e: any) => {
-    MessagePlugin.error(e?.message || t('knowledgeList.messages.deleteFailed'))
-  })
+  } catch {
+    if (version === deleteImpactVersion && tenant === authStore.currentTenantId) deleteImpactStatus.value = 'unavailable'
+  }
+}
+
+const confirmDelete = async () => {
+  const kb = deletingKb.value, tenant = authStore.currentTenantId
+  if (!kb || !canConfirmDelete.value) return
+  deletePending.value = true
+  try {
+    // The dialog preview can age while it is open. Re-read immediately before
+    // DELETE; the server's 409 check remains authoritative under a race.
+    if (canInspectOctoImpact.value) {
+      deleteImpactStatus.value = 'loading'
+      const result = await effectiveKBUses(kb.id)
+      if (result.success !== true || !Array.isArray(result.data)) throw new Error('invalid Octo usage projection')
+      if (tenant !== authStore.currentTenantId || kb.id !== deletingKb.value?.id) return
+      deleteImpactRows.value = sortedDeletionImpact(result.data)
+      deleteImpactStatus.value = 'ready'
+      if (deleteImpactRows.value.length) return
+    }
+    if (tenant !== authStore.currentTenantId || kb.id !== deletingKb.value?.id) return
+    const res: any = await deleteKnowledgeBase(kb.id)
+    if (!res?.success) { MessagePlugin.error(res?.message || t('knowledgeList.messages.deleteFailed')); return }
+    MessagePlugin.success(t('knowledgeList.messages.deleted'))
+    deleteVisible.value = false
+    deletingKb.value = null
+    await fetchList(true)
+  } catch (e: any) {
+    if (tenant !== authStore.currentTenantId || kb.id !== deletingKb.value?.id) return
+    if (e?.response?.status === 409 || e?.status === 409) {
+      MessagePlugin.warning('知识库仍被 Octo 群或子区使用，服务端已阻止删除。请先解除查询与维护授权。')
+      if (canInspectOctoImpact.value) await loadDeleteImpact()
+    } else {
+      if (canInspectOctoImpact.value && deleteImpactStatus.value === 'loading') deleteImpactStatus.value = 'unavailable'
+      MessagePlugin.error(e?.message || t('knowledgeList.messages.deleteFailed'))
+    }
+  } finally { deletePending.value = false }
 }
 
 const isInitialized = (kb: KB) => {
@@ -2865,6 +2935,41 @@ const handleUploadFinishedEvent = (event: Event) => {
 }
 
 .circle-wrap {
+  .octo-delete-impact {
+    margin: 0 0 18px 29px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .octo-delete-impact p {
+    color: var(--td-text-color-secondary);
+    margin: 0 0 8px;
+  }
+
+  .octo-impact-list {
+    max-height: 220px;
+    overflow: auto;
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+    border: 1px solid var(--td-component-border);
+    border-radius: 6px;
+  }
+
+  .octo-impact-list li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px 10px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--td-component-border);
+  }
+
+  .octo-impact-list li:last-child { border-bottom: 0; }
+  .octo-impact-list li span { color: var(--td-text-color-secondary); }
+  .octo-impact-list li a { margin-left: auto; }
+  .octo-impact-clear { color: var(--td-text-color-secondary); }
+
   .dialog-header {
     display: flex;
     align-items: center;
@@ -2904,6 +3009,9 @@ const handleUploadFinishedEvent = (event: Event) => {
   }
 
   .circle-btn-txt {
+    border: 0;
+    background: transparent;
+    padding: 0;
     color: var(--td-text-color-primary);
     font-family: var(--app-font-family);
     font-size: 14px;
@@ -2913,6 +3021,12 @@ const handleUploadFinishedEvent = (event: Event) => {
 
     &:hover {
       opacity: 0.8;
+    }
+
+    &:disabled {
+      color: var(--td-text-color-disabled);
+      cursor: not-allowed;
+      opacity: 1;
     }
   }
 

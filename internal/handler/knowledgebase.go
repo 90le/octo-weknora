@@ -16,6 +16,7 @@ import (
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/middleware"
+	"github.com/Tencent/WeKnora/internal/octointegration"
 	"github.com/Tencent/WeKnora/internal/storageurl"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -25,7 +26,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
+	"gorm.io/gorm"
 )
+
+type octoScopeImpactReader interface {
+	EffectiveUses(context.Context, uint64, string) ([]octointegration.EffectiveUse, error)
+}
 
 // KnowledgeBaseHandler defines the HTTP handler for knowledge base operations
 type KnowledgeBaseHandler struct {
@@ -44,6 +50,7 @@ type KnowledgeBaseHandler struct {
 	// default handle mode is available.
 	fileService     interfaces.FileService
 	storageResolver interfaces.StorageBackendResolver
+	octoScopeImpact octoScopeImpactReader
 }
 
 // NewKnowledgeBaseHandler creates a new knowledge base handler instance
@@ -58,6 +65,7 @@ func NewKnowledgeBaseHandler(
 	userService interfaces.UserService,
 	fileService interfaces.FileService,
 	storageResolver interfaces.StorageBackendResolver,
+	db *gorm.DB,
 ) *KnowledgeBaseHandler {
 	return &KnowledgeBaseHandler{
 		cfg:                cfg,
@@ -70,6 +78,7 @@ func NewKnowledgeBaseHandler(
 		userService:        userService,
 		fileService:        fileService,
 		storageResolver:    storageResolver,
+		octoScopeImpact:    octointegration.NewStore(db),
 	}
 }
 
@@ -813,12 +822,34 @@ func (h *KnowledgeBaseHandler) DeleteKnowledgeBase(c *gin.Context) {
 		c.Error(apperrors.NewForbiddenError("Only knowledge base owner can delete"))
 		return
 	}
+	// Interactive deletion must not silently sever an Octo group's direct or
+	// inherited read access, or an exact maintenance delegation. This
+	// preflight gives a useful 409 before side effects; the repository repeats
+	// the check under the same KB lock used by Octo binding mutations.
+	if h.octoScopeImpact == nil {
+		_ = c.Error(apperrors.NewInternalServerError("Octo scope impact check unavailable"))
+		return
+	}
+	uses, err := h.octoScopeImpact.EffectiveUses(ctx, kb.TenantID, id)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, nil)
+		_ = c.Error(apperrors.NewInternalServerError("Unable to check Octo knowledge base usage"))
+		return
+	}
+	if len(uses) > 0 {
+		_ = c.Error(apperrors.NewConflictError("知识库仍被 Octo 群或子区读取或维护；请先解绑，并撤销独立维护授权，再删除知识库。"))
+		return
+	}
 
 	logger.Infof(ctx, "Deleting knowledge base, ID: %s, name: %s",
 		secutils.SanitizeForLog(id), secutils.SanitizeForLog(kb.Name))
 
 	// Delete the knowledge base
 	if err := h.service.DeleteKnowledgeBase(ctx, id); err != nil {
+		if stderrors.Is(err, repository.ErrKnowledgeBaseInUse) {
+			_ = c.Error(apperrors.NewConflictError("知识库仍被 Octo 群或子区查询绑定或授权维护；请先解绑并撤销维护授权，再删除。"))
+			return
+		}
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(apperrors.NewInternalServerError(err.Error()))
 		return

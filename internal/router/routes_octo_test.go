@@ -31,6 +31,11 @@ func TestOctoRejectsNonAdminEvenWithLegacyRBACDisabled(t *testing.T) {
 			if w.Code != http.StatusForbidden {
 				t.Fatalf("status = %d", w.Code)
 			}
+			w = httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/octo/knowledge-bases/kb/effective-scopes", nil))
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("effective scopes status = %d", w.Code)
+			}
 			if *g.cfg.Tenant.EnableRBAC {
 				t.Fatal("registration mutated global RBAC config")
 			}

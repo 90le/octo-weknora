@@ -1,7 +1,7 @@
 <template>
   <section class="octo-panel">
     <header class="page-heading">
-      <div><h2>群与知识库</h2><p>选择 Octo 群或子区，查看它能查询哪些知识库、哪些已开放维护。</p></div>
+      <div><h2>群与知识库</h2><p>工作区管理员在此配置 Bot 连接与跨区域授权；获授权的群管理者可在本群向小丘提案，并由本人确认本区知识库变更。</p></div>
       <div class="heading-actions">
         <t-button variant="outline" :loading="loading" :disabled="saving" @click="load">刷新</t-button>
         <t-button :disabled="!connections.length" @click="showCreate = true"><template #icon><t-icon name="add" /></template>接入群／子区</t-button>
@@ -55,16 +55,18 @@
 
           <section class="knowledge-section">
             <div class="section-heading"><div><h4>知识库与权限</h4><p>查询和维护分别授权；解除查询绑定不会删除资料或撤销维护权。</p></div><t-button :disabled="bindingLoading || Boolean(bindingError)" @click="showBind = true"><template #icon><t-icon name="add" /></template>绑定知识库</t-button></div>
+            <t-input v-model="kbSearch" class="knowledge-search" clearable placeholder="搜索知识库名称或 ID" aria-label="搜索当前区域的知识库"><template #prefix-icon><t-icon name="search" /></template></t-input>
             <t-alert v-if="bindingError" theme="error">{{ bindingError }} <t-button variant="text" @click="select(selected)">重新读取</t-button></t-alert>
             <t-loading :loading="bindingLoading">
               <t-empty v-if="!bindingLoading && !bindingError && !knowledgeRows.length" description="本区域尚未绑定知识库，也没有单独的维护授权。" />
+              <t-empty v-else-if="!bindingLoading && !bindingError && !visibleKnowledgeRows.length" description="没有匹配的知识库；可清除搜索词查看全部。" />
               <div v-if="!bindingError" class="knowledge-list">
-                <article v-for="row in knowledgeRows" :key="row.knowledgeBaseId" class="knowledge-row">
+                <article v-for="row in visibleKnowledgeRows" :key="row.knowledgeBaseId" class="knowledge-row">
                   <div class="knowledge-name"><span class="knowledge-icon"><t-icon name="folder" /></span><div><router-link :to="{name:'knowledgeBaseDetail',params:{kbId:row.knowledgeBaseId}}">{{ row.name }}</router-link><small>知识库</small></div></div>
                   <div class="permission-state"><small>本区查询</small><span :class="{muted:row.query==='none'}">{{ row.query==='direct' ? '已开放' : row.query==='inherited' ? '继承主群' : '未开放' }}</span><button v-if="row.query==='inherited'" type="button" class="inline-link" @click="openParent(row.sourceScopeId)">查看主群设置</button></div>
                   <div class="permission-state"><small>维护授权</small><t-tag :theme="row.managed ? 'success' : 'default'" variant="light" size="small">{{ row.managed ? '已授权本区管理者' : '未授权' }}</t-tag></div>
                   <div class="knowledge-actions">
-                    <t-popconfirm v-if="row.query==='direct'" :content="`停止「${selected.display_name}」直接查询此库；资料和已有维护授权保留。若子区同时继承主群，继承关系仍可能提供查询。`" @confirm="removeBinding(row.knowledgeBaseId)"><t-button variant="text" :disabled="saving">解除查询</t-button></t-popconfirm>
+                    <t-button v-if="row.query==='direct'" variant="text" :disabled="saving || Boolean(bindingError)" @click="previewUnbind(row.knowledgeBaseId)">解除查询</t-button>
                     <t-button v-else variant="text" :disabled="saving" @click="bindQuery(row.knowledgeBaseId)">{{ row.query==='inherited' ? '独立绑定' : '开放查询' }}</t-button>
                     <t-popconfirm v-if="row.managed" content="仅撤销本区域的维护授权，查询绑定和知识资料保持不变。" @confirm="revokeManagement(row.knowledgeBaseId)"><t-button variant="text" theme="danger" :disabled="saving">撤销维护</t-button></t-popconfirm>
                     <t-popconfirm v-else :content="grantDescription(row)" @confirm="grantManagement(row.knowledgeBaseId)"><t-button variant="text" :disabled="saving">授权维护</t-button></t-popconfirm>
@@ -112,19 +114,20 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
-import { MessagePlugin } from 'tdesign-vue-next'
+import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next'
 import { useRoute } from 'vue-router'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import { useAuthStore } from '@/stores/auth'
 import OctoConnectionDialog from './OctoConnectionDialog.vue'
 import OctoScopeCreateDialog from './OctoScopeCreateDialog.vue'
-import { groupScopes, scopeKnowledgeRows, type ScopeKnowledgeRow } from './octoScopeDisplay'
-import { listScopes, updateScope, effectiveBindings, managedKBs, revokeKBManagement, bindKB, unbindKB, listConnections, syncScopeName, inspectMemberRole, type OctoScope, type EffectiveBinding } from '@/api/octo'
+import { filterScopeKnowledgeRows, groupScopes, scopeKnowledgeRows, type ScopeKnowledgeRow } from './octoScopeDisplay'
+import { affectedInheritedUses, scopeUnbindFingerprint } from './octoKBUsesDisplay'
+import { listScopes, updateScope, effectiveBindings, effectiveKBUses, managedKBs, revokeKBManagement, bindKB, unbindKB, listConnections, syncScopeName, inspectMemberRole, type OctoScope, type EffectiveBinding, type EffectiveScopeUse } from '@/api/octo'
 
 const scopes = ref<OctoScope[]>([]), selected = ref<OctoScope | null>(null)
 const kbs = ref<Array<{id:string;name:string}>>([]), bindings = ref<EffectiveBinding[]>([]), managed = ref<string[]>([])
 const loading = ref(false), saving = ref(false), bindingLoading = ref(false)
-const error = ref(''), bindingError = ref(''), search = ref('')
+const error = ref(''), bindingError = ref(''), search = ref(''), kbSearch = ref('')
 const showCreate = ref(false), showBind = ref(false), showConnection = ref(false), detailsOpen = ref(false)
 const kbToBind = ref(''), grantOnBind = ref(false)
 const editInherit = ref(false), editCreation = ref(false), editAggregate = ref(false), editPublicWeb = ref(false)
@@ -139,6 +142,7 @@ const groups = computed(() => groupScopes(scopes.value, search.value))
 const groupCount = computed(() => scopes.value.filter(scope => !scope.subarea_id).length)
 const childCount = computed(() => scopes.value.length - groupCount.value)
 const knowledgeRows = computed(() => scopeKnowledgeRows(bindings.value, managed.value, kbs.value))
+const visibleKnowledgeRows = computed(() => filterScopeKnowledgeRows(knowledgeRows.value, kbSearch.value))
 const queryCount = computed(() => knowledgeRows.value.filter(row => row.query !== 'none').length)
 const managementCount = computed(() => knowledgeRows.value.filter(row => row.managed).length)
 const parentScope = computed(() => selected.value?.subarea_id ? scopes.value.find(scope => !scope.subarea_id && scope.account_id===selected.value?.account_id && scope.group_id===selected.value?.group_id) : undefined)
@@ -173,6 +177,7 @@ async function load() {
 
 async function select(scope:OctoScope) {
   const version=++selectionVersion
+  if (selected.value?.id !== scope.id) kbSearch.value=''
   selected.value=scope;editInherit.value=Boolean(scope.inherit_parent);editCreation.value=Boolean(scope.allow_knowledge_creation);editAggregate.value=Boolean(scope.aggregate_child_issues);editPublicWeb.value=Boolean(scope.allow_public_web)
   roleUID.value='';roleResult.value='';roleLoading.value=false;detailsOpen.value=false;showBind.value=false
   bindings.value=[];managed.value=[];bindingError.value='';kbToBind.value='';bindingLoading.value=true
@@ -194,7 +199,68 @@ async function mutate(operation:()=>Promise<unknown>,success='配置已更新') 
 }
 function saveScope() {const scope=selected.value;if(scope)return mutate(()=>updateScope(scope.id,scope.display_name,editInherit.value,editCreation.value,editAggregate.value,editPublicWeb.value),'区域规则已保存')}
 function bindQuery(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>bindKB(id,kb),'查询绑定已更新')}
-function removeBinding(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>unbindKB(id,kb),'查询绑定已解除；独立维护授权保持不变')}
+function unbindPreviewText(scope: OctoScope, current: EffectiveScopeUse, uses: EffectiveScopeUse[]): string {
+  if (!scope.subarea_id) {
+    const children = affectedInheritedUses(current, uses)
+    if (children.length) {
+      const names = children.slice(0, 4).map(child => child.display_name).join('、')
+      return '解除「' + scope.display_name + '」的直接查询后，' + names + (children.length > 4 ? '等' : '') +
+        '共 ' + children.length + ' 个子区会失去继承查询。知识库资料和各区域独立维护授权保留。'
+    }
+  }
+  if (current.subarea_id && current.inherit_parent && uses.some(parent =>
+    !parent.subarea_id && parent.account_id === current.account_id && parent.group_id === current.group_id && parent.query_mode === 'direct')) {
+    return '解除这个子区的直接查询后，它仍可继承主群对该库的查询。知识库资料和本区独立维护授权保留。'
+  }
+  return '解除「' + scope.display_name + '」的直接查询后，本区将不再通过此绑定查询。知识库资料和独立维护授权保留。'
+}
+async function previewUnbind(kb: string) {
+  const scope = selected.value, tenant = auth.currentTenantId, version = selectionVersion
+  if (!scope || saving.value || bindingError.value) return
+  saving.value = true
+  try {
+    const response = await effectiveKBUses(kb)
+    if (response.success !== true || !Array.isArray(response.data)) throw new Error('invalid impact response')
+    if (tenant !== auth.currentTenantId || version !== selectionVersion || selected.value?.id !== scope.id) return
+    const current = response.data.find(use => use.scope_id === scope.id && use.query_mode === 'direct')
+    if (!current) throw new Error('binding changed')
+    const expected = scopeUnbindFingerprint(scope, response.data)
+    const body = unbindPreviewText(scope, current, response.data)
+    let confirming = false
+    const dialog = DialogPlugin.confirm({
+      header: '解除查询绑定', body,
+      confirmBtn: { content: '确认解除', theme: 'danger' }, cancelBtn: '取消',
+      onConfirm: async () => {
+        if (confirming || saving.value) return
+        confirming = true
+        saving.value = true
+        try {
+          if (tenant !== auth.currentTenantId || selected.value?.id !== scope.id) throw new Error('scope changed')
+          const fresh = await effectiveKBUses(kb)
+          if (fresh.success !== true || !Array.isArray(fresh.data)) throw new Error('impact unavailable')
+          if (scopeUnbindFingerprint(scope, fresh.data) !== expected) {
+            dialog.destroy()
+            await MessagePlugin.warning('使用范围已变化，请重新查看影响后再确认。')
+            return
+          }
+          await unbindKB(scope.id, kb)
+          dialog.destroy()
+          if (tenant === auth.currentTenantId && selected.value?.id === scope.id) {
+            await load()
+            await MessagePlugin.success('查询绑定已解除；独立维护授权保持不变')
+          }
+        } catch {
+          dialog.destroy()
+          if (tenant === auth.currentTenantId) await MessagePlugin.error('操作结果未确认；请刷新区域与知识库的使用范围后核对。')
+        } finally { saving.value = false; confirming = false }
+      },
+      onCancel: () => dialog.destroy(), onClose: () => dialog.destroy(),
+    })
+  } catch {
+    if (tenant === auth.currentTenantId && version === selectionVersion) await MessagePlugin.error('无法核对解绑对主群及子区的影响，未执行操作。')
+  } finally { saving.value = false }
+}
+
 function grantManagement(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>bindKB(id,kb,true),'本区域维护授权已更新')}
 function revokeManagement(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>revokeKBManagement(id,kb),'维护授权已撤销；查询绑定保持不变')}
 function grantDescription(row:ScopeKnowledgeRow) {return row.query==='direct' ? '允许当前区域经核验的管理者维护此知识库；普通成员不会因此获得维护权。' : '将在本区建立独立查询绑定，并允许本区经核验的管理者维护该库。主群与其他子区保持不变。'}
@@ -238,6 +304,7 @@ onBeforeUnmount(()=>{selectionVersion++;loadVersion++})
 .breadcrumb { display:flex;align-items:center;gap:4px;margin:0 0 8px;color:var(--td-text-color-secondary);font-size:12px; }.breadcrumb button,.inline-link { border:0;background:transparent;padding:0;color:var(--td-brand-color);cursor:pointer;font:inherit; }
 .scope-summary { display:flex;gap:32px;padding:16px 0 20px;margin-bottom:16px;border-bottom:1px solid var(--td-component-border); }.scope-summary > div { display:flex;flex-direction:column;gap:5px; }.scope-summary strong { font-size:21px;font-weight:600; }.scope-summary span { color:var(--td-text-color-secondary);font-size:12px; }
 .section-heading { align-items:center;margin-bottom:16px; }.section-heading h4 { margin:0 0 6px;font-size:16px;font-weight:600; }.section-heading > .t-button { flex-shrink:0; }.knowledge-list { display:flex;flex-direction:column;gap:12px; }
+.knowledge-search { max-width:420px;margin:0 0 16px; }
 .knowledge-row { display:grid;grid-template-columns:minmax(170px,1.5fr) minmax(95px,.7fr) minmax(120px,.8fr) auto;gap:14px;align-items:center;padding:16px;border:1px solid var(--td-component-border);border-radius:8px;background:var(--td-bg-color-container); }
 .knowledge-name { display:flex;align-items:flex-start;gap:10px;min-width:0; }.knowledge-icon { display:flex;align-items:center;justify-content:center;width:32px;height:32px;background:var(--td-brand-color-light);color:var(--td-brand-color);border-radius:6px;flex-shrink:0; }.knowledge-name a { color:var(--td-text-color-primary);font-weight:500;line-height:1.5;text-decoration:none;overflow-wrap:anywhere; }.knowledge-name a:hover { color:var(--td-brand-color); }.knowledge-name small,.permission-state small { display:block;color:var(--td-text-color-secondary);font-size:12px;margin-top:4px; }.permission-state { display:flex;flex-direction:column;align-items:flex-start;gap:7px;font-size:13px;min-width:0; }.permission-state small { margin-top:0; }.muted { color:var(--td-text-color-secondary); }.inline-link { font-size:12px; }.knowledge-actions { display:flex;gap:2px;align-items:center;justify-content:flex-end;flex-wrap:wrap;max-width:168px; }
 .permission-note { display:flex;align-items:flex-start;gap:6px;margin:14px 0 0;color:var(--td-text-color-secondary);font-size:12px;line-height:1.7; }.permission-note .t-icon { margin-top:3px;flex-shrink:0; }
