@@ -1,7 +1,7 @@
 <template>
   <section class="octo-panel">
     <header class="page-heading">
-      <div><h2>群与知识库</h2><p>选择 Octo 群或子区，查看它能查询哪些知识库、哪些已开放维护。</p></div>
+      <div><h2>群与知识库</h2><p>工作区管理员在此配置 Bot 连接与跨区域授权；获授权的群管理者可在本群向小丘提案，并由本人确认本区知识库变更。</p></div>
       <div class="heading-actions">
         <t-button variant="outline" :loading="loading" :disabled="saving" @click="load">刷新</t-button>
         <t-button :disabled="!connections.length" @click="showCreate = true"><template #icon><t-icon name="add" /></template>接入群／子区</t-button>
@@ -55,11 +55,13 @@
 
           <section class="knowledge-section">
             <div class="section-heading"><div><h4>知识库与权限</h4><p>查询和维护分别授权；解除查询绑定不会删除资料或撤销维护权。</p></div><t-button :disabled="bindingLoading || Boolean(bindingError)" @click="showBind = true"><template #icon><t-icon name="add" /></template>绑定知识库</t-button></div>
+            <t-input v-model="kbSearch" class="knowledge-search" clearable placeholder="搜索知识库名称或 ID" aria-label="搜索当前区域的知识库"><template #prefix-icon><t-icon name="search" /></template></t-input>
             <t-alert v-if="bindingError" theme="error">{{ bindingError }} <t-button variant="text" @click="select(selected)">重新读取</t-button></t-alert>
             <t-loading :loading="bindingLoading">
               <t-empty v-if="!bindingLoading && !bindingError && !knowledgeRows.length" description="本区域尚未绑定知识库，也没有单独的维护授权。" />
+              <t-empty v-else-if="!bindingLoading && !bindingError && !visibleKnowledgeRows.length" description="没有匹配的知识库；可清除搜索词查看全部。" />
               <div v-if="!bindingError" class="knowledge-list">
-                <article v-for="row in knowledgeRows" :key="row.knowledgeBaseId" class="knowledge-row">
+                <article v-for="row in visibleKnowledgeRows" :key="row.knowledgeBaseId" class="knowledge-row">
                   <div class="knowledge-name"><span class="knowledge-icon"><t-icon name="folder" /></span><div><router-link :to="{name:'knowledgeBaseDetail',params:{kbId:row.knowledgeBaseId}}">{{ row.name }}</router-link><small>知识库</small></div></div>
                   <div class="permission-state"><small>本区查询</small><span :class="{muted:row.query==='none'}">{{ row.query==='direct' ? '已开放' : row.query==='inherited' ? '继承主群' : '未开放' }}</span><button v-if="row.query==='inherited'" type="button" class="inline-link" @click="openParent(row.sourceScopeId)">查看主群设置</button></div>
                   <div class="permission-state"><small>维护授权</small><t-tag :theme="row.managed ? 'success' : 'default'" variant="light" size="small">{{ row.managed ? '已授权本区管理者' : '未授权' }}</t-tag></div>
@@ -118,13 +120,13 @@ import { listKnowledgeBases } from '@/api/knowledge-base'
 import { useAuthStore } from '@/stores/auth'
 import OctoConnectionDialog from './OctoConnectionDialog.vue'
 import OctoScopeCreateDialog from './OctoScopeCreateDialog.vue'
-import { groupScopes, scopeKnowledgeRows, type ScopeKnowledgeRow } from './octoScopeDisplay'
+import { filterScopeKnowledgeRows, groupScopes, scopeKnowledgeRows, type ScopeKnowledgeRow } from './octoScopeDisplay'
 import { listScopes, updateScope, effectiveBindings, managedKBs, revokeKBManagement, bindKB, unbindKB, listConnections, syncScopeName, inspectMemberRole, type OctoScope, type EffectiveBinding } from '@/api/octo'
 
 const scopes = ref<OctoScope[]>([]), selected = ref<OctoScope | null>(null)
 const kbs = ref<Array<{id:string;name:string}>>([]), bindings = ref<EffectiveBinding[]>([]), managed = ref<string[]>([])
 const loading = ref(false), saving = ref(false), bindingLoading = ref(false)
-const error = ref(''), bindingError = ref(''), search = ref('')
+const error = ref(''), bindingError = ref(''), search = ref(''), kbSearch = ref('')
 const showCreate = ref(false), showBind = ref(false), showConnection = ref(false), detailsOpen = ref(false)
 const kbToBind = ref(''), grantOnBind = ref(false)
 const editInherit = ref(false), editCreation = ref(false), editAggregate = ref(false), editPublicWeb = ref(false)
@@ -139,6 +141,7 @@ const groups = computed(() => groupScopes(scopes.value, search.value))
 const groupCount = computed(() => scopes.value.filter(scope => !scope.subarea_id).length)
 const childCount = computed(() => scopes.value.length - groupCount.value)
 const knowledgeRows = computed(() => scopeKnowledgeRows(bindings.value, managed.value, kbs.value))
+const visibleKnowledgeRows = computed(() => filterScopeKnowledgeRows(knowledgeRows.value, kbSearch.value))
 const queryCount = computed(() => knowledgeRows.value.filter(row => row.query !== 'none').length)
 const managementCount = computed(() => knowledgeRows.value.filter(row => row.managed).length)
 const parentScope = computed(() => selected.value?.subarea_id ? scopes.value.find(scope => !scope.subarea_id && scope.account_id===selected.value?.account_id && scope.group_id===selected.value?.group_id) : undefined)
@@ -173,6 +176,7 @@ async function load() {
 
 async function select(scope:OctoScope) {
   const version=++selectionVersion
+  if (selected.value?.id !== scope.id) kbSearch.value=''
   selected.value=scope;editInherit.value=Boolean(scope.inherit_parent);editCreation.value=Boolean(scope.allow_knowledge_creation);editAggregate.value=Boolean(scope.aggregate_child_issues);editPublicWeb.value=Boolean(scope.allow_public_web)
   roleUID.value='';roleResult.value='';roleLoading.value=false;detailsOpen.value=false;showBind.value=false
   bindings.value=[];managed.value=[];bindingError.value='';kbToBind.value='';bindingLoading.value=true
@@ -238,6 +242,7 @@ onBeforeUnmount(()=>{selectionVersion++;loadVersion++})
 .breadcrumb { display:flex;align-items:center;gap:4px;margin:0 0 8px;color:var(--td-text-color-secondary);font-size:12px; }.breadcrumb button,.inline-link { border:0;background:transparent;padding:0;color:var(--td-brand-color);cursor:pointer;font:inherit; }
 .scope-summary { display:flex;gap:32px;padding:16px 0 20px;margin-bottom:16px;border-bottom:1px solid var(--td-component-border); }.scope-summary > div { display:flex;flex-direction:column;gap:5px; }.scope-summary strong { font-size:21px;font-weight:600; }.scope-summary span { color:var(--td-text-color-secondary);font-size:12px; }
 .section-heading { align-items:center;margin-bottom:16px; }.section-heading h4 { margin:0 0 6px;font-size:16px;font-weight:600; }.section-heading > .t-button { flex-shrink:0; }.knowledge-list { display:flex;flex-direction:column;gap:12px; }
+.knowledge-search { max-width:420px;margin:0 0 16px; }
 .knowledge-row { display:grid;grid-template-columns:minmax(170px,1.5fr) minmax(95px,.7fr) minmax(120px,.8fr) auto;gap:14px;align-items:center;padding:16px;border:1px solid var(--td-component-border);border-radius:8px;background:var(--td-bg-color-container); }
 .knowledge-name { display:flex;align-items:flex-start;gap:10px;min-width:0; }.knowledge-icon { display:flex;align-items:center;justify-content:center;width:32px;height:32px;background:var(--td-brand-color-light);color:var(--td-brand-color);border-radius:6px;flex-shrink:0; }.knowledge-name a { color:var(--td-text-color-primary);font-weight:500;line-height:1.5;text-decoration:none;overflow-wrap:anywhere; }.knowledge-name a:hover { color:var(--td-brand-color); }.knowledge-name small,.permission-state small { display:block;color:var(--td-text-color-secondary);font-size:12px;margin-top:4px; }.permission-state { display:flex;flex-direction:column;align-items:flex-start;gap:7px;font-size:13px;min-width:0; }.permission-state small { margin-top:0; }.muted { color:var(--td-text-color-secondary); }.inline-link { font-size:12px; }.knowledge-actions { display:flex;gap:2px;align-items:center;justify-content:flex-end;flex-wrap:wrap;max-width:168px; }
 .permission-note { display:flex;align-items:flex-start;gap:6px;margin:14px 0 0;color:var(--td-text-color-secondary);font-size:12px;line-height:1.7; }.permission-note .t-icon { margin-top:3px;flex-shrink:0; }

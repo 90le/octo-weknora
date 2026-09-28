@@ -44,3 +44,9 @@ export function scopeKnowledgeRows(bindings: EffectiveBinding[], managedIds: str
   for (const id of grants) if (!rows.has(id)) rows.set(id, create(id))
   return [...rows.values()]
 }
+
+export function filterScopeKnowledgeRows(rows: ScopeKnowledgeRow[], search = ''): ScopeKnowledgeRow[] {
+  const query = search.trim().toLocaleLowerCase()
+  return rows.filter(row => !query || (row.name + ' ' + row.knowledgeBaseId).toLocaleLowerCase().includes(query))
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN') || a.knowledgeBaseId.localeCompare(b.knowledgeBaseId))
+}

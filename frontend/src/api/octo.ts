@@ -22,12 +22,26 @@ export interface EffectiveBinding {
   inherited: boolean
   can_manage: boolean
 }
+export interface EffectiveScopeUse {
+  scope_id: string
+  display_name: string
+  account_id: string
+  group_id: string
+  subarea_id: string
+  query_mode: 'direct' | 'inherited' | 'none'
+  from_scope_id: string
+  can_manage: boolean
+  name_source: string
+  sync_status: string
+  verified_at: string | null
+}
 type Envelope<T> = { success: boolean; data: T }
 const root = '/api/v1/octo'
 export const listScopes = (offset = 0) => get(`${root}/scopes?offset=${offset}`) as unknown as Promise<Envelope<OctoScope[]>>
 export const createScope = (data: { account_id: string; group_id: string; subarea_id: string; inherit_parent: boolean }) => post(`${root}/scopes`, data) as unknown as Promise<Envelope<OctoScope>>
 export const updateScope = (id: string, display_name: string, inherit_parent: boolean, allow_knowledge_creation = false, aggregate_child_issues = false, allow_public_web = false) => put(`${root}/scopes/${encodeURIComponent(id)}`, { display_name, inherit_parent, allow_knowledge_creation, aggregate_child_issues, allow_public_web })
 export const effectiveBindings = (id: string) => get(`${root}/scopes/${encodeURIComponent(id)}/effective-bindings`) as unknown as Promise<Envelope<EffectiveBinding[]>>
+export const effectiveKBUses = (id: string) => get(`${root}/knowledge-bases/${encodeURIComponent(id)}/effective-scopes`) as unknown as Promise<Envelope<EffectiveScopeUse[]>>
 export const managedKBs = (id: string) => get(`${root}/scopes/${encodeURIComponent(id)}/managed-knowledge-bases`) as unknown as Promise<Envelope<string[]>>
 export const revokeKBManagement = (scope: string, kb: string) => del(`${root}/scopes/${encodeURIComponent(scope)}/managed-knowledge-bases/${encodeURIComponent(kb)}`)
 export const bindKB = (scope: string, kb: string, can_manage?: boolean) => put(`${root}/scopes/${encodeURIComponent(scope)}/knowledge-bases/${encodeURIComponent(kb)}`, can_manage === undefined ? {} : { can_manage })
