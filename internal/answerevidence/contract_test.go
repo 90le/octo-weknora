@@ -47,6 +47,25 @@ func TestClassifyKeepsSourceFactsSeparateFromReleaseQuestions(t *testing.T) {
 	}
 }
 
+func TestChannelRepositoryNameDoesNotTurnReleaseQuestionIntoIntegration(t *testing.T) {
+	query := "请分别核对 Mininglamp-OSS/octo-android 与 Mininglamp-OSS/codex-channel-octo 的最新稳定 GitHub Release。只说明可核验版本；不要推断更新内容。"
+	ctx := WithContract(context.Background(), query)
+	require.True(t, Requires(ctx, IntentRelease))
+	require.False(t, Requires(ctx, IntentIntegration), "a repository name is not a support or integration question")
+	require.False(t, Requires(ctx, IntentSource))
+	require.Equal(t, []string{"mininglamp-oss/codex-channel-octo", "mininglamp-oss/octo-android"}, RequiredReleaseRepositories(ctx))
+
+	RecordReleaseFact(ctx, releaseFact("Mininglamp-OSS/octo-android", "v1.3.7", time.Date(2026, time.September, 28, 8, 30, 0, 0, time.UTC)))
+	partial := FallbackReply(ctx)
+	require.Contains(t, partial, "v1.3.7")
+	require.Contains(t, partial, "codex-channel-octo")
+	require.Contains(t, partial, "未核验")
+
+	compound := WithContract(context.Background(), "codex-channel-octo 最新版本是否支持原生 IM 接入？")
+	require.True(t, Requires(compound, IntentRelease))
+	require.True(t, Requires(compound, IntentIntegration), "an actual support question still needs integration evidence")
+}
+
 func TestFixedRevisionCitationDoesNotBecomeLatestReleaseRequest(t *testing.T) {
 	query := "在 Node.js 如何安装 Octo CLI？openclaw-channel-octo 如何接收 Octo 消息，基础 IM 接入是否依赖 CLI？请分别核对两个仓库的 README／源码后给出固定版本来源。"
 	ctx := WithContract(context.Background(), query)
