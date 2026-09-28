@@ -60,3 +60,16 @@ export function sortedDeletionImpact(rows: EffectiveScopeUse[]): EffectiveScopeU
     compareNames(a.display_name, b.display_name) ||
     compareNames(a.scope_id, b.scope_id))
 }
+
+// Include the current scope, any child inheriting it, and the parent direct
+// binding of a direct child. A preview must be discarded if any of these
+// conditions changes before confirmation, including the child's inheritance
+// flag while it still has a direct binding.
+export function scopeUnbindFingerprint(scope: OctoScope, uses: EffectiveScopeUse[]): string {
+  return JSON.stringify(uses.filter(use =>
+    use.scope_id === scope.id ||
+    (use.query_mode === 'inherited' && use.from_scope_id === scope.id) ||
+    (Boolean(scope.subarea_id) && !use.subarea_id && use.account_id === scope.account_id && use.group_id === scope.group_id && use.query_mode === 'direct'))
+    .map(use => [use.scope_id, use.display_name, use.query_mode, use.from_scope_id, use.can_manage, use.inherit_parent])
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0]))))
+}

@@ -41,7 +41,7 @@ import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { listScopes, effectiveKBUses, bindKB, unbindKB, type EffectiveScopeUse, type OctoScope } from '@/api/octo'
-import { affectedInheritedUses, directChildFallsBackToParent, effectiveUseGroups } from './octoKBUsesDisplay'
+import { affectedInheritedUses, directChildFallsBackToParent, effectiveUseGroups, scopeUnbindFingerprint } from './octoKBUsesDisplay'
 
 const props = defineProps<{ kbId: string }>()
 const auth = useAuthStore()
@@ -103,11 +103,27 @@ async function change(operation: () => Promise<unknown>) {
     await operation()
     if (tenant !== auth.currentTenantId || kb !== props.kbId) return
     selectedScope.value = ''; await load(); await MessagePlugin.success('使用范围已更新')
-  } catch { if (tenant === auth.currentTenantId && kb === props.kbId) await MessagePlugin.error('更新失败，请检查权限并重试') }
-  finally { saving.value = false }
+  } catch (e) {
+    if (tenant === auth.currentTenantId && kb === props.kbId) {
+      if (e instanceof Error && e.message === 'stale_scope_preview') {
+        await load()
+        await MessagePlugin.warning('使用范围已变化，请重新查看影响后再确认。')
+      } else await MessagePlugin.error('操作结果未确认，请刷新使用范围后核对。')
+    }
+  } finally { saving.value = false }
 }
 function add() { const id = selectedScope.value, kb = props.kbId; if (id) return change(() => bindKB(id, kb)) }
-function remove(id: string) { const kb = props.kbId; return change(() => unbindKB(id, kb)) }
+function remove(id: string) {
+  const kb = props.kbId, scope = scopes.value.find(item => item.id === id)
+  if (!scope) { void MessagePlugin.error('区域资料已变化，请重新读取使用范围。'); return }
+  const expected = scopeUnbindFingerprint(scope, rows.value)
+  return change(async () => {
+    const fresh = await effectiveKBUses(kb)
+    if (fresh.success !== true || !Array.isArray(fresh.data)) throw new Error('impact unavailable')
+    if (scopeUnbindFingerprint(scope, fresh.data) !== expected) throw new Error('stale_scope_preview')
+    await unbindKB(id, kb)
+  })
+}
 </script>
 <style scoped>
 .intro,.hint { color:var(--td-text-color-secondary);line-height:1.65;font-size:13px; }

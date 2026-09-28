@@ -121,7 +121,7 @@ import { useAuthStore } from '@/stores/auth'
 import OctoConnectionDialog from './OctoConnectionDialog.vue'
 import OctoScopeCreateDialog from './OctoScopeCreateDialog.vue'
 import { filterScopeKnowledgeRows, groupScopes, scopeKnowledgeRows, type ScopeKnowledgeRow } from './octoScopeDisplay'
-import { affectedInheritedUses, directChildFallsBackToParent } from './octoKBUsesDisplay'
+import { affectedInheritedUses, scopeUnbindFingerprint } from './octoKBUsesDisplay'
 import { listScopes, updateScope, effectiveBindings, effectiveKBUses, managedKBs, revokeKBManagement, bindKB, unbindKB, listConnections, syncScopeName, inspectMemberRole, type OctoScope, type EffectiveBinding, type EffectiveScopeUse } from '@/api/octo'
 
 const scopes = ref<OctoScope[]>([]), selected = ref<OctoScope | null>(null)
@@ -199,11 +199,6 @@ async function mutate(operation:()=>Promise<unknown>,success='配置已更新') 
 }
 function saveScope() {const scope=selected.value;if(scope)return mutate(()=>updateScope(scope.id,scope.display_name,editInherit.value,editCreation.value,editAggregate.value,editPublicWeb.value),'区域规则已保存')}
 function bindQuery(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>bindKB(id,kb),'查询绑定已更新')}
-function unbindUseKey(scopeId: string, uses: EffectiveScopeUse[]): string {
-  return JSON.stringify(uses.filter(use => use.scope_id === scopeId || (use.query_mode === 'inherited' && use.from_scope_id === scopeId))
-    .map(use => [use.scope_id, use.display_name, use.query_mode, use.from_scope_id, use.can_manage])
-    .sort((a, b) => String(a[0]).localeCompare(String(b[0]))))
-}
 function unbindPreviewText(scope: OctoScope, current: EffectiveScopeUse, uses: EffectiveScopeUse[]): string {
   if (!scope.subarea_id) {
     const children = affectedInheritedUses(current, uses)
@@ -213,7 +208,8 @@ function unbindPreviewText(scope: OctoScope, current: EffectiveScopeUse, uses: E
         '共 ' + children.length + ' 个子区会失去继承查询。知识库资料和各区域独立维护授权保留。'
     }
   }
-  if (directChildFallsBackToParent(current, uses, scopes.value)) {
+  if (current.subarea_id && current.inherit_parent && uses.some(parent =>
+    !parent.subarea_id && parent.account_id === current.account_id && parent.group_id === current.group_id && parent.query_mode === 'direct')) {
     return '解除这个子区的直接查询后，它仍可继承主群对该库的查询。知识库资料和本区独立维护授权保留。'
   }
   return '解除「' + scope.display_name + '」的直接查询后，本区将不再通过此绑定查询。知识库资料和独立维护授权保留。'
@@ -228,7 +224,7 @@ async function previewUnbind(kb: string) {
     if (tenant !== auth.currentTenantId || version !== selectionVersion || selected.value?.id !== scope.id) return
     const current = response.data.find(use => use.scope_id === scope.id && use.query_mode === 'direct')
     if (!current) throw new Error('binding changed')
-    const expected = unbindUseKey(scope.id, response.data)
+    const expected = scopeUnbindFingerprint(scope, response.data)
     const body = unbindPreviewText(scope, current, response.data)
     let confirming = false
     const dialog = DialogPlugin.confirm({
@@ -242,7 +238,7 @@ async function previewUnbind(kb: string) {
           if (tenant !== auth.currentTenantId || selected.value?.id !== scope.id) throw new Error('scope changed')
           const fresh = await effectiveKBUses(kb)
           if (fresh.success !== true || !Array.isArray(fresh.data)) throw new Error('impact unavailable')
-          if (unbindUseKey(scope.id, fresh.data) !== expected) {
+          if (scopeUnbindFingerprint(scope, fresh.data) !== expected) {
             dialog.destroy()
             await MessagePlugin.warning('使用范围已变化，请重新查看影响后再确认。')
             return

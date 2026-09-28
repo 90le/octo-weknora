@@ -74,17 +74,18 @@ type EffectiveBinding struct {
 // direct, inherited or none; a none row has an exact-scope maintenance grant
 // but no read binding. Management never follows a parent read binding.
 type EffectiveUse struct {
-	ScopeID     string     `json:"scope_id"`
-	DisplayName string     `json:"display_name"`
-	AccountID   string     `json:"account_id"`
-	GroupID     string     `json:"group_id"`
-	SubareaID   string     `json:"subarea_id"`
-	QueryMode   string     `json:"query_mode"`
-	FromScopeID string     `json:"from_scope_id"`
-	CanManage   bool       `json:"can_manage"`
-	NameSource  string     `json:"name_source"`
-	SyncStatus  string     `json:"sync_status"`
-	VerifiedAt  *time.Time `json:"verified_at"`
+	ScopeID       string     `json:"scope_id"`
+	DisplayName   string     `json:"display_name"`
+	AccountID     string     `json:"account_id"`
+	GroupID       string     `json:"group_id"`
+	SubareaID     string     `json:"subarea_id"`
+	InheritParent bool       `json:"inherit_parent"`
+	QueryMode     string     `json:"query_mode"`
+	FromScopeID   string     `json:"from_scope_id"`
+	CanManage     bool       `json:"can_manage"`
+	NameSource    string     `json:"name_source"`
+	SyncStatus    string     `json:"sync_status"`
+	VerifiedAt    *time.Time `json:"verified_at"`
 }
 
 type Store struct{ db *gorm.DB }
@@ -353,7 +354,7 @@ func (s *Store) EffectiveUses(ctx context.Context, tenant uint64, kb string) ([]
 		}
 		return tx.Raw(`
 SELECT s.id AS scope_id, s.display_name, s.account_id, s.group_id,
-       s.subarea_id, s.name_source, s.sync_status, s.verified_at,
+       s.subarea_id, s.inherit_parent, s.name_source, s.sync_status, s.verified_at,
        CASE WHEN direct.scope_id IS NOT NULL THEN 'direct'
             WHEN inherited.scope_id IS NOT NULL THEN 'inherited'
             ELSE 'none' END AS query_mode,

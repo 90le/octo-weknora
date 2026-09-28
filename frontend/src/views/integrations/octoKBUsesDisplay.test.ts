@@ -1,14 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { EffectiveScopeUse, OctoScope } from '@/api/octo'
-import { affectedInheritedUses, directChildFallsBackToParent, effectiveUseGroups, sortedDeletionImpact } from './octoKBUsesDisplay'
+import { affectedInheritedUses, directChildFallsBackToParent, effectiveUseGroups, scopeUnbindFingerprint, sortedDeletionImpact } from './octoKBUsesDisplay'
 
 const scope = (id: string, account_id: string, group_id: string, subarea_id = '', inherit_parent = false): OctoScope => ({
   id, account_id, group_id, subarea_id, display_name: id, name_source: 'octo', sync_status: 'verified', sync_error: '', checked_at: null, verified_at: null,
   inherit_parent, allow_knowledge_creation: false, aggregate_child_issues: false, allow_public_web: false,
 })
-const use = (scope_id: string, account_id: string, group_id: string, subarea_id: string, query_mode: EffectiveScopeUse['query_mode'], from_scope_id = '', can_manage = false): EffectiveScopeUse => ({
-  scope_id, display_name: scope_id, account_id, group_id, subarea_id, query_mode, from_scope_id, can_manage,
+const use = (scope_id: string, account_id: string, group_id: string, subarea_id: string, query_mode: EffectiveScopeUse['query_mode'], from_scope_id = '', can_manage = false, inherit_parent = false): EffectiveScopeUse => ({
+  scope_id, display_name: scope_id, account_id, group_id, subarea_id, inherit_parent, query_mode, from_scope_id, can_manage,
   name_source: 'octo', sync_status: 'verified', verified_at: null,
 })
 
@@ -39,4 +39,14 @@ test('whole-library deletion impact includes read inheritance and maintenance-on
   const rows = [use('child','bot-a','group','sub','inherited','parent'), use('grant-only','bot-a','group','grant','none','',true), use('parent','bot-a','group','','direct','parent')]
   assert.deepEqual(sortedDeletionImpact(rows).map(row => [row.scope_id,row.query_mode]), [['parent','direct'],['child','inherited'],['grant-only','none']])
   assert.deepEqual(sortedDeletionImpact([]), [])
+})
+
+test('unbind confirmation becomes stale when a child loses parent read or inheritance', () => {
+  const child = scope('child', 'bot-a', 'group', 'sub', true)
+  const childUse = use('child', 'bot-a', 'group', 'sub', 'direct', 'child', false, true)
+  const parentUse = use('parent', 'bot-a', 'group', '', 'direct', 'parent')
+  const before = scopeUnbindFingerprint(child, [childUse, parentUse])
+  assert.notEqual(before, scopeUnbindFingerprint(child, [childUse]), 'parent unbind changes fallback')
+  assert.notEqual(before, scopeUnbindFingerprint(child, [{ ...childUse, inherit_parent: false }, parentUse]), 'inheritance toggle changes fallback')
+  assert.equal(before, scopeUnbindFingerprint(child, [childUse, parentUse, use('foreign', 'bot-b', 'group', '', 'direct', 'foreign')]), 'foreign Bot changes cannot alter this preview')
 })

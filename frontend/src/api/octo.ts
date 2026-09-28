@@ -28,6 +28,7 @@ export interface EffectiveScopeUse {
   account_id: string
   group_id: string
   subarea_id: string
+  inherit_parent: boolean
   query_mode: 'direct' | 'inherited' | 'none'
   from_scope_id: string
   can_manage: boolean
