@@ -66,7 +66,7 @@
                   <div class="permission-state"><small>本区查询</small><span :class="{muted:row.query==='none'}">{{ row.query==='direct' ? '已开放' : row.query==='inherited' ? '继承主群' : '未开放' }}</span><button v-if="row.query==='inherited'" type="button" class="inline-link" @click="openParent(row.sourceScopeId)">查看主群设置</button></div>
                   <div class="permission-state"><small>维护授权</small><t-tag :theme="row.managed ? 'success' : 'default'" variant="light" size="small">{{ row.managed ? '已授权本区管理者' : '未授权' }}</t-tag></div>
                   <div class="knowledge-actions">
-                    <t-popconfirm v-if="row.query==='direct'" :content="`停止「${selected.display_name}」直接查询此库；资料和已有维护授权保留。若子区同时继承主群，继承关系仍可能提供查询。`" @confirm="removeBinding(row.knowledgeBaseId)"><t-button variant="text" :disabled="saving">解除查询</t-button></t-popconfirm>
+                    <t-button v-if="row.query==='direct'" variant="text" :disabled="saving || Boolean(bindingError)" @click="previewUnbind(row.knowledgeBaseId)">解除查询</t-button>
                     <t-button v-else variant="text" :disabled="saving" @click="bindQuery(row.knowledgeBaseId)">{{ row.query==='inherited' ? '独立绑定' : '开放查询' }}</t-button>
                     <t-popconfirm v-if="row.managed" content="仅撤销本区域的维护授权，查询绑定和知识资料保持不变。" @confirm="revokeManagement(row.knowledgeBaseId)"><t-button variant="text" theme="danger" :disabled="saving">撤销维护</t-button></t-popconfirm>
                     <t-popconfirm v-else :content="grantDescription(row)" @confirm="grantManagement(row.knowledgeBaseId)"><t-button variant="text" :disabled="saving">授权维护</t-button></t-popconfirm>
@@ -114,14 +114,15 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
-import { MessagePlugin } from 'tdesign-vue-next'
+import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next'
 import { useRoute } from 'vue-router'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import { useAuthStore } from '@/stores/auth'
 import OctoConnectionDialog from './OctoConnectionDialog.vue'
 import OctoScopeCreateDialog from './OctoScopeCreateDialog.vue'
 import { filterScopeKnowledgeRows, groupScopes, scopeKnowledgeRows, type ScopeKnowledgeRow } from './octoScopeDisplay'
-import { listScopes, updateScope, effectiveBindings, managedKBs, revokeKBManagement, bindKB, unbindKB, listConnections, syncScopeName, inspectMemberRole, type OctoScope, type EffectiveBinding } from '@/api/octo'
+import { affectedInheritedUses, directChildFallsBackToParent } from './octoKBUsesDisplay'
+import { listScopes, updateScope, effectiveBindings, effectiveKBUses, managedKBs, revokeKBManagement, bindKB, unbindKB, listConnections, syncScopeName, inspectMemberRole, type OctoScope, type EffectiveBinding, type EffectiveScopeUse } from '@/api/octo'
 
 const scopes = ref<OctoScope[]>([]), selected = ref<OctoScope | null>(null)
 const kbs = ref<Array<{id:string;name:string}>>([]), bindings = ref<EffectiveBinding[]>([]), managed = ref<string[]>([])
@@ -198,7 +199,72 @@ async function mutate(operation:()=>Promise<unknown>,success='配置已更新') 
 }
 function saveScope() {const scope=selected.value;if(scope)return mutate(()=>updateScope(scope.id,scope.display_name,editInherit.value,editCreation.value,editAggregate.value,editPublicWeb.value),'区域规则已保存')}
 function bindQuery(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>bindKB(id,kb),'查询绑定已更新')}
-function removeBinding(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>unbindKB(id,kb),'查询绑定已解除；独立维护授权保持不变')}
+function unbindUseKey(scopeId: string, uses: EffectiveScopeUse[]): string {
+  return JSON.stringify(uses.filter(use => use.scope_id === scopeId || (use.query_mode === 'inherited' && use.from_scope_id === scopeId))
+    .map(use => [use.scope_id, use.display_name, use.query_mode, use.from_scope_id, use.can_manage])
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0]))))
+}
+function unbindPreviewText(scope: OctoScope, current: EffectiveScopeUse, uses: EffectiveScopeUse[]): string {
+  if (!scope.subarea_id) {
+    const children = affectedInheritedUses(current, uses)
+    if (children.length) {
+      const names = children.slice(0, 4).map(child => child.display_name).join('、')
+      return '解除「' + scope.display_name + '」的直接查询后，' + names + (children.length > 4 ? '等' : '') +
+        '共 ' + children.length + ' 个子区会失去继承查询。知识库资料和各区域独立维护授权保留。'
+    }
+  }
+  if (directChildFallsBackToParent(current, uses, scopes.value)) {
+    return '解除这个子区的直接查询后，它仍可继承主群对该库的查询。知识库资料和本区独立维护授权保留。'
+  }
+  return '解除「' + scope.display_name + '」的直接查询后，本区将不再通过此绑定查询。知识库资料和独立维护授权保留。'
+}
+async function previewUnbind(kb: string) {
+  const scope = selected.value, tenant = auth.currentTenantId, version = selectionVersion
+  if (!scope || saving.value || bindingError.value) return
+  saving.value = true
+  try {
+    const response = await effectiveKBUses(kb)
+    if (response.success !== true || !Array.isArray(response.data)) throw new Error('invalid impact response')
+    if (tenant !== auth.currentTenantId || version !== selectionVersion || selected.value?.id !== scope.id) return
+    const current = response.data.find(use => use.scope_id === scope.id && use.query_mode === 'direct')
+    if (!current) throw new Error('binding changed')
+    const expected = unbindUseKey(scope.id, response.data)
+    const body = unbindPreviewText(scope, current, response.data)
+    let confirming = false
+    const dialog = DialogPlugin.confirm({
+      header: '解除查询绑定', body,
+      confirmBtn: { content: '确认解除', theme: 'danger' }, cancelBtn: '取消',
+      onConfirm: async () => {
+        if (confirming || saving.value) return
+        confirming = true
+        saving.value = true
+        try {
+          if (tenant !== auth.currentTenantId || selected.value?.id !== scope.id) throw new Error('scope changed')
+          const fresh = await effectiveKBUses(kb)
+          if (fresh.success !== true || !Array.isArray(fresh.data)) throw new Error('impact unavailable')
+          if (unbindUseKey(scope.id, fresh.data) !== expected) {
+            dialog.destroy()
+            await MessagePlugin.warning('使用范围已变化，请重新查看影响后再确认。')
+            return
+          }
+          await unbindKB(scope.id, kb)
+          dialog.destroy()
+          if (tenant === auth.currentTenantId && selected.value?.id === scope.id) {
+            await load()
+            await MessagePlugin.success('查询绑定已解除；独立维护授权保持不变')
+          }
+        } catch {
+          dialog.destroy()
+          if (tenant === auth.currentTenantId) await MessagePlugin.error('操作结果未确认；请刷新区域与知识库的使用范围后核对。')
+        } finally { saving.value = false; confirming = false }
+      },
+      onCancel: () => dialog.destroy(), onClose: () => dialog.destroy(),
+    })
+  } catch {
+    if (tenant === auth.currentTenantId && version === selectionVersion) await MessagePlugin.error('无法核对解绑对主群及子区的影响，未执行操作。')
+  } finally { saving.value = false }
+}
+
 function grantManagement(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>bindKB(id,kb,true),'本区域维护授权已更新')}
 function revokeManagement(kb:string) {const id=selected.value?.id;if(id)return mutate(()=>revokeKBManagement(id,kb),'维护授权已撤销；查询绑定保持不变')}
 function grantDescription(row:ScopeKnowledgeRow) {return row.query==='direct' ? '允许当前区域经核验的管理者维护此知识库；普通成员不会因此获得维护权。' : '将在本区建立独立查询绑定，并允许本区经核验的管理者维护该库。主群与其他子区保持不变。'}
