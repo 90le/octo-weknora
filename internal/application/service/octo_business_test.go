@@ -6,13 +6,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/octointegration"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+type octoRepositoryDeleteService struct {
+	interfaces.KnowledgeBaseService
+	repo interfaces.KnowledgeBaseRepository
+	err  error
+}
+
+func (s *octoRepositoryDeleteService) DeleteKnowledgeBase(ctx context.Context, id string) error {
+	if s.err != nil {
+		return s.err
+	}
+	return s.repo.DeleteKnowledgeBase(ctx, id)
+}
 
 func octoManagementFixture(t *testing.T) (*octobusiness.Service, *octointegration.Store, *gorm.DB, context.Context, octobusiness.Principal) {
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "management.db")), &gorm.Config{})
@@ -110,4 +125,39 @@ func TestOctoChatDeleteCountsInheritedReadersAndBlocksOtherManagement(t *testing
 	preview, err = s.Management(ctx, p, in, true)
 	require.NoError(t, err)
 	require.Equal(t, 1, preview["inheriting_subareas"])
+}
+
+func TestOctoChatDeleteAtomicallyRemovesOwnBindingAndGrant(t *testing.T) {
+	_, store, db, ctx, p := octoManagementFixture(t)
+	service := NewOctoBusiness(db, &octoRepositoryDeleteService{repo: repository.NewKnowledgeBaseRepository(db)}, nil)
+	in := octobusiness.ManagementInput{Action: "delete_kb", KnowledgeBaseID: "kb"}
+	preview, err := service.Management(ctx, p, in, true)
+	require.NoError(t, err)
+	in.ExpectedRevision = preview["revision"].(string)
+	result, err := service.Management(ctx, p, in, false)
+	require.NoError(t, err)
+	require.Equal(t, true, result["deletion_requested"])
+	var deleted, bindings, grants, auditCount int64
+	require.NoError(t, db.Table("knowledge_bases").Where("id = ? AND deleted_at IS NOT NULL", "kb").Count(&deleted).Error)
+	require.Equal(t, int64(1), deleted)
+	require.NoError(t, db.Table("octo_scope_bindings").Where("knowledge_base_id = ?", "kb").Count(&bindings).Error)
+	require.NoError(t, db.Table("octo_scope_knowledge_grants").Where("knowledge_base_id = ?", "kb").Count(&grants).Error)
+	require.Zero(t, bindings)
+	require.Zero(t, grants)
+	require.NoError(t, db.Model(&types.AuditLog{}).Where("action = ? AND scope_id = ?", "octo.scope.authorization_removed_for_kb_delete", p.ScopeID).Count(&auditCount).Error)
+	require.Equal(t, int64(1), auditCount)
+	_, err = store.EffectiveUses(ctx, 1, "kb")
+	require.Error(t, err, "deleted KB must disappear from the Octo impact projection")
+}
+
+func TestOctoChatDeleteMapsConcurrentDependencyToConflict(t *testing.T) {
+	_, _, db, ctx, p := octoManagementFixture(t)
+	service := NewOctoBusiness(db, &octoRepositoryDeleteService{err: repository.ErrKnowledgeBaseInUse}, nil)
+	in := octobusiness.ManagementInput{Action: "delete_kb", KnowledgeBaseID: "kb"}
+	preview, err := service.Management(ctx, p, in, true)
+	require.NoError(t, err)
+	in.ExpectedRevision = preview["revision"].(string)
+	_, err = service.Management(ctx, p, in, false)
+	require.ErrorIs(t, err, octobusiness.ErrConflict)
+	require.ErrorContains(t, err, "其他 Octo 区域")
 }

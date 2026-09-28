@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/octointegration"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -162,7 +164,15 @@ func NewOctoBusiness(db *gorm.DB, kbs interfaces.KnowledgeBaseService, knowledge
 		if err != nil {
 			return nil, err
 		}
-		err = kbs.DeleteKnowledgeBase(grant.Context(ctx), kb.ID)
+		// The proposal has revalidated the native sender, exact scope and
+		// management grant. The repository repeats the grant check while
+		// holding the KB lock, then removes only this scope's references in
+		// the same transaction as the soft-delete.
+		deleteCtx := repository.WithVerifiedOctoScopeDeletion(grant.Context(ctx), p.TenantID, p.ScopeID, p.UserID)
+		err = kbs.DeleteKnowledgeBase(deleteCtx, kb.ID)
+		if errors.Is(err, repository.ErrKnowledgeBaseInUse) {
+			return nil, fmt.Errorf("%w: 知识库仍有其他 Octo 区域在查询或维护，或本区维护授权已变化；请核对使用范围后再删除", octobusiness.ErrConflict)
+		}
 		return map[string]any{"knowledge_base_id": kb.ID, "deletion_requested": err == nil}, err
 	}
 	return s

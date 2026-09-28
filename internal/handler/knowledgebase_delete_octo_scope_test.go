@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/middleware"
 	"github.com/Tencent/WeKnora/internal/octointegration"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -17,8 +18,9 @@ import (
 
 type kbDeleteServiceStub struct {
 	interfaces.KnowledgeBaseService
-	kb      *types.KnowledgeBase
-	deletes int
+	kb        *types.KnowledgeBase
+	deletes   int
+	deleteErr error
 }
 
 func (s *kbDeleteServiceStub) GetKnowledgeBaseByID(context.Context, string) (*types.KnowledgeBase, error) {
@@ -27,7 +29,7 @@ func (s *kbDeleteServiceStub) GetKnowledgeBaseByID(context.Context, string) (*ty
 
 func (s *kbDeleteServiceStub) DeleteKnowledgeBase(context.Context, string) error {
 	s.deletes++
-	return nil
+	return s.deleteErr
 }
 
 type octoScopeImpactStub struct {
@@ -94,4 +96,14 @@ func TestKBDeleteChecksOwnershipBeforeOctoImpact(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 	require.Zero(t, impact.calls, "foreign Octo scope metadata must not be read")
 	require.Zero(t, svc.deletes)
+}
+
+func TestKBDeleteMapsConcurrentOctoDependencyToConflict(t *testing.T) {
+	svc := &kbDeleteServiceStub{kb: &types.KnowledgeBase{ID: "kb", TenantID: 1, Name: "Product"}, deleteErr: repository.ErrKnowledgeBaseInUse}
+	impact := &octoScopeImpactStub{}
+	w := deleteKnowledgeBaseTestResponse(svc, impact)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "撤销维护授权")
+	require.Equal(t, 1, impact.calls)
+	require.Equal(t, 1, svc.deletes)
 }

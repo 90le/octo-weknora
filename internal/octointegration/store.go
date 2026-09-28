@@ -212,12 +212,13 @@ func (s *Store) SetBinding(ctx context.Context, tenant uint64, scopeID, kbID str
 			}
 			return audit(tx, ctx, tenant, scopeID, "octo.binding.removed", map[string]interface{}{"knowledge_base_id": kbID})
 		}
-		var count int64
-		if err := tx.Table("knowledge_bases").Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", kbID, tenant).Count(&count).Error; err != nil {
+		// The KB repository uses the same row lock before its dependency
+		// check and soft-delete. Recheck active state only after acquiring it.
+		var kb struct{ ID string }
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Table("knowledge_bases").
+			Select("id").Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", kbID, tenant).
+			Take(&kb).Error; err != nil {
 			return err
-		}
-		if count != 1 {
-			return gorm.ErrRecordNotFound
 		}
 		b := Binding{TenantID: tenant, ScopeID: scopeID, KnowledgeBaseID: kbID}
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&b).Error; err != nil {

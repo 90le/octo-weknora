@@ -823,9 +823,9 @@ func (h *KnowledgeBaseHandler) DeleteKnowledgeBase(c *gin.Context) {
 		return
 	}
 	// Interactive deletion must not silently sever an Octo group's direct or
-	// inherited read access, or an exact maintenance delegation. This is a
-	// fail-closed preflight, not an atomic lock against a concurrent binding;
-	// full serialization belongs in the binding/deletion transactions.
+	// inherited read access, or an exact maintenance delegation. This
+	// preflight gives a useful 409 before side effects; the repository repeats
+	// the check under the same KB lock used by Octo binding mutations.
 	if h.octoScopeImpact == nil {
 		_ = c.Error(apperrors.NewInternalServerError("Octo scope impact check unavailable"))
 		return
@@ -846,6 +846,10 @@ func (h *KnowledgeBaseHandler) DeleteKnowledgeBase(c *gin.Context) {
 
 	// Delete the knowledge base
 	if err := h.service.DeleteKnowledgeBase(ctx, id); err != nil {
+		if stderrors.Is(err, repository.ErrKnowledgeBaseInUse) {
+			_ = c.Error(apperrors.NewConflictError("知识库仍被 Octo 群或子区查询绑定或授权维护；请先解绑并撤销维护授权，再删除。"))
+			return
+		}
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(apperrors.NewInternalServerError(err.Error()))
 		return
