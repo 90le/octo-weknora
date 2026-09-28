@@ -266,8 +266,10 @@ func (e *AgentEngine) executeToolCalls(
 // chasing arguments the failing call does not have.
 const truncatedArgumentsError = "Tool call was not executed: the model output was cut off " +
 	"before the arguments finished, so they are incomplete rather than wrong. " +
-	"Re-issue the call with a complete JSON object. If the payload is large, " +
-	"split it across several smaller calls."
+	"Re-issue exactly one needed call with a complete JSON object under 8 KiB. " +
+	"Use a narrow query or range; do not include a whole document or file body. " +
+	"If more work is needed, split it into smaller calls in later rounds. " +
+	"Do not answer from this failed call."
 
 // failTruncatedToolCalls records every call in a truncated response as failed
 // without running any of them, emitting the same events a real execution would
@@ -276,13 +278,25 @@ func (e *AgentEngine) failTruncatedToolCalls(
 	ctx context.Context, response *types.ChatResponse,
 	step *types.AgentStep, iteration int, sessionID string,
 ) {
+	e.failUnexecutedToolCalls(ctx, response, step, iteration, sessionID, truncatedArgumentsError)
+}
+
+// failUnexecutedToolCalls preserves tool-call/result pairing without replaying
+// malformed or oversized arguments to the provider on the next round.
+func (e *AgentEngine) failUnexecutedToolCalls(
+	ctx context.Context, response *types.ChatResponse,
+	step *types.AgentStep, iteration int, sessionID, reason string,
+) {
 	for i, tc := range response.ToolCalls {
 		toolCall := types.ToolCall{
-			ID:               agenttools.NormalizeToolCallID(tc.ID, tc.Function.Name, i),
-			Name:             tc.Function.Name,
-			Args:             map[string]any{"_raw": tc.Function.Arguments},
+			ID:   agenttools.NormalizeToolCallID(tc.ID, tc.Function.Name, i),
+			Name: tc.Function.Name,
+			// Keep the assistant/tool-result pair valid for provider replay, but
+			// never send incomplete (possibly sensitive and very large) JSON back
+			// into the next model request or persisted AgentSteps.
+			Args:             map[string]any{},
 			ProviderMetadata: tc.ProviderMetadata,
-			Result:           &types.ToolResult{Success: false, Error: truncatedArgumentsError},
+			Result:           &types.ToolResult{Success: false, Error: reason},
 		}
 		step.ToolCalls = append(step.ToolCalls, toolCall)
 		e.emitToolOutcome(ctx, toolCall, iteration, sessionID)
@@ -343,6 +357,22 @@ func (e *AgentEngine) emitToolOutcome(
 	result := toolCall.Result
 	if result == nil {
 		result = &types.ToolResult{Success: false, Error: "no result"}
+	}
+	if result.Error == truncatedArgumentsError || result.Error == invalidToolRecoveryError {
+		// A refused call exits before runToolCall emits its normal start event.
+		// The Web and Octo streams use that event to retract an optimistic
+		// answer/preamble. Emit it with no model arguments before the failure
+		// result, so a partial answer cannot survive as the final reply.
+		_ = e.eventBus.Emit(ctx, event.Event{
+			ID:        toolCall.ID + "-tool-call-refused",
+			Type:      event.EventAgentToolCall,
+			SessionID: sessionID,
+			Data: event.AgentToolCallData{
+				ToolCallID: toolCall.ID,
+				ToolName:   toolCall.ExecutionName(),
+				Iteration:  iteration,
+			},
+		})
 	}
 
 	e.eventBus.Emit(ctx, event.Event{
@@ -406,7 +436,7 @@ func (e *AgentEngine) runToolCall(
 			return types.ToolCall{
 				ID:               tc.ID,
 				Name:             tc.Function.Name,
-				Args:             map[string]any{"_raw": argsStr},
+				Args:             map[string]any{},
 				ProviderMetadata: tc.ProviderMetadata,
 				Result: &types.ToolResult{
 					Success: false,
@@ -430,7 +460,7 @@ func (e *AgentEngine) runToolCall(
 			return types.ToolCall{
 				ID:               tc.ID,
 				Name:             tc.Function.Name,
-				Args:             map[string]any{"_raw": argsStr},
+				Args:             map[string]any{},
 				ProviderMetadata: tc.ProviderMetadata,
 				Result:           &types.ToolResult{Success: false, Error: truncatedArgumentsError},
 			}
@@ -451,7 +481,7 @@ func (e *AgentEngine) runToolCall(
 			return types.ToolCall{
 				ID:               tc.ID,
 				Name:             tc.Function.Name,
-				Args:             map[string]any{"_raw": tc.Function.Arguments},
+				Args:             map[string]any{},
 				ProviderMetadata: tc.ProviderMetadata,
 				Result: &types.ToolResult{
 					Success: false,

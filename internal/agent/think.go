@@ -28,6 +28,11 @@ type streamLLMResult struct {
 	StreamError      string // error message from stream (e.g., timeout), kept separate from Content
 }
 
+// recoveryAnswerHoldKey prevents the one truncated-tool recovery call from
+// optimistically streaming prose. Until its finish reason is known, that prose
+// might be a preamble or an unsupported answer from a failed tool call.
+type recoveryAnswerHoldKey struct{}
+
 // streamLLMToEventBus streams LLM response through EventBus (generic method)
 // emitFunc: callback to emit each chunk event
 func (e *AgentEngine) streamLLMToEventBus(
@@ -282,7 +287,7 @@ func (e *AgentEngine) streamThinkingToEventBus(
 	// A classified answer is buffered until its evidence can be checked at the
 	// end of the round. Without this hold, an LLM can stream an unsupported
 	// conclusion before the engine sees whether it requested any retrieval.
-	holdAnswer := answerevidence.ShouldHoldStreamingAnswer(ctx)
+	holdAnswer := answerevidence.ShouldHoldStreamingAnswer(ctx) || ctx.Value(recoveryAnswerHoldKey{}) != nil
 
 	emitThought := func(content string, done bool) {
 		if content == "" && !done {
@@ -484,11 +489,16 @@ func (e *AgentEngine) streamThinkingToEventBus(
 // callLLMWithRetry runs one ReAct round's LLM call with retry and graceful
 // degradation. messagesPtr is a pointer because an overflow recovery compacts
 // the history in place: the caller has to keep the compacted list, or the next
-// round rebuilds the request that was just rejected.
+// round rebuilds the request that was just rejected. A truncated tool-call
+// recovery is a single attempt: repeating it or synthesizing from the failed
+// call would add latency without adding evidence.
 func (e *AgentEngine) callLLMWithRetry(
 	ctx context.Context, messagesPtr *[]chat.Message, tools []chat.Tool,
-	state *types.AgentState, query string, iteration int, sessionID string,
+	state *types.AgentState, query string, iteration int, sessionID string, singleAttempt bool,
 ) (*types.ChatResponse, error) {
+	if singleAttempt {
+		ctx = context.WithValue(ctx, recoveryAnswerHoldKey{}, struct{}{})
+	}
 	round := iteration + 1
 	messages := *messagesPtr
 
@@ -530,7 +540,7 @@ func (e *AgentEngine) callLLMWithRetry(
 	// it as either is wrong in a specific way: retried unchanged it fails
 	// identically every time, and surfaced as an error it ends a turn that a
 	// compaction would have rescued. It gets its own one-shot recovery.
-	if err != nil && !e.overflowRecovered && compaction.IsOverflowError(err) {
+	if err != nil && !singleAttempt && !e.overflowRecovered && compaction.IsOverflowError(err) {
 		e.overflowRecovered = true
 		logger.Warnf(ctx, "[Agent][Round-%d] Provider rejected the request as too large; "+
 			"compacting and retrying once: %v", round, err)
@@ -547,7 +557,7 @@ func (e *AgentEngine) callLLMWithRetry(
 		response, err = e.streamThinkingToEventBus(ctx, messages, tools, iteration, sessionID)
 	}
 
-	if err != nil && isTransientError(err) {
+	if err != nil && !singleAttempt && isTransientError(err) {
 		// Retry transient errors (timeout, rate limit, server errors) up to maxLLMRetries times
 		for retry := 1; retry <= maxLLMRetries; retry++ {
 			retryDelay := time.Duration(retry) * time.Second
@@ -570,7 +580,7 @@ func (e *AgentEngine) callLLMWithRetry(
 
 		// Graceful degradation: if we have tool results from previous rounds,
 		// try to synthesize a final answer from them instead of losing everything.
-		if totalTC := countTotalToolCalls(state.RoundSteps); totalTC > 0 {
+		if totalTC := countTotalToolCalls(state.RoundSteps); totalTC > 0 && !singleAttempt {
 			logger.Warnf(ctx, "[Agent] LLM failed but have %d steps with %d tool calls — "+
 				"attempting final answer synthesis from existing results",
 				len(state.RoundSteps), totalTC)

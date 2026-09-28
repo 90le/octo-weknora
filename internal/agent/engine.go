@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -525,6 +526,8 @@ func (e *AgentEngine) executeLoop(
 	emptyRetries := 0
 	consecutiveSameContent := 0
 	lastResponseContent := ""
+	truncatedToolRetryUsed := false
+	truncatedToolRetryPending := false
 loop:
 	for e.withinIterationBudget(state.CurrentRound) || e.allowSteerOverrun {
 		e.allowSteerOverrun = false
@@ -557,7 +560,8 @@ loop:
 		// every exit path (break/continue/next) without having to sprinkle
 		// manual finish calls throughout the many branches below.
 		outcome, iterErr := e.runReActIteration(ctx, state, &messages, tools,
-			sessionID, messageID, query, &emptyRetries, &consecutiveSameContent, &lastResponseContent)
+			sessionID, messageID, query, &emptyRetries, &consecutiveSameContent, &lastResponseContent,
+			&truncatedToolRetryUsed, &truncatedToolRetryPending)
 		if iterErr != nil {
 			return state, iterErr
 		}
@@ -614,6 +618,7 @@ func (e *AgentEngine) runReActIteration(
 	sessionID, assistantMessageID, query string,
 	emptyRetries, consecutiveSameContent *int,
 	lastResponseContent *string,
+	truncatedToolRetryUsed, truncatedToolRetryPending *bool,
 ) (outcome iterOutcome, retErr error) {
 	roundStart := time.Now()
 	round := state.CurrentRound + 1
@@ -698,8 +703,14 @@ func (e *AgentEngine) runReActIteration(
 
 	// 1. Think: Call LLM with function calling (includes retry + graceful degradation)
 	e.lastSentMsgCount = len(*messagesPtr)
-	resp, err := e.callLLMWithRetry(ctx, messagesPtr, tools, state, query, state.CurrentRound, sessionID)
+	resp, err := e.callLLMWithRetry(ctx, messagesPtr, tools, state, query, state.CurrentRound, sessionID,
+		*truncatedToolRetryPending)
 	if err != nil {
+		if *truncatedToolRetryPending && ctx.Err() == nil {
+			*truncatedToolRetryPending = false
+			e.completeTruncatedToolCall(ctx, state, sessionID)
+			return iterOutcomeBreak, nil
+		}
 		retErr = err
 		return iterOutcomeNext, err
 	}
@@ -712,14 +723,14 @@ func (e *AgentEngine) runReActIteration(
 	// the window. Compacting and retrying once turns that into a recovered
 	// round instead of a wasted one. Once per turn: if the retry overflows
 	// too, the problem is not the history size.
-	if !e.overflowRecovered && e.responseHitContextLimit(resp) {
+	if !*truncatedToolRetryPending && !e.overflowRecovered && e.responseHitContextLimit(resp) {
 		e.overflowRecovered = true
 		logger.Warnf(ctx, "[Agent][Round-%d] Response hit the context window (finish=%s, "+
 			"completion=%d of %d requested); compacting and retrying once",
 			round, resp.FinishReason, resp.Usage.CompletionTokens, e.getCompletionTokenBudget())
 		*messagesPtr = e.forceCompaction(ctx, *messagesPtr, round)
 		e.lastSentMsgCount = len(*messagesPtr)
-		resp, err = e.callLLMWithRetry(ctx, messagesPtr, tools, state, query, state.CurrentRound, sessionID)
+		resp, err = e.callLLMWithRetry(ctx, messagesPtr, tools, state, query, state.CurrentRound, sessionID, false)
 		if err != nil {
 			retErr = err
 			return iterOutcomeNext, err
@@ -790,6 +801,42 @@ func (e *AgentEngine) runReActIteration(
 			state.RoundSteps = append(state.RoundSteps, step)
 		}
 		return iterOutcomeBreak, nil
+	}
+
+	// A length-finished tool call may have stopped in the middle of its JSON.
+	// Never execute any call from that response, even a preceding one that
+	// happens to parse. Give the model one bounded opportunity to reissue a
+	// single small call; another truncation ends this turn with an honest error.
+	if isLengthFinishReason(response.FinishReason) && len(response.ToolCalls) > 0 {
+		step.Thought = ""
+		step.ReasoningContent = ""
+		e.failTruncatedToolCalls(ctx, response, &step, state.CurrentRound, sessionID)
+		toolCallCount = len(step.ToolCalls)
+		state.RoundSteps = append(state.RoundSteps, step)
+		if *truncatedToolRetryUsed || !e.withinIterationBudget(state.CurrentRound+1) {
+			e.completeTruncatedToolCall(ctx, state, sessionID)
+			return iterOutcomeBreak, nil
+		}
+		*truncatedToolRetryUsed = true
+		*truncatedToolRetryPending = true
+		*messagesPtr = e.appendToolResults(*messagesPtr, step)
+		return iterOutcomeNext, nil
+	}
+
+	if *truncatedToolRetryPending {
+		*truncatedToolRetryPending = false
+		if !isCompleteSmallRecoveryCall(response) {
+			if len(response.ToolCalls) > 0 {
+				e.failUnexecutedToolCalls(ctx, response, &step, state.CurrentRound, sessionID,
+					invalidToolRecoveryError)
+				toolCallCount = len(step.ToolCalls)
+			}
+			step.Thought = ""
+			step.ReasoningContent = ""
+			state.RoundSteps = append(state.RoundSteps, step)
+			e.completeTruncatedToolCall(ctx, state, sessionID)
+			return iterOutcomeBreak, nil
+		}
 	}
 
 	// A natural answer to a classified source/release question must not bypass
@@ -902,6 +949,48 @@ func (e *AgentEngine) runReActIteration(
 	})
 
 	return iterOutcomeNext, nil
+}
+
+const (
+	maxRecoveryToolArgumentsBytes = 8192
+	invalidToolRecoveryError      = "Tool call was not executed: recovery requires exactly one complete JSON object under 8 KiB."
+)
+
+// isCompleteSmallRecoveryCall validates the *entire* retried tool-call batch
+// before any side effect. A provider's stop reason alone does not prove that
+// its arguments are usable, and a model answer without a call cannot recover
+// evidence that the failed call never obtained.
+func isCompleteSmallRecoveryCall(response *types.ChatResponse) bool {
+	if response == nil || len(response.ToolCalls) != 1 || isLengthFinishReason(response.FinishReason) ||
+		strings.EqualFold(strings.TrimSpace(response.FinishReason), "content_filter") {
+		return false
+	}
+	args := response.ToolCalls[0].Function.Arguments
+	if len(args) == 0 || len(args) > maxRecoveryToolArgumentsBytes {
+		return false
+	}
+	var object map[string]any
+	return json.Unmarshal([]byte(args), &object) == nil && object != nil
+}
+
+func (e *AgentEngine) completeTruncatedToolCall(ctx context.Context, state *types.AgentState, sessionID string) {
+	answer := "模型生成工具参数时达到输出长度限制，所需工具调用未完成，也没有执行残缺的调用。请缩小问题范围后重试。"
+	if !strings.HasPrefix(types.LanguageNameFromContext(ctx), "Chinese") {
+		answer = "The model hit its output limit while forming a tool call. The incomplete call was not run, " +
+			"so I could not complete this request. Please narrow the request and try again."
+	}
+	logger.Warnf(ctx, "[Agent] Stopping after incomplete tool-call recovery")
+	common.PipelineWarn(ctx, "Agent", "truncated_tool_call_recovery_exhausted", map[string]interface{}{
+		"round": state.CurrentRound + 1,
+	})
+	state.FinalAnswer = answer
+	state.IsComplete = true
+	answerID := generateEventID("answer")
+	_ = e.eventBus.Emit(ctx, event.Event{
+		ID: answerID, Type: event.EventAgentFinalAnswer, SessionID: sessionID,
+		Data: event.AgentFinalAnswerData{Content: answer, Done: false, IsFallback: true},
+	})
+	e.closeAnswerStream(ctx, sessionID, answerID)
 }
 
 // String returns a stable label for Langfuse output payloads.
