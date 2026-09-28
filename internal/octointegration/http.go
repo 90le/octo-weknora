@@ -213,6 +213,11 @@ func (h *Handler) Uses(c *gin.Context) {
 	respond(c, http.StatusOK, rows, err)
 }
 
+func (h *Handler) EffectiveUses(c *gin.Context) {
+	rows, err := h.store.EffectiveUses(c.Request.Context(), tenant(c), c.Param("id"))
+	respond(c, http.StatusOK, rows, err)
+}
+
 // Explicit credential verification may register a new credential. A previously
 // verified token uses only the read API, including when pasted into the probe UI.
 func (h *Handler) probeIdentity(ctx context.Context, tenantID uint64, token string) (*ConnectionIdentity, error) {

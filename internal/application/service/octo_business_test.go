@@ -84,3 +84,30 @@ func TestOctoChatCannotDeleteNativeSharedAssets(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "直接渠道")
 }
+
+func TestOctoChatDeleteCountsInheritedReadersAndBlocksOtherManagement(t *testing.T) {
+	s, store, _, ctx, p := octoManagementFixture(t)
+	child, err := store.Create(ctx, octointegration.Scope{TenantID: 1, AccountID: "bot", GroupID: "group", SubareaID: "topic", DisplayName: "子区", InheritParent: true})
+	require.NoError(t, err)
+	other, err := store.Create(ctx, octointegration.Scope{TenantID: 1, AccountID: "bot", GroupID: "other", DisplayName: "其他群"})
+	require.NoError(t, err)
+	require.NoError(t, store.SetBinding(ctx, 1, other.ID, "kb", true, true))
+	require.NoError(t, store.SetBinding(ctx, 1, other.ID, "kb", false))
+
+	in := octobusiness.ManagementInput{Action: "delete_kb", KnowledgeBaseID: "kb"}
+	_, err = s.Management(ctx, p, in, true)
+	require.ErrorContains(t, err, "其他区域读取或维护", "management-only delegation must block group chat deletion")
+
+	require.NoError(t, store.RevokeKnowledgeManagement(ctx, 1, other.ID, "kb"))
+	preview, err := s.Management(ctx, p, in, true)
+	require.NoError(t, err)
+	require.Equal(t, 1, preview["inheriting_subareas"], "parent deletion still previews an inherited child")
+
+	require.NoError(t, store.SetBinding(ctx, 1, child.ID, "kb", true))
+	_, err = s.Management(ctx, p, in, true)
+	require.ErrorContains(t, err, "其他区域读取或维护", "a child's direct binding must take precedence over inheritance")
+	require.NoError(t, store.SetBinding(ctx, 1, child.ID, "kb", false))
+	preview, err = s.Management(ctx, p, in, true)
+	require.NoError(t, err)
+	require.Equal(t, 1, preview["inheriting_subareas"])
+}
