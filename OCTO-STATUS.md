@@ -2,7 +2,17 @@
 
 更新：2026-09-28。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-28；生产 PR #89）
+## 当前状态（2026-09-28；生产 PR #91）
+
+**运行版本与范围：**公开「Octo 小丘」的 WeKnora 后端已切到 [PR #91](https://github.com/90le/octo-weknora/pull/91)，业务提交 ce827a12647f5ba723511b900b72979a4bf68490，合并提交 5592f7ff20c721ba7638d626e2ad38e3530c5c27。App Image ID 为 sha256:1d736e608c6a50fbf560453341d796a3149a203db0014535bac8177ea1b97327，运行二进制 SHA-256 为 b75ab381daeb14ae6b505c92b11be7081234b64967f85c86c6ee34ebab53c58b；前端镜像仍为 sha256:dd2bae75c16daf552ee5f3ff00ee4cf42be852c128ed3ca9b23ae15d92866eb1。只修改公开小丘的 Agent 配置和 WeKnora 后端；私人小丘与其他 Bot 未切换。公开小丘的单轮 max_completion_tokens 从 32768 调到 65536，原配置单独备份在 2 TB 数据盘 operations/agent-completion-budget-20260928-r1。它限制每轮总生成量（包括模型内部推理与工具参数），不是独立的“思考 token”开关；LLM 停滞超时仍为 300 秒。
+
+**行为与验收：**#91 在模型生成工具参数触及长度上限时拒绝执行所有残缺调用，只给一次完整、小于 8 KiB 的单工具恢复机会；再次截断、参数不完整或恢复轮报错时给明确的 fallback，不继续无限重试。被拒工具的事件会撤回先流出的半截文字，Web 实时、Web 持久内容与 Octo 出站均覆盖。Linux Agent／会话流／IM 三包全测、GitHub 所有 CI、独立代码复审通过。生产切换前从本轮新备份恢复内部网络候选，登录 200、迁移 107|f、4 个知识库、5 个 Octo 区域、8 个解析引擎、1495 条活动知识、公网搜索开启数 0；候选首次暴露 Go 模块缓存路径与运行镜像不一致造成的分词词典启动错误，已在 /go/pkg/mod 路径重编译并重新通过候选回读，失败镜像已定点删除。
+
+**真实群结果与限制：**「Steward 联调群」使用已授权的「Octo 小测」先后发送普通 CLI 安装题（消息 2104376315690782720）及源码路由题（2104376570536693760），公开小丘各投递一次，分别返回 2104376348712538112、2104376651541286912。安装题有 npm 命令和资料链接；源码题事实与固定提交一致，所引 client.go:840–847、search_route.go:76–86、token.go:14–23 已用 GitHub 固定提交的原始字节核对。网页文本抽取会折叠空行，不能据其展示行号判错；这次回答正文有一处手写目录标签多出 client/，可信链接路径正确。两条新题不证明所有知识问答、逐主张语义支持或 65536 token 满额输出均通过；本次也未在线上刻意触发截断失败，失败路径由自动测试验证。无工具的纯文本生成触及长度上限仍待单独处理；企业网关每次新模型实例拒绝可选 chat_template_kwargs 后重试，尚无独立数值思考预算。九题冻结夹具尚有 6 项未跑，Wiki 项仍缺已发布页面。
+
+**恢复与空间：**本轮 PostgreSQL／文件／来源快照／Compose／环境备份位于服务器私有 operations/release-agent-pr91-20260928/backup-current，不含 Milvus／Neo4j 卷；上一版 #89 App 镜像 sha256:3336b5cf539e9bc8d4fcdf6831aa3283bec42b1057c272f5cb8db9463663e140 留作直接回退。隔离候选容器、网络与数据克隆及错误构建镜像已定点清理，测试 Bot 的临时 CLI profile 已退出。最后回读根盘约余 13 GB、2 TB 盘约用 67 GB，均为时点值。后续优先做独立主张—证据支持评测、纯文本截断收口，以及网关可选参数的短期兼容缓存；不要仅因上限提高就宣称时延和成本已改善。
+
+## 2026-09-28 PR #89 发布后快照（历史）
 
 **运行版本：**公开 Octo 小丘的 WeKnora 后端已切到 [PR #89](https://github.com/90le/octo-weknora/pull/89)，业务代码 `a87b85400c99ee7c5139df6c49318d47aa8e71ce`，合并提交 `bbae88c00d30bb6d75a4e6b12fe2215d90a5f7fb`。app Image ID `sha256:3336b5cf539e9bc8d4fcdf6831aa3283bec42b1057c272f5cb8db9463663e140`；UI 仍为 `sha256:dd2bae75c16daf552ee5f3ff00ee4cf42be852c128ed3ca9b23ae15d92866eb1`，容器内二进制 SHA-256 为 `a29f2a32ca116f4b10ed03aa34bc583a84029af2739c9dfbb741ca5bfd2cdba7`。独立回读：健康 200、迁移 `107|f`、4 个知识库、5 个 Octo 区域、1495 条活动知识、区域公网搜索开启数 0；OpenClaw Gateway 与 Octo daemon active。私人小丘、其他 Bot、前端、知识库绑定和模型配置均未切换。
 
