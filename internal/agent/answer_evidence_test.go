@@ -249,6 +249,9 @@ func TestRecordAnswerEvidenceRequiresPrivateReleaseProvenance(t *testing.T) {
 	}}})
 	require.False(t, answerevidence.ReleaseEvidenceObserved(releaseCtx), "only the dedicated release lookup can promote release provenance")
 
+	// A named leaf is resolved by a complete authorized release catalog before
+	// the opaque latest reference can supply evidence for that repository.
+	answerevidence.RecordReleaseTargetResolution(releaseCtx, "octo-android", "Mininglamp-OSS/octo-android")
 	recordAnswerEvidenceFromStep(releaseCtx, types.AgentStep{ToolCalls: []types.ToolCall{{
 		Name: agenttools.ToolGitHubReleaseLookup,
 		Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
@@ -270,7 +273,7 @@ func TestRecordAnswerEvidenceRequiresPrivateReleaseProvenance(t *testing.T) {
 		Name: agenttools.ToolGitHubReleaseLookup,
 		Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
 			types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{
-				KnowledgeBaseID: "kb", DataSourceID: "source", Repository: "Mininglamp-OSS/octo-android", TagName: "v1.2.3", URL: "https://example.test/release", PublishedAt: checkedAt, CheckedAt: checkedAt,
+				KnowledgeBaseID: "kb", DataSourceID: "source", Repository: "Mininglamp-OSS/octo-android", TagName: "v1.2.3", URL: "https://github.com/Mininglamp-OSS/octo-android/releases/tag/v1.2.3", PublishedAt: checkedAt, CheckedAt: checkedAt,
 			},
 		}},
 	}}})
@@ -289,6 +292,66 @@ func TestRecordAnswerEvidenceRequiresPrivateReleaseProvenance(t *testing.T) {
 	require.False(t, answerevidence.ReleaseEvidenceObserved(noStableCtx), "a no-stable fallback cannot establish the current release")
 }
 
+func TestModelDirectedCompleteReleaseListCanResolveAfterPreflightTimeout(t *testing.T) {
+	checkedAt := time.Date(2026, time.September, 28, 4, 5, 6, 0, time.UTC)
+	for _, tc := range []struct {
+		name        string
+		query       string
+		listOutput  string
+		wantPartial bool
+	}{
+		{
+			name:        "complete unique leaf",
+			query:       "octo-android",
+			listOutput:  `{"repositories":[{"release_ref":"r1","repository":"Alpha/octo-android"}],"complete":true}`,
+			wantPartial: true,
+		},
+		{
+			name:       "incomplete page",
+			query:      "octo-android",
+			listOutput: `{"repositories":[{"release_ref":"r1","repository":"Alpha/octo-android"}],"complete":false}`,
+		},
+		{
+			name:       "owner-filtered page cannot prove ownerless uniqueness",
+			query:      "Alpha/octo-android",
+			listOutput: `{"repositories":[{"release_ref":"r1","repository":"Alpha/octo-android"}],"complete":true}`,
+		},
+		{
+			name:       "same leaf under two owners",
+			query:      "octo-android",
+			listOutput: `{"repositories":[{"release_ref":"r1","repository":"Alpha/octo-android"},{"release_ref":"r2","repository":"Beta/octo-android"}],"complete":true}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := answerevidence.WithContract(context.Background(), "Octo 安卓最新版本、Web 最新版本分别是什么？")
+			recordAnswerEvidenceFromStep(ctx, types.AgentStep{ToolCalls: []types.ToolCall{{
+				Name:   agenttools.ToolGitHubReleaseLookup,
+				Args:   map[string]interface{}{"action": "list", "query": tc.query},
+				Result: &types.ToolResult{Success: true, Output: tc.listOutput},
+			}}})
+			recordAnswerEvidenceFromStep(ctx, types.AgentStep{ToolCalls: []types.ToolCall{{
+				Name: agenttools.ToolGitHubReleaseLookup,
+				Args: map[string]interface{}{"action": "latest", "release_ref": "r1"},
+				Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
+					types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{
+						KnowledgeBaseID: "kb", DataSourceID: "source", Repository: "Alpha/octo-android",
+						TagName: "v9.1.0", URL: "https://github.com/Alpha/octo-android/releases/tag/v9.1.0",
+						PublishedAt: checkedAt, CheckedAt: checkedAt,
+					},
+				}},
+			}}})
+			reply := answerevidence.FallbackReply(ctx)
+			if tc.wantPartial {
+				require.Contains(t, reply, "v9.1.0")
+				require.Equal(t, []string{"octo-web"}, answerevidence.MissingReleaseRepositories(ctx))
+			} else {
+				require.NotContains(t, reply, "v9.1.0")
+				require.Equal(t, []string{"octo-android", "octo-web"}, answerevidence.MissingReleaseRepositories(ctx))
+			}
+		})
+	}
+}
+
 func TestCompoundEvidenceUsesPrivateRepositoryIdentity(t *testing.T) {
 	checkedAt := time.Date(2026, time.September, 22, 9, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
@@ -299,6 +362,7 @@ func TestCompoundEvidenceUsesPrivateRepositoryIdentity(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := answerevidence.WithContract(context.Background(), "octo-android 最新版本的源码如何实现？")
+			answerevidence.RecordReleaseTargetResolution(ctx, "octo-android", "Mininglamp-OSS/octo-android")
 			recordAnswerEvidenceFromStep(ctx, types.AgentStep{ToolCalls: []types.ToolCall{{
 				Name: agenttools.ToolSourceBrowse,
 				Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
@@ -307,7 +371,7 @@ func TestCompoundEvidenceUsesPrivateRepositoryIdentity(t *testing.T) {
 			}, {
 				Name: agenttools.ToolGitHubReleaseLookup,
 				Result: &types.ToolResult{Success: true, Data: map[string]interface{}{
-					types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{KnowledgeBaseID: "kb", DataSourceID: "source", Repository: "Mininglamp-OSS/octo-android", TagName: "v1.2.3", URL: "https://example.test/release", PublishedAt: checkedAt, CheckedAt: checkedAt},
+					types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{KnowledgeBaseID: "kb", DataSourceID: "source", Repository: "Mininglamp-OSS/octo-android", TagName: "v1.2.3", URL: "https://github.com/Mininglamp-OSS/octo-android/releases/tag/v1.2.3", PublishedAt: checkedAt, CheckedAt: checkedAt},
 				}},
 			}}})
 			require.True(t, answerevidence.SourceReadObserved(ctx))
@@ -339,6 +403,32 @@ func TestExecuteLoopStopsUnevidencedSourceClaimWithDeterministicFallback(t *test
 	require.Contains(t, state.FinalAnswer, "可核验的源码")
 	require.Len(t, emitted, 2)
 	require.Contains(t, emitted[0].Content, "可核验的源码")
+	require.False(t, emitted[0].Done)
+	require.True(t, emitted[1].Done)
+}
+
+func TestPartialReleaseFallbackKeepsFallbackEventStatus(t *testing.T) {
+	checkedAt := time.Date(2026, time.September, 28, 4, 5, 6, 0, time.UTC)
+	ctx := answerevidence.WithContract(context.Background(), "Alpha/octo-android、Beta/octo-web 最新版本分别是什么？")
+	require.True(t, answerevidence.RecordReleaseFact(ctx, answerevidence.ReleaseFact{
+		Repository: "Alpha/octo-android",
+		TagName:    "v1.2.3",
+		URL:        "https://github.com/Alpha/octo-android/releases/tag/v1.2.3",
+		CheckedAt:  checkedAt,
+	}))
+	engine := newTestEngine(t, &mockChat{})
+	var emitted []event.AgentFinalAnswerData
+	engine.eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
+		emitted = append(emitted, evt.Data.(event.AgentFinalAnswerData))
+		return nil
+	})
+	state := &types.AgentState{}
+	engine.completeWithEvidenceFallback(ctx, state, types.AgentStep{}, "session")
+	require.True(t, state.IsComplete)
+	require.Contains(t, state.FinalAnswer, "v1.2.3")
+	require.Contains(t, state.FinalAnswer, "beta/octo-web")
+	require.Len(t, emitted, 2)
+	require.True(t, emitted[0].IsFallback, "a partially verified result is not a fully answered question")
 	require.False(t, emitted[0].Done)
 	require.True(t, emitted[1].Done)
 }

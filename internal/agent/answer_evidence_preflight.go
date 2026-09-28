@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"path"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,6 +53,7 @@ type releaseCatalogPreflight struct {
 		ReleaseRef string `json:"release_ref"`
 		Repository string `json:"repository"`
 	} `json:"repositories"`
+	Complete bool `json:"complete"`
 }
 
 type sourceCatalogPreflight struct {
@@ -245,40 +245,6 @@ func hasRegisteredTool(e *AgentEngine, name string) bool {
 	return err == nil
 }
 
-// releaseRepositoryCandidates recognizes explicit repository leaves and a
-// small set of platform words when they are paired with "octo". It does not
-// encode any organization, owner, release version, or project fact; exact
-// matching still happens against the authorized tool catalog.
-func releaseRepositoryCandidates(query string) []string {
-	lower := strings.ToLower(query)
-	seen := make(map[string]bool)
-	for _, token := range strings.FieldsFunc(lower, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' || r == '/')
-	}) {
-		if slash := strings.LastIndex(token, "/"); slash >= 0 {
-			token = token[slash+1:]
-		}
-		token = strings.Trim(token, "-_.")
-		if strings.Contains(token, "-") && strings.Contains(token, "octo") {
-			seen[token] = true
-		}
-	}
-	if strings.Contains(lower, "octo") {
-		if strings.Contains(lower, "android") || strings.Contains(query, "安卓") {
-			seen["octo-android"] = true
-		}
-		if strings.Contains(lower, "web") || strings.Contains(query, "网页") || strings.Contains(query, "网站") {
-			seen["octo-web"] = true
-		}
-	}
-	out := make([]string, 0, len(seen))
-	for candidate := range seen {
-		out = append(out, candidate)
-	}
-	sort.Strings(out)
-	return out
-}
-
 func repositoryLeafForPreflight(repository string) string {
 	repository = strings.ToLower(strings.TrimSpace(repository))
 	if slash := strings.LastIndex(repository, "/"); slash >= 0 {
@@ -287,38 +253,53 @@ func repositoryLeafForPreflight(repository string) string {
 	return strings.Trim(repository, "-_.")
 }
 
-func exactReleaseReference(output, candidate string) string {
+func exactReleaseReference(output, candidate string) (string, string) {
 	var catalog releaseCatalogPreflight
 	if json.Unmarshal([]byte(output), &catalog) != nil {
-		return ""
+		return "", ""
+	}
+	// An incomplete page can hide another owner's same-named repository.
+	// An explicit owner, however, remains unambiguous when its exact row is
+	// present in the authorized page.
+	ownerQualified := strings.Contains(candidate, "/")
+	if !catalog.Complete && !ownerQualified {
+		return "", ""
 	}
 	ref := ""
+	repository := ""
 	for _, entry := range catalog.Repositories {
-		if repositoryLeafForPreflight(entry.Repository) != candidate || entry.ReleaseRef == "" {
+		actual := strings.ToLower(strings.Trim(entry.Repository, "/"))
+		matches := actual == candidate
+		if !ownerQualified {
+			matches = repositoryLeafForPreflight(entry.Repository) == candidate
+		}
+		if !matches || entry.ReleaseRef == "" {
 			continue
 		}
 		if ref != "" && ref != entry.ReleaseRef {
-			return "" // More than one authorized owner has the same leaf; do not guess.
+			return "", "" // More than one authorized owner has the same leaf; do not guess.
 		}
 		ref = entry.ReleaseRef
+		repository = entry.Repository
 	}
-	return ref
+	return ref, repository
 }
 
 func (e *AgentEngine) preflightNamedReleaseEvidence(ctx context.Context, query string, preflight *answerEvidencePreflight) {
 	if preflight == nil || !hasRegisteredTool(e, agenttools.ToolGitHubReleaseLookup) {
 		return
 	}
-	for _, candidate := range releaseRepositoryCandidates(query) {
+	for _, candidate := range answerevidence.RequiredReleaseRepositories(ctx) {
 		list := e.preflightToolCall(ctx, agenttools.ToolGitHubReleaseLookup, map[string]interface{}{"action": "list", "query": candidate}, len(preflight.step.ToolCalls)+1)
 		preflight.add(list)
 		if list.Result == nil || !list.Result.Success {
 			continue
 		}
-		ref := exactReleaseReference(list.Result.Output, candidate)
+		ref, repository := exactReleaseReference(list.Result.Output, candidate)
 		if ref == "" {
 			continue
 		}
+		answerevidence.RecordReleaseTargetResolution(ctx, candidate, repository)
 		latest := e.preflightToolCall(ctx, agenttools.ToolGitHubReleaseLookup, map[string]interface{}{"action": "latest", "release_ref": ref}, len(preflight.step.ToolCalls)+1)
 		preflight.add(latest)
 		if latest.Result != nil && latest.Result.Success {
