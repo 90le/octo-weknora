@@ -137,12 +137,14 @@ func classifyNeeds(query string) evidenceNeeds {
 		needs |= needRelease
 	}
 	if containsAny(q,
-		"是否支持", "支持", "接入", "集成", "兼容", "对接", "原生接入", "channel-octo", "octo-channel",
+		"是否支持", "支持", "接入", "集成", "兼容", "对接", "原生接入",
 		"integration", "integrate", "compatible", "support",
-	) || (needs == 0 && strings.Contains(q, "github.com/")) {
+	) || (needs&needRelease == 0 && containsAny(q, "channel-octo", "octo-channel")) ||
+		(needs == 0 && strings.Contains(q, "github.com/")) {
 		// A bare GitHub URL can identify an integration project, but it must
 		// not turn a release URL or named source-file question into an extra
-		// support claim the user did not request.
+		// support claim the user did not request. A channel repository's name
+		// alone likewise does not add an integration claim to a release question.
 		needs |= needIntegration
 	}
 	return needs
