@@ -2,7 +2,17 @@
 
 更新：2026-09-28。范围见 [需求地图](OCTO-REQUIREMENTS.md)，接续顺序见 [实施计划](OCTO-PLAN.md)，配置见 [OCTO-SETUP](OCTO-SETUP.md)，操作布局见 [OCTO-UX](OCTO-UX.md)。本页是唯一的当前进度入口；下方旧日期段落是历史发布证据。
 
-## 当前状态（2026-09-28；生产 PR #93）
+## 当前状态（2026-09-28；生产 PR #96）
+
+**运行版本与资产：**公开「Octo 小丘」的 WeKnora 后端已切到 [PR #96](https://github.com/90le/octo-weknora/pull/96)（发布源码提交 `d069583c88aad435100277ee454bfd11fccef51b`，合并提交 `a81d7007d4a228ec0cf0035bc17d6fc03f19a0ed`，两者 Git tree 相同）。生产 app Image ID 为 `sha256:39970c1468ef912a511410c79850344a8b02d1769f5068599798e14408d94ae7`；前端沿用 #93 的 `sha256:4c234155990763f3d1c22d41d82aa2ffac344f78c4208a8698cb642e3bfec1f4`。独立回读：迁移 `107|false`，4 个活动知识库、5 个 Octo 区域、7 条查询绑定、0 条维护授权、1495 条活动知识；app 与前端健康均为 200，Octo daemon 与 OpenClaw gateway 仍运行。私人小丘和其他 Bot 未切换。
+
+**主线 2 本次交付：**[#95](https://github.com/90le/octo-weknora/pull/95) 把“多仓最新发布”从单个布尔证据改为按用户点名仓库分别核验，显式 owner 不能借同名仓证据；完整、唯一的授权目录可补救预检失败后的模型自主 `list → latest`。只对部分目标拥有本轮可信 GitHub Release 标记的纯多目标发布题，服务端才给出确定性的部分答复：已核验仓库只列截至核验时间的稳定版标签和官方链接，其他仓写未核验，不据此推断更新内容、发布日期或源码实现。[#96](https://github.com/90le/octo-weknora/pull/96) 修复了 `channel-octo` 仓库名把纯发布题误判成“接入能力”问题；真正询问支持或接入时，双重证据要求仍在。
+
+**验证与实际回答：**两个 PR 的 Go 构建测试和 lint 均通过；Linux 使用生产 `anydoc` 构建标签运行了证据包、Agent、IM、Octo 适配包测试，证据包 race 测试和 Go vet 也通过。每次发布都从新的 PostgreSQL／文件恢复点启动内部隔离候选，登录和 4 库／5 区域／8 解析引擎／1495 条知识回读正常；候选已定点清理。真实「Steward 联调群」使用已获准的「Octo 小测」复测同一道**开发回归题**：#95 的答复只笼统指出缺项；#96 的答复明确给出 `octo-android` 截至核验时间的稳定版 `v1.3.7` 及[官方 Release](https://github.com/Mininglamp-OSS/octo-android/releases/tag/v1.3.7)，把 `codex-channel-octo` 标为未核验，未推断更新内容。两轮均正确引用原问题、各投递 1 次，未新增知识缺口，测试 CLI 凭据已退出。
+
+**仍未解决：**“每仓都取得 Release 证据”仍不能自动证明模型的每句结论与正确仓库、版本和 Release 正文对齐；A/B 标签互换、更新摘要是否受来源支持、发布标签与源码快照提交对齐，仍需逐主张验证。历史 9 题已参与此前修复，属于开发回归而非未接触盲测；本轮没有用它们声称总体答题质量提升。主线 1 的真人群主写入验收按用户要求跳过，不记为通过。#96 是仅替换 app 的发布：直接回滚使用 #95 app 镜像 `sha256:4a200805ded9a4a24fb28f49612a1d39d2b791e3d4029eb52aa129bdf848a3ee`，前端未改，仍使用 #93 UI。新备份在服务器私有 2 TB 数据盘，未包含 Milvus／Neo4j 卷。最终根盘约余 11 GB（90% 使用），数据盘约余 1.9 TB；本次定点清理了候选及构建暂存，未做宽范围 Docker prune。后续构建前应先处理根盘容量风险。
+
+## 2026-09-28 PR #93 控制面发布后快照（历史）
 
 **运行版本与范围：**公开「Octo 小丘」的 WeKnora 后端与管理前端已切到 [PR #93](https://github.com/90le/octo-weknora/pull/93)。发布源码提交为 `b44d56197948f7c83499d5ca53697e9b1e2133a4`，合并提交 `9900c64d79c3d258e4ac041f126ad5d7dc95eaa2` 与其 Git tree 完全相同。生产 app Image ID 为 `sha256:b2948cc05c93f61424e34a04e67e776bce6b5ee3e486e394258dabe48082e05b`，UI 为 `sha256:4c234155990763f3d1c22d41d82aa2ffac344f78c4208a8698cb642e3bfec1f4`；PostgreSQL migration 为 `107|false`，app `/health` 和前端 `/` 均返回 200。现有资产回读为 4 个活动知识库、5 个 Octo 区域、7 条查询绑定、0 条维护授权、1495 条活动知识，无孤儿绑定。私人小丘与其他 Bot 未切换。#91 的单轮 `65536` 总生成上限及工具参数截断保护仍随当前版本保留；它不是独立的“思考 token”开关，LLM 停滞超时仍为 300 秒。
 
