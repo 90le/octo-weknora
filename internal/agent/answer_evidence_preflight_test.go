@@ -145,7 +145,7 @@ func TestCompoundSourceQuestionStillPreflightsNamedRelease(t *testing.T) {
 func TestExecutePreservesIngressEvidenceContractWithoutResettingIt(t *testing.T) {
 	query := "octo-android 最新版本更新了什么？"
 	ctx := answerevidence.WithContract(context.Background(), query)
-	answerevidence.RecordReleaseEvidence(ctx)
+	answerevidence.RecordReleaseEvidence(ctx, "ExampleOrg/octo-android")
 	model := &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{{
 		ResponseType: types.ResponseTypeAnswer,
 		Content:      "正式发布已在入口证据中确认。",
@@ -225,6 +225,103 @@ func TestAnswerEvidencePreflightReadsEveryNamedReleaseCandidate(t *testing.T) {
 	prompt := systemMessage(t, model.calls[0])
 	require.Contains(t, prompt, "ExampleOrg/octo-android")
 	require.Contains(t, prompt, "ExampleOrg/octo-web")
+}
+
+func TestAnswerEvidencePreflightKeepsMissingReleaseTargetUnverified(t *testing.T) {
+	checkedAt := time.Date(2026, time.September, 22, 10, 0, 0, 0, time.UTC)
+	releaseTool := newScriptedPreflightTool(agenttools.ToolGitHubReleaseLookup, func(args map[string]interface{}) *types.ToolResult {
+		switch args["action"] {
+		case "list":
+			if args["query"] == "octo-android" {
+				return &types.ToolResult{Success: true, Output: `{"repositories":[{"release_ref":"android","repository":"ExampleOrg/octo-android"}],"complete":true}`}
+			}
+			return &types.ToolResult{Success: true, Output: `{"repositories":[{"release_ref":"web","repository":"ExampleOrg/octo-web"}],"complete":true}`}
+		case "latest":
+			if args["release_ref"] == "android" {
+				return &types.ToolResult{Success: true, Output: `{"repository":"ExampleOrg/octo-android","latest_stable":{"tag_name":"v9.1.0"}}`, Data: map[string]interface{}{
+					types.GitHubReleaseLookupDataKey:   types.GitHubReleaseLookupAudit{Repository: "ExampleOrg/octo-android"},
+					types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{KnowledgeBaseID: "kb", DataSourceID: "ds", Repository: "ExampleOrg/octo-android", TagName: "v9.1.0", URL: "https://github.com/ExampleOrg/octo-android/releases/tag/v9.1.0", PublishedAt: checkedAt, CheckedAt: checkedAt},
+				}}
+			}
+			return &types.ToolResult{Success: true, Output: `{"repository":"ExampleOrg/octo-web","no_published_stable_release":true}`, Data: map[string]interface{}{
+				types.GitHubReleaseLookupDataKey: types.GitHubReleaseLookupAudit{Repository: "ExampleOrg/octo-web"},
+			}}
+		}
+		return &types.ToolResult{Success: false, Error: "unexpected action"}
+	})
+	engine := newTestEngine(t, &mockChat{})
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	engine.toolRegistry.RegisterTool(releaseTool)
+	query := "Octo 安卓最新版本、Web 最新版本分别更新了什么？"
+	ctx := answerevidence.WithContract(context.Background(), query)
+	state := &types.AgentState{}
+
+	evidence := engine.prepareAnswerEvidencePreflight(ctx, state, query)
+	require.Equal(t, []string{"list", "latest", "list", "latest"}, releaseTool.actions())
+	require.Contains(t, evidence, "ExampleOrg/octo-android")
+	require.Equal(t, []string{"exampleorg/octo-android", "exampleorg/octo-web"}, answerevidence.ObservedReleaseLookupRepositories(ctx))
+	require.Equal(t, []string{"octo-web"}, answerevidence.MissingReleaseRepositories(ctx))
+	require.False(t, answerevidence.ReleaseEvidenceObserved(ctx))
+	require.True(t, answerevidence.NeedsEvidenceRetry(ctx, "两个项目均发布了 v9.1.0。"))
+	partial := answerevidence.FallbackReply(ctx)
+	require.Contains(t, partial, "octo-web")
+	require.Contains(t, partial, "v9.1.0")
+	require.Contains(t, partial, "[官方 Release](<https://github.com/exampleorg/octo-android/releases/tag/v9.1.0>)")
+	require.Contains(t, partial, "未核验更新内容")
+}
+
+func TestAnswerEvidencePreflightDoesNotGuessAmbiguousOwnerlessRelease(t *testing.T) {
+	latestCalls := 0
+	releaseTool := newScriptedPreflightTool(agenttools.ToolGitHubReleaseLookup, func(args map[string]interface{}) *types.ToolResult {
+		switch args["action"] {
+		case "list":
+			if args["query"] == "octo-android" {
+				return &types.ToolResult{Success: true, Output: `{"repositories":[{"release_ref":"a","repository":"Alpha/octo-android"},{"release_ref":"b","repository":"Beta/octo-android"}],"complete":true}`}
+			}
+			return &types.ToolResult{Success: true, Output: `{"repositories":[],"complete":true}`}
+		case "latest":
+			latestCalls++
+		}
+		return &types.ToolResult{Success: false, Error: "unexpected action"}
+	})
+	engine := newTestEngine(t, &mockChat{})
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	engine.toolRegistry.RegisterTool(releaseTool)
+	query := "Octo 安卓最新版本、Web 最新版本分别是什么？"
+	ctx := answerevidence.WithContract(context.Background(), query)
+	engine.prepareAnswerEvidencePreflight(ctx, &types.AgentState{}, query)
+	require.Zero(t, latestCalls, "neither owner may silently satisfy an ownerless target")
+	require.Equal(t, []string{"octo-android", "octo-web"}, answerevidence.MissingReleaseRepositories(ctx))
+}
+
+func TestAnswerEvidencePreflightSelectsExplicitReleaseOwner(t *testing.T) {
+	checkedAt := time.Date(2026, time.September, 22, 10, 0, 0, 0, time.UTC)
+	selected := ""
+	releaseTool := newScriptedPreflightTool(agenttools.ToolGitHubReleaseLookup, func(args map[string]interface{}) *types.ToolResult {
+		switch args["action"] {
+		case "list":
+			return &types.ToolResult{Success: true, Output: `{"repositories":[{"release_ref":"wrong-owner","repository":"OtherOrg/octo-web"},{"release_ref":"requested-owner","repository":"ExampleOrg/octo-web"}],"complete":true}`}
+		case "latest":
+			selected, _ = args["release_ref"].(string)
+			return &types.ToolResult{Success: true, Output: `{"repository":"ExampleOrg/octo-web","latest_stable":{"tag_name":"v9.1.0"}}`, Data: map[string]interface{}{
+				types.GitHubReleaseLookupDataKey:   types.GitHubReleaseLookupAudit{Repository: "ExampleOrg/octo-web"},
+				types.GitHubReleaseCitationDataKey: types.GitHubReleaseCitation{KnowledgeBaseID: "kb", DataSourceID: "ds", Repository: "ExampleOrg/octo-web", TagName: "v9.1.0", URL: "https://github.com/ExampleOrg/octo-web/releases/tag/v9.1.0", PublishedAt: checkedAt, CheckedAt: checkedAt},
+			}}
+		}
+		return &types.ToolResult{Success: false, Error: "unexpected action"}
+	})
+	engine := newTestEngine(t, &mockChat{})
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	engine.toolRegistry.RegisterTool(releaseTool)
+	query := "ExampleOrg/octo-web 最新版本是什么？"
+	ctx := answerevidence.WithContract(context.Background(), query)
+
+	evidence := engine.prepareAnswerEvidencePreflight(ctx, &types.AgentState{}, query)
+	require.Equal(t, []string{"exampleorg/octo-web"}, answerevidence.RequiredReleaseRepositories(ctx))
+	require.Equal(t, "requested-owner", selected)
+	require.Contains(t, evidence, "ExampleOrg/octo-web")
+	require.True(t, answerevidence.ReleaseEvidenceObserved(ctx))
+	require.False(t, answerevidence.NeedsEvidenceRetry(ctx, "最新版本是 v9.1.0。"))
 }
 
 func TestAnswerEvidencePreflightSearchesAndReadsEachNamedChannelBeforeModel(t *testing.T) {

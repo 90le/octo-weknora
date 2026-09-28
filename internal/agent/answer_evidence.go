@@ -23,11 +23,17 @@ func recordAnswerEvidenceFromStep(ctx context.Context, step types.AgentStep) {
 			continue
 		}
 		if call.Name == agenttools.ToolGitHubReleaseLookup {
-			if hasGitHubReleaseLookupAudit(call.Result) {
-				answerevidence.RecordReleaseLookup(ctx)
+			recordReleaseListResolutions(ctx, call)
+			if audit, ok := githubReleaseLookupAudit(call.Result); ok {
+				answerevidence.RecordReleaseLookup(ctx, audit.Repository)
 			}
 			if citation, ok := githubReleaseCitation(call.Result); ok {
-				answerevidence.RecordReleaseEvidence(ctx, citation.Repository)
+				answerevidence.RecordReleaseFact(ctx, answerevidence.ReleaseFact{
+					Repository: citation.Repository,
+					TagName:    citation.TagName,
+					URL:        citation.URL,
+					CheckedAt:  citation.CheckedAt,
+				})
 			}
 			continue
 		}
@@ -57,6 +63,33 @@ func recordAnswerEvidenceFromStep(ctx context.Context, step types.AgentStep) {
 	}
 }
 
+// A later model-directed list may recover from a timed-out preflight. Its
+// result is still produced by the scoped release tool, but an ownerless target
+// can be resolved only if the list query covers every possible owner of that
+// leaf. A model-filtered owner query cannot prove uniqueness.
+func recordReleaseListResolutions(ctx context.Context, call types.ToolCall) {
+	args := call.ExecutionArgs()
+	if action, _ := args["action"].(string); action != "list" {
+		return
+	}
+	var query string
+	if raw, exists := args["query"]; exists {
+		value, ok := raw.(string)
+		if !ok {
+			return
+		}
+		query = strings.ToLower(strings.TrimSpace(value))
+	}
+	for _, target := range answerevidence.RequiredReleaseRepositories(ctx) {
+		if !strings.Contains(target, "/") && query != "" && !strings.Contains(target, query) {
+			continue
+		}
+		if _, repository := exactReleaseReference(call.Result.Output, target); repository != "" {
+			answerevidence.RecordReleaseTargetResolution(ctx, target, repository)
+		}
+	}
+}
+
 // githubReleaseCitation accepts only the typed, private marker attached by
 // trusted release lookup code. A public tag in tool text, an arbitrary RAG
 // chunk, or a source snapshot cannot set the latest-release evidence ledger.
@@ -81,21 +114,28 @@ func githubReleaseCitation(result *types.ToolResult) (types.GitHubReleaseCitatio
 }
 
 func hasGitHubReleaseLookupAudit(result *types.ToolResult) bool {
+	_, ok := githubReleaseLookupAudit(result)
+	return ok
+}
+
+func githubReleaseLookupAudit(result *types.ToolResult) (types.GitHubReleaseLookupAudit, bool) {
 	if result == nil || !result.Success || result.Data == nil {
-		return false
+		return types.GitHubReleaseLookupAudit{}, false
 	}
 	raw, ok := result.Data[types.GitHubReleaseLookupDataKey]
 	if !ok {
-		return false
+		return types.GitHubReleaseLookupAudit{}, false
 	}
 	switch audit := raw.(type) {
 	case types.GitHubReleaseLookupAudit:
-		return audit.Repository != ""
+		return audit, audit.Repository != ""
 	case *types.GitHubReleaseLookupAudit:
-		return audit != nil && audit.Repository != ""
+		if audit != nil {
+			return *audit, audit.Repository != ""
+		}
 	default:
-		return false
 	}
+	return types.GitHubReleaseLookupAudit{}, false
 }
 
 func validGitHubReleaseCitation(citation types.GitHubReleaseCitation) bool {

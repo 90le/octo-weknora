@@ -2,10 +2,21 @@ package answerevidence
 
 import (
 	"context"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func releaseFact(repository, tag string, checkedAt time.Time) ReleaseFact {
+	return ReleaseFact{
+		Repository: repository,
+		TagName:    tag,
+		URL:        "https://github.com/" + repository + "/releases/tag/" + url.PathEscape(tag),
+		CheckedAt:  checkedAt,
+	}
+}
 
 func TestClassifyKeepsSourceFactsSeparateFromReleaseQuestions(t *testing.T) {
 	cases := []struct {
@@ -151,6 +162,149 @@ func TestCompoundReleaseAndSourceRequireBothTrustedProofs(t *testing.T) {
 	require.Contains(t, FallbackReply(ctx), "发布标签对应的提交")
 }
 
+func TestMultipleNamedReleaseTargetsRequireEachRepository(t *testing.T) {
+	ctx := WithContract(context.Background(), "Octo 安卓最新版本、Web 最新版本分别更新了什么？")
+	require.Equal(t, []string{"octo-android", "octo-web"}, RequiredReleaseRepositories(ctx))
+	RecordReleaseLookup(ctx, "Mininglamp-OSS/octo-android")
+	RecordReleaseEvidence(ctx, "Mininglamp-OSS/octo-android")
+	require.Equal(t, []string{"mininglamp-oss/octo-android"}, ObservedReleaseRepositories(ctx))
+	require.Equal(t, []string{"mininglamp-oss/octo-android"}, ObservedReleaseLookupRepositories(ctx))
+	require.Equal(t, []string{"octo-web"}, MissingReleaseRepositories(ctx))
+	require.False(t, ReleaseEvidenceObserved(ctx), "one verified release cannot authorize claims about both products")
+	require.True(t, ShouldHoldStreamingAnswer(ctx))
+	require.True(t, NeedsEvidenceRetry(ctx, "安卓和 Web 的最新版本都是 v1。"))
+	require.Contains(t, FallbackReply(ctx), "octo-web")
+
+	RecordReleaseEvidence(ctx, "Mininglamp-OSS/octo-web")
+	require.Empty(t, MissingReleaseRepositories(ctx))
+	require.True(t, ReleaseEvidenceObserved(ctx))
+	require.False(t, NeedsEvidenceRetry(ctx, "两个项目各自的发布记录已核验。"))
+}
+
+func TestPartialReleaseFallbackReportsOnlyTurnLocalVerifiedTags(t *testing.T) {
+	checkedAt := time.Date(2026, time.September, 28, 4, 5, 6, 0, time.UTC)
+	ctx := WithContract(context.Background(), "Alpha/octo-android、Beta/octo-web 最新版本分别更新了什么？")
+	require.True(t, RecordReleaseFact(ctx, releaseFact("Alpha/octo-android", "v2.3.4", checkedAt)))
+	RecordReleaseLookup(ctx, "Alpha/octo-android")
+	require.True(t, ShouldHoldStreamingAnswer(ctx))
+	require.True(t, NeedsEvidenceRetry(ctx, "两个项目都发布了新功能。"))
+	require.True(t, NeedsEvidenceRetry(ctx, "无法确认最新版本"), "a generic unknown must not discard verified per-repository facts")
+	require.False(t, AllowsMissingIssue(ctx))
+	reply := FallbackReply(ctx)
+	require.Contains(t, reply, "alpha/octo-android")
+	require.Contains(t, reply, "v2.3.4")
+	require.Contains(t, reply, checkedAt.Format(time.RFC3339))
+	require.Contains(t, reply, "[官方 Release](<https://github.com/alpha/octo-android/releases/tag/v2.3.4>)")
+	require.Contains(t, reply, "beta/octo-web：本轮未取得")
+	require.Contains(t, reply, "未核验更新内容")
+	require.NotContains(t, reply, "beta/octo-web：没有发布")
+
+	english := WithContract(context.Background(), "What are the latest releases for Alpha/octo-android and Beta/octo-web?")
+	require.True(t, RecordReleaseFact(english, releaseFact("Alpha/octo-android", "v2.3.4", checkedAt)))
+	reply = FallbackReply(english)
+	require.Contains(t, reply, "as of 2026-09-28T04:05:06Z")
+	require.Contains(t, reply, "beta/octo-web: no verifiable")
+	require.Contains(t, reply, "Changes, publication dates and source implementation were not verified")
+}
+
+func TestMultiTargetReleaseCannotUseOneLookupForGenericUnknown(t *testing.T) {
+	ctx := WithContract(context.Background(), "Octo 安卓最新版本、Web 最新版本分别是什么？")
+	RecordReleaseLookup(ctx, "Alpha/octo-android")
+	require.True(t, ReleaseLookupObserved(ctx))
+	require.Equal(t, []string{"octo-android", "octo-web"}, MissingReleaseRepositories(ctx))
+	require.True(t, NeedsEvidenceRetry(ctx, "无法确认最新版本"), "one lookup cannot discharge the other target")
+	require.Contains(t, FallbackReply(ctx), "octo-android、octo-web")
+
+	single := WithContract(context.Background(), "Octo 安卓最新版本是什么？")
+	RecordReleaseLookup(single, "Alpha/octo-android")
+	require.False(t, NeedsEvidenceRetry(single, "无法确认最新版本"), "single-target safe unknown keeps its existing behaviour")
+}
+
+func TestPartialReleaseRequiresUniqueOwnerlessResolution(t *testing.T) {
+	checkedAt := time.Date(2026, time.September, 28, 4, 5, 6, 0, time.UTC)
+	ctx := WithContract(context.Background(), "Octo 安卓最新版本、Web 最新版本分别是什么？")
+	require.True(t, RecordReleaseFact(ctx, releaseFact("Alpha/octo-android", "v1", checkedAt)))
+	require.NotContains(t, FallbackReply(ctx), "v1", "a matching leaf alone cannot identify an ownerless target")
+	RecordReleaseTargetResolution(ctx, "octo-android", "Alpha/octo-android")
+	require.Contains(t, FallbackReply(ctx), "v1")
+	RecordReleaseTargetResolution(ctx, "octo-android", "Beta/octo-android")
+	require.NotContains(t, FallbackReply(ctx), "v1", "conflicting authorized owners remain ambiguous")
+	require.Equal(t, []string{"octo-android", "octo-web"}, MissingReleaseRepositories(ctx))
+}
+
+func TestPartialReleaseConflictingTagsAndUnsafeMarkdownStayUnverified(t *testing.T) {
+	checkedAt := time.Date(2026, time.September, 28, 4, 5, 6, 0, time.UTC)
+	ctx := WithContract(context.Background(), "Alpha/octo-android、Beta/octo-web 最新版本是什么？")
+	require.True(t, RecordReleaseFact(ctx, releaseFact("Alpha/octo-android", "v1", checkedAt)))
+	require.False(t, RecordReleaseFact(ctx, releaseFact("Alpha/octo-android", "v2", checkedAt)))
+	tag := "v3](https://evil.example)<script>"
+	require.True(t, RecordReleaseFact(ctx, releaseFact("Beta/octo-web", tag, checkedAt)))
+	reply := FallbackReply(ctx)
+	require.Contains(t, reply, "beta/octo-web")
+	require.Contains(t, reply, "alpha/octo-android：本轮未取得")
+	require.NotContains(t, reply, "标签为「v1")
+	require.NotContains(t, reply, "标签为「v2")
+	require.Contains(t, reply, "\\]")
+	require.Contains(t, reply, "&lt;script&gt;")
+	require.NotContains(t, reply, "<script>")
+	require.NotContains(t, reply, "[官方 Release](<https://evil.example")
+
+	invalid := WithContract(context.Background(), "Alpha/octo-android、Beta/octo-web 最新版本是什么？")
+	forged := releaseFact("Alpha/octo-android", "v9", checkedAt)
+	forged.URL = "https://evil.example/phishing"
+	require.False(t, RecordReleaseFact(invalid, forged))
+	require.NotContains(t, FallbackReply(invalid), "v9")
+}
+
+func TestPartialReleaseNeverUnlocksLatestSourceImplementation(t *testing.T) {
+	checkedAt := time.Date(2026, time.September, 28, 4, 5, 6, 0, time.UTC)
+	ctx := WithContract(context.Background(), "Alpha/octo-android、Beta/octo-web 最新版本的源码如何实现？")
+	require.True(t, Requires(ctx, IntentSource))
+	require.True(t, Requires(ctx, IntentRelease))
+	require.True(t, RecordReleaseFact(ctx, releaseFact("Alpha/octo-android", "v2.3.4", checkedAt)))
+	RecordSourceRead(ctx, "Alpha/octo-android")
+	reply := FallbackReply(ctx)
+	require.NotContains(t, reply, "v2.3.4")
+	require.True(t, NeedsSynthesisFallback(ctx))
+	require.False(t, AllowsMissingIssue(ctx))
+}
+
+func TestExplicitGitHubRepositoryURLKeepsOwnerForRootAndDeepLinks(t *testing.T) {
+	ctx := WithContract(context.Background(), "https://github.com/ExampleOrg/any-repo 最新版本是多少？")
+	require.Equal(t, []string{"exampleorg/any-repo"}, RequiredReleaseRepositories(ctx))
+	bare := WithContract(context.Background(), "ExampleOrg/any-repo 最新版本是多少？")
+	require.Empty(t, RequiredReleaseRepositories(bare), "a bare path may be a file path")
+	path := WithContract(context.Background(), "https://github.com/ExampleOrg/any-repo/blob/main/file.go 最新版本是多少？")
+	require.Equal(t, []string{"exampleorg/any-repo"}, RequiredReleaseRepositories(path))
+
+	octoPath := WithContract(context.Background(), "https://github.com/Alpha/octo-web/blob/main/README.md 这个 Web 仓库的最新版本是什么？")
+	require.Equal(t, []string{"alpha/octo-web"}, RequiredReleaseRepositories(octoPath), "the Web alias must not erase the explicit owner")
+	RecordReleaseEvidence(octoPath, "Beta/octo-web")
+	require.Equal(t, []string{"alpha/octo-web"}, MissingReleaseRepositories(octoPath))
+	require.False(t, ReleaseEvidenceObserved(octoPath))
+
+	octoQuery := WithContract(context.Background(), "https://github.com/Alpha/octo-web?tab=readme 这个 Web 仓库的最新版本是什么？")
+	require.Equal(t, []string{"alpha/octo-web"}, RequiredReleaseRepositories(octoQuery))
+	octoFragment := WithContract(context.Background(), "https://github.com/Alpha/octo-web#readme 这个 Web 仓库的最新版本是什么？")
+	require.Equal(t, []string{"alpha/octo-web"}, RequiredReleaseRepositories(octoFragment))
+}
+
+func TestExplicitReleaseOwnersCannotBorrowSameNamedRepository(t *testing.T) {
+	ctx := WithContract(context.Background(), "Alpha/octo-web 和 Beta/octo-web 的最新版本分别是什么？")
+	require.Equal(t, []string{"alpha/octo-web", "beta/octo-web"}, RequiredReleaseRepositories(ctx))
+	RecordReleaseEvidence(ctx, "Alpha/octo-web", "OtherOrg/octo-web")
+	require.Equal(t, []string{"beta/octo-web"}, MissingReleaseRepositories(ctx))
+	require.False(t, ReleaseEvidenceObserved(ctx))
+	require.True(t, NeedsEvidenceRetry(ctx, "两个仓库都是 v1。"))
+	RecordReleaseEvidence(ctx, "Beta/octo-web")
+	require.True(t, ReleaseEvidenceObserved(ctx))
+
+	single := WithContract(context.Background(), "Beta/octo-web 最新版本是什么？")
+	require.Equal(t, []string{"beta/octo-web"}, RequiredReleaseRepositories(single))
+	RecordReleaseEvidence(single, "Alpha/octo-web")
+	require.False(t, ReleaseEvidenceObserved(single), "an explicitly named owner is part of even a single release obligation")
+}
+
 func TestCompoundSourceAndReleaseRejectDifferentRepositories(t *testing.T) {
 	ctx := WithContract(context.Background(), "octo-android 最新版本的源码如何实现？")
 	RecordSourceRead(ctx, "OtherOrg/octo-android")
@@ -216,7 +370,7 @@ func TestWithContractPreservesExistingTurnState(t *testing.T) {
 	again := WithContract(ctx, "你好")
 	require.Equal(t, IntentRelease, IntentFromContext(again))
 	require.True(t, ReleaseLookupObserved(again))
-	RecordReleaseEvidence(again)
+	RecordReleaseEvidence(again, "ExampleOrg/octo-android")
 	require.True(t, ReleaseEvidenceObserved(ctx), "both contexts must address the same turn state")
 }
 
@@ -296,7 +450,7 @@ func TestReleaseContractRequiresReleaseProvenance(t *testing.T) {
 	require.True(t, ReleaseLookupObserved(ctx))
 	require.False(t, NeedsEvidenceRetry(ctx, "当前材料无法确认最新版本。"), "an explicit unknown is safe only after the official latest endpoint ran")
 
-	RecordReleaseEvidence(ctx)
+	RecordReleaseEvidence(ctx, "ExampleOrg/octo-android")
 	require.True(t, ReleaseEvidenceObserved(ctx))
 	require.False(t, ShouldHoldStreamingAnswer(ctx))
 	require.False(t, NeedsEvidenceRetry(ctx, "最新版本是 1.2.3。"))

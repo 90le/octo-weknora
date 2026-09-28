@@ -7,11 +7,14 @@ package answerevidence
 
 import (
 	"context"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"unicode"
 )
+
+var explicitGitHubRepositoryURL = regexp.MustCompile("(?i)https://github\\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)")
 
 // Intent identifies the evidence boundary for a user request.
 type Intent string
@@ -68,9 +71,18 @@ type State struct {
 	sourceReadIdentities map[string]bool
 	documentEvidence     bool
 	releaseLookup        bool
+	releaseLookups       map[string]bool
 	releaseEvidence      bool
 	releaseIdentities    map[string]bool
-	requiredRepos        []string
+	requiredReleases     []string
+	// Release facts and target resolutions exist only for this turn. The
+	// model-facing tool output and persisted steps are never used to rebuild
+	// them when composing a guarded partial answer.
+	releaseFacts           map[string]ReleaseFact
+	releaseFactConflicts   map[string]bool
+	releaseTargets         map[string]string
+	releaseTargetConflicts map[string]bool
+	requiredRepos          []string
 	// postPreflightSourceBrowse is deliberately separate from the normal
 	// source-evidence ledger. It is enabled only after the system has already
 	// searched and read every explicitly named channel repository. At that
@@ -201,6 +213,65 @@ func namedChannelRepositories(query string) []string {
 	return out
 }
 
+// namedReleaseRepositories records only recognizable repository names and the
+// existing Octo platform aliases. An explicitly written owner is retained: a
+// release from another owner's same-named repository cannot satisfy it.
+func namedReleaseRepositories(query string) []string {
+	lower := strings.ToLower(query)
+	seen := make(map[string]bool)
+	explicitLeaves := make(map[string]bool)
+	// A GitHub URL names its repository even when it continues to a blob,
+	// release or issue. Record the full owner/repo before considering product
+	// aliases, or an Octo Web blob URL could fall back to ownerless octo-web
+	// and accidentally borrow another owner's Release.
+	for _, match := range explicitGitHubRepositoryURL.FindAllStringSubmatchIndex(lower, -1) {
+		repository := lower[match[2]:match[3]] + "/" + lower[match[4]:match[5]]
+		if !validReleaseRepository(repository) {
+			continue
+		}
+		seen[repository] = true
+		explicitLeaves[repositoryLeaf(repository)] = true
+	}
+	for _, token := range strings.FieldsFunc(lower, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' || r == '/')
+	}) {
+		token = strings.Trim(token, "/-_.")
+		token = strings.TrimPrefix(token, "github.com/")
+		parts := strings.Split(token, "/")
+		if len(parts) == 0 || len(parts) > 2 {
+			continue
+		}
+		leaf := strings.Trim(parts[len(parts)-1], "-_.")
+		if !strings.Contains(leaf, "-") || !strings.Contains(leaf, "octo") {
+			continue
+		}
+		if len(parts) == 2 {
+			owner := strings.Trim(parts[0], "-_.")
+			if owner == "" {
+				continue
+			}
+			seen[owner+"/"+leaf] = true
+		} else {
+			seen[leaf] = true
+		}
+		explicitLeaves[leaf] = true
+	}
+	if strings.Contains(lower, "octo") {
+		if !explicitLeaves["octo-android"] && (strings.Contains(lower, "android") || strings.Contains(query, "安卓")) {
+			seen["octo-android"] = true
+		}
+		if !explicitLeaves["octo-web"] && (strings.Contains(lower, "web") || strings.Contains(query, "网页") || strings.Contains(query, "网站")) {
+			seen["octo-web"] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for repository := range seen {
+		out = append(out, repository)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func repositoryLeaf(repository string) string {
 	repository = strings.ToLower(strings.TrimSpace(repository))
 	if slash := strings.LastIndex(repository, "/"); slash >= 0 {
@@ -252,10 +323,11 @@ func WithContract(ctx context.Context, query string) context.Context {
 		return context.WithValue(ctx, classifiedNoneKey{}, true)
 	}
 	return context.WithValue(ctx, stateKey{}, &State{
-		intent:        intent,
-		needs:         needs,
-		chinese:       containsHan(query),
-		requiredRepos: namedChannelRepositories(query),
+		intent:           intent,
+		needs:            needs,
+		chinese:          containsHan(query),
+		requiredReleases: namedReleaseRepositories(query),
+		requiredRepos:    namedChannelRepositories(query),
 	})
 }
 
@@ -364,7 +436,103 @@ func ReleaseEvidenceObserved(ctx context.Context) bool {
 	}
 	state.mu.RLock()
 	defer state.mu.RUnlock()
-	return state.releaseEvidence
+	return releaseEvidenceObservedLocked(state)
+}
+
+func releaseEvidenceObservedLocked(state *State) bool {
+	if !state.releaseEvidence {
+		return false
+	}
+	if len(state.requiredReleases) == 0 {
+		return len(state.releaseFactConflicts) == 0
+	}
+	return len(missingReleaseRepositoriesLocked(state)) == 0
+}
+
+func missingReleaseRepositoriesLocked(state *State) []string {
+	missing := make([]string, 0)
+	for _, required := range state.requiredReleases {
+		// Real release tool calls record full private facts. In that path an
+		// ownerless name must also have an unambiguous scoped catalog
+		// resolution; a matching leaf in another owner's repository is not
+		// enough. Legacy callers that only record a trusted identity retain
+		// their previous contract until they migrate to facts.
+		if len(state.releaseFacts) > 0 {
+			if _, ok := releaseFactForTargetLocked(state, required); !ok {
+				missing = append(missing, required)
+			}
+			continue
+		}
+		found := false
+		for actual := range state.releaseIdentities {
+			if requiredRepositoryMatches(required, actual) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = append(missing, required)
+		}
+	}
+	return missing
+}
+
+// RequiredReleaseRepositories exposes the original user's explicit release
+// targets to the deterministic preflight. Later retrieved text cannot add one.
+func RequiredReleaseRepositories(ctx context.Context) []string {
+	state := stateFrom(ctx)
+	if state == nil {
+		return nil
+	}
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	return append([]string(nil), state.requiredReleases...)
+}
+
+// MissingReleaseRepositories identifies named targets with no matching
+// trusted GitHub Release provenance in this turn.
+func MissingReleaseRepositories(ctx context.Context) []string {
+	state := stateFrom(ctx)
+	if state == nil {
+		return nil
+	}
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	return missingReleaseRepositoriesLocked(state)
+}
+
+// ObservedReleaseRepositories returns only identities carried by trusted
+// positive release provenance. It does not expose a tag or assert currentness.
+func ObservedReleaseRepositories(ctx context.Context) []string {
+	state := stateFrom(ctx)
+	if state == nil {
+		return nil
+	}
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	out := make([]string, 0, len(state.releaseIdentities))
+	for repository := range state.releaseIdentities {
+		out = append(out, repository)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ObservedReleaseLookupRepositories records where a trusted latest lookup was
+// attempted, including targets for which no stable release was returned.
+func ObservedReleaseLookupRepositories(ctx context.Context) []string {
+	state := stateFrom(ctx)
+	if state == nil {
+		return nil
+	}
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	out := make([]string, 0, len(state.releaseLookups))
+	for repository := range state.releaseLookups {
+		out = append(out, repository)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ReleaseLookupObserved reports that the dedicated official latest-release
@@ -602,10 +770,18 @@ func RecordReleaseEvidence(ctx context.Context, repositories ...string) {
 // latest-release endpoint. It intentionally does not claim that a stable
 // release exists; it merely prevents a model from claiming uncertainty without
 // attempting the official source at all.
-func RecordReleaseLookup(ctx context.Context) {
+func RecordReleaseLookup(ctx context.Context, repositories ...string) {
 	if state := stateFrom(ctx); state != nil {
 		state.mu.Lock()
 		state.releaseLookup = true
+		if state.releaseLookups == nil {
+			state.releaseLookups = make(map[string]bool)
+		}
+		for _, repository := range repositories {
+			if identity := repositoryIdentity(repository); identity != "" {
+				state.releaseLookups[identity] = true
+			}
+		}
 		state.mu.Unlock()
 	}
 }
@@ -659,7 +835,7 @@ func CanRetryEvidence(ctx context.Context) bool {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if state.needs.has(IntentSource) && state.needs.has(IntentRelease) &&
-		state.sourceRead && state.releaseEvidence {
+		state.sourceRead && releaseEvidenceObservedLocked(state) {
 		// The current release marker carries a tag but no resolved tag commit.
 		// Repeating source/release tools cannot prove that a default-branch
 		// snapshot implements that release. Stop immediately with the precise
@@ -727,6 +903,13 @@ func NeedsEvidenceRetry(ctx context.Context, answer string) bool {
 	case IntentRelease:
 		if ReleaseEvidenceObserved(ctx) {
 			return false
+		}
+		if len(RequiredReleaseRepositories(ctx)) > 1 {
+			// One repository's latest lookup cannot authorize a generic
+			// uncertainty answer for every named repository. The final
+			// fallback names each still-unverified target and preserves any
+			// trusted per-repository facts.
+			return true
 		}
 		// An explicit unknown is safe only after the official latest-release
 		// endpoint was actually queried. A README, source snapshot, tag listing,
@@ -876,9 +1059,17 @@ func missingEvidenceLabels(ctx context.Context, chinese bool) []string {
 	}
 	if Requires(ctx, IntentRelease) && !ReleaseEvidenceObserved(ctx) {
 		if chinese {
-			missing = append(missing, "可核验的发布记录")
+			if repositories := MissingReleaseRepositories(ctx); len(repositories) > 1 {
+				missing = append(missing, strings.Join(repositories, "、")+"的可核验发布记录")
+			} else {
+				missing = append(missing, "可核验的发布记录")
+			}
 		} else {
-			missing = append(missing, "verifiable release record")
+			if repositories := MissingReleaseRepositories(ctx); len(repositories) > 1 {
+				missing = append(missing, "verifiable release records for "+strings.Join(repositories, ", "))
+			} else {
+				missing = append(missing, "verifiable release record")
+			}
 		}
 	}
 	if Requires(ctx, IntentIntegration) && !IntegrationEvidenceObserved(ctx) {
@@ -1080,6 +1271,18 @@ func RetryNudge(ctx context.Context) string {
 }
 
 func FallbackReply(ctx context.Context) string {
+	if partial := partialReleaseReply(ctx); partial != "" {
+		return partial
+	}
+	if Requires(ctx, IntentRelease) {
+		missing := MissingReleaseRepositories(ctx)
+		if len(RequiredReleaseRepositories(ctx)) > 1 && len(missing) > 0 {
+			if isChinese(ctx) {
+				return "尚未取得" + strings.Join(missing, "、") + "各自可核验的官方发布记录，不能完整核实这些目标的最新版本或更新内容。"
+			}
+			return "I could not verify official release records for " + strings.Join(missing, ", ") + "; I cannot fully confirm the latest versions or changes for all requested targets."
+		}
+	}
 	if multipleNeeds(ctx) {
 		missing := missingEvidenceLabels(ctx, isChinese(ctx))
 		if Requires(ctx, IntentRelease) && ReleaseLookupObserved(ctx) && !ReleaseEvidenceObserved(ctx) {
