@@ -897,6 +897,281 @@ func TestExecuteLoop_EndTurnTerminates(t *testing.T) {
 	assert.Equal(t, 1, mock.callCount, "end_turn must end the loop after the first model call")
 }
 
+func toolCallChunk(reason, args string) types.StreamResponse {
+	return types.StreamResponse{
+		ResponseType: types.ResponseTypeAnswer,
+		Done:         true,
+		FinishReason: reason,
+		ToolCalls: []types.LLMToolCall{{
+			ID: "call-test", Type: "function",
+			Function: types.FunctionCall{Name: "test_read", Arguments: args},
+		}},
+	}
+}
+
+func TestExecuteLoop_TruncatedToolCallRetriesWithOneCompleteSmallCall(t *testing.T) {
+	const secret = "PRIVATE_INCOMPLETE_ARGUMENT_MARKER"
+	model := &mockChat{responses: []mockResponse{
+		{chunks: []types.StreamResponse{toolCallChunk("length", `{"query":"`+secret)}},
+		{chunks: []types.StreamResponse{toolCallChunk("tool_calls", `{}`)}},
+		{chunks: []types.StreamResponse{{ResponseType: types.ResponseTypeAnswer,
+			Content: "The verified result is available.", Done: true, FinishReason: "stop"}}},
+	}}
+	engine := newTestEngine(t, model)
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	tool := newCountingTool("test_read")
+	engine.toolRegistry.RegisterTool(tool)
+	state := &types.AgentState{}
+	_, err := engine.executeLoop(context.Background(), state, "test query", emptyMessages(),
+		engine.buildToolsForLLM(), "sess-1", "msg-1")
+	require.NoError(t, err)
+	require.True(t, state.IsComplete)
+	require.Equal(t, "The verified result is available.", state.FinalAnswer)
+	require.Equal(t, 1, tool.calls, "only the complete retried call may run")
+	require.Equal(t, 3, model.callCount)
+	require.Len(t, state.RoundSteps, 3)
+	require.False(t, state.RoundSteps[0].ToolCalls[0].Result.Success)
+	require.Empty(t, state.RoundSteps[0].ToolCalls[0].Args)
+	require.True(t, state.RoundSteps[1].ToolCalls[0].Result.Success)
+	for _, msg := range model.calls[1] {
+		require.NotContains(t, msg.Content, secret)
+		for _, call := range msg.ToolCalls {
+			require.NotContains(t, call.Function.Arguments, secret)
+		}
+	}
+	require.Equal(t, "tool", model.calls[1][len(model.calls[1])-1].Role,
+		"recovery guidance must stay in the failed tool result, not become a fake user turn")
+	require.Contains(t, model.calls[1][len(model.calls[1])-1].Content, "exactly one needed call")
+}
+
+func TestExecuteLoop_TruncatedToolCallSecondTruncationStops(t *testing.T) {
+	model := &mockChat{responses: []mockResponse{
+		{chunks: []types.StreamResponse{toolCallChunk("length", `{"query":"first`)}},
+		{chunks: []types.StreamResponse{toolCallChunk("length", `{"query":"second`)}},
+	}}
+	engine := newTestEngine(t, model)
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	tool := newCountingTool("test_read")
+	engine.toolRegistry.RegisterTool(tool)
+	var answerEvents []event.AgentFinalAnswerData
+	engine.eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
+		if data, ok := evt.Data.(event.AgentFinalAnswerData); ok {
+			answerEvents = append(answerEvents, data)
+		}
+		return nil
+	})
+	state := &types.AgentState{}
+	_, err := engine.executeLoop(context.Background(), state, "test query", emptyMessages(),
+		engine.buildToolsForLLM(), "sess-1", "msg-1")
+	require.NoError(t, err)
+	require.True(t, state.IsComplete)
+	require.Contains(t, state.FinalAnswer, "工具调用未完成")
+	require.Equal(t, 0, tool.calls)
+	require.Equal(t, 2, model.callCount, "no third model call or final-answer synthesis")
+	require.Len(t, answerEvents, 2, "one fallback answer and one closing marker")
+	require.Equal(t, state.FinalAnswer, answerEvents[0].Content)
+	require.True(t, answerEvents[0].IsFallback)
+	require.True(t, answerEvents[1].Done)
+}
+
+// Web and Octo retract an optimistic answer only when a tool_call event
+// arrives. A refusal must publish that event before its failed tool result,
+// even though no tool implementation was entered.
+func TestExecuteLoop_ContentThenTruncatedToolCallEmitsSafeRetraction(t *testing.T) {
+	model := &mockChat{responses: []mockResponse{
+		{chunks: []types.StreamResponse{
+			{ResponseType: types.ResponseTypeAnswer, Content: "optimistic preamble"},
+			toolCallChunk("length", `{"query":"partial`),
+		}},
+		{chunks: []types.StreamResponse{toolCallChunk("tool_calls", `{}`)}},
+		{chunks: []types.StreamResponse{{ResponseType: types.ResponseTypeAnswer,
+			Content: "final verified answer", Done: true, FinishReason: "stop"}}},
+	}}
+	engine := newTestEngine(t, model)
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	tool := newCountingTool("test_read")
+	engine.toolRegistry.RegisterTool(tool)
+	var eventOrder []string
+	engine.eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
+		if data, ok := evt.Data.(event.AgentFinalAnswerData); ok && data.Content != "" {
+			eventOrder = append(eventOrder, "answer:"+data.Content)
+		}
+		return nil
+	})
+	engine.eventBus.On(event.EventAgentToolCall, func(_ context.Context, evt event.Event) error {
+		if strings.HasSuffix(evt.ID, "-tool-call-refused") {
+			data, ok := evt.Data.(event.AgentToolCallData)
+			require.True(t, ok)
+			require.Nil(t, data.Arguments, "refusal event must never expose incomplete arguments")
+			eventOrder = append(eventOrder, "retract:"+data.ToolCallID)
+		}
+		return nil
+	})
+	engine.eventBus.On(event.EventAgentToolResult, func(_ context.Context, evt event.Event) error {
+		if data, ok := evt.Data.(event.AgentToolResultData); ok && !data.Success {
+			eventOrder = append(eventOrder, "failed:"+data.ToolCallID)
+		}
+		return nil
+	})
+	state := &types.AgentState{}
+	_, err := engine.executeLoop(context.Background(), state, "test query", emptyMessages(),
+		engine.buildToolsForLLM(), "sess-1", "msg-1")
+	require.NoError(t, err)
+	require.Equal(t, 1, tool.calls)
+	require.Equal(t, "final verified answer", state.FinalAnswer)
+	require.Equal(t, []string{
+		"answer:optimistic preamble", "retract:call-test", "failed:call-test", "answer:final verified answer",
+	}, eventOrder)
+}
+
+func TestExecuteLoop_PendingBeforeLatePreambleStillEmitsRefusalSignal(t *testing.T) {
+	model := &mockChat{responses: []mockResponse{
+		{chunks: []types.StreamResponse{
+			{ResponseType: types.ResponseTypeToolCall, Data: map[string]any{
+				"tool_call_id": "call-test", "tool_name": "test_read",
+			}},
+			{ResponseType: types.ResponseTypeAnswer, Content: "late preamble"},
+			toolCallChunk("length", `{"query":"partial`),
+		}},
+		{chunks: []types.StreamResponse{{ResponseType: types.ResponseTypeAnswer,
+			Content: "unsupported guess", Done: true, FinishReason: "stop"}}},
+	}}
+	engine := newTestEngine(t, model)
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	tool := newCountingTool("test_read")
+	engine.toolRegistry.RegisterTool(tool)
+	var order []string
+	engine.eventBus.On(event.EventAgentToolCall, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(event.AgentToolCallData)
+		require.True(t, ok)
+		order = append(order, "tool:"+data.ToolCallID)
+		return nil
+	})
+	engine.eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
+		if data, ok := evt.Data.(event.AgentFinalAnswerData); ok && data.Content != "" {
+			order = append(order, "answer:"+data.Content)
+		}
+		return nil
+	})
+	state := &types.AgentState{}
+	_, err := engine.executeLoop(context.Background(), state, "test query", emptyMessages(),
+		engine.buildToolsForLLM(), "sess-1", "msg-1")
+	require.NoError(t, err)
+	require.Equal(t, 0, tool.calls)
+	require.Equal(t, []string{
+		"tool:call-test", "answer:late preamble", "tool:call-test", "answer:" + state.FinalAnswer,
+	}, order, "same-ID refusal must follow and retract prose streamed after the pending event")
+	require.NotContains(t, state.FinalAnswer, "late preamble")
+	require.NotContains(t, state.FinalAnswer, "unsupported guess")
+}
+
+func TestExecuteLoop_TruncatedToolRecoveryProseWithoutCallStaysHidden(t *testing.T) {
+	model := &mockChat{responses: []mockResponse{
+		{chunks: []types.StreamResponse{toolCallChunk("length", `{"query":"partial`)}},
+		{chunks: []types.StreamResponse{{ResponseType: types.ResponseTypeAnswer,
+			Content: "unsupported guess", Done: true, FinishReason: "stop"}}},
+	}}
+	engine := newTestEngine(t, model)
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	tool := newCountingTool("test_read")
+	engine.toolRegistry.RegisterTool(tool)
+	var visibleAnswers []string
+	engine.eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
+		if data, ok := evt.Data.(event.AgentFinalAnswerData); ok && data.Content != "" {
+			visibleAnswers = append(visibleAnswers, data.Content)
+		}
+		return nil
+	})
+	state := &types.AgentState{}
+	_, err := engine.executeLoop(context.Background(), state, "test query", emptyMessages(),
+		engine.buildToolsForLLM(), "sess-1", "msg-1")
+	require.NoError(t, err)
+	require.Equal(t, 0, tool.calls)
+	require.Equal(t, 2, model.callCount)
+	require.Equal(t, []string{state.FinalAnswer}, visibleAnswers,
+		"the unsupported recovery prose must not be streamed before deterministic fallback")
+	require.NotContains(t, state.FinalAnswer, "unsupported guess")
+}
+
+func TestExecuteLoop_TruncatedToolRecoveryRejectsInvalidOrLargeCalls(t *testing.T) {
+	tests := []struct {
+		name   string
+		second types.StreamResponse
+	}{
+		{name: "malformed", second: toolCallChunk("tool_calls", `{"query":`)},
+		{name: "large", second: toolCallChunk("tool_calls", `{"query":"`+strings.Repeat("x", maxRecoveryToolArgumentsBytes)+`"}`)},
+		{name: "multiple", second: func() types.StreamResponse {
+			response := toolCallChunk("tool_calls", `{}`)
+			response.ToolCalls = append(response.ToolCalls, types.LLMToolCall{
+				ID: "call-other", Type: "function",
+				Function: types.FunctionCall{Name: "test_read", Arguments: `{}`},
+			})
+			return response
+		}()},
+		{name: "answer_without_call", second: types.StreamResponse{
+			ResponseType: types.ResponseTypeAnswer, Content: "I found it", Done: true, FinishReason: "stop",
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := &mockChat{responses: []mockResponse{
+				{chunks: []types.StreamResponse{toolCallChunk("length", `{"query":"partial`)}},
+				{chunks: []types.StreamResponse{tt.second}},
+			}}
+			engine := newTestEngine(t, model)
+			engine.toolRegistry = agenttools.NewToolRegistry()
+			tool := newCountingTool("test_read")
+			engine.toolRegistry.RegisterTool(tool)
+			state := &types.AgentState{}
+			_, err := engine.executeLoop(context.Background(), state, "test query", emptyMessages(),
+				engine.buildToolsForLLM(), "sess-1", "msg-1")
+			require.NoError(t, err)
+			require.Equal(t, 0, tool.calls)
+			require.Equal(t, 2, model.callCount)
+			require.True(t, state.IsComplete)
+			require.Contains(t, state.FinalAnswer, "工具调用未完成")
+		})
+	}
+}
+
+func TestExecuteLoop_TruncatedToolRecoveryModelErrorDoesNotRetryOrSynthesize(t *testing.T) {
+	model := &mockChat{responses: []mockResponse{
+		{chunks: []types.StreamResponse{toolCallChunk("length", `{"query":"partial`)}},
+		{chunks: []types.StreamResponse{{ResponseType: types.ResponseTypeError,
+			Content: "provider temporarily unavailable", Done: true, FinishReason: types.FinishReasonIncomplete}}},
+	}}
+	engine := newTestEngine(t, model)
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	tool := newCountingTool("test_read")
+	engine.toolRegistry.RegisterTool(tool)
+	state := &types.AgentState{}
+	_, err := engine.executeLoop(context.Background(), state, "test query", emptyMessages(),
+		engine.buildToolsForLLM(), "sess-1", "msg-1")
+	require.NoError(t, err)
+	require.Equal(t, 0, tool.calls)
+	require.Equal(t, 2, model.callCount, "failed recovery gets no transient retry or fallback LLM")
+	require.True(t, state.IsComplete)
+	require.Contains(t, state.FinalAnswer, "工具调用未完成")
+}
+
+func TestExecuteLoop_TruncatedToolCallWithoutRetryBudgetStops(t *testing.T) {
+	model := &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{
+		toolCallChunk("length", `{"query":"partial`),
+	}}}}
+	engine := newTestEngine(t, model, withMaxIterations(1))
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	tool := newCountingTool("test_read")
+	engine.toolRegistry.RegisterTool(tool)
+	state := &types.AgentState{}
+	_, err := engine.executeLoop(context.Background(), state, "test query", emptyMessages(),
+		engine.buildToolsForLLM(), "sess-1", "msg-1")
+	require.NoError(t, err)
+	require.True(t, state.IsComplete)
+	require.Contains(t, state.FinalAnswer, "工具调用未完成")
+	require.Equal(t, 0, tool.calls)
+	require.Equal(t, 1, model.callCount)
+}
+
 func TestStreamFinalAnswerToEventBus_EmitsDoneWhenProviderEndsWithEmptyChunk(t *testing.T) {
 	mock := &mockChat{
 		responses: []mockResponse{

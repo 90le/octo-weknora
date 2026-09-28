@@ -187,23 +187,22 @@ func (h *AgentStreamHandler) handleToolCall(ctx context.Context, evt event.Event
 	}
 
 	h.mu.Lock()
-	_, first := h.eventStartTimes[data.ToolCallID]
-	if !first {
+	_, seen := h.eventStartTimes[data.ToolCallID]
+	if !seen {
 		h.eventStartTimes[data.ToolCallID] = time.Now()
-		// Any answer text streamed before this tool call was a non-terminal round's
-		// preamble, not the final answer (the agent only ends by stopping naturally
-		// with plain text and no tool calls). Drop those segments from the persisted
-		// answer so the preamble never leaks into Message.Content.
-		supersededAny := false
-		for _, seg := range h.answerSegments {
-			if !seg.superseded && seg.content != "" {
-				seg.superseded = true
-				supersededAny = true
-			}
+	}
+	// A provider may announce a call before it emits a preamble, then emit a
+	// second event with the same call ID when the incomplete call is refused.
+	// Retract any answer text on every event; deduplicate only the start time.
+	supersededAny := false
+	for _, seg := range h.answerSegments {
+		if !seg.superseded && seg.content != "" {
+			seg.superseded = true
+			supersededAny = true
 		}
-		if supersededAny {
-			h.finalAnswer = h.composeFinalAnswer()
-		}
+	}
+	if supersededAny {
+		h.finalAnswer = h.composeFinalAnswer()
 	}
 	h.mu.Unlock()
 

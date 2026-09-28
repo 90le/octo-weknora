@@ -454,6 +454,7 @@ func TestExecuteToolCalls_LengthFinish_RefusesEveryCallWithoutExecuting(t *testi
 	assert.False(t, step.ToolCalls[0].Result.Success)
 	assert.Contains(t, step.ToolCalls[0].Result.Error, "was not executed")
 	assert.Contains(t, step.ToolCalls[0].Result.Error, "smaller calls")
+	assert.Empty(t, step.ToolCalls[0].Args, "incomplete arguments must not be persisted or replayed")
 }
 
 // A stream that breaks mid-argument never reports finish_reason=length, so the
@@ -478,6 +479,7 @@ func TestExecuteToolCalls_TruncatedArgsWithoutFinishReason_Refuses(t *testing.T)
 	require.Len(t, step.ToolCalls, 1)
 	assert.False(t, step.ToolCalls[0].Result.Success)
 	assert.Contains(t, step.ToolCalls[0].Result.Error, "was not executed")
+	assert.Empty(t, step.ToolCalls[0].Args, "incomplete arguments must not be persisted or replayed")
 }
 
 // Well-formed arguments must still run — the refusal keys on truncation, not on

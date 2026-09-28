@@ -2758,10 +2758,17 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 		if !ok {
 			return nil
 		}
+		bufMu.Lock()
+		// The provider may announce a call before it streams a preamble, then
+		// send a second event with the same ID when the cut-off call is refused.
+		// Retract on every signal, including deduplicated and hidden tools.
+		if useAgent {
+			retractAgentLiveAnswer()
+		}
 		if !isToolVisibleToUser(data.ToolName) {
+			bufMu.Unlock()
 			return nil
 		}
-		bufMu.Lock()
 		if seenToolCalls[data.ToolCallID] {
 			if useAgent {
 				upsertIMToolStep(&agentToolSteps, agentToolIdx, data.ToolCallID, func(step *IMToolStep) {
@@ -2783,7 +2790,6 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 			})
 			streamedAny = true
 		} else if useAgent {
-			retractAgentLiveAnswer()
 			upsertIMToolStep(&agentToolSteps, agentToolIdx, data.ToolCallID, func(step *IMToolStep) {
 				step.ToolName = data.ToolName
 				step.Pending = true
