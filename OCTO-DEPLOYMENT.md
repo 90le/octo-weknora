@@ -50,6 +50,8 @@ When the existing data filesystem lacks the required OverlayFS features and no n
 - An unpublished draft is absent from user search.
 - A query outside the caller's scope is rejected.
 - A representative document format still parses through the configured engine.
+- 当发布涉及 Octo 群／子区控制面时，隔离恢复库的 API 验收必须覆盖直接查询、继承查询、仅维护授权，以及知识库仍被任一有效范围使用时网页删除返回 409。
+- 生产管理界面必须从知识库反向核对最终使用范围；在宣布群管理能力完成前，还须由真实群主／群管理员完成一次本区提案、同人确认、绑定或解绑、撤销维护授权及后续问答。网页工作区管理员操作不能替代这一步。
 
 Do not equate HTTP 200, a passing test suite or an isolated candidate with full integration acceptance. Record which native Bot flows, configuration operations, parsers and failure cases were actually exercised on the released revision. Keep untested combinations explicit in OCTO-STATUS.md.
 
