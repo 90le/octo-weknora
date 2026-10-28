@@ -58,7 +58,7 @@ prepare_patched_anydoc() {
   # fail deep inside cargo's patch resolution instead of here. Cargo.toml is
   # required too: a truncated leftover with only the marker would otherwise
   # skip the copy and fail with "failed to read .../Cargo.toml".
-  if [ -f "$dest/.weknora-patched" ] && [ "$(cat "$dest/.weknora-patched")" = "$anydoc_version" ] && [ -f "$dest/Cargo.toml" ]; then
+  if [ -f "$dest/.weknora-patched" ] && [ "$(cat "$dest/.weknora-patched")" = "$anydoc_version-zip9" ] && [ -f "$dest/Cargo.toml" ]; then
     return
   fi
 
@@ -91,7 +91,15 @@ prepare_patched_anydoc() {
   fi
   sed -i.bak 's/^use render::markdown::document_to_markdown;/pub use render::markdown::document_to_markdown;/' "$dest/src/lib.rs"
   rm -f "$dest/src/lib.rs.bak"
-  printf '%s\n' "$anydoc_version" > "$dest/.weknora-patched"
+  # The published 0.2.4 crate pins zip 8, which is affected by extraction
+  # vulnerabilities fixed in zip 9. Fail closed if the expected pin changes.
+  if ! grep -A 1 '^\[dependencies.zip\]$' "$dest/Cargo.toml" | grep -q '^version = "8.6.0"$'; then
+    echo "error: unexpected anydoc zip dependency; review the security patch" >&2
+    exit 1
+  fi
+  sed -i.bak '/^\[dependencies.zip\]$/,/^\[/{s/^version = "8.6.0"$/version = "9.0.0"/;}' "$dest/Cargo.toml"
+  rm -f "$dest/Cargo.toml.bak"
+  printf '%s\n' "$anydoc_version-zip9" > "$dest/.weknora-patched"
   rm -rf "$crate_dir/.anydoc-unpack" "$crate_dir/.anydoc-$anydoc_version.crate"
 }
 

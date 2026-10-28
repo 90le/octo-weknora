@@ -18,7 +18,8 @@ func TestToolRefusalWithSeenCallIDRetractsLateAnswerPreamble(t *testing.T) {
 	bus := event.NewEventBus()
 	streams := &completionEventRecorder{}
 	message := &types.Message{ID: "message"}
-	h := NewAgentStreamHandler(ctx, "session", "message", "request", 1, time.Now(), message, streams, bus, nil)
+	h := NewAgentStreamHandler(ctx, "session", "message", "request", 1, time.Now(), message, streams, bus, nil,
+		nil, nil)
 	h.Subscribe()
 	require.NoError(t, bus.Emit(ctx, event.Event{
 		ID: "call-pending", Type: event.EventAgentToolCall,

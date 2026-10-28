@@ -28,17 +28,19 @@ func testService(t *testing.T) *Service {
 	require.NoError(t, db.AutoMigrate(&types.AuditLog{}))
 	require.NoError(t, db.Exec("CREATE TABLE knowledge_bases(id VARCHAR(36) PRIMARY KEY, tenant_id BIGINT NOT NULL, name TEXT, description TEXT, deleted_at TIMESTAMP)").Error)
 	require.NoError(t, db.Exec("INSERT INTO knowledge_bases(id,tenant_id,name,description) VALUES ('kb-a',1,'Product A',''),('kb-b',1,'Product B',''),('kb-other',2,'Other tenant','')").Error)
-	migration, err := os.ReadFile("../../migrations/sqlite/000021_octo_knowledge_business.up.sql")
+	migration, err := os.ReadFile("../../migrations/sqlite/000041_octo_knowledge_business.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(migration)).Error)
-	migration, err = os.ReadFile("../../migrations/sqlite/000024_octo_report_schedules.up.sql")
+	migration, err = os.ReadFile("../../migrations/sqlite/000044_octo_report_schedules.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(migration)).Error)
 	return NewService(db, nil, nil)
 }
+
 func testPrincipal() Principal {
 	return Principal{TenantID: 1, AccountID: "bot", ChannelID: "group-A", ScopeID: "scope-A", ScopeName: "真实群名称", GroupID: "group-A", UserID: "alice", UserName: "Alice", MessageID: "message-1", MessageText: "采购合同付款周期？", KnowledgeBaseIDs: []string{"kb-a"}, ManageKnowledgeBaseIDs: []string{"kb-a"}}
 }
+
 func principalContext(p Principal) context.Context {
 	if !p.Console && p.Validate == nil {
 		copyP := p
@@ -51,6 +53,7 @@ func principalContext(p Principal) context.Context {
 	trace.succeeded = true // This fixture represents a verified successful search.
 	return WithPrincipal(ctx, p)
 }
+
 func gapInput() IssueInput {
 	return IssueInput{Kind: "missing", KnowledgeBaseID: "kb-a", Title: "采购付款周期", Description: "用户需要采购合同付款周期；已搜索但资料没有相应说明。", RetrievalStatus: "no_answer"}
 }
@@ -93,6 +96,7 @@ func TestIssueIdentityIsolationAndIdempotency(t *testing.T) {
 	_, err = s.CreateIssue(spoof, gapInput())
 	require.ErrorIs(t, err, ErrDenied, "a principal without fresh native validator must not execute")
 }
+
 func TestPrivateConversationNeverLeaksOtherUsers(t *testing.T) {
 	s := testService(t)
 	alice := testPrincipal()
@@ -108,6 +112,7 @@ func TestPrivateConversationNeverLeaksOtherUsers(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, page.Total)
 }
+
 func TestClarificationAndRetrievalFailuresDoNotRegister(t *testing.T) {
 	s := testService(t)
 	ctx := principalContext(testPrincipal())
@@ -133,6 +138,7 @@ func TestClarificationAndRetrievalFailuresDoNotRegister(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, page.Total)
 }
+
 func TestIssueStatusPermissionsAndHistory(t *testing.T) {
 	s := testService(t)
 	p := testPrincipal()
@@ -159,6 +165,7 @@ func TestIssueStatusPermissionsAndHistory(t *testing.T) {
 	_, err = s.UpdateIssue(principalContext(other), row.ID, IssueUpdate{Status: "inprogress"})
 	require.NoError(t, err)
 }
+
 func TestContactsDefaultAndNativeScope(t *testing.T) {
 	s := testService(t)
 	p := testPrincipal()
@@ -190,10 +197,13 @@ type fakeKB struct {
 	calls int
 }
 
-func (f *fakeKB) UpdateKnowledgeBase(_ context.Context, id, name, description string, _ *types.KnowledgeBaseConfig) (*types.KnowledgeBase, error) {
+func (f *fakeKB) UpdateKnowledgeBase(_ context.Context, id, name, description string,
+	_ *types.KnowledgeBaseConfig, _ *types.VLMConfig,
+) (*types.KnowledgeBase, error) {
 	f.calls++
 	return &types.KnowledgeBase{ID: id, Name: name, Description: description}, nil
 }
+
 func TestProposalRequiresSameSenderNativeConfirmationAndFreshGrant(t *testing.T) {
 	s := testService(t)
 	fake := &fakeKB{}
@@ -228,6 +238,7 @@ func TestProposalRequiresSameSenderNativeConfirmationAndFreshGrant(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, 1, fake.calls, "duplicate confirm cannot replay mutation")
 }
+
 func TestProposalCallbackCancellationExpiryAndUncertainExecution(t *testing.T) {
 	s := testService(t)
 	p := testPrincipal()
@@ -267,6 +278,7 @@ func TestProposalCallbackCancellationExpiryAndUncertainExecution(t *testing.T) {
 	_, err = s.Confirm(principalContext(p), expired.ID, false)
 	require.ErrorIs(t, err, ErrConflict)
 }
+
 func TestReportCountsScopeAndSafeArtifacts(t *testing.T) {
 	s := testService(t)
 	p := testPrincipal()
@@ -297,6 +309,7 @@ func TestReportCountsScopeAndSafeArtifacts(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, report.Total)
 }
+
 func TestToolRejectsSpoofedIdentityArguments(t *testing.T) {
 	s := testService(t)
 	result, err := NewTool(s).Execute(principalContext(testPrincipal()), json.RawMessage(`{"operation":"list_issues","user_id":"another-user"}`))

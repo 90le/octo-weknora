@@ -53,6 +53,12 @@ func (h *Handler) UploadTemporaryDocument(c *gin.Context) {
 	options := types.TemporaryDocumentCreateOptions{ParserEngine: strings.TrimSpace(c.PostForm("parser_engine"))}
 	if agent != nil {
 		options.ResourceTenantID = resourceTenantID
+		// A shared agent parses in its owner's workspace, with the parser
+		// engines (and credentials) configured there: only the agent's own
+		// rules may pick one, not the caller.
+		if resourceTenantID != 0 && resourceTenantID != c.GetUint64(types.TenantIDContextKey.String()) {
+			options.ParserEngine = ""
+		}
 		if len(agent.Config.SupportedFileTypes) > 0 && !containsFileType(agent.Config.SupportedFileTypes, ext) {
 			c.Error(apperrors.NewBadRequestError("file type is not supported by this agent"))
 			return
@@ -89,7 +95,7 @@ func (h *Handler) UploadTemporaryDocument(c *gin.Context) {
 		c.Error(apperrors.NewBadRequestError(err.Error()))
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"success": true, "data": document})
+	c.JSON(http.StatusAccepted, gin.H{"success": true, "data": document.ForClient()})
 }
 
 func (h *Handler) ListTemporaryDocuments(c *gin.Context) {
@@ -103,6 +109,9 @@ func (h *Handler) ListTemporaryDocuments(c *gin.Context) {
 	if err != nil {
 		c.Error(apperrors.NewInternalServerError(err.Error()))
 		return
+	}
+	for i := range documents {
+		documents[i] = documents[i].ForClient()
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": documents})
 }
@@ -123,7 +132,7 @@ func (h *Handler) GetTemporaryDocument(c *gin.Context) {
 		c.Error(apperrors.NewNotFoundError("Attachment not found"))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": document})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": document.ForClient()})
 }
 
 func (h *Handler) PreviewTemporaryDocument(c *gin.Context) {

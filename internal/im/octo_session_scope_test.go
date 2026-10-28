@@ -48,7 +48,7 @@ func TestOctoSessionSeparatesBotsAndChangedKnowledge(t *testing.T) {
 	if err = db.Exec(text[start : start+end+2]).Error; err != nil {
 		t.Fatal(err)
 	}
-	migration, err := os.ReadFile("../../migrations/sqlite/000019_octo_session_scope.up.sql")
+	migration, err := os.ReadFile("../../migrations/sqlite/000039_octo_session_scope.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

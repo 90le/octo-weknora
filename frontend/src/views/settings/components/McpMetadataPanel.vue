@@ -3,24 +3,25 @@
     <div class="section-title-block">
       <div class="metadata-heading">
         <h4 class="setting-drawer__section-title">{{ t('mcpMetadata.tools') }}</h4>
-        <t-button
-          v-if="!busy || snapshot"
-          variant="text"
-          size="small"
-          theme="primary"
-          :loading="refreshing"
-          :disabled="loading || disabled || policyBusy"
-          @click="refresh"
-        >
-          <template #icon><t-icon name="refresh" /></template>
-          {{ t(snapshot ? 'mcpMetadata.refresh' : 'mcpMetadata.fetch') }}
-        </t-button>
+        <t-tooltip v-if="!busy || snapshot" :content="t('mcpMetadata.cacheHint')" placement="top-right"
+          :overlay-inner-style="{ maxWidth: '300px', whiteSpace: 'normal' }">
+          <t-button
+            variant="text"
+            size="small"
+            theme="primary"
+            :loading="refreshing"
+            :disabled="loading || disabled || policyBusy"
+            @click="refresh"
+          >
+            <template #icon><t-icon name="refresh" /></template>
+            {{ t(snapshot ? 'mcpMetadata.refresh' : 'mcpMetadata.fetch') }}
+          </t-button>
+        </t-tooltip>
       </div>
-      <p class="form-desc">{{ t('mcpMetadata.cacheHint') }}</p>
       <p v-if="snapshot" class="snapshot-meta">
-        <span>{{ t('mcpMetadata.toolCount', { count: snapshot.tools.length }) }}</span>
-        <span v-if="snapshot.server_name">{{ snapshot.server_name }} {{ snapshot.server_version }}</span>
-        <span>{{ t('mcpMetadata.syncedAt') }} {{ formatTime(snapshot.synced_at) }}</span>
+        <span class="snapshot-meta__item">{{ t('mcpMetadata.toolCount', { count: snapshot.tools.length }) }}</span>
+        <span v-if="snapshot.server_name" class="snapshot-meta__item">{{ snapshot.server_name }} {{ snapshot.server_version }}</span>
+        <span class="snapshot-meta__item">{{ t('mcpMetadata.syncedAt') }}{{ formatTime(snapshot.synced_at) }}</span>
         <t-tooltip
           v-if="!hasServerDocumentation"
           :content="t('mcpMetadata.noServerDocumentation')"
@@ -67,7 +68,6 @@
         <p v-else-if="snapshot?.stale" class="form-desc form-desc--warn">{{ t('mcpMetadata.stale') }}</p>
         <p v-else-if="!busy && !snapshot" class="form-desc">{{ t('mcpMetadata.notSynced') }}</p>
         <template v-if="snapshot">
-          <p class="form-desc">{{ t('mcpMetadata.policyHint') }}</p>
           <McpToolsList :tools="snapshot.tools" :service-id="snapshot.stale ? undefined : serviceId" @busy="onPolicyBusy" />
         </template>
       </div>
@@ -177,7 +177,7 @@ onBeforeUnmount(() => { generation++; emit('busy', false); emit('synced', false)
 
 .form-desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 1.5;
   color: var(--td-text-color-placeholder);
 
@@ -205,11 +205,20 @@ onBeforeUnmount(() => { generation++; emit('busy', false); emit('synced', false)
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 10px;
+  gap: 4px 0;
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 1.4;
-  color: var(--td-text-color-secondary);
+  color: var(--td-text-color-placeholder);
+}
+
+.snapshot-meta__item + .snapshot-meta__item::before {
+  content: '·';
+  margin: 0 6px;
+}
+
+.snapshot-meta > :not(.snapshot-meta__item) {
+  margin-left: 8px;
 }
 
 .snapshot-meta__help,
@@ -226,7 +235,7 @@ onBeforeUnmount(() => { generation++; emit('busy', false); emit('synced', false)
 
 .snapshot-meta__docs {
   font: inherit;
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 1.5;
 }
 
@@ -252,7 +261,7 @@ onBeforeUnmount(() => { generation++; emit('busy', false); emit('synced', false)
     padding: 0 !important;
     width: 400px;
     max-width: calc(100vw - 24px);
-    border-radius: 12px !important;
+    border-radius: var(--app-radius-xl) !important;
     background: var(--td-bg-color-container) !important;
     border: 0.5px solid var(--td-component-stroke) !important;
     box-shadow:
@@ -268,7 +277,7 @@ onBeforeUnmount(() => { generation++; emit('busy', false); emit('synced', false)
   }
 
   .server-docs-popup__title {
-    font-size: 13px;
+    font-size: var(--app-text-md);
     font-weight: 600;
     color: var(--td-text-color-primary);
   }
@@ -277,7 +286,7 @@ onBeforeUnmount(() => { generation++; emit('busy', false); emit('synced', false)
   .server-docs-popup pre {
     margin: 8px 0 0;
     font: inherit;
-    font-size: 12px;
+    font-size: var(--app-text-sm);
     line-height: 1.6;
     color: var(--td-text-color-secondary);
     white-space: pre-wrap;

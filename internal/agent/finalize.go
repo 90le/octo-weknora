@@ -220,19 +220,27 @@ func (e *AgentEngine) emitCompletionEvent(
 		knowledgeRefsInterface = append(knowledgeRefsInterface, ref)
 	}
 
+	data := event.AgentCompleteData{
+		FinalAnswer:     state.FinalAnswer,
+		KnowledgeRefs:   knowledgeRefsInterface,
+		AgentSteps:      steps,
+		Usage:           turnUsage(state),
+		TotalSteps:      len(state.RoundSteps),
+		TotalDurationMs: time.Since(startTime).Milliseconds(),
+		MessageID:       messageID, // Include message ID for proper message update
+	}
+	// The turn's usage is aggregated only from calls made through this chat
+	// model (each round and the final answer), so it is the model the usage
+	// belongs to. The message row keeps the requested binding, which can differ
+	// when a request override falls back to the agent's model.
+	if e.chatModel != nil {
+		data.ModelID = e.chatModel.GetModelID()
+	}
 	e.eventBus.Emit(ctx, event.Event{
 		ID:        generateEventID("complete"),
 		Type:      event.EventAgentComplete,
 		SessionID: sessionID,
-		Data: event.AgentCompleteData{
-			FinalAnswer:     state.FinalAnswer,
-			KnowledgeRefs:   knowledgeRefsInterface,
-			AgentSteps:      steps,
-			Usage:           turnUsage(state),
-			TotalSteps:      len(state.RoundSteps),
-			TotalDurationMs: time.Since(startTime).Milliseconds(),
-			MessageID:       messageID, // Include message ID for proper message update
-		},
+		Data:      data,
 	})
 
 	logger.Infof(ctx, "Agent execution completed in %d rounds", state.CurrentRound)
@@ -242,7 +250,9 @@ func (e *AgentEngine) emitCompletionEvent(
 // reported usage so the field stays absent from the completion event and the
 // persisted message alike.
 func turnUsage(state *types.AgentState) *types.TokenUsage {
-	if state == nil || state.TurnUsage.TotalTokens == 0 {
+	// A token scale is worth persisting on its own: the next turn's history
+	// loading is calibrated by it even when this provider reported no total.
+	if state == nil || (state.TurnUsage.TotalTokens == 0 && state.TurnUsage.ContextTokenScale <= 0) {
 		return nil
 	}
 	usage := state.TurnUsage

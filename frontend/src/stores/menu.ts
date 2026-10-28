@@ -4,6 +4,7 @@ import i18n from '@/i18n'
 import { useAuthStore } from '@/stores/auth'
 import { useDeploymentCapabilitiesStore } from '@/stores/deploymentCapabilities'
 import type { DeploymentCapabilityKey } from '@/config/deploymentCapabilities'
+import type { QuestionOrigin } from '@/utils/questionOrigin'
 
 type MenuChild = Record<string, any>
 
@@ -30,7 +31,10 @@ export const useMenuStore = defineStore('menuStore', () => {
       children: createMenuChildren()
     },
     { title: '', titleKey: 'menu.knowledgeBase', icon: 'zhishiku', path: 'knowledge-bases' },
+    // Artifacts only exist where skills run in a sandbox.
+    { title: '', titleKey: 'menu.artifacts', icon: 'artifact', path: 'artifacts', requiredCapability: 'settings.sandbox' },
     { title: '', titleKey: 'menu.agents', icon: 'agent', path: 'agents', requiredCapability: 'agents' },
+    { title: '', titleKey: 'toolbox.title', icon: 'toolbox', path: 'toolbox' },
     { title: '', titleKey: 'menu.organizations', icon: 'organization', path: 'organizations', requiredCapability: 'organizations' },
     { title: '渠道接入', icon: 'channels', path: 'channels', requiredCapability: 'integrations.im' },
     { title: '问题反馈', icon: 'issues', path: 'issues' },
@@ -44,6 +48,7 @@ export const useMenuStore = defineStore('menuStore', () => {
   const firstModelId = ref('')
   const firstImageFiles = ref<any[]>([])
   const firstAttachmentFiles = ref<any[]>([])
+  const firstQuestionOrigin = ref<QuestionOrigin | null>(null)
   const prefillQuery = ref('')
 
   const applyMenuTranslations = () => {
@@ -128,12 +133,13 @@ export const useMenuStore = defineStore('menuStore', () => {
     isFirstSession.value = payload
   }
 
-  const changeFirstQuery = (payload: string, mentionedItems: any[] = [], modelId: string = '', imageFiles: any[] = [], attachmentFiles: any[] = []) => {
+  const changeFirstQuery = (payload: string, mentionedItems: any[] = [], modelId: string = '', imageFiles: any[] = [], attachmentFiles: any[] = [], questionOrigin: QuestionOrigin | null = null) => {
     firstQuery.value = payload
     firstMentionedItems.value = mentionedItems
     firstModelId.value = modelId
     firstImageFiles.value = imageFiles
     firstAttachmentFiles.value = attachmentFiles
+    firstQuestionOrigin.value = questionOrigin
   }
 
   const setPrefillQuery = (q: string) => {
@@ -155,6 +161,7 @@ export const useMenuStore = defineStore('menuStore', () => {
     firstModelId,
     firstImageFiles,
     firstAttachmentFiles,
+    firstQuestionOrigin,
     prefillQuery,
     clearMenuArr,
     updatemenuArr,

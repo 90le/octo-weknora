@@ -29,6 +29,12 @@ export interface MCPService {
     // OAuth-only, non-secret configuration.
     scopes?: string[]
     auth_server_metadata_url?: string
+    // OAuth client registered with the authorization server ahead of time.
+    // Empty means dynamic client registration. Non-secret.
+    client_id?: string
+    // Secret of client_id. Like api_key it is never returned; edits go
+    // through the /credentials subresource.
+    client_secret?: string
   }
   advanced_config?: {
     timeout?: number
@@ -90,8 +96,27 @@ export interface MCPTestResult {
 }
 
 // List all MCP services
-export async function listMCPServices(): Promise<MCPService[]> {
-  const response: any = await get('/api/v1/mcp-services')
+/** Locates a shared agent's source workspace, same parameters as a chat request. */
+export interface MCPAgentScope {
+  agentId?: string
+  /** Set only for a shared agent; left empty for this workspace's own agents. */
+  sourceTenantId?: string | number
+}
+
+// Lists MCP services.
+//
+// With a shared agent, the result is the services THAT agent can be @mentioned
+// with: they live in its owner's workspace and none of their ids match anything
+// in the caller's. Those rows also carry a narrowed field set — no URL,
+// headers or credential metadata, which describe how the owner wired the
+// service up — since the picker needs nothing more.
+export async function listMCPServices(agent?: MCPAgentScope): Promise<MCPService[]> {
+  const params: Record<string, string> = {}
+  if (agent?.agentId && agent?.sourceTenantId) {
+    params.agent_id = agent.agentId
+    params.agent_source_tenant_id = String(agent.sourceTenantId)
+  }
+  const response: any = await get('/api/v1/mcp-services', { params })
   return response.data || []
 }
 
@@ -168,7 +193,7 @@ export async function setMCPToolEnabled(serviceId: string, toolName: string, ena
 // client reconnect server-side.
 // ----------------------------------------------------------------------------
 
-export type McpCredentialField = 'api_key' | 'token'
+export type McpCredentialField = 'api_key' | 'token' | 'client_secret'
 
 export interface CredentialFieldMetadata {
   configured: boolean

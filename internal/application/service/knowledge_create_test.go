@@ -271,6 +271,41 @@ func TestCreateKnowledgeFromGitHubPinsSourceBeforeParserEnqueue(t *testing.T) {
 	require.Equal(t, u, repo.createdKnowledge.Source)
 }
 
+// Datasource sync deletes the previous knowledge for an external_id before
+// calling CreateKnowledgeFromFile. Early JSON rejection here would leave a
+// gap (old gone, nothing created). Malformed .json must still create a row
+// and fail later in async parse — HTTP upload rejects via the handler instead.
+func TestCreateKnowledgeFromFileAcceptsInvalidJSONForAsyncParse(t *testing.T) {
+	t.Parallel()
+
+	repo := &createKnowledgeFileRepoStub{}
+	fileSvc := &createKnowledgeFileServiceStub{}
+	task := &createKnowledgeTaskEnqueuerStub{}
+	svc := &knowledgeService{
+		repo:      repo,
+		kbService: &createKnowledgeFileKBServiceStub{kb: &types.KnowledgeBase{ID: "kb-1"}},
+		fileSvc:   fileSvc,
+		task:      task,
+	}
+
+	knowledge, err := svc.CreateKnowledgeFromFile(
+		newCreateKnowledgeFileContext(),
+		"kb-1",
+		newMultipartFileHeader(t, "bad.json", "{\n// comment\n\"a\": 1\n}"),
+		map[string]string{"datasource_id": "ds-1", "external_id": "ext-1"},
+		nil,
+		"bad.json",
+		nil,
+		"notion",
+		nil,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, knowledge)
+	require.Equal(t, 1, repo.createCalls)
+	require.Equal(t, 1, task.calls)
+}
+
 func TestCreateKnowledgeFromImageFallsBackWhenLegacyStorageConfigIsIncomplete(t *testing.T) {
 	t.Parallel()
 
@@ -361,6 +396,7 @@ func TestCreateKnowledgeFromFile_PersistsProcessOverrides(t *testing.T) {
 	chunkSize := 512
 	overrides := &types.KnowledgeProcessOverrides{
 		ChunkingConfig: &types.ChunkingConfig{ChunkSize: chunkSize},
+		SummaryEnabled: processConfigBoolPtr(false),
 	}
 
 	knowledge, err := svc.CreateKnowledgeFromFile(
@@ -383,6 +419,8 @@ func TestCreateKnowledgeFromFile_PersistsProcessOverrides(t *testing.T) {
 	parsed, err := repo.createdKnowledge.ProcessOverrides()
 	require.NoError(t, err)
 	require.NotNil(t, parsed)
+	require.NotNil(t, parsed.SummaryEnabled)
+	require.False(t, *parsed.SummaryEnabled)
 	require.NotNil(t, parsed.ChunkingConfig)
 	require.Equal(t, chunkSize, parsed.ChunkingConfig.ChunkSize)
 

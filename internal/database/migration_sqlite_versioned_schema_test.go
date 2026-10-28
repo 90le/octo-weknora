@@ -2,8 +2,10 @@ package database
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,7 +14,8 @@ import (
 // versionedSQLiteTables is the set of tables that SQLite migrations must
 // create to stay in sync with the versioned (PostgreSQL) migrations:
 // 000041 task queue, 000053 system settings, 000055 processing spans,
-// 000063 knowledge multi-tags, 000093 browser authorization.
+// 000063 knowledge multi-tags, 000093 browser authorization, 000103 message
+// artifacts.
 var versionedSQLiteTables = []string{
 	"local_source_spaces", "local_source_roots", "local_source_registry_state",
 	"octo_knowledge_issues", "octo_knowledge_issue_events", "octo_knowledge_contacts", "octo_knowledge_proposals",
@@ -26,32 +29,60 @@ var versionedSQLiteTables = []string{
 	"datasource_restart_recovery_runs",
 	"github_document_sync_runs", "github_document_sync_items",
 	"system_settings",
+	"model_catalog_configs",
+	"chunk_images",
 	"knowledge_processing_spans",
 	"knowledge_tag_relations",
 	"browser_devices",
 	"browser_pairings",
 	"browser_task_interruptions",
+	"fork_snapshot_leases",
+	"mcp_endpoints",
+	"mcp_metadata",
+	"message_artifacts",
+	"tenant_skills",
+	"tenant_skill_snapshots",
+	"tenant_skill_catalog",
+	"tenant_user_env_vars",
 }
 
 // versionedSQLiteColumns maps each existing table to the columns that the
 // versioned migrations add and the SQLite baseline was missing.
 var versionedSQLiteColumns = map[string][]string{
-	"octo_scopes":        {"allow_public_web"},                                          // 000107
-	"octo_connections":   {"verified_identity"},                                         // 000104
-	"memory_subjects":    {"extraction_state"},                                          // 000094
-	"memory_items":       {"replaces_id"},                                               // 000094
-	"tenants":            {"api_principal_config"},                                      // 000064
-	"users":              {"is_system_admin"},                                           // 000053
-	"knowledges":         {"pending_subtasks_count"},                                    // 000056
-	"messages":           {"attachments", "usage"},                                      // 000034, 000085
+	"model_catalog_configs": {"version", "overlay", "history", "updated_by", "updated_at"},        // 000031
+	"octo_scopes":           {"allow_public_web"},                                                 // 000048
+	"octo_connections":      {"verified_identity"},                                                // 000045
+	"memory_subjects":       {"extraction_state"},                                                 // 000094
+	"memory_items":          {"replaces_id"},                                                      // 000094
+	"tenants":               {"api_principal_config"},                                             // 000064
+	"users":                 {"is_system_admin"},                                                  // 000053
+	"knowledges":            {"pending_subtasks_count", "profile"},                                // 000056, 000101
+	"knowledge_bases":       {"profile_config", "generated_profile"},                              // 000101
+	"messages":              {"attachments", "usage", "sandbox_checkpoint", "context_checkpoint"}, // 000034/085/097/105
+	"sessions": {
+		"parent_session_id", "forked_from_message_id", "fork_bootstrap", // 000097
+		"sandbox_config_tenant_id", // 000027
+		"host_workspace_dir",       // 000029
+	},
 	"tenant_invitations": {"token", "accepted_count"},                                   // 000054
 	"embed_channels":     {"allow_memory"},                                              // 000060
+	"im_channels":        {"locale"},                                                    // 000030
+	"chunks":             {"source_locators"},                                           // 000033
 	"mcp_oauth_tokens":   {"principal_type", "principal_id"},                            // 000064
 	"mcp_tool_approvals": {"enabled"},                                                   // 000091
-	"data_sources":       {"restart_recovery_lease_id", "restart_recovery_lease_until"}, // 000105
+	"mcp_services":       {"usage_instructions"},                                        // 000092
+	"message_artifacts":  {"deleted_at"},                                                // 000107
+	"data_sources":       {"restart_recovery_lease_id", "restart_recovery_lease_until"}, // 000046
+	"tenant_skills": {
+		"envs", "served", "catalog_id", "install_session_id", "install_message_id",
+	}, // 000028
+	"tenant_skill_snapshots": {"planned_name"}, // 000028
+	"tenant_user_env_vars": {
+		"principal_type", "principal_id", "sandbox_config_id", "skill_id", "name", "value",
+	}, // 000028
 }
 
-const expectedSQLiteMigrationVersion = 28
+const expectedSQLiteMigrationVersion = 48
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)
@@ -80,10 +111,106 @@ func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 		}
 	}
 
+	require.True(t, sqliteIndexExists(t, db, "idx_messages_session_created_id"),
+		"SQLite migrations must add the session/created_at index") // 000106
+	require.True(t, sqliteIndexExists(t, db, "idx_messages_live_attachments"),
+		"SQLite migrations must index live user message references")
+	assertSQLiteAgentHistoryQueriesUseTheIndex(t, db)
+
+	var catalogVersion int
+	var catalogOverlay string
+	catalogRow := db.QueryRow("SELECT version, overlay FROM model_catalog_configs WHERE id = 1")
+	require.NoError(t, catalogRow.Scan(&catalogVersion, &catalogOverlay))
+	require.Zero(t, catalogVersion)
+	require.JSONEq(t, `{"providers":{}}`, catalogOverlay)
+
 	assertSQLiteShareLinkInvitationsWork(t, db)
 	assertSQLiteMCPOAuthPrincipalUpsertWorks(t, db)
 	require.False(t, sqliteColumnExists(t, db, "knowledges", "tag_id"),
 		"SQLite migrations must drop legacy knowledges.tag_id after multi-tag migration")
+}
+
+// TestSQLiteMigrationsUpgradeForkLiteNumbering covers a Lite database created
+// under the fork's 0.8.0 numbering: version 28, its Octo objects already
+// present, and none of the objects upstream v0.8.3 added as 17-36. Those 20
+// versions sit below the recorded number, so the upgrade has to rewind the
+// numbering before replaying; otherwise the database comes up without the
+// session-fork, message-artifact, skill and connector tables.
+func TestSQLiteMigrationsUpgradeForkLiteNumbering(t *testing.T) {
+	repoRoot := sqliteRepoRoot(t)
+	dbPath := filepath.Join(t.TempDir(), "fork-080.db")
+	opts := MigrationOptions{SQLiteDBPath: dbPath}
+
+	chdirAndRestore(t, buildForkLiteMigrationRoot(t, repoRoot))
+	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", opts))
+
+	db := openSQLiteDB(t, dbPath)
+	version, dirty := sqliteMigrationState(t, db)
+	require.Equal(t, forkLiteLegacyMaxVersion, version)
+	require.False(t, dirty)
+	_, err := db.Exec(`INSERT INTO octo_scopes
+		(id, tenant_id, account_id, group_id, display_name, sync_status, created_at, updated_at)
+		VALUES ('legacy-scope', 1, 'acct', 'group', 'Legacy chat', 'verified', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	chdirAndRestore(t, repoRoot)
+	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", opts))
+
+	db = openSQLiteDB(t, dbPath)
+	version, dirty = sqliteMigrationState(t, db)
+	require.Equal(t, expectedSQLiteMigrationVersion, version)
+	require.False(t, dirty)
+
+	for _, table := range versionedSQLiteTables {
+		require.Truef(t, sqliteTableExists(t, db, table), "upgraded Lite DB must have table %s", table)
+	}
+	for table, columns := range versionedSQLiteColumns {
+		for _, column := range columns {
+			require.Truef(t, sqliteColumnExists(t, db, table, column),
+				"upgraded Lite DB must have column %s.%s", table, column)
+		}
+	}
+
+	var displayName, syncStatus string
+	require.NoError(t, db.QueryRow(
+		"SELECT display_name, sync_status FROM octo_scopes WHERE id = 'legacy-scope'",
+	).Scan(&displayName, &syncStatus))
+	require.Equal(t, "Legacy chat", displayName)
+	require.Equal(t, "verified", syncStatus)
+}
+
+// buildForkLiteMigrationRoot reproduces the Lite migration set the fork
+// shipped with v0.8.0: upstream 0-16, then its Octo slots under 17-28.
+func buildForkLiteMigrationRoot(t *testing.T, repoRoot string) string {
+	t.Helper()
+	dest := copySQLiteMigrationsThrough(t, repoRoot, forkLiteSharedTailVersion)
+	srcDir := filepath.Join(repoRoot, "migrations", "sqlite")
+	destDir := filepath.Join(dest, "migrations", "sqlite")
+
+	entries, err := os.ReadDir(srcDir)
+	require.NoError(t, err)
+	renamed := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+		var version int
+		_, scanErr := fmt.Sscanf(name, "%d_", &version)
+		require.NoError(t, scanErr, "sqlite migration filename %s", name)
+		if version < 37 {
+			continue
+		}
+		data, readErr := os.ReadFile(filepath.Join(srcDir, name))
+		require.NoError(t, readErr)
+		legacy := fmt.Sprintf("%06d_%s", version-20, name[7:])
+		require.NoError(t, os.WriteFile(filepath.Join(destDir, legacy), data, 0o600))
+		renamed++
+	}
+	require.Equal(t, forkLiteLegacyMaxVersion-forkLiteSharedTailVersion, renamed,
+		"every Octo slot must land in the legacy range")
+	return dest
 }
 
 func TestSQLiteMigrationsUpgradeV4PreservesData(t *testing.T) {
@@ -148,6 +275,42 @@ func TestSQLiteMigrationsUpgradeV4PreservesData(t *testing.T) {
 	require.False(t, sqliteColumnExists(t, db, "knowledges", "tag_id"))
 }
 
+func TestSQLiteMigrationsUpgradeV16AddsSessionForkColumns(t *testing.T) {
+	repoRoot := sqliteRepoRoot(t)
+
+	legacyRoot := copySQLiteMigrationsThrough(t, repoRoot, 16)
+	chdirAndRestore(t, legacyRoot)
+
+	dbPath := filepath.Join(t.TempDir(), "upgrade-v16.db")
+	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
+
+	db := openSQLiteDB(t, dbPath)
+	versionBefore, dirtyBefore := sqliteMigrationState(t, db)
+	require.Equal(t, 16, versionBefore)
+	require.False(t, dirtyBefore)
+	require.False(t, sqliteColumnExists(t, db, "sessions", "parent_session_id"))
+	require.False(t, sqliteColumnExists(t, db, "sessions", "forked_from_message_id"))
+	require.False(t, sqliteColumnExists(t, db, "sessions", "fork_bootstrap"))
+	require.False(t, sqliteColumnExists(t, db, "messages", "sandbox_checkpoint"))
+
+	chdirAndRestore(t, repoRoot)
+	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
+
+	db = openSQLiteDB(t, dbPath)
+	versionAfter, dirtyAfter := sqliteMigrationState(t, db)
+	require.Equal(t, expectedSQLiteMigrationVersion, versionAfter)
+	require.False(t, dirtyAfter)
+	for _, column := range versionedSQLiteColumns["sessions"] {
+		require.Truef(
+			t,
+			sqliteColumnExists(t, db, "sessions", column),
+			"upgraded SQLite DB must have column sessions.%s",
+			column,
+		)
+	}
+	require.True(t, sqliteColumnExists(t, db, "messages", "sandbox_checkpoint"))
+}
+
 func sqliteRepoRoot(t *testing.T) string {
 	t.Helper()
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
@@ -183,6 +346,45 @@ func sqliteTableExists(t *testing.T, db *sql.DB, table string) bool {
 	require.NoError(t, db.QueryRow(
 		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
 		table,
+	).Scan(&n))
+	return n == 1
+}
+
+// assertSQLiteAgentHistoryQueriesUseTheIndex checks the two per-turn agent
+// history queries walk idx_messages_session_created_id in order instead of
+// sorting every message of the session.
+func assertSQLiteAgentHistoryQueriesUseTheIndex(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for name, query := range map[string]string{
+		"backwards page": `SELECT * FROM messages WHERE session_id = 's'
+			AND (created_at < '2026-01-01' OR (created_at = '2026-01-01' AND id < 'x'))
+			AND deleted_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 200`,
+		"newest checkpoint": `SELECT id FROM messages WHERE session_id = 's' AND role = 'assistant'
+			AND context_checkpoint IS NOT NULL AND deleted_at IS NULL
+			ORDER BY created_at DESC, id DESC LIMIT 1`,
+	} {
+		rows, err := db.Query("EXPLAIN QUERY PLAN " + query)
+		require.NoError(t, err, name)
+		var plan strings.Builder
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			require.NoError(t, rows.Scan(&id, &parent, &unused, &detail), name)
+			plan.WriteString(detail + "\n")
+		}
+		require.NoError(t, rows.Err(), name)
+		require.NoError(t, rows.Close(), name)
+		require.Contains(t, plan.String(), "idx_messages_session_created_id", "%s plan:\n%s", name, plan.String())
+		require.NotContains(t, plan.String(), "TEMP B-TREE", "%s must not sort:\n%s", name, plan.String())
+	}
+}
+
+func sqliteIndexExists(t *testing.T, db *sql.DB, index string) bool {
+	t.Helper()
+	var n int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+		index,
 	).Scan(&n))
 	return n == 1
 }
@@ -260,22 +462,35 @@ func assertSQLiteMCPOAuthPrincipalUpsertWorks(t *testing.T, db *sql.DB) {
 
 func copySQLiteMigrationsV4(t *testing.T, repoRoot string) string {
 	t.Helper()
+	return copySQLiteMigrationsThrough(t, repoRoot, 4)
+}
+
+func copySQLiteMigrationsThrough(t *testing.T, repoRoot string, maxVersion int) string {
+	t.Helper()
 	dest := t.TempDir()
 	srcDir := filepath.Join(repoRoot, "migrations", "sqlite")
 	destDir := filepath.Join(dest, "migrations", "sqlite")
 	require.NoError(t, os.MkdirAll(destDir, 0o755))
 
-	legacy := []string{
-		"000000_init.up.sql",
-		"000001_remove_wiki_log.up.sql",
-		"000002_knowledge_folder_path.up.sql",
-		"000003_knowledge_base_auto_tag_config.up.sql",
-		"000004_memory.up.sql",
-	}
-	for _, name := range legacy {
-		data, err := os.ReadFile(filepath.Join(srcDir, name))
-		require.NoError(t, err)
+	entries, err := os.ReadDir(srcDir)
+	require.NoError(t, err)
+	copied := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+		var version int
+		_, scanErr := fmt.Sscanf(name, "%d_", &version)
+		require.NoError(t, scanErr, "sqlite migration filename %s", name)
+		if version > maxVersion {
+			continue
+		}
+		data, readErr := os.ReadFile(filepath.Join(srcDir, name))
+		require.NoError(t, readErr)
 		require.NoError(t, os.WriteFile(filepath.Join(destDir, name), data, 0o600))
+		copied++
 	}
+	require.Greater(t, copied, 0)
 	return dest
 }

@@ -26,21 +26,21 @@ func testStore(t *testing.T) *Store {
 	if err := db.Exec("CREATE TABLE knowledge_bases (id VARCHAR(36) PRIMARY KEY, tenant_id BIGINT NOT NULL, deleted_at TIMESTAMP)").Error; err != nil {
 		t.Fatal(err)
 	}
-	migration, err := os.ReadFile("../../migrations/sqlite/000017_octo_scopes.up.sql")
+	migration, err := os.ReadFile("../../migrations/sqlite/000037_octo_scopes.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(string(migration)).Error; err != nil {
 		t.Fatal(err)
 	}
-	next, err := os.ReadFile("../../migrations/sqlite/000018_octo_connections.up.sql")
+	next, err := os.ReadFile("../../migrations/sqlite/000038_octo_connections.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(string(next)).Error; err != nil {
 		t.Fatal(err)
 	}
-	grants, err := os.ReadFile("../../migrations/sqlite/000023_octo_knowledge_grants.up.sql")
+	grants, err := os.ReadFile("../../migrations/sqlite/000043_octo_knowledge_grants.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,14 +50,14 @@ func testStore(t *testing.T) *Store {
 	if err := db.Exec("INSERT INTO knowledge_bases(id, tenant_id) VALUES ('kb-a', 1), ('kb-b', 2)").Error; err != nil {
 		t.Fatal(err)
 	}
-	identity, err := os.ReadFile("../../migrations/sqlite/000025_octo_verified_identity.up.sql")
+	identity, err := os.ReadFile("../../migrations/sqlite/000045_octo_verified_identity.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = db.Exec(string(identity)).Error; err != nil {
 		t.Fatal(err)
 	}
-	publicWeb, err := os.ReadFile("../../migrations/sqlite/000028_octo_scope_public_web.up.sql")
+	publicWeb, err := os.ReadFile("../../migrations/sqlite/000048_octo_scope_public_web.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

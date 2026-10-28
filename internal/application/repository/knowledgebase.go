@@ -12,15 +12,21 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-var ErrKnowledgeBaseNotFound = errors.New("knowledge base not found")
-var ErrKnowledgeBaseInUse = errors.New("knowledge base is still used by an Octo scope")
+var (
+	// ErrKnowledgeBaseNotFound identifies a missing knowledge base.
+	ErrKnowledgeBaseNotFound = errors.New("knowledge base not found")
+	// ErrKnowledgeBaseInUse indicates that a scope still uses the knowledge base.
+	ErrKnowledgeBaseInUse = errors.New("knowledge base is still used by an Octo scope")
+)
 
-type verifiedOctoScopeDeletionKey struct{}
-type verifiedOctoScopeDeletion struct {
-	tenantID uint64
-	scopeID  string
-	actorUID string
-}
+type (
+	verifiedOctoScopeDeletionKey struct{}
+	verifiedOctoScopeDeletion    struct {
+		tenantID uint64
+		scopeID  string
+		actorUID string
+	}
+)
 
 // WithVerifiedOctoScopeDeletion is only for a server-verified Octo knowledge
 // proposal. It does not authorize a caller: the business service must first
@@ -190,6 +196,27 @@ func (r *knowledgeBaseRepository) UpdateKnowledgeBase(ctx context.Context, kb *t
 	return r.db.WithContext(ctx).Save(kb).Error
 }
 
+// UpdateKnowledgeBaseGeneratedProfile writes the generated_profile column
+// only. The rest of the row is left untouched so a settings save that lands
+// while a profile is being generated is not overwritten by the worker.
+func (r *knowledgeBaseRepository) UpdateKnowledgeBaseGeneratedProfile(
+	ctx context.Context, id string, profile *types.KnowledgeBaseProfile,
+) error {
+	if id == "" {
+		return errors.New("knowledge base ID cannot be empty")
+	}
+	var value interface{}
+	if profile != nil {
+		value = *profile
+	}
+	return r.db.WithContext(ctx).Model(&types.KnowledgeBase{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"generated_profile": value,
+			"updated_at":        time.Now(),
+		}).Error
+}
+
 // DeleteKnowledgeBase serializes a soft-delete with Octo scope binding. Both
 // this operation and SetBinding lock the active KB row before inspecting or
 // changing scope references, so a concurrent bind cannot commit after the
@@ -322,7 +349,7 @@ func (r *knowledgeBaseRepository) ListModelUsages(
 		Model(&types.KnowledgeBase{}).
 		Select(
 			"id", "name", "embedding_model_id", "summary_model_id",
-			"image_processing_config", "vlm_config", "asr_config", "wiki_config",
+			"image_processing_config", "vlm_config", "asr_config", "wiki_config", "auto_tag_config",
 		).
 		Where("tenant_id = ?", tenantID)
 	query = scopeKnowledgeBasesByModelID(query, modelID)

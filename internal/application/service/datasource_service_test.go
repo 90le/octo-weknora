@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -93,7 +94,7 @@ func (s *processSyncKBService) ListKnowledgeBasesByTenantID(context.Context, uin
 }
 
 func (s *processSyncKBService) UpdateKnowledgeBase(
-	context.Context, string, string, string, *types.KnowledgeBaseConfig,
+	context.Context, string, string, string, *types.KnowledgeBaseConfig, *types.VLMConfig,
 ) (*types.KnowledgeBase, error) {
 	return nil, nil
 }
@@ -103,6 +104,17 @@ func (s *processSyncKBService) TogglePinKnowledgeBase(context.Context, string) (
 }
 
 func (s *processSyncKBService) HybridSearch(context.Context, string, types.SearchParams) ([]*types.SearchResult, error) {
+	return nil, nil
+}
+
+func (s *processSyncKBService) HybridSearchWithRerank(
+	ctx context.Context, id string, params types.SearchParams,
+) (*types.RetrievalResult, error) {
+	results, err := s.HybridSearch(ctx, id, params)
+	return &types.RetrievalResult{Results: results}, err
+}
+
+func (s *processSyncKBService) ReadChunkImage(context.Context, *types.SearchResult) ([]byte, error) {
 	return nil, nil
 }
 
@@ -185,7 +197,12 @@ func (r *processSyncSyncLogRepo) UpdateResultIfRunning(_ context.Context, log *t
 	if current.Status != types.SyncLogStatusRunning {
 		return false, nil
 	}
-	r.logs[log.ID] = log
+	// Store a snapshot, the way a database does. Keeping the caller's pointer
+	// would let the next in-memory status change look like somebody else's
+	// terminal write and turn an ordinary finish into a compare-and-set miss.
+	stored := *log
+	stored.Result = append(types.JSON(nil), log.Result...)
+	r.logs[log.ID] = &stored
 	return true, nil
 }
 
@@ -316,7 +333,7 @@ type deletionLookupKnowledgeRepo struct {
 	interfaces.KnowledgeRepository
 	knowledge         *types.Knowledge
 	lookupErr         error
-	metadataUpdates   []map[string]string // metadata persisted via UpdateKnowledge
+	metadataUpdates   []map[string]string // metadata persisted via UpdateKnowledge / UpdateKnowledgeColumn
 	metadataUpdateErr error
 	hardDeleted       []string
 	hardDeleteErr     error
@@ -338,6 +355,19 @@ func (r *deletionLookupKnowledgeRepo) UpdateKnowledge(_ context.Context, knowled
 	}
 	r.metadataUpdates = append(r.metadataUpdates, metadata)
 	return nil
+}
+
+func (r *deletionLookupKnowledgeRepo) UpdateKnowledgeColumn(
+	ctx context.Context, id string, column string, value interface{},
+) error {
+	if column != "metadata" {
+		return fmt.Errorf("unexpected column update %q", column)
+	}
+	raw, ok := value.(types.JSON)
+	if !ok {
+		return fmt.Errorf("unexpected metadata value %T", value)
+	}
+	return r.UpdateKnowledge(ctx, &types.Knowledge{ID: id, Metadata: raw})
 }
 
 func (r *deletionLookupKnowledgeRepo) FindByDataSourceExternalID(

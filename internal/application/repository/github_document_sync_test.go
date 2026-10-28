@@ -255,11 +255,13 @@ func TestGitHubDocumentCheckpointPostgresSchemaAndRollback(t *testing.T) {
 	require.NoError(t, db.Raw("SELECT current_database()").Scan(&name).Error)
 	require.True(t, strings.HasPrefix(name, "weknora_test_"), "refusing to mutate non-test database %q", name)
 	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.DataSource{}))
-	up, err := os.ReadFile(filepath.Join("..", "..", "..", "migrations", "versioned", "000106_github_document_checkpoint.up.sql"))
+	up, err := os.ReadFile(filepath.Join("..", "..", "..", "migrations", "versioned",
+		"000129_github_document_checkpoint.up.sql"))
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(up)).Error)
 	t.Cleanup(func() {
-		down, readErr := os.ReadFile(filepath.Join("..", "..", "..", "migrations", "versioned", "000106_github_document_checkpoint.down.sql"))
+		down, readErr := os.ReadFile(filepath.Join("..", "..", "..", "migrations", "versioned",
+			"000129_github_document_checkpoint.down.sql"))
 		if readErr == nil {
 			_ = db.Exec(string(down)).Error
 		}
