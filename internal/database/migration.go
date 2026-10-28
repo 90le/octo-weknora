@@ -86,9 +86,13 @@ func RunMigrations(dsn string) error {
 
 // MigrationOptions configures migration behavior
 type MigrationOptions struct {
-	// AutoRecoverDirty when true, automatically attempts to recover from dirty state
-	// by forcing to the previous version and retrying the migration
+	// AutoRecoverDirty allows SQLite dirty recovery by forcing to the previous
+	// version. PostgreSQL dirty states are always rejected for manual review.
 	AutoRecoverDirty bool
+
+	// StopOnMigrationError prevents a failed Up from being force-retried.
+	// Startup uses this so a migration failure always prevents readiness.
+	StopOnMigrationError bool
 
 	// SQLiteDBPath is the raw filesystem path to the SQLite database file.
 	// When set, the migrator opens the DB directly via sql.Open instead of
@@ -109,6 +113,7 @@ func RunMigrationsWithOptions(dsn string, opts MigrationOptions) error {
 	}
 
 	var m *migrate.Migrate
+	var sqliteDB *sql.DB
 	if opts.SQLiteDBPath != "" {
 		sqlDB, err := sql.Open("sqlite3", opts.SQLiteDBPath)
 		if err != nil {
@@ -132,6 +137,7 @@ func RunMigrationsWithOptions(dsn string, opts MigrationOptions) error {
 			setMigrationState(0, false, wrapped.Error(), false)
 			return wrapped
 		}
+		sqliteDB = sqlDB
 	} else {
 		var err error
 		m, err = migrate.New(migrationsPath, dsn)
@@ -155,6 +161,23 @@ func RunMigrationsWithOptions(dsn string, opts MigrationOptions) error {
 		logger.Infof(ctx, "Database has no migration history, will start from version 0")
 	} else {
 		logger.Infof(ctx, "Current migration version: %d, dirty: %v", oldVersion, oldDirty)
+	}
+
+	// The fork's PostgreSQL 96-107 slots overlap upstream migration numbers.
+	// Inspect the legacy range before Up without changing the recorded version.
+	postgresMigration := isPostgresMigrationDSN(dsn)
+	if postgresMigration && versionErr == nil && oldDirty {
+		return captureMigrationFailure(m, postgresDirtyError(oldVersion))
+	}
+	if postgresMigration && versionErr == nil && oldVersion == 107 {
+		if err := checkPostgres107BeforeMigration(ctx, dsn, oldDirty); err != nil {
+			return captureMigrationFailure(m, err)
+		}
+	}
+	if postgresMigration && versionErr == nil && isPostgresLegacyEarlyVersion(oldVersion) {
+		if err := checkPostgresLegacyEarlyBeforeMigration(ctx, dsn, oldVersion); err != nil {
+			return captureMigrationFailure(m, err)
+		}
 	}
 
 	// If database is in dirty state, try to recover or return error
@@ -190,14 +213,30 @@ func RunMigrationsWithOptions(dsn string, opts MigrationOptions) error {
 		}
 	}
 
+	// A Lite database from the fork's 0.8.0 numbering records 17-28 under a
+	// different sequence than upstream v0.8.3 uses, so those upstream versions
+	// would never run. Rewind to the last shared version first.
+	if sqliteDB != nil && versionErr != migrate.ErrNilVersion {
+		if err := rewindForkLiteNumbering(ctx, sqliteDB, int(oldVersion)); err != nil {
+			logger.Errorf(ctx, "Failed to rewind fork Lite migration numbering: %v", err)
+			return captureMigrationFailure(m, err)
+		}
+	}
+
 	// Run all pending migrations
 	logger.Infof(ctx, "Running pending migrations...")
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		logger.Errorf(ctx, "Migration failed: %v", err)
+		if opts.StopOnMigrationError {
+			return captureMigrationFailure(m, fmt.Errorf("migration failed; automatic retry disabled: %w", err))
+		}
 		// Check if error is due to dirty state (in case it became dirty during migration)
 		currentVersion, currentDirty, versionCheckErr := m.Version()
 		if versionCheckErr == nil && currentDirty {
 			logger.Warnf(ctx, "Migration caused dirty state at version %d", currentVersion)
+			if postgresMigration {
+				return captureMigrationFailure(m, fmt.Errorf("%w; migration error: %v", postgresDirtyError(currentVersion), err))
+			}
 			if opts.AutoRecoverDirty {
 				logger.Infof(ctx, "Attempting to recover from dirty state...")
 				// Try to recover and retry
@@ -237,6 +276,15 @@ func RunMigrationsWithOptions(dsn string, opts MigrationOptions) error {
 	}
 
 	// Get current version after migration
+	// SQLite has no ADD COLUMN IF NOT EXISTS; the renumbered Octo slots leave
+	// their columns to this reconciliation. Running it here covers every entry
+	// point, including tests and an external migrate invocation.
+	if sqliteDB != nil {
+		if err := ReconcileSQLiteOctoColumns(sqliteDB); err != nil {
+			return captureMigrationFailure(m, fmt.Errorf("reconcile SQLite Octo columns: %w", err))
+		}
+	}
+
 	version, dirty, err := m.Version()
 	if err != nil && err != migrate.ErrNilVersion {
 		return captureMigrationFailure(m, fmt.Errorf("failed to get migration version: %w", err))

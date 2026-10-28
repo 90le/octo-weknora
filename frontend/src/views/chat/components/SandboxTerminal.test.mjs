@@ -24,6 +24,18 @@ test('xterm palette keeps prompt green but ls directories blue', () => {
   assert.doesNotMatch(prompt, /\]\\w\\\[/)
 })
 
+test('hidden terminal does not resize the live PTY to a zero-size fit', () => {
+  assert.match(terminal, /function containerHasPtySize/)
+  assert.match(terminal, /clientWidth >= 20/)
+  assert.match(terminal, /clientHeight >= 20/)
+  const start = terminal.indexOf('function applyFit')
+  const end = terminal.indexOf('function fitAndFocus')
+  assert.ok(start >= 0 && end > start)
+  const applyFit = terminal.slice(start, end)
+  assert.match(applyFit, /containerHasPtySize\(\)/)
+  assert.match(applyFit, /xterm\.cols < 2 \|\| xterm\.rows < 2/)
+})
+
 test('PTY output attaches after the first fit so FitAddon cannot wipe the prompt', () => {
   const start = terminal.indexOf('function mountTerminal')
   const end = terminal.indexOf('function unmountTerminal')
@@ -57,6 +69,19 @@ test('panel open looks up a running sandbox and only provisions on an explicit c
   assert.match(terminal, /status === 'paused'/)
   assert.match(terminal, /chat\.sandbox\.paused/)
   assert.doesNotMatch(terminal, /not_started/)
+})
+
+test('a non-reattachable (Docker) terminal never redials silently after ready', () => {
+  const composable = readFileSync(
+    new URL('../../../composables/useSandboxTerminal.ts', import.meta.url),
+    'utf8',
+  )
+  assert.match(composable, /reattachable\.value = frame\.reattachable !== false/)
+  assert.match(composable, /if \(readyReceived && !reattachable\.value\) return\s*scheduleReconnect\(\)/)
+  assert.match(composable, /code === 'SANDBOX_PAUSED' \|\| code === 'SANDBOX_STOPPED'/)
+  assert.match(terminal, /chat\.sandbox\.idleDisconnectedNewShell/)
+  assert.match(terminal, /chat\.sandbox\.disconnectedNewShell/)
+  assert.match(terminal, /chat\.sandbox\.stopped/)
 })
 
 test('interactive bash defines Debian-style ls aliases', () => {

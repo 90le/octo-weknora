@@ -23,7 +23,7 @@ func TestWorkspaceDirectoryBrowseIsScopedRelativeAndAdminOnly(t *testing.T) {
 	require.NoError(t, err)
 	raw, _ := db.DB()
 	t.Cleanup(func() { _ = raw.Close() })
-	migration, err := os.ReadFile("../../migrations/sqlite/000020_local_source_roots.up.sql")
+	migration, err := os.ReadFile("../../migrations/sqlite/000040_local_source_roots.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(migration)).Error)
 	base := t.TempDir()

@@ -190,7 +190,28 @@ func (r *knowledgeBaseRepository) UpdateKnowledgeBase(ctx context.Context, kb *t
 	return r.db.WithContext(ctx).Save(kb).Error
 }
 
-// DeleteKnowledgeBase serializes a soft-delete with Octo scope binding. Both
+// UpdateKnowledgeBaseGeneratedProfile writes the generated_profile column
+// only. The rest of the row is left untouched so a settings save that lands
+// while a profile is being generated is not overwritten by the worker.
+func (r *knowledgeBaseRepository) UpdateKnowledgeBaseGeneratedProfile(
+	ctx context.Context, id string, profile *types.KnowledgeBaseProfile,
+) error {
+	if id == "" {
+		return errors.New("knowledge base ID cannot be empty")
+	}
+	var value interface{}
+	if profile != nil {
+		value = *profile
+	}
+	return r.db.WithContext(ctx).Model(&types.KnowledgeBase{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"generated_profile": value,
+			"updated_at":        time.Now(),
+		}).Error
+}
+
+// DeleteKnowledgeBase deletes a knowledge base// DeleteKnowledgeBase serializes a soft-delete with Octo scope binding. Both
 // this operation and SetBinding lock the active KB row before inspecting or
 // changing scope references, so a concurrent bind cannot commit after the
 // dependency check but before the soft-delete. SQLite serializes writes at
@@ -322,7 +343,7 @@ func (r *knowledgeBaseRepository) ListModelUsages(
 		Model(&types.KnowledgeBase{}).
 		Select(
 			"id", "name", "embedding_model_id", "summary_model_id",
-			"image_processing_config", "vlm_config", "asr_config", "wiki_config",
+			"image_processing_config", "vlm_config", "asr_config", "wiki_config", "auto_tag_config",
 		).
 		Where("tenant_id = ?", tenantID)
 	query = scopeKnowledgeBasesByModelID(query, modelID)

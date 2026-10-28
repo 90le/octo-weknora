@@ -56,16 +56,18 @@ type MCPCatalogSummary struct {
 	SyncedAt  time.Time `json:"synced_at"`
 }
 
-// MCPAuthConfigResponse intentionally has no APIKey or Token fields. Their
-// presence is signalled via MCPServiceResponse.Credentials. AuthType, Scopes
-// and AuthServerMetadataURL are non-secret OAuth configuration and are safe to
-// echo back so the UI can render the current strategy.
+// MCPAuthConfigResponse intentionally has no APIKey, Token or ClientSecret
+// fields. Their presence is signalled via MCPServiceResponse.Credentials.
+// AuthType, Scopes, AuthServerMetadataURL and ClientID are non-secret OAuth
+// configuration and are safe to echo back so the UI can render the current
+// strategy.
 type MCPAuthConfigResponse struct {
 	AuthType              types.MCPAuthType `json:"auth_type,omitempty"`
 	APIKeyHeader          string            `json:"api_key_header,omitempty"`
 	CustomHeaders         map[string]string `json:"custom_headers,omitempty"`
 	Scopes                []string          `json:"scopes,omitempty"`
 	AuthServerMetadataURL string            `json:"auth_server_metadata_url,omitempty"`
+	ClientID              string            `json:"client_id,omitempty"`
 }
 
 // CredentialFieldMetadata reports whether a credential field has a value
@@ -116,6 +118,7 @@ func NewMCPServiceResponse(ctx context.Context, svc *types.MCPService) *MCPServi
 			CustomHeaders:         svc.AuthConfig.CustomHeaders,
 			Scopes:                svc.AuthConfig.Scopes,
 			AuthServerMetadataURL: svc.AuthConfig.AuthServerMetadataURL,
+			ClientID:              svc.AuthConfig.ClientID,
 		}
 		if !includeDetail {
 			auth.CustomHeaders = nil
@@ -132,8 +135,9 @@ func NewMCPServiceResponse(ctx context.Context, svc *types.MCPService) *MCPServi
 		resp.AuthConfig = nil
 	} else {
 		resp.Credentials = map[string]CredentialFieldMetadata{
-			"api_key": {Configured: svc.AuthConfig != nil && svc.AuthConfig.APIKey != ""},
-			"token":   {Configured: svc.AuthConfig != nil && svc.AuthConfig.Token != ""},
+			"api_key":       {Configured: svc.AuthConfig != nil && svc.AuthConfig.APIKey != ""},
+			"token":         {Configured: svc.AuthConfig != nil && svc.AuthConfig.Token != ""},
+			"client_secret": {Configured: svc.AuthConfig != nil && svc.AuthConfig.ClientSecret != ""},
 		}
 	}
 	return resp
@@ -144,6 +148,36 @@ func NewMCPServiceResponses(ctx context.Context, svcs []*types.MCPService) []*MC
 	out := make([]*MCPServiceResponse, 0, len(svcs))
 	for _, s := range svcs {
 		out = append(out, NewMCPServiceResponse(ctx, s))
+	}
+	return out
+}
+
+// NewSharedAgentMCPServiceResponses is the cross-workspace list shape: the
+// @MCP picker of a borrowed agent needs a service's identity and how many
+// tools it offers, and nothing else.
+//
+// It fills the fields explicitly instead of reusing NewMCPServiceResponse and
+// blanking the rest, so a field added to MCPServiceResponse later is absent
+// here until someone decides it may cross a workspace boundary. Endpoint URLs,
+// headers, env vars, stdio commands, auth config and credential metadata all
+// describe how the OWNER wired the service up; the borrower never configures
+// it and must not see it.
+func NewSharedAgentMCPServiceResponses(svcs []*types.MCPService) []*MCPServiceResponse {
+	out := make([]*MCPServiceResponse, 0, len(svcs))
+	for _, s := range svcs {
+		if s == nil {
+			continue
+		}
+		out = append(out, &MCPServiceResponse{
+			ID:                s.ID,
+			TenantID:          s.TenantID,
+			Name:              s.Name,
+			Description:       s.Description,
+			UsageInstructions: s.UsageInstructions,
+			Enabled:           s.Enabled,
+			TransportType:     s.TransportType,
+			IsBuiltin:         s.IsBuiltin,
+		})
 	}
 	return out
 }

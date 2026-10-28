@@ -28,10 +28,10 @@ func testService(t *testing.T) *Service {
 	require.NoError(t, db.AutoMigrate(&types.AuditLog{}))
 	require.NoError(t, db.Exec("CREATE TABLE knowledge_bases(id VARCHAR(36) PRIMARY KEY, tenant_id BIGINT NOT NULL, name TEXT, description TEXT, deleted_at TIMESTAMP)").Error)
 	require.NoError(t, db.Exec("INSERT INTO knowledge_bases(id,tenant_id,name,description) VALUES ('kb-a',1,'Product A',''),('kb-b',1,'Product B',''),('kb-other',2,'Other tenant','')").Error)
-	migration, err := os.ReadFile("../../migrations/sqlite/000021_octo_knowledge_business.up.sql")
+	migration, err := os.ReadFile("../../migrations/sqlite/000041_octo_knowledge_business.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(migration)).Error)
-	migration, err = os.ReadFile("../../migrations/sqlite/000024_octo_report_schedules.up.sql")
+	migration, err = os.ReadFile("../../migrations/sqlite/000044_octo_report_schedules.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(migration)).Error)
 	return NewService(db, nil, nil)
@@ -190,7 +190,7 @@ type fakeKB struct {
 	calls int
 }
 
-func (f *fakeKB) UpdateKnowledgeBase(_ context.Context, id, name, description string, _ *types.KnowledgeBaseConfig) (*types.KnowledgeBase, error) {
+func (f *fakeKB) UpdateKnowledgeBase(_ context.Context, id, name, description string, _ *types.KnowledgeBaseConfig, _ *types.VLMConfig) (*types.KnowledgeBase, error) {
 	f.calls++
 	return &types.KnowledgeBase{ID: id, Name: name, Description: description}, nil
 }

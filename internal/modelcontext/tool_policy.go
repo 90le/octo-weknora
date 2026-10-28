@@ -28,6 +28,10 @@ const (
 	spaceDocumentRef // "knowledgeID|title" stored refs; only the ID is durable
 	spaceKnowledgeBase
 	spaceWeb
+	// spaceAnySource accepts a chunk or a document handle in one argument
+	// (read_document's id). It is decode-only: registration never learns a
+	// source from a bare "id" key, whose meaning differs from tool to tool.
+	spaceAnySource
 )
 
 // sourceKeySpaces is the single table of ID-bearing keys the source codec
@@ -42,6 +46,7 @@ var sourceKeySpaces = map[string]sourceKeySpace{
 	"knowledge_base": spaceKnowledgeBase, "knowledge_base_id": spaceKnowledgeBase,
 	"knowledge_base_ids": spaceKnowledgeBase, "kb_id": spaceKnowledgeBase, "kb_ids": spaceKnowledgeBase,
 	"url": spaceWeb, "urls": spaceWeb,
+	"id": spaceAnySource,
 }
 
 type toolHandlePolicy struct {
@@ -83,6 +88,22 @@ var toolHandlePolicies = map[string]toolHandlePolicy{
 	// GitHub repository/release fields. Keep a deliberate empty policy so it
 	// cannot inherit an unrelated source-ID mapping or compact its fixed URL.
 	"github_release_lookup": {},
+	"search_knowledge": {
+		sourceIDKeys: map[string]struct{}{"knowledge_base_ids": {}},
+		sourceOutput: true,
+	},
+	// read_document takes one id that may name a document (dN) or a chunk
+	// (cN); the "id" key resolves against both handle tables.
+	"read_document": {
+		sourceIDKeys: map[string]struct{}{"id": {}},
+		sourceOutput: true,
+	},
+	"list_documents": {
+		sourceIDKeys: map[string]struct{}{"knowledge_base_id": {}},
+		sourceOutput: true,
+	},
+	// Retired retrieval tools keep their policies so stored histories that
+	// still carry their calls decode and compact exactly as they did.
 	"knowledge_search": {
 		sourceIDKeys: map[string]struct{}{"knowledge_base_ids": {}},
 		sourceOutput: true,
@@ -113,9 +134,10 @@ var toolHandlePolicies = map[string]toolHandlePolicy{
 		sourceTextKeys: map[string]struct{}{"sql": {}},
 		sourceOutput:   true,
 	},
+	// data_analysis exposes the selected document as a fixed table name, so
+	// its SQL never carries a document handle; only knowledge_id is decoded.
 	toolDataAnalysis: {
-		sourceIDKeys:   map[string]struct{}{"knowledge_id": {}},
-		sourceTextKeys: map[string]struct{}{"sql": {}},
+		sourceIDKeys: map[string]struct{}{"knowledge_id": {}},
 	},
 	"data_schema": {
 		sourceIDKeys: map[string]struct{}{"knowledge_id": {}},
@@ -144,7 +166,7 @@ var toolHandlePolicies = map[string]toolHandlePolicy{
 		sourceIDKeys: map[string]struct{}{"suspected_knowledge_ids": {}},
 	},
 	"wiki_search": {
-		sourceIDKeys: map[string]struct{}{"knowledge_base_id": {}},
+		sourceIDKeys: map[string]struct{}{"knowledge_base_id": {}, "knowledge_base_ids": {}},
 		sourceOutput: true,
 	},
 	toolWikiReadIssue: {

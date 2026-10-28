@@ -142,6 +142,7 @@ type AgentCompleteData struct {
 	KnowledgeRefs   []interface{}          `json:"knowledge_refs,omitempty"` // []*types.SearchResult
 	AgentSteps      interface{}            `json:"agent_steps,omitempty"`    // []types.AgentStep - detailed execution steps
 	Usage           interface{}            `json:"usage,omitempty"`          // *types.TokenUsage - LLM token usage aggregated over the turn
+	ModelID         string                 `json:"model_id,omitempty"`       // Chat model whose calls produced Usage
 	TotalDurationMs int64                  `json:"total_duration_ms"`
 	MessageID       string                 `json:"message_id,omitempty"` // Assistant message ID
 	RequestID       string                 `json:"request_id,omitempty"`
@@ -197,6 +198,12 @@ type AgentFinalAnswerData struct {
 	Content    string `json:"content"`
 	Done       bool   `json:"done"`
 	IsFallback bool   `json:"is_fallback,omitempty"` // True when response is a fallback (no knowledge base match)
+	// Truncated marks an answer the provider cut off at the completion-token
+	// cap. The text is what the model had produced when the cap hit, not a
+	// finished answer, so a client should say so rather than present it as
+	// complete. Carried on both the content event and the Done marker,
+	// because a live-streamed answer only learns of the cap at the close.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // ContextCompactedData reports that older conversation was replaced by a

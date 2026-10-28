@@ -229,6 +229,10 @@ func safePipelineStringField(key string) bool {
 	switch key {
 	case "session_id", "message_id", "user_message_id",
 		"kb_id", "knowledge_base_id", "knowledge_id", "chunk_id",
+		// Source connectors report per-document losses; the node id and the
+		// block-type list are stable identifiers, while the document title and
+		// URL stay redacted as user content.
+		"node_id", "block_types",
 		"chat_model", "model_id", "rerank_model", "rerank_model_id",
 		"vlm_model_id", "query_understand_model_id", "provider_id",
 		"finish_reason", "status", "error_code", "target_type":

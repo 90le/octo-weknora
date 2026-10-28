@@ -28,7 +28,7 @@ func TestAgentRegisteredLocalSourceBrowseReadsAndHonorsRootRevocation(t *testing
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	require.NoError(t, db.AutoMigrate(&types.DataSource{}))
-	migration, err := os.ReadFile("../../../migrations/sqlite/000020_local_source_roots.up.sql")
+	migration, err := os.ReadFile("../../../migrations/sqlite/000040_local_source_roots.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(migration)).Error)
 	sourceDir := t.TempDir()

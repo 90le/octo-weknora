@@ -160,9 +160,9 @@ func TestOctoInlinePrivateTitleNeverRevealsLocalPathOrToken(t *testing.T) {
 	require.NotContains(t, answer, "file://")
 	for _, unsafe := range []string{
 		"Bearer example-secret", "sk-example-secret", "bf_example-secret",
-		"app_example-secret", "uk_example-secret", "C:/Users/Administrator/private/ops.md",
+		"app_example-secret", "uk_example-secret", "C:/Users/example/private/ops.md",
 		"~/private/ops.md", "./private/ops.md", "../private/ops.md",
-		"说明 /home/mlclaw/private/ops.md", "说明 C:/Users/Administrator/private/ops.md",
+		"说明 /home/example/private/ops.md", "说明 C:/Users/example/private/ops.md",
 	} {
 		require.Equal(t, "知识库资料", safeOctoSourceTitle(unsafe))
 	}

@@ -200,14 +200,23 @@ func hasDocumentEvidence(toolName string, result *types.ToolResult) bool {
 		return false
 	}
 	switch toolName {
-	case agenttools.ToolKnowledgeSearch:
+	case agenttools.ToolSearchKnowledge, agenttools.LegacyToolKnowledgeSearch:
+		// Upstream 0.8.3 merged the former knowledge_search and grep_chunks
+		// tools, so a snippet match is evidence here as well.
 		return positiveEvidenceCount(result.Data["count"]) &&
-			(strings.Contains(result.Output, "<content>") || strings.Contains(result.Output, "<answer>"))
-	case agenttools.ToolGrepChunks:
+			(strings.Contains(result.Output, "<content>") ||
+				strings.Contains(result.Output, "<answer>") ||
+				strings.Contains(result.Output, "<match_snippet>"))
+	case agenttools.LegacyToolGrepChunks:
 		return positiveEvidenceCount(result.Data["result_count"]) && strings.Contains(result.Output, "<match_snippet>")
-	case agenttools.ToolListKnowledgeChunks:
-		return positiveEvidenceCount(result.Data["fetched_chunks"]) && strings.Contains(result.Output, "<content>")
-	case agenttools.ToolGetDocumentInfo:
+	case agenttools.ToolReadDocument, agenttools.LegacyToolListKnowledgeChunks:
+		// A title alone is navigation. A fetched chunk is a body, and FAQ
+		// entries are emitted as <faq> instead of <chunk>.
+		return positiveEvidenceCount(result.Data["fetched_chunks"]) &&
+			(strings.Contains(result.Output, "<chunk ") ||
+				strings.Contains(result.Output, "<faq ") ||
+				strings.Contains(result.Output, "<content>"))
+	case agenttools.LegacyToolGetDocumentInfo:
 		// A document title is only navigation. An FAQ answer is a body, and
 		// its typed data cannot be forged by an unrelated document's text.
 		if !strings.Contains(result.Output, "Answers:") {
@@ -221,10 +230,13 @@ func hasDocumentEvidence(toolName string, result *types.ToolResult) bool {
 			}
 		}
 		return false
+	case agenttools.ToolListDocuments:
+		// Listing document titles never answers a question.
+		return false
 	case agenttools.ToolWikiReadPage:
 		found, ok := result.Data["found_kbs"].(map[string][]string)
 		return ok && len(found) > 0 && strings.Contains(result.Output, "<wiki_page>")
-	case agenttools.ToolWikiReadSourceDoc:
+	case agenttools.LegacyToolWikiReadSourceDoc:
 		return positiveEvidenceCount(result.Data["fetched_chunks"])
 	case agenttools.ToolWebFetch:
 		return positiveEvidenceCount(result.Data["successful_count"]) &&
@@ -275,5 +287,5 @@ func (e *AgentEngine) completeWithEvidenceFallback(
 			IsFallback: true,
 		},
 	})
-	e.closeAnswerStream(ctx, sessionID, answerID)
+	e.closeAnswerStream(ctx, sessionID, answerID, false)
 }

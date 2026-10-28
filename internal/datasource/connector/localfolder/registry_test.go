@@ -20,7 +20,7 @@ func registryDB(t *testing.T) *gorm.DB {
 	raw, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
-	migration, err := os.ReadFile("../../../../migrations/sqlite/000020_local_source_roots.up.sql")
+	migration, err := os.ReadFile("../../../../migrations/sqlite/000040_local_source_roots.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(migration)).Error)
 	require.NoError(t, db.Exec("CREATE TABLE tenants (id BIGINT PRIMARY KEY, deleted_at TIMESTAMP)").Error)

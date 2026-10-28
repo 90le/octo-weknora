@@ -82,10 +82,10 @@ func TestAgentQAInvalidAgentIDDoesNotLeakRequestValues(t *testing.T) {
 }
 
 func (s *privacySessionServiceStub) SearchKnowledge(
-	_ context.Context, _ []string, _ []string, _ []types.TagScope, query string,
-) ([]*types.SearchResult, error) {
+	_ context.Context, _ []string, _ []string, _ []types.TagScope, query string, _ *types.KnowledgeSearchOptions,
+) (*types.RetrievalResult, error) {
 	s.seenQuery = query
-	return nil, nil
+	return &types.RetrievalResult{}, nil
 }
 
 func TestQAAndKnowledgeSearchDoNotLogUserQuestion(t *testing.T) {

@@ -12,12 +12,25 @@
     </div>
 
     <template v-else>
+      <Teleport to="#toolbox-toolbar" defer>
+        <t-input v-if="services.length > 0" v-model="query" class="list-search" :placeholder="$t('menu.search')"
+          :aria-label="$t('menu.search')" clearable>
+          <template #prefix-icon><t-icon name="search" size="16px" /></template>
+        </t-input>
+      </Teleport>
       <div v-if="services.length === 0 && !authStore.hasRole('admin')" class="empty-state">
         <t-empty :description="$t('mcpSettings.empty')" />
       </div>
 
+      <div v-else-if="services.length > 0 && filteredServices.length === 0" class="empty-state">
+        <t-empty :description="$t('common.noResult')" />
+        <t-button variant="outline" @click="query = ''">{{ $t('common.clear') }}</t-button>
+        <t-button v-if="authStore.hasRole('admin')" variant="text" @click="handleAdd">
+          {{ $t('mcpSettings.addService') }}
+        </t-button>
+      </div>
       <div v-else class="services-grid">
-        <article v-for="service in services" :key="service.id" class="service-card">
+        <article v-for="service in filteredServices" :key="service.id" class="service-card">
           <div class="service-card__main">
             <div class="service-card__body">
               <div class="service-card__header">
@@ -109,7 +122,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { AddIcon } from 'tdesign-icons-vue-next'
 import { useI18n } from 'vue-i18n'
@@ -122,7 +135,9 @@ import {
 import McpServiceDialog from './components/McpServiceDialog.vue'
 import { useConfirmDelete } from '@/components/settings/useConfirmDelete'
 import { useAuthStore } from '@/stores/auth'
+import { matchesResourceQuery } from '@/utils/resourceListSearch'
 
+const emit = defineEmits<{ count: [value: number] }>()
 const { t } = useI18n()
 const authStore = useAuthStore()
 const confirmDelete = useConfirmDelete()
@@ -135,12 +150,17 @@ const currentService = ref<MCPService | null>(null)
 const dialogInitialStep = ref<0 | 1>(0)
 const togglingIds = ref(new Set<string>())
 const serviceUsage = (service: MCPService) => service.usage_instructions?.trim() || service.description?.trim() || ''
+const query = ref('')
+const filteredServices = computed(() => services.value.filter((service) =>
+  matchesResourceQuery({ name: service.name, description: serviceUsage(service) }, query.value),
+))
 
 // Load MCP services
 const loadServices = async () => {
   loading.value = true
   try {
     services.value = await listMCPServices()
+    emit('count', services.value.length)
   } catch (error) {
     MessagePlugin.error(t('mcpSettings.toasts.loadFailed'))
     console.error('Failed to load MCP services:', error)
@@ -237,29 +257,21 @@ const getTransportTypeLabel = (transportType: string) => {
 onMounted(() => {
   loadServices()
 })
+
+defineExpose({ openAdd: handleAdd })
 </script>
 
 <style scoped lang="less">
+@import (reference) '@/components/css/provider-card.less';
+
+@import (reference) '@/components/css/settings-section.less';
+
 .mcp-settings {
   width: 100%;
 }
 
 .section-header {
-  margin-bottom: 28px;
-
-  h2 {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--td-text-color-primary);
-    margin: 0 0 8px 0;
-  }
-
-  .section-description {
-    font-size: 14px;
-    color: var(--td-text-color-secondary);
-    margin: 0;
-    line-height: 1.6;
-  }
+  .settings-section-header();
 }
 
 .loading-container {
@@ -272,7 +284,7 @@ onMounted(() => {
   text-align: center;
 
   :deep(.t-empty__description) {
-    font-size: 14px;
+    font-size: var(--app-text-base);
     color: var(--td-text-color-placeholder);
     margin-bottom: 16px;
   }
@@ -293,8 +305,14 @@ onMounted(() => {
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--td-component-stroke);
-  border-radius: 10px;
+  border-radius: var(--app-radius-md);
   background: var(--td-bg-color-container);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+
+  &:hover:not(.service-card--add) {
+    border-color: color-mix(in srgb, var(--td-brand-color) 40%, var(--td-component-stroke));
+    box-shadow: 0 3px 12px color-mix(in srgb, var(--td-text-color-primary) 6%, transparent);
+  }
 
   &--add {
     align-items: center;
@@ -328,14 +346,14 @@ onMounted(() => {
       justify-content: center;
       width: 32px;
       height: 32px;
-      border-radius: 8px;
+      border-radius: var(--app-radius-md);
       background: var(--td-bg-color-secondarycontainer);
       color: var(--td-text-color-secondary);
-      font-size: 18px;
+      font-size: var(--app-text-2xl);
     }
 
     &__label {
-      font-size: 13px;
+      font-size: var(--app-text-md);
       font-weight: 500;
       line-height: 1.4;
     }
@@ -351,15 +369,8 @@ onMounted(() => {
 }
 
 .service-card__badge {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  background: var(--td-bg-color-secondarycontainer);
-  color: var(--td-text-color-secondary);
+  .provider-card-badge(28px, 8px);
+  font-size: var(--app-text-md);
 
   :deep(.t-icon) {
     display: block;
@@ -387,7 +398,7 @@ onMounted(() => {
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-size: 14px;
+  font-size: var(--app-text-base);
   font-weight: 600;
   line-height: 20px;
   color: var(--td-text-color-primary);
@@ -398,14 +409,14 @@ onMounted(() => {
 
 .service-card__builtin {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 1.35;
   color: var(--td-text-color-placeholder);
 }
 
 .service-card__type {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--app-text-xs);
   line-height: 18px;
   color: var(--td-text-color-placeholder);
 }
@@ -425,7 +436,7 @@ onMounted(() => {
   height: 24px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--app-radius-sm);
   background: none;
   color: var(--td-text-color-placeholder);
   cursor: pointer;
@@ -458,7 +469,7 @@ onMounted(() => {
   line-clamp: 2;
   margin: 0;
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 1.5;
   color: var(--td-text-color-secondary);
   overflow-wrap: anywhere;
@@ -478,7 +489,7 @@ onMounted(() => {
   align-items: center;
   min-height: calc(2 * 12px * 1.5);
   color: var(--td-text-color-placeholder);
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 1.5;
 }
 
@@ -488,7 +499,7 @@ onMounted(() => {
   gap: 4px;
   padding: 2px 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--app-radius-xs);
   background: none;
   color: inherit;
   font: inherit;
@@ -513,11 +524,11 @@ onMounted(() => {
   max-width: 100%;
   padding: 2px 6px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--app-radius-sm);
   background: var(--td-bg-color-secondarycontainer);
   color: var(--td-text-color-secondary);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 18px;
   text-align: left;
 
@@ -556,10 +567,10 @@ button.service-card__tools {
   gap: 5px;
   padding: 2px 4px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--app-radius-sm);
   background: none;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--app-text-sm);
   line-height: 18px;
   color: var(--td-text-color-placeholder);
 

@@ -36,6 +36,40 @@ When the existing data filesystem lacks the required OverlayFS features and no n
 
 ## Required checks before switching
 
+### Fork 0.8.0 to upstream 0.8.3 migration collision
+
+The fork's PostgreSQL migrations 96–107 were renumbered to 119–130 because
+upstream 0.8.3 uses the original numbers for different changes. A legacy
+`107|false` record therefore does not mean that upstream migrations 96–107
+ran. Never run the candidate migration directly against such a database, and
+never force a version based on the number alone.
+
+Before a planned migration, identify the target by its schema and migration
+history, make a consistent recovery point, and rehearse the reviewed
+legacy-107 → shared-95 → 130 sequence on a restored isolated copy. Refuse
+dirty, unexpected or ambiguous schema states. Verify the final version,
+upstream and Octo objects, record counts, extension versions, and the validity
+of concurrently built indexes before starting the candidate application.
+Allow for locks and backfills during the maintenance window. Do not enable
+automatic dirty recovery without examining the partially applied migration.
+The application's migration guard is not invoked by the standalone `migrate`
+CLI or when `AUTO_MIGRATE=false`; those paths require the same preflight and
+post-migration checks before the application is started.
+
+The renumbered Octo up migrations may encounter objects that existed before
+the upgrade. Their down migrations can drop those objects and data, so they
+are not a safe general-purpose rollback to the fork's prior schema. Restore a
+verified consistent recovery point when database rollback is required; a
+previous application image on an upgraded schema is only an option for the
+specific paths tested. In particular, verify message-artifact access and
+account for writes made since the recovery point.
+
+The embedding adapter is a separately deployed dependency. Configure its
+upstream endpoint privately and verify real embeddings, retrieval and rollback
+compatibility in the candidate environment. When Neo4j is enabled, verify
+that its installed APOC version provides the procedures used by graph writes,
+reprocessing and deletion; an HTTP health response is insufficient.
+
 1. Focused draft visibility tests plus upstream required checks complete successfully.
 2. Compare deployed commit and release commit, including migrations and configuration defaults. Review existing local patches. Drain running source sync and parsing jobs, and check `pending/processing/finalizing` knowledge before replacing the app.
 3. Create a consistent database backup and corresponding file snapshot; record the exact old images and Compose configuration privately. Record which stores and volumes the recovery point actually covers, including whether Milvus and Neo4j are included. A PostgreSQL dump plus application files is not a complete recovery point for stores it omits.

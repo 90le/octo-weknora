@@ -96,7 +96,9 @@ func (s *Service) management(ctx context.Context, p Principal, in ManagementInpu
 		if s.kb == nil {
 			return nil, ErrInvalid
 		}
-		updated, e := s.kb.UpdateKnowledgeBase(ctx, kb.ID, in.Name, kb.Description, nil)
+		// A rename carries no chunking, image, FAQ or indexing settings; nil
+		// leaves every stored configuration untouched.
+		updated, e := s.kb.UpdateKnowledgeBase(ctx, kb.ID, in.Name, kb.Description, nil, nil)
 		if e != nil {
 			return nil, e
 		}

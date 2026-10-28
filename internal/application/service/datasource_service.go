@@ -86,6 +86,9 @@ func (s *DataSourceService) CreateDataSource(ctx context.Context, ds *types.Data
 	if ds == nil {
 		return nil, datasource.ErrDataSourceInvalid
 	}
+	if err := datasource.ValidateSyncSchedule(ds.SyncSchedule); err != nil {
+		return nil, err
+	}
 
 	// Validate knowledge base exists
 	kb, err := s.kbService.GetKnowledgeBaseByID(ctx, ds.KnowledgeBaseID)
@@ -207,6 +210,9 @@ func (s *DataSourceService) UpdateDataSource(ctx context.Context, ds *types.Data
 	}
 	if ds.TenantID != existing.TenantID {
 		return nil, datasource.ErrDataSourceInvalid
+	}
+	if err := datasource.ValidateSyncSchedule(ds.SyncSchedule); err != nil {
+		return nil, err
 	}
 
 	// Credentials NEVER flow through this endpoint — they live behind the
@@ -640,6 +646,9 @@ func (s *DataSourceService) ResumeDataSource(ctx context.Context, id string) err
 	if err != nil {
 		return err
 	}
+	if err := datasource.ValidateSyncSchedule(ds.SyncSchedule); err != nil {
+		return err
+	}
 
 	ds.Status = types.DataSourceStatusActive
 	if err := s.dsRepo.Update(ctx, ds); err != nil {
@@ -830,8 +839,12 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		return s.finishSyncRunGuardError(ctx, ds, syncLog, nil, wasPaused, err)
 	}
 	if payload.ForceFull || ds.SyncMode == types.SyncModeFull {
-		// Full sync
-		items, fetchErr = connector.FetchAll(ctx, config, config.ResourceIDs)
+		if full, ok := connector.(datasource.FullSyncWithCursor); ok {
+			cursor, _ := ds.ParseSyncCursor()
+			items, nextCursor, fetchErr = full.FetchAllFromCursor(ctx, config, config.ResourceIDs, cursor)
+		} else {
+			items, fetchErr = connector.FetchAll(ctx, config, config.ResourceIDs)
+		}
 		logger.Infof(ctx, "full sync fetched %d items", len(items))
 	} else {
 		// Incremental sync
@@ -1259,6 +1272,26 @@ func (h *streamSyncHandler) Checkpoint(ctx context.Context, cursor *types.SyncCu
 	return nil
 }
 
+// streamingFetch dispatches to FetchFullStream when a connector can re-fetch
+// every item while keeping the stored cursor as the deletion baseline. Other
+// streaming connectors keep FetchStream, including force-full runs that drop
+// the cursor on the first attempt via streamStartCursor.
+func streamingFetch(
+	ctx context.Context,
+	sc datasource.StreamingConnector,
+	config *types.DataSourceConfig,
+	forceFull bool,
+	startCursor, fullBaseline *types.SyncCursor,
+	h datasource.StreamHandler,
+) (*types.SyncCursor, error) {
+	if forceFull {
+		if full, ok := sc.(datasource.FullStreamingConnector); ok {
+			return full.FetchFullStream(ctx, config, fullBaseline, h)
+		}
+	}
+	return sc.FetchStream(ctx, config, startCursor, h)
+}
+
 // processSyncStreaming runs a sync through a StreamingConnector, ingesting each
 // item as it arrives and checkpointing progress so the run is memory-bounded and
 // resumable after a timeout.
@@ -1303,7 +1336,21 @@ func (s *DataSourceService) processSyncStreaming(
 	guard := &syncAccessGuard{svc: s, ds: ds, config: config, allowPaused: wasPaused && payload.Trigger == "manual"}
 	handler := &streamSyncHandler{svc: s, ds: ds, tagIDs: autoTagIDs, result: result, syncLog: syncLog, guard: guard, runGuard: runGuard}
 
-	nextCursor, fetchErr := sc.FetchStream(ctx, config, startCursor, handler)
+	fullBaseline := startCursor
+	if forceFull {
+		if _, ok := sc.(datasource.FullStreamingConnector); ok {
+			baseline, cursorErr := ds.ParseSyncCursor()
+			if cursorErr != nil {
+				logger.Errorf(ctx, "failed to parse full-sync cursor: %v", cursorErr)
+				s.updateSyncRunResult(ctx, ds, syncLog, result, nil,
+					types.SyncLogStatusFailed, fmt.Sprintf("Invalid cursor: %v", cursorErr), wasPaused, false)
+				return cursorErr
+			}
+			fullBaseline = baseline
+		}
+	}
+
+	nextCursor, fetchErr := streamingFetch(ctx, sc, config, forceFull, startCursor, fullBaseline, handler)
 	if err := ensureSyncRunActive(ctx, runGuard); err != nil {
 		return s.finishSyncRunGuardError(ctx, ds, syncLog, result, wasPaused, err)
 	}
@@ -1717,7 +1764,13 @@ func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource
 				return isUpdate, fmt.Errorf("marshal datasource metadata: %w", mErr)
 			}
 			created.Metadata = types.JSON(metadataBytes)
-			if uErr := s.knowledgeService.GetRepository().UpdateKnowledge(ctx, created); uErr != nil {
+			// Only the metadata column: the processing task is already
+			// queued, and a full-row save of this snapshot could put
+			// parse_status back to "pending" under a worker that has moved
+			// it on, which then skips post-process and strands the row.
+			if uErr := s.knowledgeService.GetRepository().UpdateKnowledgeColumn(
+				ctx, created.ID, "metadata", created.Metadata,
+			); uErr != nil {
 				return isUpdate, fmt.Errorf("attach datasource metadata: %w", uErr)
 			}
 		}

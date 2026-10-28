@@ -42,7 +42,7 @@ func newSyncGuardFixture(t *testing.T) *syncGuardFixture {
 	raw.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = raw.Close() })
 	require.NoError(t, db.AutoMigrate(&types.DataSource{}, &types.SyncLog{}))
-	migration, err := os.ReadFile("../../../migrations/sqlite/000020_local_source_roots.up.sql")
+	migration, err := os.ReadFile("../../../migrations/sqlite/000040_local_source_roots.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(migration)).Error)
 	input := t.TempDir()
