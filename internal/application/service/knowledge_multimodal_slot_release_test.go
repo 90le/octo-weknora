@@ -85,7 +85,7 @@ func TestEnqueueImageMultimodalTasksSeedsCounterForEveryImage(t *testing.T) {
 	svc := &knowledgeService{task: enqueuer, redisClient: rdb}
 	knowledge, kb, images, chunks := slotReleaseFixture(3)
 
-	svc.enqueueImageMultimodalTasks(context.Background(), knowledge, kb, images, chunks, nil)
+	_ = svc.enqueueImageMultimodalTasks(context.Background(), knowledge, kb, images, chunks, nil)
 
 	require.Equal(t, 3, enqueuer.imageEnqueued)
 	require.Equal(t, 0, enqueuer.postProcess)
@@ -102,7 +102,7 @@ func TestEnqueueImageMultimodalTasksReleasesUnownedSlots(t *testing.T) {
 	svc := &knowledgeService{task: enqueuer, redisClient: rdb}
 	knowledge, kb, images, chunks := slotReleaseFixture(2)
 
-	svc.enqueueImageMultimodalTasks(context.Background(), knowledge, kb, images, chunks, nil)
+	_ = svc.enqueueImageMultimodalTasks(context.Background(), knowledge, kb, images, chunks, nil)
 
 	require.Equal(t, 1, enqueuer.imageEnqueued)
 	require.Equal(t, "1", mustGet(t, mr, multimodalPendingKey(knowledge.ID)),
@@ -125,7 +125,7 @@ func TestEnqueueImageMultimodalTasksReleaseFinalizesWhenSiblingsAlreadyDone(t *t
 	}
 	svc := &knowledgeService{task: enqueuer, redisClient: rdb}
 
-	svc.enqueueImageMultimodalTasks(context.Background(), knowledge, kb, images, chunks, nil)
+	_ = svc.enqueueImageMultimodalTasks(context.Background(), knowledge, kb, images, chunks, nil)
 
 	require.Equal(t, 1, enqueuer.postProcess, "the release owns the finalize here")
 	require.False(t, mr.Exists(multimodalPendingKey(knowledge.ID)),
@@ -140,7 +140,7 @@ func TestEnqueueImageMultimodalTasksFinalizesWhenNoTaskEnqueued(t *testing.T) {
 	svc := &knowledgeService{task: enqueuer, redisClient: rdb}
 	knowledge, kb, images, chunks := slotReleaseFixture(2)
 
-	svc.enqueueImageMultimodalTasks(context.Background(), knowledge, kb, images, chunks, nil)
+	_ = svc.enqueueImageMultimodalTasks(context.Background(), knowledge, kb, images, chunks, nil)
 
 	require.Equal(t, 0, enqueuer.imageEnqueued)
 	require.Equal(t, 1, enqueuer.postProcess)
@@ -155,7 +155,7 @@ func TestEnqueueImageMultimodalTasksWithoutRedisLeavesFinalizeToWorkers(t *testi
 	svc := &knowledgeService{task: enqueuer}
 	knowledge, kb, images, chunks := slotReleaseFixture(2)
 
-	svc.enqueueImageMultimodalTasks(context.Background(), knowledge, kb, images, chunks, nil)
+	_ = svc.enqueueImageMultimodalTasks(context.Background(), knowledge, kb, images, chunks, nil)
 
 	require.Equal(t, 1, enqueuer.imageEnqueued)
 	require.Equal(t, 0, enqueuer.postProcess)
@@ -208,7 +208,7 @@ func TestEnqueueImageMultimodalTasksRetriesSlotRelease(t *testing.T) {
 	svc := &knowledgeService{task: enqueuer, redisClient: rdb}
 	knowledge, kb, images, chunks := slotReleaseFixture(2)
 
-	svc.enqueueImageMultimodalTasks(context.Background(), knowledge, kb, images, chunks, nil)
+	_ = svc.enqueueImageMultimodalTasks(context.Background(), knowledge, kb, images, chunks, nil)
 
 	require.Equal(t, multimodalSlotReleaseAttempts, hook.calls, "every attempt should be used")
 	require.Equal(t, "1", mustGet(t, mr, multimodalPendingKey(knowledge.ID)),
@@ -226,7 +226,7 @@ func TestEnqueueImageMultimodalTasksGivesUpSlotReleaseAfterRetries(t *testing.T)
 	svc := &knowledgeService{task: enqueuer, redisClient: rdb}
 	knowledge, kb, images, chunks := slotReleaseFixture(2)
 
-	svc.enqueueImageMultimodalTasks(context.Background(), knowledge, kb, images, chunks, nil)
+	_ = svc.enqueueImageMultimodalTasks(context.Background(), knowledge, kb, images, chunks, nil)
 
 	require.Equal(t, multimodalSlotReleaseAttempts, hook.calls, "retries must stay bounded")
 	require.Equal(t, "2", mustGet(t, mr, multimodalPendingKey(knowledge.ID)))
@@ -246,7 +246,7 @@ func TestEnqueueImageMultimodalTasksClearsCounterOnCancelledContext(t *testing.T
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	svc.enqueueImageMultimodalTasks(ctx, knowledge, kb, images, chunks, nil)
+	_ = svc.enqueueImageMultimodalTasks(ctx, knowledge, kb, images, chunks, nil)
 
 	require.False(t, mr.Exists(multimodalPendingKey(knowledge.ID)),
 		"seeded counter must be cleared on a detached context")

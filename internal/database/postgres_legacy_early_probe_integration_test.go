@@ -39,7 +39,7 @@ func TestPostgresLegacyEarlyProbeOnDisposablePostgres(t *testing.T) {
 	fixtureDSN := parsed.String()
 	db, err := sql.Open("postgres", fixtureDSN)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	_, err = db.Exec("CREATE TABLE schema_migrations (version bigint NOT NULL, dirty boolean NOT NULL); INSERT INTO schema_migrations VALUES (96, false)")
 	require.NoError(t, err)
 	for version := 96; version <= 106; version++ {

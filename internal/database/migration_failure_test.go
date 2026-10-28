@@ -23,7 +23,7 @@ func TestMigrationFailureStopsWithoutAutoRetry(t *testing.T) {
 	require.ErrorContains(t, err, "automatic retry disabled")
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	var version int
 	var dirty bool
 	require.NoError(t, db.QueryRow("SELECT version, dirty FROM schema_migrations").Scan(&version, &dirty))
