@@ -13,9 +13,10 @@ function routeBlock(name) {
 
 test('platform shell is the only place that mounts the settings modal', () => {
   // Two copies each fetch their own data, so a save in one leaves the other stale.
-  // The Octo shell keeps the route guard so /platform/settings renders only the
-  // outlet; the assertion is about a single mount, not its attributes.
+  // The outlet is empty, so the shell must keep the modal mounted on the
+  // settings route as well as on other routes that can open it.
   assert.equal(platformShell.match(/<Settings[^>]*\/>/g)?.length, 1)
+  assert.match(platformShell, /<Settings\s*\/>/)
   assert.doesNotMatch(router, /views\/settings\/Settings\.vue/)
 })
 
