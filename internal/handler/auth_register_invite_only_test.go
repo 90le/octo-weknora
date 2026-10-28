@@ -293,7 +293,9 @@ func TestDisabledRegistrationOverridesDatabaseMode(t *testing.T) {
 	t.Setenv("DISABLE_REGISTRATION", " TrUe ")
 	settings := &registrationModeSettings{}
 	h := &AuthHandler{
-		configInfo:       &config.Config{Auth: &config.AuthConfig{RegistrationMode: config.AuthRegistrationModeSelfServe}},
+		configInfo: &config.Config{Auth: &config.AuthConfig{
+			RegistrationMode: config.AuthRegistrationModeSelfServe,
+		}},
 		systemSettingSvc: settings,
 	}
 	r := newRegisterTestRouter(h)
@@ -306,7 +308,8 @@ func TestDisabledRegistrationOverridesDatabaseMode(t *testing.T) {
 		var cfg struct {
 			RegistrationMode string `json:"registration_mode"`
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil || cfg.RegistrationMode != config.AuthRegistrationModeInviteOnly {
+		if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil ||
+			cfg.RegistrationMode != config.AuthRegistrationModeInviteOnly {
 			t.Fatalf("disabled registration must expose invite_only for DB mode %q: %s", mode, w.Body.String())
 		}
 		for _, path := range []string{"/auth/register", "/auth/register-by-invite"} {
