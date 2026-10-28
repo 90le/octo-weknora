@@ -139,7 +139,10 @@ func TestPostgresLegacyEarlyRealMigrationBoundaries(t *testing.T) {
 		{"CREATE TABLE local_source_spaces (id text)", "DROP TABLE local_source_spaces"},
 		{"CREATE TABLE github_document_sync_items (id text)", "DROP TABLE github_document_sync_items"},
 		{"CREATE TABLE data_sources (restart_recovery_lease_id text)", "DROP TABLE data_sources"},
-		{"CREATE TABLE index_fixture (id text); CREATE INDEX idx_octo_channel_session ON index_fixture(id)", "DROP TABLE index_fixture"},
+		{
+			"CREATE TABLE index_fixture (id text); CREATE INDEX idx_octo_channel_session ON index_fixture(id)",
+			"DROP TABLE index_fixture",
+		},
 	} {
 		_, err = db.Exec(fixture.create)
 		require.NoError(t, err)

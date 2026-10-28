@@ -1170,7 +1170,7 @@ func (noopTaskInspector) QueuedKnowledgeIDs(context.Context) (map[string]struct{
 // deletes also run inline there, so a stale "deleting" row genuinely has
 // no task left and the delete sweep may recover it.
 func (noopTaskInspector) HasQueuedDeleteTasksForKnowledge(
-	ctx context.Context, knowledgeID string,
+	_ context.Context, _ string,
 ) (bool, error) {
 	return false, nil
 }

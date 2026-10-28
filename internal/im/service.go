@@ -2995,7 +2995,8 @@ loop:
 
 	outCtx := imOutboundContext(ctx)
 	answer = sanitizeOctoGitHubLineLinks(outCtx, answer)
-	finalDisplay := s.formatIMStreamFinal(outCtx, parts, []*types.SearchResult(assistantMsg.KnowledgeReferences), tenant)
+	finalDisplay := s.formatIMStreamFinal(outCtx, parts, []*types.SearchResult(assistantMsg.KnowledgeReferences),
+		tenant)
 	if noVisibleContent || finalDisplay == "" {
 		fallback := imNoAnswerFallback
 		if finalErr != nil {

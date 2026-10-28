@@ -236,7 +236,8 @@ func (c *LongConnClient) maxConnectionAgeLoop(ctx context.Context, conn *ws.Conn
 
 func (c *LongConnClient) logFrame(ctx context.Context, frame *webSocketFrame) {
 	logger.Debugf(ctx,
-		"[Yunzhijia] WebSocket frame channel_id=%s cmd=%s type=%s event=%s seq=%d has_seq=%t need_ack=%t has_message=%t",
+		"[Yunzhijia] WebSocket frame channel_id=%s cmd=%s type=%s event=%s seq=%d "+
+			"has_seq=%t need_ack=%t has_message=%t",
 		c.channelID, frame.cmd, frame.typeName, frame.event, frame.seq, frame.hasSeq, frame.needAck, frame.message != nil,
 	)
 }

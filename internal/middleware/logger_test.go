@@ -170,7 +170,8 @@ func TestSanitizeBody(t *testing.T) {
 		},
 		{
 			name: "OAuth authorization response fields",
-			in:   `{"authorization_url":"https://idp.example/authorize?state=secret","authorization_attempt":"secret-state"}`,
+			in: `{"authorization_url":"https://idp.example/authorize?state=secret",` +
+				`"authorization_attempt":"secret-state"}`,
 			want: `{"authorization_url":"***","authorization_attempt":"***"}`,
 		},
 	}

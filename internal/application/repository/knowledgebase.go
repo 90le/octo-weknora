@@ -13,8 +13,10 @@ import (
 )
 
 var (
+	// ErrKnowledgeBaseNotFound identifies a missing knowledge base.
 	ErrKnowledgeBaseNotFound = errors.New("knowledge base not found")
-	ErrKnowledgeBaseInUse    = errors.New("knowledge base is still used by an Octo scope")
+	// ErrKnowledgeBaseInUse indicates that a scope still uses the knowledge base.
+	ErrKnowledgeBaseInUse = errors.New("knowledge base is still used by an Octo scope")
 )
 
 type (

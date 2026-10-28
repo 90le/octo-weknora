@@ -77,7 +77,8 @@ func TestCompletionResolvesReferencesWhenNothingWasPersisted(t *testing.T) {
 	message := &types.Message{ID: "m", Content: "已生成 ![报告](sandbox:report.pptx)"}
 	handler := NewAgentStreamHandler(context.Background(), "s", "m", "req", 1, time.Time{},
 		message, stream, nil,
-		service.NewArtifactCollector(nil, nil, completionHistory{[]types.MessageArtifact{existing}}, nil, service.ArtifactCollectorConfig{}),
+		service.NewArtifactCollector(nil, nil, completionHistory{[]types.MessageArtifact{existing}}, nil,
+			service.ArtifactCollectorConfig{}),
 		nil, nil)
 
 	err := handler.handleComplete(context.Background(), event.Event{Data: event.AgentCompleteData{MessageID: "m"}})
@@ -112,7 +113,8 @@ func TestCompletionResolvesNameToLatestKnownVersion(t *testing.T) {
 	message := &types.Message{ID: "m", Content: "已生成 ![报告](sandbox:report.pptx)"}
 	handler := NewAgentStreamHandler(context.Background(), "s", "m", "req", 1, time.Time{},
 		message, stream, nil,
-		service.NewArtifactCollector(nil, nil, completionHistory{[]types.MessageArtifact{old, latest}}, nil, service.ArtifactCollectorConfig{}),
+		service.NewArtifactCollector(nil, nil, completionHistory{[]types.MessageArtifact{old, latest}}, nil,
+			service.ArtifactCollectorConfig{}),
 		nil, nil)
 
 	err := handler.handleComplete(context.Background(), event.Event{Data: event.AgentCompleteData{MessageID: "m"}})

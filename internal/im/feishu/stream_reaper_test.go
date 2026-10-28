@@ -106,7 +106,10 @@ func TestLongRunningStreamFinalizesAfterReaper(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	adapter := &Adapter{region: testRegion(srv.URL), apiBaseURL: srv.URL, tokenCache: "test-token", tokenExpAt: time.Now().Add(time.Hour)}
+	adapter := &Adapter{
+		region: testRegion(srv.URL), apiBaseURL: srv.URL, tokenCache: "test-token",
+		tokenExpAt: time.Now().Add(time.Hour),
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	streamID, err := adapter.StartStream(ctx, &im.IncomingMessage{UserID: "test-user"})
@@ -167,7 +170,10 @@ func TestEndStreamFailurePreservesSequenceForRetry(t *testing.T) {
 		_, _ = w.Write([]byte(`{"code":0}`))
 	}))
 	defer srv.Close()
-	adapter := &Adapter{region: testRegion(srv.URL), apiBaseURL: srv.URL, tokenCache: "test-token", tokenExpAt: time.Now().Add(time.Hour)}
+	adapter := &Adapter{
+		region: testRegion(srv.URL), apiBaseURL: srv.URL, tokenCache: "test-token",
+		tokenExpAt: time.Now().Add(time.Hour),
+	}
 	registerTestStream(t, cardID, &feishuStreamState{seq: 42})
 	if err := adapter.EndStream(context.Background(), nil, cardID); err == nil {
 		t.Fatal("failed CardKit finalization reported success")
@@ -228,7 +234,10 @@ func TestSendReplySplitsLongTextWithoutLoss(t *testing.T) {
 		_, _ = w.Write([]byte(`{"code":0}`))
 	}))
 	defer srv.Close()
-	adapter := &Adapter{region: testRegion(srv.URL), apiBaseURL: srv.URL, tokenCache: "test-token", tokenExpAt: time.Now().Add(time.Hour)}
+	adapter := &Adapter{
+		region: testRegion(srv.URL), apiBaseURL: srv.URL, tokenCache: "test-token",
+		tokenExpAt: time.Now().Add(time.Hour),
+	}
 	answer := strings.Repeat("中文答案 ✅\n", 1500)
 	if err := adapter.SendReply(context.Background(), &im.IncomingMessage{MessageID: "original-message"},
 		&im.ReplyMessage{Content: answer, IsFinal: true}); err != nil {
