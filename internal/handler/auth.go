@@ -9,6 +9,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -54,11 +55,8 @@ type AuthHandler struct {
 //   - userService: An implementation of the UserService interface for business logic
 //   - tenantService: An implementation of the TenantService interface for tenant management
 //   - systemSettingSvc: 3-tier resolver for runtime-tunable settings such as
-//     auth.registration_mode (P3). When DB has a row, it overrides cfg's
-//     startup value; otherwise we fall back to cfg.Auth.RegistrationMode
-//     (which already accounted for the legacy DISABLE_REGISTRATION env coerce
-//     during config load). Mismatch impossible by construction since the
-//     handler always passes cfg's value as the def parameter to GetString.
+//     auth.registration_mode (P3). When registration is not disabled by the
+//     deployment, a DB row overrides cfg.Auth.RegistrationMode.
 //
 // Returns a pointer to the newly created AuthHandler
 func NewAuthHandler(configInfo *config.Config,
@@ -86,12 +84,15 @@ func NewAuthHandler(configInfo *config.Config,
 }
 
 // resolveRegistrationMode returns the currently active registration mode.
-// Priority: DB system_settings > cfg (which already absorbed the legacy
-// DISABLE_REGISTRATION env coerce at startup) > "self_serve" hard default.
+// DISABLE_REGISTRATION is a hard deployment boundary. Otherwise, the DB
+// system setting overrides cfg and the self_serve default.
 //
 // Centralised here so /auth/register and /auth/config stay in lock-step —
 // otherwise a SystemAdmin's UI edit could affect one path and not the other.
 func (h *AuthHandler) resolveRegistrationMode(ctx context.Context) string {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("DISABLE_REGISTRATION")), "true") {
+		return config.AuthRegistrationModeInviteOnly
+	}
 	// cfg-derived default: empty is impossible after applyAuthAndTenantDefaults,
 	// but be defensive in case AuthHandler was constructed before that ran
 	// (the NewAuthHandler guard already logged in that case).
@@ -104,11 +105,8 @@ func (h *AuthHandler) resolveRegistrationMode(ctx context.Context) string {
 	if h.systemSettingSvc == nil {
 		return def
 	}
-	// envName = "" because DISABLE_REGISTRATION is a boolean and
-	// auth.registration_mode is a string — the legacy env was already
-	// coerced into `def` above. Mixing the two semantics at the resolver
-	// layer would mean a UI delete (DB row absent) silently flipped to
-	// the legacy boolean read again, which is surprising.
+	// The deployment-wide boolean is checked above; the remaining setting
+	// is a string and is resolved from the DB or configuration default.
 	return h.systemSettingSvc.GetString(ctx, "auth.registration_mode", "", def)
 }
 
