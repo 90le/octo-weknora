@@ -55,6 +55,9 @@ If pre-existing deletion states must be retained, set
 This prevents startup and housekeeping from rewriting those states; it does
 not prevent queued delete tasks from running. Independently verify the task
 backend and drain or safely stop deletion workers before enabling the app.
+Keep `DISABLE_REGISTRATION=true` when registration must remain closed. This
+deployment setting takes precedence over the database registration mode for
+both public and invitation-based account registration.
 Allow for locks and backfills during the maintenance window. Do not enable
 automatic dirty recovery without examining the partially applied migration.
 The application's migration guard is not invoked by the standalone `migrate`

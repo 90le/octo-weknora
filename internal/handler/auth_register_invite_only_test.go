@@ -288,3 +288,39 @@ func TestRegistrationModeChangesApplyImmediately(t *testing.T) {
 		}
 	}
 }
+
+func TestDisabledRegistrationOverridesDatabaseMode(t *testing.T) {
+	t.Setenv("DISABLE_REGISTRATION", " TrUe ")
+	settings := &registrationModeSettings{}
+	h := &AuthHandler{
+		configInfo: &config.Config{Auth: &config.AuthConfig{
+			RegistrationMode: config.AuthRegistrationModeSelfServe,
+		}},
+		systemSettingSvc: settings,
+	}
+	r := newRegisterTestRouter(h)
+	r.POST("/auth/register-by-invite", h.RegisterByInvite)
+	r.GET("/auth/config", h.GetAuthConfig)
+	for _, mode := range []string{config.AuthRegistrationModeSelfServe, config.AuthRegistrationModeInviteRegister} {
+		settings.mode = mode
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/auth/config", nil))
+		var cfg struct {
+			RegistrationMode string `json:"registration_mode"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil ||
+			cfg.RegistrationMode != config.AuthRegistrationModeInviteOnly {
+			t.Fatalf("disabled registration must expose invite_only for DB mode %q: %s", mode, w.Body.String())
+		}
+		for _, path := range []string{"/auth/register", "/auth/register-by-invite"} {
+			body, _ := json.Marshal(validRegisterBody())
+			req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("disabled registration with DB mode %q: %s returned %d", mode, path, w.Code)
+			}
+		}
+	}
+}
