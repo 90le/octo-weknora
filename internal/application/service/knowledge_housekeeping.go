@@ -264,7 +264,7 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 	// next sweep: we cannot tell backlog from orphan without it, and
 	// wrongly failing a live delete is visible to users, while waiting one
 	// more interval is not. A probe error defers that single row.
-	if h.inspector != nil {
+	if h.inspector != nil && !config.PreserveDeletingKnowledge() {
 		var strandedDeletes []types.Knowledge
 		if err := h.db.WithContext(ctx).
 			Where("parse_status = ? AND updated_at < ?", types.ParseStatusDeleting, cutoff).

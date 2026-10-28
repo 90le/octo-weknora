@@ -50,6 +50,11 @@ legacy-107 → shared-95 → 130 sequence on a restored isolated copy. Refuse
 dirty, unexpected or ambiguous schema states. Verify the final version,
 upstream and Octo objects, record counts, extension versions, and the validity
 of concurrently built indexes before starting the candidate application.
+If pre-existing deletion states must be retained, set
+`OCTO_PRESERVE_DELETING_KNOWLEDGE=true` for the candidate and production app.
+This prevents startup and housekeeping from rewriting those states; it does
+not prevent queued delete tasks from running. Independently verify the task
+backend and drain or safely stop deletion workers before enabling the app.
 Allow for locks and backfills during the maintenance window. Do not enable
 automatic dirty recovery without examining the partially applied migration.
 The application's migration guard is not invoked by the standalone `migrate`

@@ -440,6 +440,17 @@ func TestHousekeeping_RecoversStrandedDeletingRow(t *testing.T) {
 	assert.Contains(t, errMsg, "stranded")
 }
 
+func TestHousekeeping_PreserveDeletingKnowledge(t *testing.T) {
+	t.Setenv("OCTO_PRESERVE_DELETING_KNOWLEDGE", "true")
+	db := setupHousekeepingDB(t)
+	svc := newHousekeepingSvcForTest(db)
+	insertKnowledge(t, db, "kid-preserved-delete", types.ParseStatusDeleting, time.Now().Add(-3*time.Hour))
+	svc.runSweep(context.Background())
+	status, errMsg := readKnowledgeStatus(t, db, "kid-preserved-delete")
+	assert.Equal(t, types.ParseStatusDeleting, status)
+	assert.Empty(t, errMsg)
+}
+
 func TestHousekeeping_KeepsBackloggedDeletingRow(t *testing.T) {
 	db := setupHousekeepingDB(t)
 	// A live (queued/active/retry) knowledge:list_delete still covers the
