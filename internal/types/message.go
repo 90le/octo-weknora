@@ -342,7 +342,7 @@ func (m *MessageAttachments) Scan(value interface{}) error {
 // When mtime moves, ArtifactCollector compares content hashes so a git
 // checkout cannot duplicate a blob and a same-size rewrite still attaches.
 type MessageArtifact struct {
-	URL         string    `json:"url"`                    // Storage URL (provider://path); persisted, not sent to client
+	URL         string    `json:"url"`                    // Persisted storage URL (provider://path)
 	FileName    string    `json:"file_name"`              // Original filename inside the sandbox
 	FileType    string    `json:"file_type"`              // File extension (e.g., ".pptx", ".pdf")
 	FileSize    int64     `json:"file_size"`              // File size in bytes
