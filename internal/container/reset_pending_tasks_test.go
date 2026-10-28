@@ -138,6 +138,23 @@ func TestResetPendingTasks_KnowledgeFindThenUpdate(t *testing.T) {
 	assert.Contains(t, errMsg, "application restart")
 }
 
+func TestResetPendingTasks_PreserveDeletingKnowledge(t *testing.T) {
+	t.Setenv("REDIS_ADDR", "")
+	t.Setenv("OCTO_PRESERVE_DELETING_KNOWLEDGE", "true")
+	db := setupResetPendingDB(t)
+	stale := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, db.Exec(
+		`INSERT INTO knowledges (id, parse_status, updated_at) VALUES (?, ?, ?), (?, ?, ?)`,
+		"k-delete", types.ParseStatusDeleting, stale, "k-process", types.ParseStatusProcessing, stale,
+	).Error)
+	resetPendingTasks(db)
+	var deleting, processing string
+	require.NoError(t, db.Raw(`SELECT parse_status FROM knowledges WHERE id = ?`, "k-delete").Scan(&deleting).Error)
+	require.NoError(t, db.Raw(`SELECT parse_status FROM knowledges WHERE id = ?`, "k-process").Scan(&processing).Error)
+	assert.Equal(t, types.ParseStatusDeleting, deleting)
+	assert.Equal(t, types.ParseStatusFailed, processing)
+}
+
 func TestResetPendingTasks_KnowledgeFreshInDistributedMode(t *testing.T) {
 	db := setupResetPendingDB(t)
 	fresh := time.Now().Add(-5 * time.Minute)

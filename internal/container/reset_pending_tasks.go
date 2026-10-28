@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
@@ -177,12 +178,15 @@ func stuckSyncLogQuery(db *gorm.DB, distributed bool, staleCutoff time.Time) *go
 }
 
 func resettableParseStatuses() []string {
-	return []string{
+	statuses := []string{
 		types.ParseStatusPending,
 		types.ParseStatusProcessing,
 		types.ParseStatusFinalizing,
-		types.ParseStatusDeleting,
 	}
+	if !config.PreserveDeletingKnowledge() {
+		statuses = append(statuses, types.ParseStatusDeleting)
+	}
+	return statuses
 }
 
 func knowledgeIDs(rows []types.Knowledge) []string {
