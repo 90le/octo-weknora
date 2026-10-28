@@ -459,7 +459,7 @@ func (c *Connector) fetchStream(
 		for _, s := range incompleteSpaces {
 			if probeCount >= maxDeletionProbes {
 				return nil, fmt.Errorf(
-					"Confluence deletion reconciliation deferred: more than %d pages need verification",
+					"confluence deletion reconciliation deferred: more than %d pages need verification",
 					maxDeletionProbes,
 				)
 			}
@@ -470,7 +470,7 @@ func (c *Connector) fetchStream(
 					return nil, ctx.Err()
 				}
 				return nil, fmt.Errorf(
-					"Confluence deletion reconciliation deferred: could not verify page %s in space %s: %w",
+					"confluence deletion reconciliation deferred: could not verify page %s in space %s: %w",
 					id, s.Key, err,
 				)
 			}

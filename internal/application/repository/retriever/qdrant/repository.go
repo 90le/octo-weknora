@@ -121,7 +121,9 @@ func isMissingCollectionErr(err error) bool {
 // When that happens the process-local initialized cache is dropped so the
 // following write (ensureCollection) will recreate the collection instead of
 // skipping create and failing the upsert.
-func (q *qdrantRepository) deletePoints(ctx context.Context, dimension int, collectionName string, points *qdrant.PointsSelector) error {
+func (q *qdrantRepository) deletePoints(ctx context.Context, dimension int, collectionName string,
+	points *qdrant.PointsSelector,
+) error {
 	wait := true
 	_, err := q.client.Delete(ctx, &qdrant.DeletePoints{
 		CollectionName: collectionName,
@@ -531,7 +533,8 @@ func (q *qdrantRepository) BatchUpdateChunkEnabledStatus(ctx context.Context, ch
 			})
 			if err != nil {
 				log.Warnf("[Qdrant] Failed to update enabled chunks in %s: %v", collectionName, err)
-				updateErr = errors.Join(updateErr, fmt.Errorf("enable chunks in collection %s: %w", collectionName, err))
+				updateErr = errors.Join(updateErr, fmt.Errorf("enable chunks in collection %s: %w", collectionName,
+					err))
 			}
 		}
 
@@ -553,7 +556,8 @@ func (q *qdrantRepository) BatchUpdateChunkEnabledStatus(ctx context.Context, ch
 			})
 			if err != nil {
 				log.Warnf("[Qdrant] Failed to update disabled chunks in %s: %v", collectionName, err)
-				updateErr = errors.Join(updateErr, fmt.Errorf("disable chunks in collection %s: %w", collectionName, err))
+				updateErr = errors.Join(updateErr, fmt.Errorf("disable chunks in collection %s: %w", collectionName,
+					err))
 			}
 		}
 	}

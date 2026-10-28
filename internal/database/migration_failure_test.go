@@ -13,7 +13,8 @@ func TestMigrationFailureStopsWithoutAutoRetry(t *testing.T) {
 	root := t.TempDir()
 	migrations := filepath.Join(root, "migrations", "sqlite")
 	require.NoError(t, os.MkdirAll(migrations, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(migrations, "000001_broken.up.sql"), []byte("INSERT INTO missing_table VALUES (1);"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(migrations, "000001_broken.up.sql"),
+		[]byte("INSERT INTO missing_table VALUES (1);"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(migrations, "000001_broken.down.sql"), []byte("SELECT 1;"), 0o600))
 	chdirAndRestore(t, root)
 	path := filepath.Join(root, "db.sqlite")

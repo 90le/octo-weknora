@@ -64,6 +64,7 @@ type LongConnClient struct {
 	reconnectCount        atomic.Int64
 }
 
+// NewLongConnClient creates a channel client for incoming messages.
 func NewLongConnClient(
 	channelID, webSocketURL string,
 	handler func(context.Context, *im.IncomingMessage) error,

@@ -121,6 +121,7 @@ type AuditAPIKey struct {
 	Name string
 }
 
+// WithAuditAPIKey records the initiating API key identity in the context.
 func WithAuditAPIKey(ctx context.Context, key AuditAPIKey) context.Context {
 	if key.ID == 0 && key.Name == "" {
 		return ctx
@@ -128,6 +129,7 @@ func WithAuditAPIKey(ctx context.Context, key AuditAPIKey) context.Context {
 	return context.WithValue(ctx, AuditAPIKeyContextKey, key)
 }
 
+// AuditAPIKeyFromContext reads the initiating API key identity, when present.
 func AuditAPIKeyFromContext(ctx context.Context) (AuditAPIKey, bool) {
 	if ctx == nil {
 		return AuditAPIKey{}, false

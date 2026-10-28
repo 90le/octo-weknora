@@ -286,8 +286,9 @@ func (h *HousekeepingService) runSweep(ctx context.Context) {
 				res := h.db.WithContext(ctx).Model(&types.Knowledge{}).
 					Where("id = ? AND parse_status = ?", k.ID, types.ParseStatusDeleting).
 					Updates(map[string]interface{}{
-						"parse_status":  types.ParseStatusFailed,
-						"error_message": "delete task stranded (no queued/active delete task) > " + threshold.String() + ", recovered by housekeeping",
+						"parse_status": types.ParseStatusFailed,
+						"error_message": "delete task stranded (no queued/active delete task) > " + threshold.String() +
+							", recovered by housekeeping",
 					})
 				if res.Error != nil {
 					logger.Warnf(ctx, "[Housekeeping] delete sweep update failed for %s: %v", k.ID, res.Error)

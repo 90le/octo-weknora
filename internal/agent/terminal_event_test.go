@@ -85,7 +85,8 @@ func TestExecuteLoop_EmptyThenAnswer_EmitsSingleTerminalAnswer(t *testing.T) {
 	recorder.attach(engine.eventBus)
 
 	state := &types.AgentState{}
-	_, err := engine.executeLoop(context.Background(), state, "test query", emptyMessages(), emptyTools(), "sess-1", "msg-1")
+	_, err := engine.executeLoop(context.Background(), state, "test query", emptyMessages(), emptyTools(),
+		"sess-1", "msg-1")
 
 	require.NoError(t, err)
 	assert.True(t, state.IsComplete)
@@ -114,7 +115,8 @@ func TestExecuteLoop_AllEmptyResponses_FallbackIsSoleTerminalAnswer(t *testing.T
 	recorder.attach(engine.eventBus)
 
 	state := &types.AgentState{}
-	_, err := engine.executeLoop(context.Background(), state, "test query", emptyMessages(), emptyTools(), "sess-1", "msg-1")
+	_, err := engine.executeLoop(context.Background(), state, "test query", emptyMessages(), emptyTools(),
+		"sess-1", "msg-1")
 
 	require.NoError(t, err)
 	assert.True(t, state.IsComplete)

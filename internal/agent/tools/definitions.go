@@ -106,11 +106,17 @@ type AvailableTool struct {
 // with registered tools in this package.
 func AvailableToolDefinitions() []AvailableTool {
 	return []AvailableTool{
-		{Name: "octo_knowledge_operations", Label: "Octo 知识业务", Description: "当前获授权会话的知识维护、问题、联系人与报告能力", Group: ToolGroupRAG},
+		{
+			Name: "octo_knowledge_operations", Label: "Octo 知识业务", Description: "当前获授权会话的知识维护、问题、联系人与报告能力",
+			Group: ToolGroupRAG,
+		},
 		{Name: ToolThinking, Label: "思考", Description: "动态和反思性的问题解决思考工具", Group: ToolGroupBase},
 		{Name: ToolTodoWrite, Label: "制定计划", Description: "创建结构化的研究计划", Group: ToolGroupBase},
 		{Name: ToolSourceBrowse, Label: "源码与文本检索", Description: "浏览获授权目录、搜索源码并按行读取引用", Group: ToolGroupRAG},
-		{Name: ToolGitHubReleaseLookup, Label: "GitHub 发布查询", Description: "查询获授权 GitHub 仓库的正式发布、更新说明与标签", Group: ToolGroupRAG},
+		{
+			Name: ToolGitHubReleaseLookup, Label: "GitHub 发布查询", Description: "查询获授权 GitHub 仓库的正式发布、更新说明与标签",
+			Group: ToolGroupRAG,
+		},
 		{
 			Name:        ToolSearchConversations,
 			Label:       "回顾历史对话",

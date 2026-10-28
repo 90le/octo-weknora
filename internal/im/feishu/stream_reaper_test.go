@@ -245,8 +245,10 @@ func TestSendReplySplitsLongTextWithoutLoss(t *testing.T) {
 }
 
 func TestSplitTextReplyPreservesBoundaries(t *testing.T) {
-	for _, text := range []string{"", "short", strings.Repeat("x", textReplyChunkBytes),
-		strings.Repeat("图", textReplyChunkBytes), strings.Repeat("\x00", textReplyChunkBytes+1)} {
+	for _, text := range []string{
+		"", "short", strings.Repeat("x", textReplyChunkBytes),
+		strings.Repeat("图", textReplyChunkBytes), strings.Repeat("\x00", textReplyChunkBytes+1),
+	} {
 		parts := splitTextReply(text)
 		if strings.Join(parts, "") != text {
 			t.Fatal("text changed when splitting")

@@ -1343,7 +1343,8 @@ func (s *DataSourceService) processSyncStreaming(
 			if cursorErr != nil {
 				logger.Errorf(ctx, "failed to parse full-sync cursor: %v", cursorErr)
 				if updateErr := s.updateSyncRunResult(ctx, ds, syncLog, result, nil,
-					types.SyncLogStatusFailed, fmt.Sprintf("Invalid cursor: %v", cursorErr), wasPaused, false); updateErr != nil {
+					types.SyncLogStatusFailed, fmt.Sprintf("Invalid cursor: %v", cursorErr), wasPaused,
+					false); updateErr != nil {
 					return updateErr
 				}
 				return cursorErr

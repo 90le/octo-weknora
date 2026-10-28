@@ -467,6 +467,8 @@ Output ONLY the updated title and introduction paragraph. Do NOT generate any di
 
 // WikiDeduplicationPrompt asks the LLM to identify duplicate entities/concepts
 // between newly extracted items and existing wiki pages.
+//
+//nolint:lll // The prompt is a raw literal whose line breaks are intentional.
 const WikiDeduplicationPrompt = `You are a strict deduplication system. You are given a list of newly extracted items. Each item carries its OWN short list of existing wiki pages that are surface-similar to it (its <candidates>). For each item, decide whether it refers to the **exact same** real-world entity or concept as ONE of its own candidates.
 
 <items>

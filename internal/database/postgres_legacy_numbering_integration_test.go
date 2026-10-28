@@ -39,7 +39,7 @@ func TestPostgres107LegacyMigrationRefusesWithoutRewind(t *testing.T) {
 	fixtureDSN := parsed.String()
 	db, err := sql.Open("postgres", fixtureDSN)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	_, err = db.Exec(`CREATE TABLE schema_migrations (version bigint NOT NULL PRIMARY KEY, dirty boolean NOT NULL);
 		INSERT INTO schema_migrations VALUES (107, false);
 		CREATE TABLE octo_scopes (id text PRIMARY KEY)`)
@@ -106,7 +106,7 @@ func TestPostgresLegacyEarlyRealMigrationBoundaries(t *testing.T) {
 	fixtureDSN := parsed.String()
 	db, err := sql.Open("postgres", fixtureDSN)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	_, err = db.Exec(`CREATE TABLE schema_migrations (version bigint NOT NULL PRIMARY KEY, dirty boolean NOT NULL);
 		INSERT INTO schema_migrations VALUES (96, false);
 		CREATE TABLE octo_scopes (id text PRIMARY KEY);
@@ -132,7 +132,8 @@ func TestPostgresLegacyEarlyRealMigrationBoundaries(t *testing.T) {
 	_, err = db.Exec("DROP TABLE octo_scopes")
 	require.NoError(t, err)
 	for version := uint(96); version <= 106; version++ {
-		require.NoError(t, checkPostgresLegacyEarlyFingerprint(context.Background(), db, version), "normal upstream marker check at %d", version)
+		require.NoError(t, checkPostgresLegacyEarlyFingerprint(context.Background(), db, version),
+			"normal upstream marker check at %d", version)
 	}
 	for _, fixture := range []struct{ create, drop string }{
 		{"CREATE TABLE local_source_spaces (id text)", "DROP TABLE local_source_spaces"},

@@ -291,7 +291,8 @@ func (s *sessionService) AgentQA(
 		logger.Infof(ctx, "Agent model supports vision, passing %d image(s) directly", len(agentImageURLs))
 	} else if req.ImageDescription != "" {
 		agentQuery = req.Query + "\n\n[用户上传图片内容]\n" + req.ImageDescription
-		logger.Infof(ctx, "Agent model does not support vision, appending image description (%d chars)", len(req.ImageDescription))
+		logger.Infof(ctx, "Agent model does not support vision, appending image description (%d chars)",
+			len(req.ImageDescription))
 	}
 	if req.QuotedContext != "" {
 		agentQuery += "\n\n" + req.QuotedContext
@@ -355,7 +356,7 @@ func logAgentQAStart(ctx context.Context, req *types.QARequest, agentTenantID ui
 // path builds the same query inline because it also has the resolved sandbox
 // layout; this helper keeps the policy testable without a sandbox.
 func buildAgentModelInput(
-	ctx context.Context, req *types.QARequest, supportsVision bool, stagedAttachments []stagedSessionAttachment,
+	ctx context.Context, req *types.QARequest, supportsVision bool, _ []stagedSessionAttachment,
 ) (context.Context, string, []string) {
 	ctx = answerevidence.WithContract(ctx, req.Query)
 	agentQuery := req.Query

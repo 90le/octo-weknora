@@ -235,7 +235,8 @@ func RunMigrationsWithOptions(dsn string, opts MigrationOptions) error {
 		if versionCheckErr == nil && currentDirty {
 			logger.Warnf(ctx, "Migration caused dirty state at version %d", currentVersion)
 			if postgresMigration {
-				return captureMigrationFailure(m, fmt.Errorf("%w; migration error: %v", postgresDirtyError(currentVersion), err))
+				return captureMigrationFailure(m, fmt.Errorf("%w; migration error: %v",
+					postgresDirtyError(currentVersion), err))
 			}
 			if opts.AutoRecoverDirty {
 				logger.Infof(ctx, "Attempting to recover from dirty state...")

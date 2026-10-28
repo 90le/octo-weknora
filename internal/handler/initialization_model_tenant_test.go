@@ -28,13 +28,13 @@ func (s *stubTenantStampModelService) GetModelByID(ctx context.Context, id strin
 	return nil, nil // default: force the create path
 }
 
-func (s *stubTenantStampModelService) CreateModel(ctx context.Context, model *types.Model) error {
+func (s *stubTenantStampModelService) CreateModel(_ context.Context, model *types.Model) error {
 	m := *model
 	s.created = append(s.created, &m)
 	return nil
 }
 
-func (s *stubTenantStampModelService) UpdateModel(ctx context.Context, model *types.Model) error {
+func (s *stubTenantStampModelService) UpdateModel(_ context.Context, model *types.Model) error {
 	m := *model
 	s.updated = append(s.updated, &m)
 	return nil
@@ -80,7 +80,7 @@ func TestProcessInitializationModelsKeepsExistingModelTenant(t *testing.T) {
 		TenantID: 10042, Source: types.ModelSourceRemote,
 	}
 	svc := &stubTenantStampModelService{}
-	svc.getModelByID = func(ctx context.Context, id string) (*types.Model, error) {
+	svc.getModelByID = func(_ context.Context, id string) (*types.Model, error) {
 		if id == "m-existing" {
 			return stored, nil
 		}

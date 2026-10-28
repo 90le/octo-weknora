@@ -12,15 +12,19 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-var ErrKnowledgeBaseNotFound = errors.New("knowledge base not found")
-var ErrKnowledgeBaseInUse = errors.New("knowledge base is still used by an Octo scope")
+var (
+	ErrKnowledgeBaseNotFound = errors.New("knowledge base not found")
+	ErrKnowledgeBaseInUse    = errors.New("knowledge base is still used by an Octo scope")
+)
 
-type verifiedOctoScopeDeletionKey struct{}
-type verifiedOctoScopeDeletion struct {
-	tenantID uint64
-	scopeID  string
-	actorUID string
-}
+type (
+	verifiedOctoScopeDeletionKey struct{}
+	verifiedOctoScopeDeletion    struct {
+		tenantID uint64
+		scopeID  string
+		actorUID string
+	}
+)
 
 // WithVerifiedOctoScopeDeletion is only for a server-verified Octo knowledge
 // proposal. It does not authorize a caller: the business service must first
@@ -211,7 +215,7 @@ func (r *knowledgeBaseRepository) UpdateKnowledgeBaseGeneratedProfile(
 		}).Error
 }
 
-// DeleteKnowledgeBase deletes a knowledge base// DeleteKnowledgeBase serializes a soft-delete with Octo scope binding. Both
+// DeleteKnowledgeBase serializes a soft-delete with Octo scope binding. Both
 // this operation and SetBinding lock the active KB row before inspecting or
 // changing scope references, so a concurrent bind cannot commit after the
 // dependency check but before the soft-delete. SQLite serializes writes at

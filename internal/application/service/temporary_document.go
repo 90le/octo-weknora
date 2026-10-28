@@ -263,7 +263,9 @@ func (s *temporaryDocumentService) sessionReferencesAttachment(
 	return false, nil
 }
 
-func (s *temporaryDocumentService) List(ctx context.Context, tenantID uint64, sessionID string) ([]*types.TemporaryDocument, error) {
+func (s *temporaryDocumentService) List(ctx context.Context, tenantID uint64,
+	sessionID string,
+) ([]*types.TemporaryDocument, error) {
 	return s.repo.ListScoped(ctx, tenantID, sessionID)
 }
 

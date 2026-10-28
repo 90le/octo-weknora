@@ -486,7 +486,8 @@ func TestIsMissingCollectionErr(t *testing.T) {
 		{"generic", errors.New("qdrant unavailable"), false},
 		{"issue wording", fmt.Errorf(qdrantMissingCollectionErr, "vectors_1024"), true},
 		{"grpc not found", status.Error(codes.NotFound, "Not found: Collection vectors_1024 doesn't exist!"), true},
-		{"wrapped not found", fmt.Errorf("Delete() failed: vectors_1024: %w", status.Error(codes.NotFound, "Not found")), true},
+		{"wrapped not found", fmt.Errorf("Delete() failed: vectors_1024: %w", status.Error(codes.NotFound,
+			"Not found")), true},
 		{"other grpc", status.Error(codes.Unavailable, "qdrant down"), false},
 	}
 	for _, tc := range cases {

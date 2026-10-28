@@ -29,26 +29,6 @@ type replayedBody struct {
 	io.Closer
 }
 
-// loggerResponseBodyWriter 自定义ResponseWriter用于捕获响应内容（用于logger中间件）
-type loggerResponseBodyWriter struct {
-	gin.ResponseWriter
-	body *bytes.Buffer
-}
-
-// Write 重写Write方法，同时写入buffer和原始writer
-// 限制buffer大小，避免SSE等流式响应导致内存无限增长
-func (r loggerResponseBodyWriter) Write(b []byte) (int, error) {
-	if r.body.Len() < maxBodySize {
-		remaining := maxBodySize - r.body.Len()
-		if len(b) <= remaining {
-			r.body.Write(b)
-		} else {
-			r.body.Write(b[:remaining])
-		}
-	}
-	return r.ResponseWriter.Write(b)
-}
-
 // sensitiveFieldRegex 匹配 JSON 中的敏感字段（不区分大小写，兼容 snake_case / camelCase / PascalCase）。
 // $1 捕获原始字段名（包括两侧引号），保持日志中的字段名不变，仅将值替换为 "***"。
 var sensitiveFieldRegex = regexp.MustCompile(

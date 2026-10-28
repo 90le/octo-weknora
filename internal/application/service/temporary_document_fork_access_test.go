@@ -24,26 +24,36 @@ type forkAccessDocRepo struct {
 func (r *forkAccessDocRepo) Create(context.Context, *types.TemporaryDocument) error {
 	panic("unexpected Create")
 }
+
 func (r *forkAccessDocRepo) MarkProcessing(context.Context, uint64, string, time.Time) error {
 	panic("unexpected MarkProcessing")
 }
-func (r *forkAccessDocRepo) MarkReady(context.Context, uint64, string, string, types.JSON, types.JSON, types.JSON, int, int, time.Time) error {
+
+func (r *forkAccessDocRepo) MarkReady(context.Context, uint64, string, string, types.JSON, types.JSON,
+	types.JSON, int, int, time.Time,
+) error {
 	panic("unexpected MarkReady")
 }
+
 func (r *forkAccessDocRepo) MarkFailed(context.Context, uint64, string, string) error {
 	panic("unexpected MarkFailed")
 }
+
 func (r *forkAccessDocRepo) DeleteScoped(context.Context, uint64, string, string) error {
 	panic("unexpected DeleteScoped")
 }
+
 func (r *forkAccessDocRepo) ListExpired(context.Context, time.Time, int) ([]*types.TemporaryDocument, error) {
 	panic("unexpected ListExpired")
 }
+
 func (r *forkAccessDocRepo) ListScoped(context.Context, uint64, string) ([]*types.TemporaryDocument, error) {
 	panic("unexpected ListScoped")
 }
 
-func (r *forkAccessDocRepo) GetByID(_ context.Context, tenantID uint64, documentID string) (*types.TemporaryDocument, error) {
+func (r *forkAccessDocRepo) GetByID(_ context.Context, tenantID uint64,
+	documentID string,
+) (*types.TemporaryDocument, error) {
 	for _, doc := range r.docs {
 		if doc.TenantID == tenantID && doc.ID == documentID {
 			return doc, nil
@@ -52,7 +62,9 @@ func (r *forkAccessDocRepo) GetByID(_ context.Context, tenantID uint64, document
 	return nil, nil
 }
 
-func (r *forkAccessDocRepo) GetScoped(_ context.Context, tenantID uint64, sessionID, documentID string) (*types.TemporaryDocument, error) {
+func (r *forkAccessDocRepo) GetScoped(_ context.Context, tenantID uint64, sessionID,
+	documentID string,
+) (*types.TemporaryDocument, error) {
 	for _, doc := range r.docs {
 		if doc.TenantID == tenantID && doc.SessionID == sessionID && doc.ID == documentID {
 			return doc, nil
@@ -65,7 +77,9 @@ type forkAccessAttachments struct {
 	bySession map[string]types.MessageAttachments
 }
 
-func (s *forkAccessAttachments) GetSessionAttachments(_ context.Context, sessionID string) (types.MessageAttachments, error) {
+func (s *forkAccessAttachments) GetSessionAttachments(_ context.Context,
+	sessionID string,
+) (types.MessageAttachments, error) {
 	return s.bySession[sessionID], nil
 }
 

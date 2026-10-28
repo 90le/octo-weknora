@@ -353,7 +353,10 @@ func TestArtifactCollector_NotifySkipsHashMatchedRestores(t *testing.T) {
 	src := &fakeSandboxSource{
 		entries: map[string][]sandbox.RemoteDirEntry{
 			"sess-1": {
-				{Name: "report.pptx", Path: "/workspace/output/report.pptx", Type: sandbox.RemoteEntryFile, Size: 4, ModTime: mustParseTime("2026-07-10T10:21:00Z")},
+				{
+					Name: "report.pptx", Path: "/workspace/output/report.pptx", Type: sandbox.RemoteEntryFile, Size: 4,
+					ModTime: mustParseTime("2026-07-10T10:21:00Z"),
+				},
 			},
 		},
 		contents: map[string][]byte{
@@ -428,7 +431,10 @@ func TestArtifactCollector_SkipsRestoredFileSamePathSameSize(t *testing.T) {
 				// git checkout rewrites the file with a fresh mtime but the
 				// same bytes. That must not attach a duplicate to the next
 				// assistant message.
-				{Name: "report.pptx", Path: "/workspace/output/report.pptx", Type: sandbox.RemoteEntryFile, Size: 4, ModTime: mustParseTime("2026-07-10T10:21:00Z")},
+				{
+					Name: "report.pptx", Path: "/workspace/output/report.pptx", Type: sandbox.RemoteEntryFile, Size: 4,
+					ModTime: mustParseTime("2026-07-10T10:21:00Z"),
+				},
 			},
 		},
 		contents: map[string][]byte{
@@ -464,7 +470,10 @@ func TestArtifactCollector_SkipsRestoredFileUsingStoredBlob(t *testing.T) {
 	src := &fakeSandboxSource{
 		entries: map[string][]sandbox.RemoteDirEntry{
 			"sess-1": {
-				{Name: "report.pptx", Path: "/workspace/output/report.pptx", Type: sandbox.RemoteEntryFile, Size: 4, ModTime: mustParseTime("2026-07-10T10:21:00Z")},
+				{
+					Name: "report.pptx", Path: "/workspace/output/report.pptx", Type: sandbox.RemoteEntryFile,
+					Size: 4, ModTime: mustParseTime("2026-07-10T10:21:00Z"),
+				},
 			},
 		},
 		contents: map[string][]byte{
@@ -493,7 +502,10 @@ func TestArtifactCollector_PersistsRestoredMtimeSoNextTurnDoesNotReread(t *testi
 	src := &fakeSandboxSource{
 		entries: map[string][]sandbox.RemoteDirEntry{
 			"fork-1": {
-				{Name: "report.pptx", Path: "/workspace/output/report.pptx", Type: sandbox.RemoteEntryFile, Size: 4, ModTime: newMod},
+				{
+					Name: "report.pptx", Path: "/workspace/output/report.pptx", Type: sandbox.RemoteEntryFile, Size: 4,
+					ModTime: newMod,
+				},
 			},
 		},
 		contents: map[string][]byte{
@@ -587,7 +599,10 @@ func TestArtifactCollector_ReattachesSameSizeDifferentContent(t *testing.T) {
 	src := &fakeSandboxSource{
 		entries: map[string][]sandbox.RemoteDirEntry{
 			"sess-1": {
-				{Name: "report.pptx", Path: "/workspace/output/report.pptx", Type: sandbox.RemoteEntryFile, Size: int64(len(newBytes)), ModTime: mustParseTime("2026-07-10T10:21:00Z")},
+				{
+					Name: "report.pptx", Path: "/workspace/output/report.pptx", Type: sandbox.RemoteEntryFile,
+					Size: int64(len(newBytes)), ModTime: mustParseTime("2026-07-10T10:21:00Z"),
+				},
 			},
 		},
 		contents: map[string][]byte{
@@ -595,7 +610,10 @@ func TestArtifactCollector_ReattachesSameSizeDifferentContent(t *testing.T) {
 		},
 	}
 	store := &fakeStore{prev: []types.MessageArtifact{
-		{SourcePath: "/workspace/output/report.pptx", ModTime: oldMod, FileSize: int64(len(oldBytes)), ContentHash: artifactContentHash(oldBytes)},
+		{
+			SourcePath: "/workspace/output/report.pptx", ModTime: oldMod, FileSize: int64(len(oldBytes)),
+			ContentHash: artifactContentHash(oldBytes),
+		},
 	}}
 	fs := &fakeFileService{}
 	c := newTestCollector(src, store, fs, 1<<20)

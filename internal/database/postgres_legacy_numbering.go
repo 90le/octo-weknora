@@ -10,14 +10,17 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 )
 
-const postgres107Advice = "take an isolated, consistent backup and review the schema and migration history in a disposable restore; use a reviewed, controlled recovery procedure before restarting; do not force or rewind the version automatically"
+const postgres107Advice = "take an isolated, consistent backup and review the schema and migration history " +
+	"in a disposable restore; use a reviewed, controlled recovery procedure before restarting; " +
+	"do not force or rewind the version automatically"
 
 func isPostgresMigrationDSN(dsn string) bool {
 	return strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://")
 }
 
 func postgresDirtyError(version uint) error {
-	return fmt.Errorf("PostgreSQL migration %d is dirty; its state and history are unsafe to infer: %s", version, postgres107Advice)
+	return fmt.Errorf("PostgreSQL migration %d is dirty; its state and history are unsafe to infer: %s",
+		version, postgres107Advice)
 }
 
 func isPostgresLegacyEarlyVersion(version uint) bool {
@@ -50,13 +53,14 @@ const postgresLegacyEarlyFingerprintSQL = `SELECT
 func checkPostgresLegacyEarlyBeforeMigration(ctx context.Context, dsn string, version uint) error {
 	parsed, err := url.Parse(dsn)
 	if err != nil {
-		return fmt.Errorf("cannot inspect PostgreSQL migration %d connection configuration; %s", version, postgres107Advice)
+		return fmt.Errorf("cannot inspect PostgreSQL migration %d connection configuration; %s",
+			version, postgres107Advice)
 	}
 	db, err := sql.Open("postgres", migrate.FilterCustomQuery(parsed).String())
 	if err != nil {
 		return fmt.Errorf("cannot open PostgreSQL migration %d schema inspection; %s", version, postgres107Advice)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	return checkPostgresLegacyEarlyFingerprint(ctx, db, version)
 }
 
@@ -66,7 +70,9 @@ func checkPostgresLegacyEarlyFingerprint(ctx context.Context, db *sql.DB, versio
 		return fmt.Errorf("cannot inspect PostgreSQL migration %d schema; %s", version, postgres107Advice)
 	}
 	if octo {
-		return fmt.Errorf("PostgreSQL migration %d has a fork Octo schema fingerprint and overlaps upstream numbering; %s", version, postgres107Advice)
+		return fmt.Errorf("PostgreSQL migration %d has a fork Octo schema fingerprint "+
+			"and overlaps upstream numbering; %s",
+			version, postgres107Advice)
 	}
 	return nil
 }
@@ -82,10 +88,17 @@ const postgres107FingerprintSQL = `SELECT
     to_regclass('octo_connections') IS NOT NULL,
     to_regclass('mcp_endpoints') IS NOT NULL,
     to_regclass('message_artifacts') IS NOT NULL,
-    EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('message_artifacts') AND attname = 'deleted_at' AND attnum > 0 AND NOT attisdropped),
-    EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('messages') AND attname = 'context_checkpoint' AND attnum > 0 AND NOT attisdropped),
-    to_regclass('fork_snapshot_leases') IS NOT NULL AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('sessions') AND attname = 'fork_bootstrap' AND attnum > 0 AND NOT attisdropped),
-    EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('tenant_skills') AND attname = 'served' AND attnum > 0 AND NOT attisdropped) AND EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('idx_messages_session_created_id') AND indisvalid)`
+    EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('message_artifacts')
+        AND attname = 'deleted_at' AND attnum > 0 AND NOT attisdropped),
+    EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('messages')
+        AND attname = 'context_checkpoint' AND attnum > 0 AND NOT attisdropped),
+    to_regclass('fork_snapshot_leases') IS NOT NULL AND EXISTS
+        (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('sessions')
+         AND attname = 'fork_bootstrap' AND attnum > 0 AND NOT attisdropped),
+    EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('tenant_skills')
+        AND attname = 'served' AND attnum > 0 AND NOT attisdropped)
+    AND EXISTS (SELECT 1 FROM pg_index WHERE indexrelid = to_regclass('idx_messages_session_created_id')
+        AND indisvalid)`
 
 func checkPostgres107BeforeMigration(ctx context.Context, dsn string, dirty bool) error {
 	if dirty {
@@ -100,7 +113,7 @@ func checkPostgres107BeforeMigration(ctx context.Context, dsn string, dirty bool
 	if err != nil {
 		return fmt.Errorf("cannot open PostgreSQL migration 107 schema inspection; %s", postgres107Advice)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	return checkPostgres107Fingerprint(ctx, db)
 }
 
@@ -114,10 +127,12 @@ func checkPostgres107Fingerprint(ctx context.Context, db *sql.DB) error {
 	octo := scopes || bindings || connections
 	upstreamComplete := mcp && artifacts && artifactDeleted && checkpoint && forkSchema && skillAndIndex
 	if octo && !upstreamComplete {
-		return fmt.Errorf("PostgreSQL migration 107 has an Octo fingerprint and missing upstream 96-107 objects, consistent with the fork's legacy numbering; %s", postgres107Advice)
+		return fmt.Errorf("PostgreSQL migration 107 has an Octo fingerprint and missing upstream 96-107 objects, "+
+			"consistent with the fork's legacy numbering; %s", postgres107Advice)
 	}
 	if octo || !upstreamComplete {
-		return fmt.Errorf("PostgreSQL migration 107 has an ambiguous or incomplete schema; neither fork nor upstream numbering can be safely assumed; %s", postgres107Advice)
+		return fmt.Errorf("PostgreSQL migration 107 has an ambiguous or incomplete schema; "+
+			"neither fork nor upstream numbering can be safely assumed; %s", postgres107Advice)
 	}
 	return nil
 }

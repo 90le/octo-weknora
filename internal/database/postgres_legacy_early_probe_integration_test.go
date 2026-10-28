@@ -40,7 +40,8 @@ func TestPostgresLegacyEarlyProbeOnDisposablePostgres(t *testing.T) {
 	db, err := sql.Open("postgres", fixtureDSN)
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
-	_, err = db.Exec("CREATE TABLE schema_migrations (version bigint NOT NULL, dirty boolean NOT NULL); INSERT INTO schema_migrations VALUES (96, false)")
+	_, err = db.Exec("CREATE TABLE schema_migrations (version bigint NOT NULL, dirty boolean NOT NULL); " +
+		"INSERT INTO schema_migrations VALUES (96, false)")
 	require.NoError(t, err)
 	for version := 96; version <= 106; version++ {
 		_, err = db.Exec("UPDATE schema_migrations SET version = $1", version)
@@ -68,7 +69,10 @@ func TestPostgresLegacyEarlyProbeOnDisposablePostgres(t *testing.T) {
 		{"CREATE TABLE local_source_spaces (id text)", "DROP TABLE local_source_spaces"},
 		{"CREATE TABLE github_document_sync_items (id text)", "DROP TABLE github_document_sync_items"},
 		{"CREATE TABLE data_sources (restart_recovery_lease_id text)", "DROP TABLE data_sources"},
-		{"CREATE TABLE index_fixture (id text); CREATE INDEX idx_octo_channel_session ON index_fixture(id)", "DROP TABLE index_fixture"},
+		{
+			"CREATE TABLE index_fixture (id text); CREATE INDEX idx_octo_channel_session ON index_fixture(id)",
+			"DROP TABLE index_fixture",
+		},
 	} {
 		_, err = db.Exec(fixture.create)
 		require.NoError(t, err)
