@@ -233,7 +233,7 @@ func (s *Server) mount(m *Mount) error {
 	if err != nil {
 		return err
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	dev, ino, err := identity(r)
 	if err != nil || dev != m.Device || ino != m.Inode {
 		return errors.New("source identity changed")
@@ -410,7 +410,7 @@ func (s *Server) browse(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "directory unavailable or unsafe", http.StatusBadRequest)
 		return
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	f, err := r.Open(".")
 	if err != nil {
 		http.Error(w, "directory unavailable", http.StatusBadRequest)
@@ -490,7 +490,7 @@ func (s *Server) add(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	dev, ino, err := identity(r)
-	r.Close()
+	_ = r.Close()
 	if err != nil {
 		http.Error(w, "directory unavailable", http.StatusBadRequest)
 		return

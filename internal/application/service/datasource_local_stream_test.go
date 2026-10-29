@@ -18,7 +18,7 @@ func TestStreamToFileHeaderPreservesLargeContent(t *testing.T) {
 	require.Equal(t, int64(len(data)), file.Size)
 	r, err := file.Open()
 	require.NoError(t, err)
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	got, err := io.ReadAll(r)
 	require.NoError(t, err)
 	require.Equal(t, data, got)
