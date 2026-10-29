@@ -15,11 +15,14 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-const discoveryBoundary = "/source-roots"
-const directoryPageSize = 200
-const directoryScanLimit = 10000
+const (
+	discoveryBoundary  = "/source-roots"
+	directoryPageSize  = 200
+	directoryScanLimit = 10000
+)
 
 type SpaceSummary struct {
 	Space
@@ -169,8 +172,14 @@ func (r *Registry) BrowseSpace(ctx context.Context, id, directory string, offset
 
 // Root browsing is safe for workspace datasource administrators: it always
 // rereads the current enabled grant, and returns no physical/space path.
-func (r *Registry) BrowseRoot(ctx context.Context, tenant uint64, id, directory string, offset int) (*DirectoryPage, error) {
-	if tenant == 0 || id == "" || len(id) > 128 || !validDirectory(directory) || offset < 0 || offset > directoryScanLimit {
+func (r *Registry) BrowseRoot(
+	ctx context.Context,
+	tenant uint64,
+	id, directory string,
+	offset int,
+) (*DirectoryPage, error) {
+	if tenant == 0 || id == "" || len(id) > 128 || !validDirectory(directory) || offset < 0 ||
+		offset > directoryScanLimit {
 		return nil, ErrRootInvalid
 	}
 	var root Root
@@ -245,7 +254,13 @@ func browseDirectories(ctx context.Context, root Root, directory string, offset 
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	start := min(offset, len(entries))
 	end := min(start+directoryPageSize, len(entries))
-	return &DirectoryPage{Directory: directory, Entries: entries[start:end], HasMore: end < len(entries), NextOffset: end, Truncated: truncated}, nil
+	return &DirectoryPage{
+		Directory:  directory,
+		Entries:    entries[start:end],
+		HasMore:    end < len(entries),
+		NextOffset: end,
+		Truncated:  truncated,
+	}, nil
 }
 
 func listedDirectoryName(name string) bool {
@@ -277,6 +292,12 @@ func (r *Registry) discoveryBase() string {
 	return discoveryBoundary
 }
 
+// BrowseDiscovery exposes only directories beneath the deployment-provided
+// mount boundary. It does not inspect or mount arbitrary host paths.
+func (r *Registry) BrowseDiscovery(ctx context.Context, directory string, offset int) (*DirectoryPage, error) {
+	return browseDirectories(ctx, Root{SpacePath: r.discoveryBase()}, directory, offset)
+}
+
 // Discovery is not mounting: only direct, real directories that the deployment
 // already exposed inside /source-roots can be considered. Nothing scans /home,
 // the host's disks, Docker mounts, or a caller-controlled absolute path.
@@ -300,6 +321,12 @@ func (r *Registry) DiscoverSpaces(ctx context.Context) (*DiscoveredSpaces, error
 	out.Available = true
 	out.Truncated = page.Truncated || page.HasMore
 	for _, item := range page.Entries {
+		// This is a dynamic container for separately mounted host folders. It
+		// must never be granted as a whole: future mounts would silently become
+		// visible to workspaces with an older grant.
+		if item.Directory == "managed" {
+			continue
+		}
 		candidate := filepath.Join(r.discoveryBase(), item.Name)
 		if registered[filepath.Clean(candidate)] || !readableSpace(Space{Path: candidate}) {
 			continue
@@ -308,10 +335,16 @@ func (r *Registry) DiscoverSpaces(ctx context.Context) (*DiscoveredSpaces, error
 	}
 	return out, nil
 }
+
 func (r *Registry) RegisterDiscoveredSpace(ctx context.Context, req SpaceRegistration) (*Space, error) {
 	req.Name = strings.TrimSpace(req.Name)
-	if !validName(req.Name) || req.Directory == "" || !listedDirectoryName(req.Directory) {
+	if !validName(req.Name) || req.Directory == "" || req.Directory == "managed" || !validDirectory(req.Directory) {
 		return nil, ErrRootInvalid
+	}
+	for _, component := range strings.Split(req.Directory, "/") {
+		if !listedDirectoryName(component) {
+			return nil, ErrRootInvalid
+		}
 	}
 	base := r.discoveryBase()
 	candidate := filepath.Join(base, req.Directory)
@@ -330,8 +363,18 @@ func (r *Registry) RegisterDiscoveredSpace(ctx context.Context, req SpaceRegistr
 	sum := sha256.Sum256([]byte(candidate))
 	space := Space{ID: "discovered-" + hex.EncodeToString(sum[:10]), Name: req.Name, Path: candidate}
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockRegistryState(tx); err != nil {
+			return err
+		}
+		// The mount may have been removed while this registration waited for
+		// the global lock. Re-open it while the lock is held.
+		current, err := openRegisteredRoot(Root{SpacePath: base, Directory: req.Directory})
+		if err != nil {
+			return ErrRootUnavailable
+		}
+		defer func() { _ = current.Close() }()
 		var old Space
-		err := tx.First(&old, "path = ?", candidate).Error
+		err = tx.First(&old, "path = ?", candidate).Error
 		if err == nil {
 			return ErrRootExists
 		}
@@ -344,6 +387,64 @@ func (r *Registry) RegisterDiscoveredSpace(ctx context.Context, req SpaceRegistr
 		return nil, ErrRootExists
 	}
 	return &space, err
+}
+
+func lockRegistryState(tx *gorm.DB) error {
+	var marker registryState
+	return tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&marker, "id = ?", "legacy-roots-v1").Error
+}
+
+// WithUnusedManagedMount serializes removal with space registration across
+// app instances. The broker call runs only when no registered space overlaps
+// the mount, including a space covering its parent directory.
+func (r *Registry) WithUnusedManagedMount(ctx context.Context, id string, remove func() error) error {
+	if len(id) != 22 || !strings.HasPrefix(id, "m-") {
+		return ErrRootInvalid
+	}
+	if _, err := hex.DecodeString(id[2:]); err != nil {
+		return ErrRootInvalid
+	}
+	target := filepath.Join(r.discoveryBase(), "managed", id)
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockRegistryState(tx); err != nil {
+			return err
+		}
+		var spaces []Space
+		if err := tx.Find(&spaces).Error; err != nil {
+			return err
+		}
+		for _, space := range spaces {
+			clean := filepath.Clean(space.Path)
+			if clean == target || strings.HasPrefix(clean, target+string(os.PathSeparator)) ||
+				strings.HasPrefix(target, clean+string(os.PathSeparator)) {
+				return ErrRootInUse
+			}
+		}
+		return remove()
+	})
+}
+
+// DeleteDiscoveredSpace removes only metadata after all workspace grants are
+// removed. A database foreign key also prevents a concurrent grant from racing
+// with the deletion. Environment-provisioned spaces are not removable here.
+func (r *Registry) DeleteDiscoveredSpace(ctx context.Context, id string) error {
+	if !strings.HasPrefix(id, "discovered-") || len(id) > 128 {
+		return ErrRootInvalid
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var space Space
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&space, "id = ?", id).Error; err != nil {
+			return err
+		}
+		var count int64
+		if err := tx.Model(&Root{}).Where("space_id = ?", id).Count(&count).Error; err != nil {
+			return err
+		}
+		if count != 0 {
+			return ErrRootInUse
+		}
+		return tx.Delete(&space).Error
+	})
 }
 
 // Counting references must not decrypt source credentials or fail JSON scanning
@@ -370,6 +471,7 @@ func (s sourceReference) rootID() (string, bool) {
 	id, ok := value.(string)
 	return id, ok
 }
+
 func (r *Registry) sourceReferences(ctx context.Context, tenant uint64) ([]sourceReference, error) {
 	rows := []sourceReference{}
 	q := r.db.WithContext(ctx).Model(&types.DataSource{}).Select("tenant_id, config").Where("type = ?", Type)

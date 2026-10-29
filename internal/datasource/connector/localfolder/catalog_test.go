@@ -59,13 +59,20 @@ func TestSpaceCatalogCountsOnlyMatchingLiveSources(t *testing.T) {
 	require.False(t, spaces[0].UsageComplete)
 	roots, err = r.RootSummaries(ctx, 8)
 	require.NoError(t, err)
-	require.True(t, roots[0].UsageComplete, "a different tenant's malformed config must not change scoped root statistics")
+	require.True(
+		t,
+		roots[0].UsageComplete,
+		"a different tenant's malformed config must not change scoped root statistics",
+	)
 }
 
 func TestSpaceCatalogDistinguishesMissingAndUnsafeWithoutRawError(t *testing.T) {
 	ctx := context.Background()
 	r := registryWithSpace(t, t.TempDir())
-	require.NoError(t, r.db.Create(&Space{ID: "missing", Name: "Missing", Path: filepath.Join(t.TempDir(), "absent")}).Error)
+	require.NoError(
+		t,
+		r.db.Create(&Space{ID: "missing", Name: "Missing", Path: filepath.Join(t.TempDir(), "absent")}).Error,
+	)
 	link := filepath.Join(t.TempDir(), "link")
 	if err := os.Symlink(t.TempDir(), link); err != nil {
 		t.Skip("symlinks not available")
@@ -98,7 +105,10 @@ func TestDiscoveryRegistersOnlyRealDirectMountedDirectoriesAndPersists(t *testin
 	require.True(t, result.Available)
 	require.Equal(t, "ready", result.Status)
 	require.Equal(t, []DirectoryEntry{{Name: "new", Directory: "new"}}, result.Entries)
-	for _, dir := range []string{"", ".", "..", "../outside", "/etc", "new/chapter", "new\\chapter", "C:/Windows", "C:Windows", ".git", ".private", strings.Repeat("x", 2049)} {
+	for _, dir := range []string{
+		"", ".", "..", "../outside", "/etc", "managed", "new\\chapter", "C:/Windows", "C:Windows",
+		".git", "new/.private", ".private", strings.Repeat("x", 2049),
+	} {
 		_, err = r.RegisterDiscoveredSpace(ctx, SpaceRegistration{Name: "Invalid", Directory: dir})
 		require.ErrorIs(t, err, ErrRootInvalid, "%s", dir)
 	}
@@ -111,13 +121,19 @@ func TestDiscoveryRegistersOnlyRealDirectMountedDirectoriesAndPersists(t *testin
 	space, err := r.RegisterDiscoveredSpace(ctx, SpaceRegistration{Name: "New space", Directory: "new"})
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(base, "new"), space.Path)
+	nested, err := r.RegisterDiscoveredSpace(ctx, SpaceRegistration{Name: "Chapter", Directory: "new/chapter"})
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(base, "new", "chapter"), nested.Path)
+	page, err := r.BrowseDiscovery(ctx, "new", 0)
+	require.NoError(t, err)
+	require.Equal(t, []DirectoryEntry{{Name: "chapter", Directory: "new/chapter"}}, page.Entries)
 	_, err = r.RegisterDiscoveredSpace(ctx, SpaceRegistration{Name: "Duplicate", Directory: "new"})
 	require.ErrorIs(t, err, ErrRootExists)
 	reopened := &Registry{db: r.db, discoveryPath: base}
 	require.NoError(t, reopened.initialize("", "ignored legacy config after first start"))
 	root, err := reopened.Create(ctx, 7, Registration{Name: "Granted", SpaceID: space.ID})
 	require.NoError(t, err)
-	page, err := reopened.BrowseRoot(ctx, 7, root.ID, "", 0)
+	page, err = reopened.BrowseRoot(ctx, 7, root.ID, "", 0)
 	require.NoError(t, err)
 	require.Equal(t, []DirectoryEntry{{Name: "chapter", Directory: "chapter"}}, page.Entries)
 	result, err = reopened.DiscoverSpaces(ctx)
@@ -166,6 +182,31 @@ func TestDirectoryBrowserRejectsTraversalSymlinksAndRevokedGrants(t *testing.T) 
 	require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(base, "product", "chapter")))
 	_, err = r.BrowseRoot(ctx, 7, root.ID, "chapter", 0)
 	require.ErrorIs(t, err, ErrRootUnsafe)
+}
+
+func TestManagedMountRemovalRequiresAllSpaceGrantsRemoved(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	id := "m-0123456789abcdef0123"
+	directory := filepath.Join(base, "managed", id)
+	require.NoError(t, os.MkdirAll(directory, 0o700))
+	r := registryWithSpace(t, t.TempDir())
+	r.discoveryPath = base
+	space, err := r.RegisterDiscoveredSpace(ctx, SpaceRegistration{Name: "Managed", Directory: "managed/" + id})
+	require.NoError(t, err)
+	grant, err := r.Create(ctx, 8, Registration{Name: "Granted", SpaceID: space.ID})
+	require.NoError(t, err)
+	require.ErrorIs(t, r.DeleteDiscoveredSpace(ctx, space.ID), ErrRootInUse)
+	called := false
+	remove := func() error { called = true; return nil }
+	require.ErrorIs(t, r.WithUnusedManagedMount(ctx, id, remove), ErrRootInUse)
+	require.False(t, called)
+	require.NoError(t, r.Delete(ctx, 8, grant.ID))
+	require.NoError(t, r.DeleteDiscoveredSpace(ctx, space.ID))
+	require.NoError(t, r.WithUnusedManagedMount(ctx, id, remove))
+	require.True(t, called)
+	_, err = os.Stat(directory)
+	require.NoError(t, err, "metadata operations must not remove source folders")
 }
 
 func TestDirectoryBrowserOrdersPagesAndDoesNotReadFiles(t *testing.T) {

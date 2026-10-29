@@ -146,7 +146,8 @@ function failedItems(log: SyncLog): SyncItemError[] {
 function formatSyncError(e: SyncItemError): string {
   let reason = ''
   if (e.code) {
-    const key = `datasource.syncError.${e.code}`
+    const key = e.code.startsWith('local_') || e.code === 'conflict_preserved'
+      ? `storageSpaces.syncErrors.${e.code}` : `datasource.syncError.${e.code}`
     const localised = t(key, (e.params || {}) as Record<string, unknown>)
     reason = localised === key ? (e.message || e.code) : localised
   } else {
@@ -299,6 +300,11 @@ const groupedLogs = computed(() => {
                   <div v-if="log.items_failed > failedItems(log).length" class="tl-failed-more">
                     {{ t('datasource.logDetail.failedItemsMore', { n: (log.items_failed - failedItems(log).length) }) }}
                   </div>
+                </div>
+                <div v-if="log.result?.skipped_unsupported" class="tl-failed">
+                  <div class="tl-failed-title">{{ t('storageSpaces.ignoredCount', { count: log.result.skipped_unsupported }) }}</div>
+                  <div v-for="name in log.result.unsupported_samples || []" :key="name" class="tl-failed-item">{{ name }}</div>
+                  <div v-if="log.result.skipped_unsupported > (log.result.unsupported_samples?.length || 0)" class="tl-failed-more">{{ t('storageSpaces.ignoredMore') }}</div>
                 </div>
               </div>
             </div>

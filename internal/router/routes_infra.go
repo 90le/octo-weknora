@@ -359,6 +359,9 @@ func RegisterDataSourceRoutes(
 		// stored FilePath candidates without contacting GitHub.
 		ds.POST("/:id/restart-recovery/preview", g.Admin(), handler.PreviewRestartInterruptedRecovery)
 		ds.POST("/:id/restart-recovery", g.Admin(), handler.StartRestartInterruptedRecovery)
+		ds.GET("/:id/local-deletion-review", g.Admin(), handler.LocalDeletionReview)
+		ds.POST("/:id/local-deletion-review/confirm", g.Admin(), handler.ConfirmLocalDeletionReview)
+		ds.GET("/:id/local-files", g.Viewer(), handler.LocalFileStates)
 		ds.POST("/:id/pause", g.Admin(), handler.PauseDataSource)
 		ds.POST("/:id/resume", g.Admin(), handler.ResumeDataSource)
 

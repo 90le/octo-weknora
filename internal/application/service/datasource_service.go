@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/textproto"
 	"reflect"
@@ -254,7 +255,8 @@ func (s *DataSourceService) UpdateDataSource(ctx context.Context, ds *types.Data
 		configActuallyChanged = !reflect.DeepEqual(*mergedCfg, *existingParsedCfg)
 	}
 	hasCreds := mergedCfg != nil && mergedCfg.HasConfiguredCredentials(ds.Type)
-	if (hasCreds || ds.Type == types.ConnectorTypeGitHub || ds.Type == localfolder.Type) && (ds.Type != existing.Type || configActuallyChanged) {
+	if (hasCreds || ds.Type == types.ConnectorTypeGitHub || ds.Type == localfolder.Type) &&
+		(ds.Type != existing.Type || configActuallyChanged) {
 		if err := s.validateDataSourceConfig(ctx, ds); err != nil {
 			return nil, err
 		}
@@ -531,6 +533,23 @@ func (s *DataSourceService) ResolveResourceAncestors(
 
 // ManualSync triggers an immediate sync for a data source
 func (s *DataSourceService) ManualSync(ctx context.Context, dsID string) (*types.SyncLog, error) {
+	return s.manualSync(ctx, dsID, "")
+}
+
+// ConfirmLocalDeletionReview queues a manual scan, not an immediate delete.
+// The connector must re-observe exactly the reviewed missing set before it can
+// apply the existing deletion policy.
+func (s *DataSourceService) ConfirmLocalDeletionReview(
+	ctx context.Context,
+	dsID, digest string,
+) (*types.SyncLog, error) {
+	if len(digest) != 64 {
+		return nil, errors.New("invalid deletion review")
+	}
+	return s.manualSync(ctx, dsID, digest)
+}
+
+func (s *DataSourceService) manualSync(ctx context.Context, dsID, approval string) (*types.SyncLog, error) {
 	// Creation of the log and its queue task is a short critical section. Once
 	// the first caller has enqueued a sync, later clicks observe the running log
 	// instead of creating duplicate GitHub fetches for the same source.
@@ -539,6 +558,19 @@ func (s *DataSourceService) ManualSync(ctx context.Context, dsID string) (*types
 	ds, err := s.GetDataSource(ctx, dsID)
 	if err != nil {
 		return nil, err
+	}
+	if approval != "" {
+		if ds.Type != localfolder.Type || !ds.SyncDeletions {
+			return nil, errors.New("deletion review is unavailable for this source")
+		}
+		cursor, err := ds.ParseSyncCursor()
+		if err != nil || cursor == nil {
+			return nil, errors.New("deletion review is unavailable")
+		}
+		review, err := localfolder.DeletionReviewFromCursor(cursor)
+		if err != nil || review == nil || review.Digest != approval {
+			return nil, errors.New("deletion review changed; refresh and review again")
+		}
 	}
 	if ds.HasActiveRestartRecoveryLease(time.Now().UTC()) {
 		return nil, datasource.ErrRestartRecoveryInProgress
@@ -577,12 +609,13 @@ func (s *DataSourceService) ManualSync(ctx context.Context, dsID string) (*types
 
 	// Enqueue sync task
 	payload := &types.DataSourceSyncPayload{
-		DataSourceID: dsID,
-		TenantID:     ds.TenantID,
-		SyncLogID:    syncLog.ID,
-		ForceFull:    false,
-		Initiator:    types.TaskInitiatorFromContext(ctx),
-		Trigger:      "manual",
+		DataSourceID:           dsID,
+		TenantID:               ds.TenantID,
+		SyncLogID:              syncLog.ID,
+		ForceFull:              false,
+		Initiator:              types.TaskInitiatorFromContext(ctx),
+		Trigger:                "manual",
+		ApprovedDeletionDigest: approval,
 	}
 	langfuse.InjectTracing(ctx, payload)
 
@@ -668,7 +701,12 @@ func (s *DataSourceService) ResumeDataSource(ctx context.Context, id string) err
 }
 
 // GetSyncLogs retrieves sync history for a data source
-func (s *DataSourceService) GetSyncLogs(ctx context.Context, dsID string, limit int, offset int) ([]*types.SyncLog, error) {
+func (s *DataSourceService) GetSyncLogs(
+	ctx context.Context,
+	dsID string,
+	limit int,
+	offset int,
+) ([]*types.SyncLog, error) {
 	logs, err := s.syncLogRepo.FindByDataSource(ctx, dsID, limit, offset)
 	if err != nil {
 		logger.Errorf(ctx, "failed to get sync logs: %v", err)
@@ -702,7 +740,12 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	// Get data source
 	ds, err := s.GetDataSource(ctx, payload.DataSourceID)
 	if err != nil {
-		logger.Warnf(ctx, "data source not found (likely deleted), cancelling sync: ds=%s err=%v", payload.DataSourceID, err)
+		logger.Warnf(
+			ctx,
+			"data source not found (likely deleted), cancelling sync: ds=%s err=%v",
+			payload.DataSourceID,
+			err,
+		)
 		if syncLog, slErr := s.syncLogRepo.FindByID(ctx, payload.SyncLogID); slErr == nil && syncLog != nil {
 			syncLog.Status = types.SyncLogStatusCanceled
 			syncLog.FinishedAt = timePtr(time.Now().UTC())
@@ -717,7 +760,8 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		// recovery acquired its database lease. It must terminate before any
 		// connector fetch; the recovery plan owns the candidate metadata and
 		// local reparse lifecycle for this source.
-		if syncLog, slErr := s.syncLogRepo.FindByID(ctx, payload.SyncLogID); slErr == nil && syncLog != nil && syncLog.Status == types.SyncLogStatusRunning {
+		if syncLog, slErr := s.syncLogRepo.FindByID(ctx, payload.SyncLogID); slErr == nil && syncLog != nil &&
+			syncLog.Status == types.SyncLogStatusRunning {
 			syncLog.Status = types.SyncLogStatusCanceled
 			syncLog.FinishedAt = timePtr(time.Now().UTC())
 			syncLog.ErrorMessage = datasource.ErrRestartRecoveryInProgress.Error()
@@ -792,6 +836,7 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	// identity is deliberately not part of the persisted data-source config.
 	config.SyncSource = &types.DataSourceSyncSource{
 		TenantID: ds.TenantID, KnowledgeBaseID: ds.KnowledgeBaseID, DataSourceID: ds.ID,
+		ApprovedDeletionDigest: payload.ApprovedDeletionDigest,
 	}
 	// Surface the KB's multimodal/VLM state to the connector so it only extracts
 	// embedded images for OCR when the KB can actually ingest them (never persisted).
@@ -800,7 +845,16 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	if ds.Type == types.ConnectorTypeGitHub && githubConnector.SharedGitCacheEnabled() {
 		credentialScope, scopeErr := githubDocumentCredentialScope(ds, config)
 		if scopeErr != nil {
-			return s.failSyncRun(ctx, ds, syncLog, nil, "GitHub shared cache credential identity is unavailable", wasPaused, scopeErr, false)
+			return s.failSyncRun(
+				ctx,
+				ds,
+				syncLog,
+				nil,
+				"GitHub shared cache credential identity is unavailable",
+				wasPaused,
+				scopeErr,
+				false,
+			)
 		}
 		config.SyncSource.CredentialScope = credentialScope
 		config.SyncSource.CheckAccess = guard.check
@@ -884,10 +938,18 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		Total: len(items), SkippedSensitive: config.SkippedSensitive, SkippedExcluded: config.SkippedExcluded,
 	}
 	if result.SkippedSensitive > 0 {
-		logger.Warnf(ctx, "GitHub document sync skipped %d mandatory-sensitive candidate(s); historical indexed rows were not purged", result.SkippedSensitive)
+		logger.Warnf(
+			ctx,
+			"GitHub document sync skipped %d mandatory-sensitive candidate(s); historical indexed rows were not purged",
+			result.SkippedSensitive,
+		)
 	}
 	if result.SkippedExcluded > 0 {
-		logger.Infof(ctx, "GitHub document sync skipped %d user-excluded candidate(s); historical indexed rows were not purged", result.SkippedExcluded)
+		logger.Infof(
+			ctx,
+			"GitHub document sync skipped %d user-excluded candidate(s); historical indexed rows were not purged",
+			result.SkippedExcluded,
+		)
 	}
 
 	// Set tenant context so KnowledgeService can resolve tenant info correctly
@@ -940,7 +1002,8 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 
 	// A repository manifest is only acknowledged after all selected documents
 	// are usable. Partial imports must be retried from the previous manifest.
-	if nextCursor != nil && ((ds.Type != types.ConnectorTypeGitHub && ds.Type != localfolder.Type) || result.Failed == 0) {
+	if nextCursor != nil &&
+		((ds.Type != types.ConnectorTypeGitHub && ds.Type != localfolder.Type) || result.Failed == 0) {
 		cursorJSON, _ := nextCursor.ToJSON()
 		ds.LastSyncCursor = cursorJSON
 	}
@@ -1122,7 +1185,7 @@ func (s *DataSourceService) applyFetchedItem(
 		return
 	}
 
-	if len(item.Content) == 0 && item.URL == "" {
+	if len(item.Content) == 0 && item.ContentStream == nil && item.URL == "" {
 		// Check if this is an error item from the connector (failed to fetch content)
 		if errMsg, hasErr := item.Metadata["error"]; hasErr {
 			logger.Warnf(ctx, "item %q (external_id=%s) fetch failed: %s", item.Title, item.ExternalID, errMsg)
@@ -1226,8 +1289,159 @@ func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) er
 		}
 	}
 	h.result.Total++
+	if h.ds.Type == localfolder.Type && item.Metadata["local_unchanged"] == "true" {
+		h.result.Skipped++
+		return nil
+	}
+	if h.ds.Type == localfolder.Type && item.Metadata["local_unsupported"] == "true" {
+		h.result.Skipped++
+		h.result.SkippedUnsupported++
+		if len(h.result.UnsupportedSamples) < maxSyncResultErrors {
+			h.result.UnsupportedSamples = append(h.result.UnsupportedSamples, item.Title)
+		}
+		return nil
+	}
 	h.svc.applyFetchedItem(withKBActivitySuppressed(ctx), h.ds, &item, h.tagIDs, h.result)
 	return nil
+}
+
+func (h *streamSyncHandler) IsCurrent(ctx context.Context, externalID, version string) (bool, error) {
+	if h.runGuard != nil {
+		if err := ensureSyncRunActive(ctx, h.runGuard); err != nil {
+			return false, err
+		}
+	}
+	if h.guard != nil {
+		if err := h.guard.check(ctx); err != nil {
+			return false, err
+		}
+	}
+	row, err := h.svc.knowledgeService.GetRepository().FindByDataSourceExternalID(ctx,
+		h.ds.TenantID, h.ds.KnowledgeBaseID, h.ds.ID, externalID)
+	if err != nil || row == nil {
+		return false, err
+	}
+	var metadata map[string]string
+	if json.Unmarshal(row.Metadata, &metadata) != nil {
+		return false, nil
+	}
+	return version != "" && sourceItemVersion(metadata) == version && indexedForSync(row), nil
+}
+
+func (h *streamSyncHandler) DeletionsEnabled() bool { return h.ds.SyncDeletions }
+
+func (h *streamSyncHandler) RecordState(ctx context.Context, state types.LocalSourceFileState) error {
+	if h.runGuard != nil {
+		if err := ensureSyncRunActive(ctx, h.runGuard); err != nil {
+			return err
+		}
+	}
+	if h.guard != nil {
+		if err := h.guard.check(ctx); err != nil {
+			return err
+		}
+	}
+	connector, err := h.svc.connectorRegistry.Get(localfolder.Type)
+	if err != nil {
+		return err
+	}
+	local, ok := connector.(*localfolder.Connector)
+	if !ok {
+		return errors.New("local folder connector unavailable")
+	}
+	return local.RecordFileState(ctx, h.ds.TenantID, h.ds.ID, state)
+}
+
+func (h *streamSyncHandler) KnownStates(ctx context.Context, selection string) ([]types.LocalSourceFileState, error) {
+	if h.runGuard != nil {
+		if err := ensureSyncRunActive(ctx, h.runGuard); err != nil {
+			return nil, err
+		}
+	}
+	if h.guard != nil {
+		if err := h.guard.check(ctx); err != nil {
+			return nil, err
+		}
+	}
+	connector, err := h.svc.connectorRegistry.Get(localfolder.Type)
+	if err != nil {
+		return nil, err
+	}
+	local, ok := connector.(*localfolder.Connector)
+	if !ok {
+		return nil, errors.New("local folder connector unavailable")
+	}
+	return local.KnownFileStates(ctx, h.ds.TenantID, h.ds.ID, selection)
+}
+
+// ListLocalFileStates returns a page of observed files for an authorized source.
+func (s *DataSourceService) ListLocalFileStates(
+	ctx context.Context,
+	sourceID, status string,
+	offset int,
+) (*types.LocalSourceFilePage, error) {
+	tenant, ok := types.TenantIDFromContext(ctx)
+	if !ok || tenant == 0 {
+		return nil, errors.New("workspace context missing")
+	}
+	ds, err := s.GetDataSource(ctx, sourceID)
+	if err != nil || ds == nil || ds.TenantID != tenant || ds.Type != localfolder.Type {
+		return nil, errors.New("source unavailable")
+	}
+	config, err := ds.ParseConfig()
+	if err != nil || snapshot.IsSource(config) {
+		return nil, errors.New("document source unavailable")
+	}
+	connector, err := s.connectorRegistry.Get(localfolder.Type)
+	if err != nil {
+		return nil, err
+	}
+	local, ok := connector.(*localfolder.Connector)
+	if !ok {
+		return nil, errors.New("local folder connector unavailable")
+	}
+	return local.ListFileStates(ctx, tenant, ds.ID, snapshot.Selection(config), status, offset)
+}
+
+func (h *streamSyncHandler) EmitWithOutcome(ctx context.Context, item types.FetchedItem) (bool, error) {
+	before := h.result.Failed
+	beforeSkipped := h.result.Skipped
+	if err := h.Emit(ctx, item); err != nil {
+		return false, err
+	}
+	// Keep a deletion candidate in the cursor while deletion is disabled, so
+	// turning it on later does not silently lose the source-side change.
+	if item.IsDeleted && !h.ds.SyncDeletions {
+		h.result.Skipped++
+		return false, nil
+	}
+	if h.result.Failed != before {
+		return false, nil
+	}
+	if h.ds.Type == localfolder.Type && !item.IsDeleted && h.result.Skipped > beforeSkipped {
+		// A duplicate may mean an idempotent retry, but conflict_strategy=skip
+		// can also retain an older version. Only acknowledge the current hash
+		// if the canonical record really has it and is searchable.
+		current, err := h.IsCurrent(ctx, item.ExternalID, sourceItemVersion(item.Metadata))
+		if err != nil {
+			return false, err
+		}
+		if current {
+			return true, nil
+		}
+		h.result.Skipped--
+		h.result.Failed++
+		recordSyncError(
+			h.result,
+			types.SyncItemError{
+				Title:   item.Title,
+				Code:    "conflict_preserved",
+				Message: "Previous version retained; the changed source was not published",
+			},
+		)
+		return false, nil
+	}
+	return true, nil
 }
 
 // Checkpoint persists the connector cursor onto the data source and mirrors the
@@ -1334,7 +1548,15 @@ func (s *DataSourceService) processSyncStreaming(
 
 	result := &types.SyncResult{}
 	guard := &syncAccessGuard{svc: s, ds: ds, config: config, allowPaused: wasPaused && payload.Trigger == "manual"}
-	handler := &streamSyncHandler{svc: s, ds: ds, tagIDs: autoTagIDs, result: result, syncLog: syncLog, guard: guard, runGuard: runGuard}
+	handler := &streamSyncHandler{
+		svc:      s,
+		ds:       ds,
+		tagIDs:   autoTagIDs,
+		result:   result,
+		syncLog:  syncLog,
+		guard:    guard,
+		runGuard: runGuard,
+	}
 
 	fullBaseline := startCursor
 	if forceFull {
@@ -1385,6 +1607,12 @@ func (s *DataSourceService) processSyncStreaming(
 	if err := allFetchedItemsFailedError(result); err != nil {
 		logger.Errorf(ctx, "streaming sync failed while processing fetched items: %v", err)
 		retryable := allFetchedItemsRetryable(ds.Type, result)
+		// A deletion review requires a human decision; queue retries cannot
+		// resolve it and would keep the source locked in "running" state.
+		if ds.Type == localfolder.Type && result.Failed == 1 && len(result.Errors) == 1 &&
+			result.Errors[0].Code == "local_deletion_guard" {
+			retryable = false
+		}
 		if updateErr := s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
 			types.SyncLogStatusFailed, err.Error(), wasPaused, retryable); updateErr != nil {
 			return updateErr
@@ -1416,7 +1644,13 @@ func (s *DataSourceService) processSyncStreaming(
 		status = types.SyncLogStatusPartial
 		errMsg = fmt.Sprintf("%d document(s) failed to sync", result.Failed)
 		if result.DeletionFailed > 0 {
-			errMsg += fmt.Sprintf("; %d deletion failure(s) will only retry on the next full sync", result.DeletionFailed)
+			if ds.Type == localfolder.Type {
+				errMsg += fmt.Sprintf("; %d deletion failure(s) remain pending for retry", result.DeletionFailed)
+			} else {
+				errMsg += fmt.Sprintf(
+					"; %d deletion failure(s) will only retry on the next full sync", result.DeletionFailed,
+				)
+			}
 		}
 	}
 	if err := s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
@@ -1606,7 +1840,11 @@ func allFetchedItemsFailedError(result *types.SyncResult) error {
 }
 
 // ValidateCredentials tests connectivity using raw credentials without persisting anything.
-func (s *DataSourceService) ValidateCredentials(ctx context.Context, connectorType string, credentials map[string]interface{}) error {
+func (s *DataSourceService) ValidateCredentials(
+	ctx context.Context,
+	connectorType string,
+	credentials map[string]interface{},
+) error {
 	connector, err := s.connectorRegistry.Get(connectorType)
 	if err != nil {
 		return err
@@ -1646,7 +1884,12 @@ func (s *DataSourceService) validateDataSourceConfig(ctx context.Context, ds *ty
 //   - Has URL only      → CreateKnowledgeFromURL  (让 WeKnora 下载并解析)
 //
 // Returns (isUpdate, error) — isUpdate is true when an existing item was replaced.
-func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource, item *types.FetchedItem, tagIDs []string) (bool, error) {
+func (s *DataSourceService) ingestItem(
+	ctx context.Context,
+	ds *types.DataSource,
+	item *types.FetchedItem,
+	tagIDs []string,
+) (bool, error) {
 	if ds.Type == types.ConnectorTypeGitHub || ds.Type == localfolder.Type {
 		return s.ingestPreparedFile(ctx, ds, item, tagIDs)
 	}
@@ -1816,7 +2059,13 @@ func (s *DataSourceService) sweepStaleSubtree(ctx context.Context, ds *types.Dat
 		return
 	}
 	repo := s.knowledgeService.GetRepository()
-	children, err := repo.FindByMetadataKeyPrefix(ctx, ds.TenantID, ds.KnowledgeBaseID, "external_id", types.SubtreeChildPrefix(item.ExternalID))
+	children, err := repo.FindByMetadataKeyPrefix(
+		ctx,
+		ds.TenantID,
+		ds.KnowledgeBaseID,
+		"external_id",
+		types.SubtreeChildPrefix(item.ExternalID),
+	)
 	if err != nil {
 		logger.Warnf(ctx, "failed to list subtree of external_id=%s: %v", item.ExternalID, err)
 		return
@@ -1895,6 +2144,41 @@ func bytesToFileHeader(data []byte, filename string) (*multipart.FileHeader, err
 	}
 
 	return files[0], nil
+}
+
+// streamToFileHeader writes a bounded-memory multipart upload. ReadForm spills
+// large parts to the process temp directory; the caller must remove the form
+// after CreateKnowledgeFromFile has saved it to its configured storage.
+func streamToFileHeader(src io.Reader, filename string) (*multipart.FileHeader, *multipart.Form, error) {
+	reader, writer := io.Pipe()
+	mw := multipart.NewWriter(writer)
+	done := make(chan error, 1)
+	go func() {
+		part, err := mw.CreateFormFile("file", filename)
+		if err == nil {
+			_, err = io.Copy(part, src)
+		}
+		if err == nil {
+			err = mw.Close()
+		}
+		_ = writer.CloseWithError(err)
+		done <- err
+	}()
+	form, err := multipart.NewReader(reader, mw.Boundary()).ReadForm(1 << 20)
+	_ = reader.Close()
+	writeErr := <-done
+	if err != nil {
+		return nil, nil, err
+	}
+	if writeErr != nil {
+		_ = form.RemoveAll()
+		return nil, nil, writeErr
+	}
+	if len(form.File["file"]) != 1 {
+		_ = form.RemoveAll()
+		return nil, nil, errors.New("multipart stream did not produce one file")
+	}
+	return form.File["file"][0], form, nil
 }
 
 func timePtr(t time.Time) *time.Time {

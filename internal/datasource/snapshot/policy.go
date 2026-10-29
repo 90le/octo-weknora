@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/utils"
 )
 
 const MaxFiles = 50000
@@ -135,9 +136,5 @@ func isJSONNull(value interface{}) bool {
 	return err == nil && string(b) == "null"
 }
 func DocumentPath(p string) bool {
-	switch strings.ToLower(path.Ext(p)) {
-	case ".md", ".markdown", ".mdx", ".txt", ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".csv", ".html", ".htm", ".epub", ".png", ".jpg", ".jpeg", ".webp":
-		return true
-	}
-	return false
+	return utils.IsSupportedImportExtension(path.Ext(p))
 }

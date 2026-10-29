@@ -89,6 +89,18 @@ type StreamHandler interface {
 	Checkpoint(ctx context.Context, cursor *types.SyncCursor) error
 }
 
+// OutcomeStreamHandler lets a connector retain the previous version of an
+// item when ingestion fails or deletion is disabled. The generic Emit contract
+// reports transport/guard errors only and does not expose per-item failures.
+type OutcomeStreamHandler interface {
+	StreamHandler
+	EmitWithOutcome(context.Context, types.FetchedItem) (bool, error)
+	IsCurrent(context.Context, string, string) (bool, error)
+	DeletionsEnabled() bool
+	RecordState(context.Context, types.LocalSourceFileState) error
+	KnownStates(context.Context, string) ([]types.LocalSourceFileState, error)
+}
+
 // StreamingConnector is an optional interface. Connectors that implement it let
 // the service interleave fetch→ingest→checkpoint so a large sync persists
 // incrementally and resumes after a timeout, rather than holding every item in

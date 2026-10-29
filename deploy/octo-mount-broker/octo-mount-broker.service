@@ -1,0 +1,15 @@
+[Unit]
+Description=Octo read-only server folder mount broker
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/local/libexec/octo-mount-broker-prepare
+ExecStart=/usr/local/libexec/octo-mount-broker -socket /srv/octo-mount-broker/run/broker.sock
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
