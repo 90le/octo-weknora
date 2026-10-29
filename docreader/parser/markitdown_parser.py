@@ -15,6 +15,7 @@ from docreader.parser.pptx_media import (
     attach_pptx_media_to_markdown,
     markdown_needs_pptx_media_attach,
 )
+from docreader.parser.pptx_text_shape_repair import repair_unrecognized_text_shapes
 from docreader.parser.xlsx_repair import (
     sanitize_xlsx_styles,
     strip_unreadable_ranges_xlsx,
@@ -73,7 +74,22 @@ class StdMarkitdownParser(BaseParser):
                     "MarkItDown failed with embedded images for %s; retrying without data URIs",
                     ft or ext,
                 )
-                result = self._convert_markitdown(content, ext, keep_data_uris=False)
+                try:
+                    result = self._convert_markitdown(content, ext, keep_data_uris=False)
+                except Exception as exc:
+                    if (
+                        pptx_bytes is None
+                        or "Shape instance of unrecognized shape type" not in str(exc)
+                    ):
+                        raise
+                    repaired = repair_unrecognized_text_shapes(pptx_bytes)
+                    if repaired is None:
+                        raise
+                    logger.warning(
+                        "Retrying PPTX with a repaired text-shape marker in a temporary copy"
+                    )
+                    result = self._convert_markitdown(repaired, ext, keep_data_uris=False)
+                    pptx_bytes = repaired
 
         text = result.text_content
         images: dict[str, str] = {}
