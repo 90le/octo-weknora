@@ -14,7 +14,7 @@ func TestStreamToFileHeaderPreservesLargeContent(t *testing.T) {
 	data := bytes.Repeat([]byte("synthetic-training-document"), 700000)
 	file, form, err := streamToFileHeader(bytes.NewReader(data), "training.pptx")
 	require.NoError(t, err)
-	defer form.RemoveAll()
+	defer func() { _ = form.RemoveAll() }()
 	require.Equal(t, int64(len(data)), file.Size)
 	r, err := file.Open()
 	require.NoError(t, err)

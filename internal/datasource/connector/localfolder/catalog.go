@@ -18,9 +18,11 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const discoveryBoundary = "/source-roots"
-const directoryPageSize = 200
-const directoryScanLimit = 10000
+const (
+	discoveryBoundary  = "/source-roots"
+	directoryPageSize  = 200
+	directoryScanLimit = 10000
+)
 
 type SpaceSummary struct {
 	Space
@@ -170,8 +172,14 @@ func (r *Registry) BrowseSpace(ctx context.Context, id, directory string, offset
 
 // Root browsing is safe for workspace datasource administrators: it always
 // rereads the current enabled grant, and returns no physical/space path.
-func (r *Registry) BrowseRoot(ctx context.Context, tenant uint64, id, directory string, offset int) (*DirectoryPage, error) {
-	if tenant == 0 || id == "" || len(id) > 128 || !validDirectory(directory) || offset < 0 || offset > directoryScanLimit {
+func (r *Registry) BrowseRoot(
+	ctx context.Context,
+	tenant uint64,
+	id, directory string,
+	offset int,
+) (*DirectoryPage, error) {
+	if tenant == 0 || id == "" || len(id) > 128 || !validDirectory(directory) || offset < 0 ||
+		offset > directoryScanLimit {
 		return nil, ErrRootInvalid
 	}
 	var root Root
@@ -246,7 +254,13 @@ func browseDirectories(ctx context.Context, root Root, directory string, offset 
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	start := min(offset, len(entries))
 	end := min(start+directoryPageSize, len(entries))
-	return &DirectoryPage{Directory: directory, Entries: entries[start:end], HasMore: end < len(entries), NextOffset: end, Truncated: truncated}, nil
+	return &DirectoryPage{
+		Directory:  directory,
+		Entries:    entries[start:end],
+		HasMore:    end < len(entries),
+		NextOffset: end,
+		Truncated:  truncated,
+	}, nil
 }
 
 func listedDirectoryName(name string) bool {
@@ -321,6 +335,7 @@ func (r *Registry) DiscoverSpaces(ctx context.Context) (*DiscoveredSpaces, error
 	}
 	return out, nil
 }
+
 func (r *Registry) RegisterDiscoveredSpace(ctx context.Context, req SpaceRegistration) (*Space, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	if !validName(req.Name) || req.Directory == "" || req.Directory == "managed" || !validDirectory(req.Directory) {
@@ -357,7 +372,7 @@ func (r *Registry) RegisterDiscoveredSpace(ctx context.Context, req SpaceRegistr
 		if err != nil {
 			return ErrRootUnavailable
 		}
-		defer current.Close()
+		defer func() { _ = current.Close() }()
 		var old Space
 		err = tx.First(&old, "path = ?", candidate).Error
 		if err == nil {
@@ -400,7 +415,8 @@ func (r *Registry) WithUnusedManagedMount(ctx context.Context, id string, remove
 		}
 		for _, space := range spaces {
 			clean := filepath.Clean(space.Path)
-			if clean == target || strings.HasPrefix(clean, target+string(os.PathSeparator)) || strings.HasPrefix(target, clean+string(os.PathSeparator)) {
+			if clean == target || strings.HasPrefix(clean, target+string(os.PathSeparator)) ||
+				strings.HasPrefix(target, clean+string(os.PathSeparator)) {
 				return ErrRootInUse
 			}
 		}
@@ -455,6 +471,7 @@ func (s sourceReference) rootID() (string, bool) {
 	id, ok := value.(string)
 	return id, ok
 }
+
 func (r *Registry) sourceReferences(ctx context.Context, tenant uint64) ([]sourceReference, error) {
 	rows := []sourceReference{}
 	q := r.db.WithContext(ctx).Model(&types.DataSource{}).Select("tenant_id, config").Where("type = ?", Type)

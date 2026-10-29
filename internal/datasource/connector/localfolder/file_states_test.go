@@ -18,7 +18,13 @@ func TestFileStatesTrackUpdatesAndAreScopedToSourceAndSelection(t *testing.T) {
 	c := NewConnector(r)
 	ctx := context.Background()
 	selection := strings.Repeat("a", 64)
-	state := types.LocalSourceFileState{Selection: selection, Path: "chapter/doc.pdf", Status: "failed", Reason: "local_size", HasPrevious: true}
+	state := types.LocalSourceFileState{
+		Selection:   selection,
+		Path:        "chapter/doc.pdf",
+		Status:      "failed",
+		Reason:      "local_size",
+		HasPrevious: true,
+	}
 	require.NoError(t, c.RecordFileState(ctx, 7, "source", state))
 	state.Status, state.Reason = "indexed", ""
 	require.NoError(t, c.RecordFileState(ctx, 7, "source", state))

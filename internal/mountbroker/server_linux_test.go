@@ -16,7 +16,9 @@ func TestBrowseIsConfinedAndDoesNotFollowSymlinks(t *testing.T) {
 	root := filepath.Join(dir, "allowed")
 	base := filepath.Join(dir, "mounts")
 	state := filepath.Join(dir, "state", "mounts.json")
-	for _, p := range []string{root, base, filepath.Dir(state), filepath.Join(root, "visible"), filepath.Join(root, ".private")} {
+	for _, p := range []string{
+		root, base, filepath.Dir(state), filepath.Join(root, "visible"), filepath.Join(root, ".private"),
+	} {
 		if err := os.MkdirAll(p, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -34,10 +36,14 @@ func TestBrowseIsConfinedAndDoesNotFollowSymlinks(t *testing.T) {
 		return w
 	}
 	w := get("/v1/browse?root=E&directory=")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "visible") || strings.Contains(w.Body.String(), "outside") || strings.Contains(w.Body.String(), ".private") || strings.Contains(w.Body.String(), root) {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "visible") || strings.Contains(w.Body.String(), "outside") ||
+		strings.Contains(w.Body.String(), ".private") ||
+		strings.Contains(w.Body.String(), root) {
 		t.Fatalf("unexpected browse result: %d %s", w.Code, w.Body.String())
 	}
-	for _, query := range []string{"root=E&directory=..%2Foutside", "root=E&directory=outside", "root=other&directory=", "root=E&directory=%2Fetc"} {
+	for _, query := range []string{
+		"root=E&directory=..%2Foutside", "root=E&directory=outside", "root=other&directory=", "root=E&directory=%2Fetc",
+	} {
 		if w := get("/v1/browse?" + query); w.Code != http.StatusBadRequest {
 			t.Fatalf("unsafe browse accepted: %s: %d", query, w.Code)
 		}
@@ -50,7 +56,8 @@ func TestConfigurationRejectsOverlappingAndForgedState(t *testing.T) {
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(map[string]string{"E": root}, filepath.Join(root, "mounts"), filepath.Join(dir, "state.json")); err == nil {
+	_, err := New(map[string]string{"E": root}, filepath.Join(root, "mounts"), filepath.Join(dir, "state.json"))
+	if err == nil {
 		t.Fatal("overlapping mount root accepted")
 	}
 	state := filepath.Join(dir, "state.json")

@@ -255,7 +255,8 @@ func (s *DataSourceService) UpdateDataSource(ctx context.Context, ds *types.Data
 		configActuallyChanged = !reflect.DeepEqual(*mergedCfg, *existingParsedCfg)
 	}
 	hasCreds := mergedCfg != nil && mergedCfg.HasConfiguredCredentials(ds.Type)
-	if (hasCreds || ds.Type == types.ConnectorTypeGitHub || ds.Type == localfolder.Type) && (ds.Type != existing.Type || configActuallyChanged) {
+	if (hasCreds || ds.Type == types.ConnectorTypeGitHub || ds.Type == localfolder.Type) &&
+		(ds.Type != existing.Type || configActuallyChanged) {
 		if err := s.validateDataSourceConfig(ctx, ds); err != nil {
 			return nil, err
 		}
@@ -538,7 +539,10 @@ func (s *DataSourceService) ManualSync(ctx context.Context, dsID string) (*types
 // ConfirmLocalDeletionReview queues a manual scan, not an immediate delete.
 // The connector must re-observe exactly the reviewed missing set before it can
 // apply the existing deletion policy.
-func (s *DataSourceService) ConfirmLocalDeletionReview(ctx context.Context, dsID, digest string) (*types.SyncLog, error) {
+func (s *DataSourceService) ConfirmLocalDeletionReview(
+	ctx context.Context,
+	dsID, digest string,
+) (*types.SyncLog, error) {
 	if len(digest) != 64 {
 		return nil, errors.New("invalid deletion review")
 	}
@@ -697,7 +701,12 @@ func (s *DataSourceService) ResumeDataSource(ctx context.Context, id string) err
 }
 
 // GetSyncLogs retrieves sync history for a data source
-func (s *DataSourceService) GetSyncLogs(ctx context.Context, dsID string, limit int, offset int) ([]*types.SyncLog, error) {
+func (s *DataSourceService) GetSyncLogs(
+	ctx context.Context,
+	dsID string,
+	limit int,
+	offset int,
+) ([]*types.SyncLog, error) {
 	logs, err := s.syncLogRepo.FindByDataSource(ctx, dsID, limit, offset)
 	if err != nil {
 		logger.Errorf(ctx, "failed to get sync logs: %v", err)
@@ -731,7 +740,12 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	// Get data source
 	ds, err := s.GetDataSource(ctx, payload.DataSourceID)
 	if err != nil {
-		logger.Warnf(ctx, "data source not found (likely deleted), cancelling sync: ds=%s err=%v", payload.DataSourceID, err)
+		logger.Warnf(
+			ctx,
+			"data source not found (likely deleted), cancelling sync: ds=%s err=%v",
+			payload.DataSourceID,
+			err,
+		)
 		if syncLog, slErr := s.syncLogRepo.FindByID(ctx, payload.SyncLogID); slErr == nil && syncLog != nil {
 			syncLog.Status = types.SyncLogStatusCanceled
 			syncLog.FinishedAt = timePtr(time.Now().UTC())
@@ -746,7 +760,8 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		// recovery acquired its database lease. It must terminate before any
 		// connector fetch; the recovery plan owns the candidate metadata and
 		// local reparse lifecycle for this source.
-		if syncLog, slErr := s.syncLogRepo.FindByID(ctx, payload.SyncLogID); slErr == nil && syncLog != nil && syncLog.Status == types.SyncLogStatusRunning {
+		if syncLog, slErr := s.syncLogRepo.FindByID(ctx, payload.SyncLogID); slErr == nil && syncLog != nil &&
+			syncLog.Status == types.SyncLogStatusRunning {
 			syncLog.Status = types.SyncLogStatusCanceled
 			syncLog.FinishedAt = timePtr(time.Now().UTC())
 			syncLog.ErrorMessage = datasource.ErrRestartRecoveryInProgress.Error()
@@ -830,7 +845,16 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 	if ds.Type == types.ConnectorTypeGitHub && githubConnector.SharedGitCacheEnabled() {
 		credentialScope, scopeErr := githubDocumentCredentialScope(ds, config)
 		if scopeErr != nil {
-			return s.failSyncRun(ctx, ds, syncLog, nil, "GitHub shared cache credential identity is unavailable", wasPaused, scopeErr, false)
+			return s.failSyncRun(
+				ctx,
+				ds,
+				syncLog,
+				nil,
+				"GitHub shared cache credential identity is unavailable",
+				wasPaused,
+				scopeErr,
+				false,
+			)
 		}
 		config.SyncSource.CredentialScope = credentialScope
 		config.SyncSource.CheckAccess = guard.check
@@ -914,10 +938,18 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 		Total: len(items), SkippedSensitive: config.SkippedSensitive, SkippedExcluded: config.SkippedExcluded,
 	}
 	if result.SkippedSensitive > 0 {
-		logger.Warnf(ctx, "GitHub document sync skipped %d mandatory-sensitive candidate(s); historical indexed rows were not purged", result.SkippedSensitive)
+		logger.Warnf(
+			ctx,
+			"GitHub document sync skipped %d mandatory-sensitive candidate(s); historical indexed rows were not purged",
+			result.SkippedSensitive,
+		)
 	}
 	if result.SkippedExcluded > 0 {
-		logger.Infof(ctx, "GitHub document sync skipped %d user-excluded candidate(s); historical indexed rows were not purged", result.SkippedExcluded)
+		logger.Infof(
+			ctx,
+			"GitHub document sync skipped %d user-excluded candidate(s); historical indexed rows were not purged",
+			result.SkippedExcluded,
+		)
 	}
 
 	// Set tenant context so KnowledgeService can resolve tenant info correctly
@@ -970,7 +1002,8 @@ func (s *DataSourceService) ProcessSync(ctx context.Context, task *asynq.Task) e
 
 	// A repository manifest is only acknowledged after all selected documents
 	// are usable. Partial imports must be retried from the previous manifest.
-	if nextCursor != nil && ((ds.Type != types.ConnectorTypeGitHub && ds.Type != localfolder.Type) || result.Failed == 0) {
+	if nextCursor != nil &&
+		((ds.Type != types.ConnectorTypeGitHub && ds.Type != localfolder.Type) || result.Failed == 0) {
 		cursorJSON, _ := nextCursor.ToJSON()
 		ds.LastSyncCursor = cursorJSON
 	}
@@ -1341,7 +1374,12 @@ func (h *streamSyncHandler) KnownStates(ctx context.Context, selection string) (
 	return local.KnownFileStates(ctx, h.ds.TenantID, h.ds.ID, selection)
 }
 
-func (s *DataSourceService) ListLocalFileStates(ctx context.Context, sourceID, status string, offset int) (*types.LocalSourceFilePage, error) {
+// ListLocalFileStates returns a page of observed files for an authorized source.
+func (s *DataSourceService) ListLocalFileStates(
+	ctx context.Context,
+	sourceID, status string,
+	offset int,
+) (*types.LocalSourceFilePage, error) {
 	tenant, ok := types.TenantIDFromContext(ctx)
 	if !ok || tenant == 0 {
 		return nil, errors.New("workspace context missing")
@@ -1393,7 +1431,14 @@ func (h *streamSyncHandler) EmitWithOutcome(ctx context.Context, item types.Fetc
 		}
 		h.result.Skipped--
 		h.result.Failed++
-		recordSyncError(h.result, types.SyncItemError{Title: item.Title, Code: "conflict_preserved", Message: "Previous version retained; the changed source was not published"})
+		recordSyncError(
+			h.result,
+			types.SyncItemError{
+				Title:   item.Title,
+				Code:    "conflict_preserved",
+				Message: "Previous version retained; the changed source was not published",
+			},
+		)
 		return false, nil
 	}
 	return true, nil
@@ -1503,7 +1548,15 @@ func (s *DataSourceService) processSyncStreaming(
 
 	result := &types.SyncResult{}
 	guard := &syncAccessGuard{svc: s, ds: ds, config: config, allowPaused: wasPaused && payload.Trigger == "manual"}
-	handler := &streamSyncHandler{svc: s, ds: ds, tagIDs: autoTagIDs, result: result, syncLog: syncLog, guard: guard, runGuard: runGuard}
+	handler := &streamSyncHandler{
+		svc:      s,
+		ds:       ds,
+		tagIDs:   autoTagIDs,
+		result:   result,
+		syncLog:  syncLog,
+		guard:    guard,
+		runGuard: runGuard,
+	}
 
 	fullBaseline := startCursor
 	if forceFull {
@@ -1556,7 +1609,8 @@ func (s *DataSourceService) processSyncStreaming(
 		retryable := allFetchedItemsRetryable(ds.Type, result)
 		// A deletion review requires a human decision; queue retries cannot
 		// resolve it and would keep the source locked in "running" state.
-		if ds.Type == localfolder.Type && result.Failed == 1 && len(result.Errors) == 1 && result.Errors[0].Code == "local_deletion_guard" {
+		if ds.Type == localfolder.Type && result.Failed == 1 && len(result.Errors) == 1 &&
+			result.Errors[0].Code == "local_deletion_guard" {
 			retryable = false
 		}
 		if updateErr := s.updateSyncRunResult(ctx, ds, syncLog, result, resultJSON,
@@ -1593,7 +1647,9 @@ func (s *DataSourceService) processSyncStreaming(
 			if ds.Type == localfolder.Type {
 				errMsg += fmt.Sprintf("; %d deletion failure(s) remain pending for retry", result.DeletionFailed)
 			} else {
-				errMsg += fmt.Sprintf("; %d deletion failure(s) will only retry on the next full sync", result.DeletionFailed)
+				errMsg += fmt.Sprintf(
+					"; %d deletion failure(s) will only retry on the next full sync", result.DeletionFailed,
+				)
 			}
 		}
 	}
@@ -1784,7 +1840,11 @@ func allFetchedItemsFailedError(result *types.SyncResult) error {
 }
 
 // ValidateCredentials tests connectivity using raw credentials without persisting anything.
-func (s *DataSourceService) ValidateCredentials(ctx context.Context, connectorType string, credentials map[string]interface{}) error {
+func (s *DataSourceService) ValidateCredentials(
+	ctx context.Context,
+	connectorType string,
+	credentials map[string]interface{},
+) error {
 	connector, err := s.connectorRegistry.Get(connectorType)
 	if err != nil {
 		return err
@@ -1824,7 +1884,12 @@ func (s *DataSourceService) validateDataSourceConfig(ctx context.Context, ds *ty
 //   - Has URL only      → CreateKnowledgeFromURL  (让 WeKnora 下载并解析)
 //
 // Returns (isUpdate, error) — isUpdate is true when an existing item was replaced.
-func (s *DataSourceService) ingestItem(ctx context.Context, ds *types.DataSource, item *types.FetchedItem, tagIDs []string) (bool, error) {
+func (s *DataSourceService) ingestItem(
+	ctx context.Context,
+	ds *types.DataSource,
+	item *types.FetchedItem,
+	tagIDs []string,
+) (bool, error) {
 	if ds.Type == types.ConnectorTypeGitHub || ds.Type == localfolder.Type {
 		return s.ingestPreparedFile(ctx, ds, item, tagIDs)
 	}
@@ -1994,7 +2059,13 @@ func (s *DataSourceService) sweepStaleSubtree(ctx context.Context, ds *types.Dat
 		return
 	}
 	repo := s.knowledgeService.GetRepository()
-	children, err := repo.FindByMetadataKeyPrefix(ctx, ds.TenantID, ds.KnowledgeBaseID, "external_id", types.SubtreeChildPrefix(item.ExternalID))
+	children, err := repo.FindByMetadataKeyPrefix(
+		ctx,
+		ds.TenantID,
+		ds.KnowledgeBaseID,
+		"external_id",
+		types.SubtreeChildPrefix(item.ExternalID),
+	)
 	if err != nil {
 		logger.Warnf(ctx, "failed to list subtree of external_id=%s: %v", item.ExternalID, err)
 		return

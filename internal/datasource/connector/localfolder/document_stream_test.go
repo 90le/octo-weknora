@@ -31,6 +31,7 @@ func (h *localStreamRecorder) Emit(ctx context.Context, item types.FetchedItem) 
 	_, err := h.EmitWithOutcome(ctx, item)
 	return err
 }
+
 func (h *localStreamRecorder) IsCurrent(context.Context, string, string) (bool, error) {
 	return !h.missingCurrent, nil
 }
@@ -39,6 +40,7 @@ func (h *localStreamRecorder) RecordState(_ context.Context, state types.LocalSo
 	h.states = append(h.states, state)
 	return nil
 }
+
 func (h *localStreamRecorder) KnownStates(context.Context, string) ([]types.LocalSourceFileState, error) {
 	return h.known, nil
 }
@@ -71,6 +73,7 @@ func TestDocumentStreamReportsUnsupportedAndRepairsMissingIndexedEntry(t *testin
 	}
 	t.Fatal("missing indexed document was not retried")
 }
+
 func (h *localStreamRecorder) EmitWithOutcome(_ context.Context, item types.FetchedItem) (bool, error) {
 	if item.ContentStream != nil {
 		_, err := io.Copy(io.Discard, item.ContentStream)
@@ -88,13 +91,14 @@ func (h *localStreamRecorder) EmitWithOutcome(_ context.Context, item types.Fetc
 	}
 	return true, nil
 }
+
 func (h *localStreamRecorder) Checkpoint(_ context.Context, cursor *types.SyncCursor) error {
 	b, _ := json.Marshal(cursor)
-	var copy types.SyncCursor
-	if err := json.Unmarshal(b, &copy); err != nil {
+	var snapshot types.SyncCursor
+	if err := json.Unmarshal(b, &snapshot); err != nil {
 		return err
 	}
-	h.checkpoints = append(h.checkpoints, &copy)
+	h.checkpoints = append(h.checkpoints, &snapshot)
 	return nil
 }
 
@@ -228,7 +232,7 @@ func TestSourceDeletionCheckRejectsReplacedPaths(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "folder", "present.pdf"), []byte("fixture"), 0o600))
 	root, err := os.OpenRoot(dir)
 	require.NoError(t, err)
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	missing, err := sourcePathMissing(root, "folder/present.pdf")
 	require.NoError(t, err)
 	require.False(t, missing)

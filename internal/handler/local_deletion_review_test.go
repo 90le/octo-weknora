@@ -23,18 +23,39 @@ func (s *reviewService) ConfirmLocalDeletionReview(_ context.Context, _ string, 
 	return &types.SyncLog{ID: "queued"}, nil
 }
 
-func (s *reviewService) ListLocalFileStates(ctx context.Context, _ string, _ string, _ int) (*types.LocalSourceFilePage, error) {
+func (s *reviewService) ListLocalFileStates(
+	ctx context.Context,
+	_ string,
+	_ string,
+	_ int,
+) (*types.LocalSourceFilePage, error) {
 	s.listedTenant, _ = types.TenantIDFromContext(ctx)
-	return &types.LocalSourceFilePage{Items: []types.LocalSourceFileState{{Path: "fixture.pdf", Status: "indexed"}}}, nil
+	return &types.LocalSourceFilePage{
+		Items: []types.LocalSourceFileState{{Path: "fixture.pdf", Status: "indexed"}},
+	}, nil
 }
 
 func TestLocalDeletionReviewWorkspaceScopeAndConfirmation(t *testing.T) {
 	digest := strings.Repeat("a", 64)
-	cursor := &types.SyncCursor{ConnectorCursor: map[string]interface{}{"deletion_review": map[string]interface{}{"digest": digest, "paths": []string{"one.pdf", "two.pptx"}}}}
+	cursor := &types.SyncCursor{
+		ConnectorCursor: map[string]interface{}{
+			"deletion_review": map[string]interface{}{"digest": digest, "paths": []string{"one.pdf", "two.pptx"}},
+		},
+	}
 	raw, err := cursor.ToJSON()
 	require.NoError(t, err)
-	ds := &types.DataSource{ID: "source", KnowledgeBaseID: "kb", Type: "local_folder", SyncDeletions: true, LastSyncCursor: raw}
-	service := &reviewService{stubDataSourceService: &stubDataSourceService{getDataSource: func(context.Context, string) (*types.DataSource, error) { return ds, nil }}}
+	ds := &types.DataSource{
+		ID:              "source",
+		KnowledgeBaseID: "kb",
+		Type:            "local_folder",
+		SyncDeletions:   true,
+		LastSyncCursor:  raw,
+	}
+	service := &reviewService{
+		stubDataSourceService: &stubDataSourceService{
+			getDataSource: func(context.Context, string) (*types.DataSource, error) { return ds, nil },
+		},
+	}
 	kb := &stubKBServiceForDS{getByID: func(context.Context, string) (*types.KnowledgeBase, error) {
 		return &types.KnowledgeBase{TenantID: 7}, nil
 	}}
@@ -65,7 +86,11 @@ func TestLocalDeletionReviewWorkspaceScopeAndConfirmation(t *testing.T) {
 
 func TestLocalFileStatesRequireOwningWorkspace(t *testing.T) {
 	ds := &types.DataSource{ID: "source", KnowledgeBaseID: "kb", Type: "local_folder"}
-	service := &reviewService{stubDataSourceService: &stubDataSourceService{getDataSource: func(context.Context, string) (*types.DataSource, error) { return ds, nil }}}
+	service := &reviewService{
+		stubDataSourceService: &stubDataSourceService{
+			getDataSource: func(context.Context, string) (*types.DataSource, error) { return ds, nil },
+		},
+	}
 	kb := &stubKBServiceForDS{getByID: func(context.Context, string) (*types.KnowledgeBase, error) {
 		return &types.KnowledgeBase{TenantID: 7}, nil
 	}}

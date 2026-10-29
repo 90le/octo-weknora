@@ -27,11 +27,13 @@ import (
 
 var rootIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
 
+// Root identifies an allowed host directory.
 type Root struct {
 	ID   string `json:"id"`
 	Path string `json:"-"`
 }
 
+// Mount records a managed read-only directory mount.
 type Mount struct {
 	ID        string `json:"id"`
 	Root      string `json:"root"`
@@ -41,6 +43,7 @@ type Mount struct {
 	Status    string `json:"status"`
 }
 
+// Server manages the broker mount state and local HTTP interface.
 type Server struct {
 	mu              sync.Mutex
 	roots           map[string]string
@@ -59,7 +62,8 @@ func New(roots map[string]string, base, statePath string) (*Server, error) {
 		if !rootIDPattern.MatchString(id) || !filepath.IsAbs(p) || filepath.Clean(p) == "/" {
 			return nil, errors.New("mount broker root is invalid")
 		}
-		if overlaps(filepath.Clean(p), filepath.Clean(base)) || overlaps(filepath.Clean(p), filepath.Dir(filepath.Clean(statePath))) {
+		if overlaps(filepath.Clean(p), filepath.Clean(base)) ||
+			overlaps(filepath.Clean(p), filepath.Dir(filepath.Clean(statePath))) {
 			return nil, errors.New("mount control paths must be outside allowed roots")
 		}
 		copyRoots[id] = filepath.Clean(p)
@@ -94,7 +98,8 @@ func New(roots map[string]string, base, statePath string) (*Server, error) {
 }
 
 func overlaps(a, b string) bool {
-	return a == b || strings.HasPrefix(a, b+string(os.PathSeparator)) || strings.HasPrefix(b, a+string(os.PathSeparator))
+	return a == b || strings.HasPrefix(a, b+string(os.PathSeparator)) ||
+		strings.HasPrefix(b, a+string(os.PathSeparator))
 }
 
 // ValidateSharedBase is a startup gate: Docker must receive future child mount
@@ -166,18 +171,18 @@ func (s *Server) openDirectory(id, dir string) (*os.Root, error) {
 		}
 		before, e := r.Lstat(part)
 		if e != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 {
-			r.Close()
+			_ = r.Close()
 			return nil, errors.New("directory unavailable or unsafe")
 		}
 		next, e := r.OpenRoot(part)
 		if e != nil {
-			r.Close()
+			_ = r.Close()
 			return nil, errors.New("directory unavailable or unsafe")
 		}
 		after, e := next.Stat(".")
-		r.Close()
+		_ = r.Close()
 		if e != nil || !os.SameFile(before, after) {
-			next.Close()
+			_ = next.Close()
 			return nil, errors.New("directory changed")
 		}
 		r = next
@@ -207,7 +212,7 @@ func (s *Server) save() error {
 		return err
 	}
 	name := f.Name()
-	defer os.Remove(name)
+	defer func() { _ = os.Remove(name) }()
 	if err = f.Chmod(0o600); err == nil {
 		_, err = f.Write(b)
 	}
@@ -258,7 +263,7 @@ func (s *Server) mount(m *Mount) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	// Prepare the detached mount read-only before publishing it into the
 	// shared tree. A traditional bind followed by remount would expose a brief
 	// writable interval to the application container.
@@ -266,8 +271,10 @@ func (s *Server) mount(m *Mount) error {
 	if err != nil {
 		return err
 	}
-	defer unix.Close(tree)
-	attr := &unix.MountAttr{Attr_set: unix.MOUNT_ATTR_RDONLY | unix.MOUNT_ATTR_NOSUID | unix.MOUNT_ATTR_NODEV | unix.MOUNT_ATTR_NOEXEC}
+	defer func() { _ = unix.Close(tree) }()
+	attr := &unix.MountAttr{
+		Attr_set: unix.MOUNT_ATTR_RDONLY | unix.MOUNT_ATTR_NOSUID | unix.MOUNT_ATTR_NODEV | unix.MOUNT_ATTR_NOEXEC,
+	}
 	if err := unix.MountSetattr(tree, "", unix.AT_EMPTY_PATH, attr); err != nil {
 		return err
 	}
@@ -409,7 +416,7 @@ func (s *Server) browse(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "directory unavailable", http.StatusBadRequest)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	type entry struct {
 		Name      string `json:"name"`
 		Directory string `json:"directory"`
@@ -446,11 +453,14 @@ func (s *Server) browse(w http.ResponseWriter, req *http.Request) {
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	start := min(offset, len(entries))
 	end := min(start+200, len(entries))
-	_ = json.NewEncoder(w).Encode(map[string]any{"directory": dir, "entries": entries[start:end], "truncated": truncated, "has_more": end < len(entries), "next_offset": end})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"directory": dir, "entries": entries[start:end], "truncated": truncated,
+		"has_more": end < len(entries), "next_offset": end,
+	})
 }
 
 func (s *Server) add(w http.ResponseWriter, req *http.Request) {
-	defer req.Body.Close()
+	defer func() { _ = req.Body.Close() }()
 	var input struct {
 		Root      string `json:"root"`
 		Directory string `json:"directory"`

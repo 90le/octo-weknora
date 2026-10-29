@@ -1,5 +1,6 @@
 //go:build linux
 
+// Package main runs the restricted read-only folder mount broker.
 package main
 
 import (
@@ -59,11 +60,15 @@ func main() {
 	if err = mountbroker.ValidateSharedBase(*base); err != nil {
 		log.Fatal(err)
 	}
-	lockFD, err := unix.Open(filepath.Join(filepath.Dir(*state), "broker.lock"), unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+	lockFD, err := unix.Open(
+		filepath.Join(filepath.Dir(*state), "broker.lock"),
+		unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW,
+		0o600,
+	)
 	if err != nil {
 		log.Fatal("cannot open broker lock")
 	}
-	defer unix.Close(lockFD)
+	defer func() { _ = unix.Close(lockFD) }()
 	if err = unix.Flock(lockFD, unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		log.Fatal("another mount broker is active")
 	}
@@ -80,7 +85,7 @@ func main() {
 			log.Fatal("broker socket path is unsafe")
 		}
 		if active, dialErr := net.DialTimeout("unix", *socket, 250*time.Millisecond); dialErr == nil {
-			active.Close()
+			_ = active.Close()
 			log.Fatal("broker socket is already active")
 		}
 		if err = os.Remove(*socket); err != nil {
@@ -93,7 +98,7 @@ func main() {
 	if err != nil {
 		log.Fatal("cannot listen on broker socket: ", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	if err = os.Chown(*socket, 0, *socketGID); err != nil {
 		log.Fatal(err)
 	}
@@ -101,7 +106,13 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Print("read-only mount broker ready")
-	httpServer := &http.Server{Handler: server, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second}
+	httpServer := &http.Server{
+		Handler:           server,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       20 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}
 	if err = httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

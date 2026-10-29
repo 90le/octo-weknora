@@ -22,17 +22,33 @@ import (
 
 // FetchStream processes one stable document at a time and checkpoints only
 // successful versions. A failed file remains eligible for a subsequent retry.
-func (c *Connector) FetchStream(ctx context.Context, cfg *types.DataSourceConfig, old *types.SyncCursor, h datasource.StreamHandler) (*types.SyncCursor, error) {
+func (c *Connector) FetchStream(
+	ctx context.Context,
+	cfg *types.DataSourceConfig,
+	old *types.SyncCursor,
+	h datasource.StreamHandler,
+) (*types.SyncCursor, error) {
 	return c.streamDocuments(ctx, cfg, old, h, false)
 }
 
 // FetchFullStream reprocesses present files while retaining the previous
 // manifest for safe deletion reconciliation after a complete scan.
-func (c *Connector) FetchFullStream(ctx context.Context, cfg *types.DataSourceConfig, old *types.SyncCursor, h datasource.StreamHandler) (*types.SyncCursor, error) {
+func (c *Connector) FetchFullStream(
+	ctx context.Context,
+	cfg *types.DataSourceConfig,
+	old *types.SyncCursor,
+	h datasource.StreamHandler,
+) (*types.SyncCursor, error) {
 	return c.streamDocuments(ctx, cfg, old, h, true)
 }
 
-func (c *Connector) streamDocuments(ctx context.Context, cfg *types.DataSourceConfig, old *types.SyncCursor, h datasource.StreamHandler, full bool) (*types.SyncCursor, error) {
+func (c *Connector) streamDocuments(
+	ctx context.Context,
+	cfg *types.DataSourceConfig,
+	old *types.SyncCursor,
+	h datasource.StreamHandler,
+	full bool,
+) (*types.SyncCursor, error) {
 	if snapshot.IsSource(cfg) {
 		return nil, errors.New("source mode must use the snapshot pipeline")
 	}
@@ -63,12 +79,12 @@ func (c *Connector) streamDocuments(ctx context.Context, cfg *types.DataSourceCo
 	if err != nil {
 		return nil, errors.New("source folder unavailable")
 	}
-	defer top.Close()
+	defer func() { _ = top.Close() }()
 	root, err := descend(top, s.Directory)
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	selection := snapshot.Selection(cfg)
 	files := map[string]string{}
 	oldSelection := ""
@@ -116,7 +132,19 @@ func (c *Connector) streamDocuments(ctx context.Context, cfg *types.DataSourceCo
 		if status == "removed" {
 			synced = ""
 		}
-		return outcomes.RecordState(ctx, types.LocalSourceFileState{Selection: selection, Path: p, Status: status, Reason: reason, SourceSize: size, SourceVersion: version, SyncedVersion: synced, HasPrevious: previous})
+		return outcomes.RecordState(
+			ctx,
+			types.LocalSourceFileState{
+				Selection:     selection,
+				Path:          p,
+				Status:        status,
+				Reason:        reason,
+				SourceSize:    size,
+				SourceVersion: version,
+				SyncedVersion: synced,
+				HasPrevious:   previous,
+			},
+		)
 	}
 	// Persist periodically rather than rewriting the complete manifest for each
 	// file. Replays after interruption are idempotent and check the indexed row.
@@ -140,7 +168,12 @@ func (c *Connector) streamDocuments(ctx context.Context, cfg *types.DataSourceCo
 		complete = false
 		_, err := outcomes.EmitWithOutcome(ctx, types.FetchedItem{
 			ExternalID: "local:" + s.RootID + ":" + p, Title: p,
-			Metadata: map[string]string{"error": message, "error_reason_code": code, "error_reason": message, "error_reason_code_value": fmt.Sprint(utils.GetMaxFileSizeMB())},
+			Metadata: map[string]string{
+				"error":                   message,
+				"error_reason_code":       code,
+				"error_reason":            message,
+				"error_reason_code_value": fmt.Sprint(utils.GetMaxFileSizeMB()),
+			},
 		})
 		if err != nil || p == "" {
 			return err
@@ -174,7 +207,10 @@ func (c *Connector) streamDocuments(ctx context.Context, cfg *types.DataSourceCo
 				// An inaccessible replacement of a formerly indexed file is not a
 				// confirmed deletion, and a symlink subtree is never traversed.
 				seen[p] = true
-				if err := failed(p, "local_unsafe_file", "symbolic links and special files are not read; deletion reconciliation was skipped"); err != nil {
+				if err := failed(
+					p, "local_unsafe_file",
+					"symbolic links and special files are not read; deletion reconciliation was skipped",
+				); err != nil {
 					return err
 				}
 				continue
@@ -196,7 +232,9 @@ func (c *Connector) streamDocuments(ctx context.Context, cfg *types.DataSourceCo
 				// Unsupported files are intentionally ignored, rather than breaking
 				// an otherwise complete scan. A previous entry at this exact path
 				// remains present in seen and cannot be inferred as deleted.
-				if err := h.Emit(ctx, types.FetchedItem{Title: p, Metadata: map[string]string{"local_unsupported": "true"}}); err != nil {
+				if err := h.Emit(ctx, types.FetchedItem{
+					Title: p, Metadata: map[string]string{"local_unsupported": "true"},
+				}); err != nil {
 					return err
 				}
 				if err := record(p, "ignored", "unsupported_file_type", before.Size(), "", files[p] != ""); err != nil {
@@ -205,7 +243,10 @@ func (c *Connector) streamDocuments(ctx context.Context, cfg *types.DataSourceCo
 				continue
 			}
 			if before.Size() <= 0 || before.Size() > utils.GetMaxFileSize() {
-				if err := failed(p, "local_size", fmt.Sprintf("source document is empty or exceeds the configured %d MiB limit", utils.GetMaxFileSizeMB())); err != nil {
+				message := fmt.Sprintf(
+					"source document is empty or exceeds the configured %d MiB limit", utils.GetMaxFileSizeMB(),
+				)
+				if err := failed(p, "local_size", message); err != nil {
 					return err
 				}
 				continue
@@ -247,7 +288,9 @@ func (c *Connector) streamDocuments(ctx context.Context, cfg *types.DataSourceCo
 				}
 				if current {
 					_ = f.Close()
-					if err := h.Emit(ctx, types.FetchedItem{Title: p, Metadata: map[string]string{"local_unchanged": "true"}}); err != nil {
+					if err := h.Emit(ctx, types.FetchedItem{
+						Title: p, Metadata: map[string]string{"local_unchanged": "true"},
+					}); err != nil {
 						return err
 					}
 					if err := record(p, "indexed", "", before.Size(), version, true); err != nil {
@@ -276,10 +319,14 @@ func (c *Connector) streamDocuments(ctx context.Context, cfg *types.DataSourceCo
 			// Platforms that cannot unlink an open file use the later cleanup.
 			_ = os.Remove(stageName)
 			stageHash := sha256.New()
-			n, readErr = io.Copy(io.MultiWriter(tmp, stageHash), io.LimitReader(&contextReader{ctx: ctx, reader: f}, utils.GetMaxFileSize()+1))
+			n, readErr = io.Copy(
+				io.MultiWriter(tmp, stageHash),
+				io.LimitReader(&contextReader{ctx: ctx, reader: f}, utils.GetMaxFileSize()+1),
+			)
 			after, statErr = f.Stat()
 			_ = f.Close()
-			if readErr != nil || statErr != nil || n != before.Size() || !before.ModTime().Equal(after.ModTime()) || hex.EncodeToString(stageHash.Sum(nil)) != version {
+			if readErr != nil || statErr != nil || n != before.Size() || !before.ModTime().Equal(after.ModTime()) ||
+				hex.EncodeToString(stageHash.Sum(nil)) != version {
 				_ = tmp.Close()
 				_ = os.Remove(stageName)
 				if err := ctx.Err(); err != nil {
@@ -298,7 +345,12 @@ func (c *Connector) streamDocuments(ctx context.Context, cfg *types.DataSourceCo
 			item := types.FetchedItem{
 				ExternalID: "local:" + s.RootID + ":" + p, FileName: path.Join(s.RootID, p), Title: p,
 				ContentStream: tmp, SourceResourceID: s.RootID,
-				Metadata: map[string]string{"channel": Type, "source_type": Type, "source_version": version, "source_path": p},
+				Metadata: map[string]string{
+					"channel":        Type,
+					"source_type":    Type,
+					"source_version": version,
+					"source_path":    p,
+				},
 			}
 			if err := record(p, "processing", "", before.Size(), version, files[p] != ""); err != nil {
 				_ = tmp.Close()
@@ -343,7 +395,9 @@ func (c *Connector) streamDocuments(ctx context.Context, cfg *types.DataSourceCo
 			for _, p := range missing {
 				absent, verifyErr := sourcePathMissing(top, p)
 				if verifyErr != nil || !absent {
-					if err := failed(p, "local_changed", "source changed after scanning; deletion reconciliation was skipped"); err != nil {
+					if err := failed(
+						p, "local_changed", "source changed after scanning; deletion reconciliation was skipped",
+					); err != nil {
 						return nil, err
 					}
 					break
@@ -368,7 +422,10 @@ func (c *Connector) streamDocuments(ctx context.Context, cfg *types.DataSourceCo
 						return nil, err
 					}
 				}
-				if err := failed("", "local_deletion_guard", fmt.Sprintf("%d previously indexed files are missing; deletion reconciliation requires review", len(missing))); err != nil {
+				message := fmt.Sprintf(
+					"%d previously indexed files are missing; deletion reconciliation requires review", len(missing),
+				)
+				if err := failed("", "local_deletion_guard", message); err != nil {
 					return nil, err
 				}
 			}
@@ -382,13 +439,18 @@ func (c *Connector) streamDocuments(ctx context.Context, cfg *types.DataSourceCo
 			if outcomes.DeletionsEnabled() {
 				absent, verifyErr := sourcePathMissing(top, p)
 				if verifyErr != nil || !absent {
-					if err := failed(p, "local_changed", "source changed before deletion; remaining deletions were skipped"); err != nil {
+					if err := failed(
+						p, "local_changed", "source changed before deletion; remaining deletions were skipped",
+					); err != nil {
 						return nil, err
 					}
 					break
 				}
 			}
-			accepted, err := outcomes.EmitWithOutcome(ctx, types.FetchedItem{ExternalID: "local:" + s.RootID + ":" + p, Title: p, IsDeleted: true})
+			accepted, err := outcomes.EmitWithOutcome(
+				ctx,
+				types.FetchedItem{ExternalID: "local:" + s.RootID + ":" + p, Title: p, IsDeleted: true},
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -462,7 +524,7 @@ func sourcePathMissing(root *os.Root, relative string) (bool, error) {
 		}
 		after, err := next.Stat(".")
 		if err != nil || !os.SameFile(before, after) {
-			next.Close()
+			_ = next.Close()
 			return false, errors.New("source directory changed")
 		}
 		_ = current.Close()

@@ -86,7 +86,7 @@ func (s *DataSourceService) ingestPreparedFile(ctx context.Context, ds *types.Da
 		if item.ContentStream != nil {
 			fh, form, err = streamToFileHeader(item.ContentStream, item.FileName)
 			if form != nil {
-				defer form.RemoveAll()
+				defer func() { _ = form.RemoveAll() }()
 			}
 		} else {
 			fh, err = bytesToFileHeader(item.Content, item.FileName)

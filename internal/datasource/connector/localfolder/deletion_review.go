@@ -33,6 +33,7 @@ func deletionReview(selection string, files map[string]string, missing []string)
 	return &DeletionReview{Digest: hex.EncodeToString(sum[:]), Paths: paths}
 }
 
+// DeletionReviewFromCursor extracts a pending deletion review from a saved cursor.
 func DeletionReviewFromCursor(cursor *types.SyncCursor) (*DeletionReview, error) {
 	if cursor == nil || cursor.ConnectorCursor["deletion_review"] == nil {
 		return nil, nil

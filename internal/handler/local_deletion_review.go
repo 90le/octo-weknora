@@ -43,9 +43,19 @@ func (h *DataSourceHandler) LocalDeletionReview(c *gin.Context) {
 		return
 	}
 	end := min(offset+100, len(review.Paths))
-	c.JSON(http.StatusOK, gin.H{"digest": review.Digest, "count": len(review.Paths), "paths": review.Paths[offset:end], "next_offset": end, "has_more": end < len(review.Paths)})
+	c.JSON(
+		http.StatusOK,
+		gin.H{
+			"digest":      review.Digest,
+			"count":       len(review.Paths),
+			"paths":       review.Paths[offset:end],
+			"next_offset": end,
+			"has_more":    end < len(review.Paths),
+		},
+	)
 }
 
+// ConfirmLocalDeletionReview queues a sync using the reviewed deletion digest.
 func (h *DataSourceHandler) ConfirmLocalDeletionReview(c *gin.Context) {
 	tenant := h.getTenantID(c)
 	if tenant == 0 {

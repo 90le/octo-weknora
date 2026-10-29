@@ -41,7 +41,7 @@ func brokerCall(ctx context.Context, method, path string, body []byte) (int, []b
 	if err != nil {
 		return 0, nil, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 {
 		return 0, nil, errMountBrokerUnavailable
@@ -64,25 +64,46 @@ func (h *LocalRootHandler) brokerGet(c *gin.Context, endpoint string, query url.
 	}
 	status, data, err := brokerCall(c.Request.Context(), http.MethodGet, endpoint, nil)
 	if err != nil || status >= 500 {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "managed server mounts are unavailable", "code": "mount_broker_unavailable"})
+		c.JSON(
+			http.StatusServiceUnavailable,
+			gin.H{"error": "managed server mounts are unavailable", "code": "mount_broker_unavailable"},
+		)
 		return
 	}
 	if status != http.StatusOK || !json.Valid(data) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "server directory is unavailable or unsafe", "code": "mount_directory_unavailable"})
+		c.JSON(
+			http.StatusBadRequest,
+			gin.H{"error": "server directory is unavailable or unsafe", "code": "mount_directory_unavailable"},
+		)
 		return
 	}
 	c.Data(status, "application/json", data)
 }
 
+// ManagedMountRoots lists the broker configured server roots.
 func (h *LocalRootHandler) ManagedMountRoots(c *gin.Context) {
 	h.brokerGet(c, "/v1/roots", nil)
 }
+
+// ManagedMounts lists managed read-only mounts.
 func (h *LocalRootHandler) ManagedMounts(c *gin.Context) {
 	h.brokerGet(c, "/v1/mounts", nil)
 }
+
+// ManagedMountBrowse lists directories in an allowed root.
 func (h *LocalRootHandler) ManagedMountBrowse(c *gin.Context) {
-	h.brokerGet(c, "/v1/browse", url.Values{"root": {c.Query("root")}, "directory": {c.Query("directory")}, "offset": {c.DefaultQuery("offset", "0")}})
+	h.brokerGet(
+		c,
+		"/v1/browse",
+		url.Values{
+			"root":      {c.Query("root")},
+			"directory": {c.Query("directory")},
+			"offset":    {c.DefaultQuery("offset", "0")},
+		},
+	)
 }
+
+// CreateManagedMount creates a broker-managed read-only mount.
 func (h *LocalRootHandler) CreateManagedMount(c *gin.Context) {
 	tenant, ok := h.authorize(c)
 	if !ok {
@@ -99,11 +120,20 @@ func (h *LocalRootHandler) CreateManagedMount(c *gin.Context) {
 	b, _ := json.Marshal(input)
 	status, data, err := brokerCall(c.Request.Context(), http.MethodPost, "/v1/mounts", b)
 	if err != nil || status >= 500 {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "managed server mounts are unavailable", "code": "mount_broker_unavailable"})
+		c.JSON(
+			http.StatusServiceUnavailable,
+			gin.H{"error": "managed server mounts are unavailable", "code": "mount_broker_unavailable"},
+		)
 		return
 	}
 	if status != http.StatusCreated || !json.Valid(data) {
-		c.JSON(status, gin.H{"error": "mount could not be created; check the selected directory and existing mounts", "code": "mount_create_failed"})
+		c.JSON(
+			status,
+			gin.H{
+				"error": "mount could not be created; check the selected directory and existing mounts",
+				"code":  "mount_create_failed",
+			},
+		)
 		return
 	}
 	var result struct {
@@ -117,6 +147,7 @@ func (h *LocalRootHandler) CreateManagedMount(c *gin.Context) {
 	c.Data(status, "application/json", data)
 }
 
+// DeleteManagedMount removes an unused managed mount.
 func (h *LocalRootHandler) DeleteManagedMount(c *gin.Context) {
 	tenant, ok := h.authorize(c)
 	if !ok {
@@ -135,7 +166,13 @@ func (h *LocalRootHandler) DeleteManagedMount(c *gin.Context) {
 			rootError(c, err)
 			return
 		}
-		c.JSON(http.StatusConflict, gin.H{"error": "mount could not be removed; it may be in use or unavailable", "code": "mount_remove_failed"})
+		c.JSON(
+			http.StatusConflict,
+			gin.H{
+				"error": "mount could not be removed; it may be in use or unavailable",
+				"code":  "mount_remove_failed",
+			},
+		)
 		return
 	}
 	h.log(c, tenant, "mount_removed", id)

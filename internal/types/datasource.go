@@ -536,8 +536,10 @@ type LocalSourceFileState struct {
 	ObservedAt    time.Time `json:"observed_at"`
 }
 
+// TableName returns the persistent table for source file observations.
 func (LocalSourceFileState) TableName() string { return "local_source_file_states" }
 
+// LocalSourceFilePage contains observations, counts, and pagination state.
 type LocalSourceFilePage struct {
 	Items   []LocalSourceFileState `json:"items"`
 	Counts  map[string]int64       `json:"counts"`
