@@ -76,7 +76,8 @@ func TestDockerAdmissionWaitsForCapacityAndRejectsOtherErrors(t *testing.T) {
 	engine.startHook = func(string) error {
 		if attempts.Add(1) == 1 {
 			return cerrdefs.ErrPermissionDenied.WithMessage(
-				"authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached: maximum 2 running containers")
+				"authorization denied by plugin octo-sandbox-limit: " +
+					"Octo sandbox capacity reached: maximum 2 running containers")
 		}
 		return nil
 	}

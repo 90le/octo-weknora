@@ -126,7 +126,10 @@ func newFakeDockerEngine() *fakeDockerEngine {
 		inspect:      make(map[string]container.InspectResponse),
 		statResult:   make(map[string]container.PathStat),
 		imagePresent: make(map[string]bool),
-		topResult:    client.ContainerTopResult{Titles: []string{"PID", "PPID", "COMMAND"}, Processes: [][]string{{"1", "0", "docker-init"}, {"2", "1", "sleep"}}},
+		topResult: client.ContainerTopResult{
+			Titles:    []string{"PID", "PPID", "COMMAND"},
+			Processes: [][]string{{"1", "0", "docker-init"}, {"2", "1", "sleep"}},
+		},
 	}
 }
 
@@ -647,7 +650,9 @@ func TestDockerClientCreateRemovesContainerThatCannotStart(t *testing.T) {
 func TestDockerClientCreateReportsOctoCapacityAndRemovesContainer(t *testing.T) {
 	engine := newFakeDockerEngine()
 	engine.imagePresent["weknora/sandbox:test"] = true
-	engine.startErr = cerrdefs.ErrPermissionDenied.WithMessage("authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached: maximum 2 running containers")
+	engine.startErr = cerrdefs.ErrPermissionDenied.WithMessage(
+		"authorization denied by plugin octo-sandbox-limit: " +
+			"Octo sandbox capacity reached: maximum 2 running containers")
 	docker := newTestDockerClient(t, engine)
 
 	_, err := docker.Create(context.Background(), RemoteCreateRequest{TemplateID: "weknora/sandbox:test"})
@@ -1225,9 +1230,12 @@ func TestDockerErrorKindClassification(t *testing.T) {
 	require.Equal(t, RemoteErrorKindAuthentication,
 		dockerErrorKind("List", cerrdefs.ErrPermissionDenied.WithMessage("denied")))
 	require.Equal(t, RemoteErrorKindCapacity,
-		dockerErrorKind("Create", cerrdefs.ErrPermissionDenied.WithMessage("authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached: maximum 2 running containers")))
+		dockerErrorKind("Create", cerrdefs.ErrPermissionDenied.WithMessage(
+			"authorization denied by plugin octo-sandbox-limit: "+
+				"Octo sandbox capacity reached: maximum 2 running containers")))
 	require.Equal(t, RemoteErrorKindAuthentication,
-		dockerErrorKind("Create", cerrdefs.ErrPermissionDenied.WithMessage("authorization denied by plugin another: Octo sandbox capacity reached:")))
+		dockerErrorKind("Create", cerrdefs.ErrPermissionDenied.WithMessage(
+			"authorization denied by plugin another: Octo sandbox capacity reached:")))
 	require.Equal(t, RemoteErrorKindTimeout,
 		dockerErrorKind("Exec", context.DeadlineExceeded))
 	require.Equal(t, RemoteErrorKindInternal,
