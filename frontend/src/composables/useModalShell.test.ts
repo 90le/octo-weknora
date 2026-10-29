@@ -178,7 +178,7 @@ for (const savedRules of [[], [{ file_types: ['xlsx'], engine: 'builtin', xlsx_f
     try {
       release()
       await settle()
-      assert.equal(vm.getEngineForGroup(['pdf']), 'anydoc', 'defaults are still displayed')
+      assert.equal(vm.getEngineForGroup(['pdf']), 'builtin', 'defaults are still displayed')
       assert.equal(updates.length, 0, 'loading must not mutate the parent form')
       f.ui.showSettingsModal = true
       await vue.nextTick()
@@ -187,10 +187,10 @@ for (const savedRules of [[], [{ file_types: ['xlsx'], engine: 'builtin', xlsx_f
       release()
       await settle()
       assert.equal(updates.length, 0, 'refreshing available engines is not a user edit')
-      vm.handleEngineChange(['pdf'], 'builtin')
+      vm.handleEngineChange(['pdf'], 'anydoc')
       await vue.nextTick()
       assert.equal(updates.length, 1)
-      assert.equal(updates[0].find((r: any) => r.file_types.includes('pdf')).engine, 'builtin')
+      assert.equal(updates[0].find((r: any) => r.file_types.includes('pdf')).engine, 'anydoc')
       if (savedRules.length) {
         assert.equal(updates[0].find((r: any) => r.file_types.includes('xlsx')).xlsx_first_row_as_header, true)
       }

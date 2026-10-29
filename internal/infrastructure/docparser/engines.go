@@ -41,9 +41,9 @@ func init() {
 	RegisterEngine(&paddleOCRVLCloudEngine{})
 }
 
-// preferAnydocWhenAvailable is the type-level default override: when the
-// anydoc binding is linked and converts this file type, use it instead of
-// builtin or the markitdown fallback. Simple formats stay on the Go reader.
+// preferAnydocWhenAvailable supplies a default for formats which otherwise have
+// no parser. Existing default routes stay stable when the optional engine is
+// linked; users can explicitly select anydoc for other supported formats.
 //
 // PDF is excluded. anydoc has no document model for it, so Convert force-
 // disables asset extraction, and AnydocReader only falls back to builtin
@@ -54,7 +54,9 @@ func init() {
 // default for the one type anydoc cannot model.
 func preferAnydocWhenAvailable(fileType string) string {
 	ft := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(fileType), "."))
-	if IsSimpleFormat(ft) || ft == "pdf" {
+	switch ft {
+	case "docm", "odp", "ods", "odt", "pptm", "rtf", "xlsm":
+	default:
 		return ""
 	}
 	if anydoc.Available() && anydoc.Supports(ft, "") {

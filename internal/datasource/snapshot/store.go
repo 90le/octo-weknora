@@ -20,10 +20,13 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-var hashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
-var privateDirectoryPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
-var gitBlobPattern = regexp.MustCompile(`^[a-f0-9]{40,64}$`)
-var ErrUnavailable = errors.New("source snapshot unavailable; run a successful sync first")
+var (
+	hashPattern             = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	privateDirectoryPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	gitBlobPattern          = regexp.MustCompile(`^[a-f0-9]{40,64}$`)
+	// ErrUnavailable indicates that no usable snapshot can be read.
+	ErrUnavailable = errors.New("source snapshot unavailable; run a successful sync first")
+)
 
 type Store struct{ Base string }
 
@@ -34,6 +37,7 @@ func FromEnvironment() (*Store, error) {
 	}
 	return &Store{Base: p}, nil
 }
+
 func (s *Store) scope(ds *types.DataSource) string {
 	h := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%s\x00%s", ds.TenantID, ds.KnowledgeBaseID, ds.ID)))
 	return filepath.Join(s.Base, hex.EncodeToString(h[:]))
@@ -81,6 +85,17 @@ func (s *Store) Begin(ds *types.DataSource, cfg *types.DataSourceConfig) (*Build
 }
 func (b *Builder) SetRevision(revision string) { b.manifest.Revision = revision }
 func (b *Builder) Skip(reason string)          { b.manifest.Skipped[reason]++ }
+
+// SkipPath retains a bounded sample while always counting every omission.
+// Paths are relative to the authorized source and never filesystem paths.
+func (b *Builder) SkipPath(p, reason string) {
+	b.Skip(reason)
+	// Excluded paths can include secrets; do not disclose even their names.
+	if reason != "excluded" && SafePath(p) && len(b.manifest.SkippedDetails) < 200 {
+		b.manifest.SkippedDetails = append(b.manifest.SkippedDetails, types.SourceSkippedFile{Path: p, Reason: reason})
+	}
+}
+
 func (b *Builder) Add(ctx context.Context, p string, body []byte, sourceURL, revision string) error {
 	return b.add(ctx, p, body, sourceURL, revision, "")
 }
@@ -106,11 +121,11 @@ func (b *Builder) add(ctx context.Context, p string, body []byte, sourceURL, rev
 		return fmt.Errorf("source file exceeds %d bytes: %s", MaxFileBytes, p)
 	}
 	if !utf8.Valid(body) || bytes.IndexByte(body, 0) >= 0 {
-		b.Skip("binary_or_unsupported_encoding")
+		b.SkipPath(p, "binary_or_unsupported_encoding")
 		return nil
 	}
 	if bytes.HasPrefix(body, []byte("version https://git-lfs.github.com/spec/v1")) {
-		b.Skip("git_lfs_pointer")
+		b.SkipPath(p, "git_lfs_pointer")
 		return nil
 	}
 	if len(b.manifest.Files) >= MaxFiles || b.size+int64(len(body)) > MaxTotalBytes {
@@ -220,8 +235,17 @@ func (b *Builder) ReuseSnapshot(previous *types.SourceSnapshot) error {
 	if previous.Files != nil {
 		files = append(make([]types.SourceFile, 0, len(previous.Files)), previous.Files...)
 	}
+	if len(previous.SkippedDetails) > 200 {
+		return ErrUnavailable
+	}
+	for _, detail := range previous.SkippedDetails {
+		if !SafePath(detail.Path) || detail.Reason == "" || detail.Reason == "excluded" {
+			return ErrUnavailable
+		}
+	}
 	b.manifest.Files = files
 	b.manifest.Skipped = skipped
+	b.manifest.SkippedDetails = append([]types.SourceSkippedFile(nil), previous.SkippedDetails...)
 	b.size = total
 	return nil
 }
@@ -275,6 +299,7 @@ func (b *Builder) Finish() (*types.SourceSnapshot, error) {
 	}
 	return b.manifest, nil
 }
+
 func (s *Store) Load(ds *types.DataSource, cfg *types.DataSourceConfig, id string) (*types.SourceSnapshot, error) {
 	if !hashPattern.MatchString(id) {
 		return nil, ErrUnavailable
@@ -301,6 +326,7 @@ func (s *Store) Load(ds *types.DataSource, cfg *types.DataSourceConfig, id strin
 	}
 	return &m, nil
 }
+
 func (s *Store) Content(ds *types.DataSource, f types.SourceFile) ([]byte, error) {
 	if !hashPattern.MatchString(f.Object) {
 		return nil, ErrUnavailable

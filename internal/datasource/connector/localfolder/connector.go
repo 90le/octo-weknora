@@ -44,6 +44,7 @@ func (c *Connector) Roots(ctx context.Context, tenant uint64) ([]Root, error) {
 	}
 	return c.registry.Roots(ctx, tenant)
 }
+
 func (c *Connector) AuthorizedRoot(ctx context.Context, tenant uint64, cfg *types.DataSourceConfig) (Root, error) {
 	s, err := parse(cfg)
 	if err != nil {
@@ -60,6 +61,7 @@ func (c *Connector) AuthorizedRoot(ctx context.Context, tenant uint64, cfg *type
 	}
 	return Root{}, errors.New("server folder root is not authorized for this knowledge base")
 }
+
 func parse(cfg *types.DataSourceConfig) (settings, error) {
 	var c settings
 	if cfg == nil {
@@ -77,6 +79,7 @@ func parse(cfg *types.DataSourceConfig) (settings, error) {
 	}
 	return c, nil
 }
+
 func (c *Connector) Validate(ctx context.Context, cfg *types.DataSourceConfig) error {
 	if err := snapshot.ValidateSettings(cfg); err != nil {
 		return err
@@ -154,6 +157,7 @@ func descend(root *os.Root, dir string) (*os.Root, error) {
 	}
 	return current, nil
 }
+
 func (c *Connector) ListResources(ctx context.Context, cfg *types.DataSourceConfig, parent string) ([]types.Resource, error) {
 	tenant, _ := types.TenantIDFromContext(ctx)
 	out := []types.Resource{}
@@ -205,11 +209,14 @@ func (c *Connector) ListResources(ctx context.Context, cfg *types.DataSourceConf
 	}
 	return out, nil
 }
+
 func (*Connector) ResolveResourceAncestors(context.Context, *types.DataSourceConfig, []string) ([]string, error) {
 	return []string{}, nil
 }
 
-func (c *Connector) walk(ctx context.Context, cfg *types.DataSourceConfig, visit func(string, []byte) error, skip func(string)) error {
+func (c *Connector) walk(
+	ctx context.Context, cfg *types.DataSourceConfig, visit func(string, []byte) error, skip func(string, string),
+) error {
 	tenant, _ := types.TenantIDFromContext(ctx)
 	r, err := c.AuthorizedRoot(ctx, tenant, cfg)
 	if err != nil {
@@ -253,7 +260,7 @@ func (c *Connector) walk(ctx context.Context, cfg *types.DataSourceConfig, visit
 		for _, e := range entries {
 			p := path.Join(prefix, e.Name())
 			if snapshot.Excluded(p, snapshot.Excludes(cfg)) {
-				skip("excluded")
+				skip(p, "excluded")
 				continue
 			}
 			before, err := dir.Lstat(e.Name())
@@ -261,7 +268,7 @@ func (c *Connector) walk(ctx context.Context, cfg *types.DataSourceConfig, visit
 				return errors.New("source changed during scan")
 			}
 			if before.Mode()&os.ModeSymlink != 0 {
-				skip("symlink")
+				skip(p, "symlink")
 				continue
 			}
 			if before.IsDir() {
@@ -277,11 +284,11 @@ func (c *Connector) walk(ctx context.Context, cfg *types.DataSourceConfig, visit
 				continue
 			}
 			if !before.Mode().IsRegular() {
-				skip("special_file")
+				skip(p, "special_file")
 				continue
 			}
 			if !snapshot.IsSource(cfg) && !snapshot.DocumentPath(p) {
-				skip("not_a_document")
+				skip(p, "not_a_document")
 				continue
 			}
 			limit := int64(snapshot.MaxFileBytes)
@@ -290,7 +297,7 @@ func (c *Connector) walk(ctx context.Context, cfg *types.DataSourceConfig, visit
 			}
 			if before.Size() > limit {
 				if snapshot.IsSource(cfg) {
-					skip("too_large")
+					skip(p, "too_large")
 					continue
 				}
 				return fmt.Errorf("source file exceeds size limit: %s", p)
@@ -318,6 +325,7 @@ func (c *Connector) walk(ctx context.Context, cfg *types.DataSourceConfig, visit
 	}
 	return walk(root, s.Directory)
 }
+
 func (c *Connector) BuildSnapshot(ctx context.Context, cfg *types.DataSourceConfig, b *snapshot.Builder) error {
 	tenant, _ := types.TenantIDFromContext(ctx)
 	root, err := c.AuthorizedRoot(ctx, tenant, cfg)
@@ -336,12 +344,14 @@ func (c *Connector) BuildSnapshot(ctx context.Context, cfg *types.DataSourceConf
 	return c.walk(ctx, cfg, func(p string, body []byte) error {
 		u, revision := git.reference(p, body)
 		return b.Add(ctx, p, body, u, revision)
-	}, b.Skip)
+	}, b.SkipPath)
 }
+
 func (c *Connector) FetchAll(ctx context.Context, cfg *types.DataSourceConfig, _ []string) ([]types.FetchedItem, error) {
 	items, _, err := c.FetchIncremental(ctx, cfg, nil)
 	return items, err
 }
+
 func (c *Connector) FetchIncremental(ctx context.Context, cfg *types.DataSourceConfig, old *types.SyncCursor) ([]types.FetchedItem, *types.SyncCursor, error) {
 	if snapshot.IsSource(cfg) {
 		return nil, nil, errors.New("source mode must use the snapshot pipeline")
@@ -375,7 +385,7 @@ func (c *Connector) FetchIncremental(ctx context.Context, cfg *types.DataSourceC
 			items[len(items)-1].Metadata["fetch_error"] = "empty source document; previous version preserved"
 		}
 		return nil
-	}, func(string) {})
+	}, func(string, string) {})
 	if err != nil {
 		return nil, nil, err
 	}

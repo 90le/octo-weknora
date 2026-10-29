@@ -1257,6 +1257,21 @@ export default {
       seafile_fetch_failed: '從 Seafile 獲取檔案失敗，下次同步將重試。'
     },
     source: {
+      indexedCount: '已收錄 {count} 個',
+      skippedCount: '已略過 {count} 個',
+      snapshotUnavailable: '暫無可用快照',
+      skippedDetails: '查看略過的項目',
+      skippedLimit: '最多顯示 200 個可公開路徑；安全排除的路徑不顯示。',
+      skippedUnavailable: '此快照暫無路徑明細；重新同步後可能顯示。',
+      skipReason: {
+        binary_or_unsupported_encoding: '二進位或不支援的編碼',
+        too_large: '超過 4 MiB',
+        symlink: '符號連結',
+        special_file: '特殊檔案',
+        git_lfs_pointer: 'Git LFS 指標',
+        symlink_or_special_file: '連結或特殊檔案',
+        not_a_document: '非文件檔案',
+      },
       snapshotHint: '每次同步生成只读快照，未变化的内容复用；失败时保留上一份可用快照。',
       snapshot: '只读快照',
       platformLink: '平台文件链接',

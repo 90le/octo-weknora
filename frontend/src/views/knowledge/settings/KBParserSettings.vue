@@ -216,11 +216,12 @@ function pickDefaultEngineName(
   const available = engines.filter(e => e.available)
   const simpleExts = new Set(['md', 'markdown', 'txt', 'csv', 'json'])
   const allSimple = extensions.length > 0 && extensions.every(ext => simpleExts.has(ext))
-  if (!allSimple) {
-    const anydoc = available.find(e => e.name === 'anydoc')
-    if (anydoc) return anydoc.name
-  }
-  return available[0]?.name ?? ''
+  const anydocOnly = new Set(['docm', 'odp', 'ods', 'odt', 'pptm', 'rtf', 'xlsm'])
+  const preferred = allSimple ? 'simple'
+    : extensions.every(ext => anydocOnly.has(ext)) ? 'anydoc'
+    : extensions.every(ext => ext === 'ppt' || ext === 'pptx') ? 'markitdown'
+    : 'builtin'
+  return available.find(e => e.name === preferred)?.name ?? available[0]?.name ?? ''
 }
 
 function hasAvailableEngine(extensions: string[]): boolean {

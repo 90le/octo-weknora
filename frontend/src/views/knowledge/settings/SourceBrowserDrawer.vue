@@ -12,6 +12,12 @@ const loading=ref(false), searched=ref(false), complete=ref(true), offset=ref(0)
 let requestId=0
 const current=computed(()=>sources.value.find(s=>s.id===selected.value))
 const skipped=computed(()=>Object.values(current.value?.skipped||{}).reduce((sum,n)=>sum+n,0))
+const skipDetails=computed(()=>current.value?.skipped_details||[])
+function skipReason(reason:string){
+ const key=`datasource.source.skipReason.${reason}`
+ const translated=t(key)
+ return translated===key?reason:translated
+}
 const lines=computed(()=>content.value?.content.split('\n')||[])
 const remoteURL=computed(()=>content.value?.source_url?.startsWith('https://github.com/')?content.value.source_url:'')
 async function loadTree(){
@@ -49,8 +55,14 @@ watch(()=>[visible.value,props.kbId,props.initialSourceId,props.initialPath,prop
    <t-input v-model="query" :placeholder="t('datasource.source.searchHint')" @enter="search" clearable />
    <t-button :loading="loading" @click="search">{{ t('datasource.source.search') }}</t-button>
   </div>
-  <p class="source-caption">{{ t('datasource.source.readonly') }} · {{ current?.file_count||0 }} {{ t('datasource.source.files') }} <span v-if="snapshot">· {{ snapshot.slice(0,12) }}</span></p>
-  <t-alert v-if="skipped" theme="info" :message="t('datasource.source.skipped',{count:skipped})" />
+  <p class="source-caption">{{ t('datasource.source.readonly') }} · <template v-if="current?.snapshot_id">{{ t('datasource.source.indexedCount',{count:current.file_count}) }} · {{ t('datasource.source.skippedCount',{count:skipped}) }} <span v-if="current.created_at">· {{ new Date(current.created_at).toLocaleString() }}</span></template><template v-else>{{ t('datasource.source.snapshotUnavailable') }}</template></p>
+  <t-alert v-if="skipped" theme="warning" :message="t('datasource.source.skipped',{count:skipped})" />
+  <details v-if="skipped" class="source-skipped">
+   <summary>{{ t('datasource.source.skippedDetails') }}</summary>
+   <p class="source-caption">{{ t('datasource.source.skippedLimit') }}</p>
+   <ul v-if="skipDetails.length"><li v-for="item in skipDetails" :key="item.path + item.reason"><span>{{ item.path }}</span><small>{{ skipReason(item.reason) }}</small></li></ul>
+   <p v-else class="source-caption">{{ t('datasource.source.skippedUnavailable') }}</p>
+  </details>
   <div v-if="selected" class="source-layout">
    <aside class="source-tree">
     <div class="source-directory"><t-button v-if="directory" variant="text" size="small" @click="up">↑</t-button><span>{{ directory||'/' }}</span></div>
@@ -79,5 +91,5 @@ watch(()=>[visible.value,props.kbId,props.initialSourceId,props.initialPath,prop
  </SettingDrawer>
 </template>
 <style scoped>
-.source-controls{display:flex;gap:10px;align-items:center;margin-bottom:12px}.source-controls>:first-child{max-width:240px}.source-caption{font-size:12px;color:var(--td-text-color-secondary);line-height:1.6}.source-layout{display:grid;grid-template-columns:260px minmax(0,1fr);border:1px solid var(--td-component-stroke);border-radius:8px;min-height:400px;margin-top:16px}.source-tree{border-right:1px solid var(--td-component-stroke);max-height:65vh;overflow:auto;padding:10px}.source-content{padding:16px;min-width:0;overflow:auto;max-height:65vh}.source-directory{display:flex;align-items:center;gap:6px;overflow-wrap:anywhere;font-size:12px;margin-bottom:8px}.source-entry{display:flex;gap:8px;align-items:center;flex-wrap:wrap;width:100%;border:0;background:transparent;color:var(--td-text-color-primary);padding:9px 8px;text-align:left;cursor:pointer;border-radius:4px;overflow-wrap:anywhere}.source-entry:hover{background:var(--td-bg-color-container-hover)}.source-entry small{width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--td-text-color-secondary)}.source-file-heading,.source-pages{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:10px}.source-pages{margin-top:12px}.source-code{overflow:auto;background:var(--td-bg-color-secondarycontainer);border-radius:6px;padding:12px 0;font-size:12px}.source-line{display:flex;min-width:max-content;line-height:1.7}.source-line>span{min-width:48px;padding:0 12px;text-align:right;color:var(--td-text-color-placeholder);user-select:none}.source-line code{white-space:pre;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;padding-right:14px}@media(max-width:760px){.source-layout{grid-template-columns:1fr}.source-tree{max-height:180px;border-right:0;border-bottom:1px solid var(--td-component-stroke)}.source-controls{flex-wrap:wrap}}
+.source-controls{display:flex;gap:10px;align-items:center;margin-bottom:12px}.source-controls>:first-child{max-width:240px}.source-caption{font-size:12px;color:var(--td-text-color-secondary);line-height:1.6}.source-skipped{margin:12px 0;padding:12px;border:1px solid var(--td-component-stroke);border-radius:var(--app-radius-md)}.source-skipped summary{cursor:pointer;font-weight:600}.source-skipped ul{max-height:240px;overflow:auto;list-style:none;padding:0;margin:8px 0 0}.source-skipped li{display:flex;justify-content:space-between;gap:12px;padding:6px 0;overflow-wrap:anywhere}.source-skipped small{flex-shrink:0;color:var(--td-text-color-secondary)}.source-layout{display:grid;grid-template-columns:260px minmax(0,1fr);border:1px solid var(--td-component-stroke);border-radius:8px;min-height:400px;margin-top:16px}.source-tree{border-right:1px solid var(--td-component-stroke);max-height:65vh;overflow:auto;padding:10px}.source-content{padding:16px;min-width:0;overflow:auto;max-height:65vh}.source-directory{display:flex;align-items:center;gap:6px;overflow-wrap:anywhere;font-size:12px;margin-bottom:8px}.source-entry{display:flex;gap:8px;align-items:center;flex-wrap:wrap;width:100%;border:0;background:transparent;color:var(--td-text-color-primary);padding:9px 8px;text-align:left;cursor:pointer;border-radius:4px;overflow-wrap:anywhere}.source-entry:hover{background:var(--td-bg-color-container-hover)}.source-entry small{width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--td-text-color-secondary)}.source-file-heading,.source-pages{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:10px}.source-pages{margin-top:12px}.source-code{overflow:auto;background:var(--td-bg-color-secondarycontainer);border-radius:6px;padding:12px 0;font-size:12px}.source-line{display:flex;min-width:max-content;line-height:1.7}.source-line>span{min-width:48px;padding:0 12px;text-align:right;color:var(--td-text-color-placeholder);user-select:none}.source-line code{white-space:pre;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;padding-right:14px}@media(max-width:760px){.source-layout{grid-template-columns:1fr}.source-tree{max-height:180px;border-right:0;border-bottom:1px solid var(--td-component-stroke)}.source-controls{flex-wrap:wrap}}
 </style>

@@ -268,8 +268,8 @@ type ChunkingConfig struct {
 	// ParserEngineRules configures which parser engine to use for each file type.
 	// When empty, DefaultParserEngine is used (builtin/simple routing, except
 	// types that only a specific engine can parse: ppt/pptx fall back to
-	// markitdown). A linked anydoc binding is preferred for every type it
-	// converts.
+	// markitdown). A linked anydoc binding supplies defaults for formats that
+	// have no other parser; other routes remain unchanged.
 	ParserEngineRules []ParserEngineRule `yaml:"parser_engine_rules,omitempty" json:"parser_engine_rules,omitempty"`
 	// EnableParentChild enables two-level parent-child chunking strategy.
 	// When enabled, large parent chunks provide context while small child chunks
@@ -320,9 +320,8 @@ func SetPreferParserEngine(fn func(fileType string) string) {
 
 // DefaultParserEngine returns the engine used when no parser_engine_rules
 // match. Empty string means builtin (docreader) or Go simple-format routing.
-// When the anydoc binding is linked it is preferred for every type it
-// converts (except Go simple formats). ppt/pptx otherwise fall back to
-// markitdown.
+// When linked, anydoc supplies defaults for its otherwise unsupported file
+// types. Existing simple, builtin and markitdown routes remain unchanged.
 func DefaultParserEngine(fileType string) string {
 	ft := normalizeParserFileType(fileType)
 	if preferParserEngine != nil {

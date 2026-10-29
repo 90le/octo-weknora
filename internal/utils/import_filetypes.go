@@ -19,6 +19,9 @@ var supportedImportFileExtensions = map[string]struct{}{
 	"xmind": {},
 	"png":   {}, "jpg": {}, "jpeg": {}, "gif": {},
 	"csv": {}, "xlsx": {}, "xls": {}, "pptx": {}, "ppt": {}, "json": {},
+	// These formats require the optional anydoc parser. Availability is checked
+	// separately from the import allowlist by the parser engine registry.
+	"docm": {}, "odp": {}, "ods": {}, "odt": {}, "pptm": {}, "rtf": {}, "xlsm": {},
 	"mp3": {}, "wav": {}, "m4a": {}, "flac": {}, "ogg": {},
 }
 

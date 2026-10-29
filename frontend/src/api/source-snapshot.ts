@@ -1,6 +1,6 @@
 import { get } from '@/utils/request'
 
-export interface SourceSummary { id: string; name: string; type: string; status: string; snapshot_id?: string; revision?: string; file_count: number; skipped?: Record<string,number> }
+export interface SourceSummary { id: string; name: string; type: string; status: string; snapshot_id?: string; revision?: string; file_count: number; skipped?: Record<string,number>; skipped_details?: {path: string; reason: string}[]; created_at?: string }
 export interface SourceEntry { path: string; directory: boolean; size?: number }
 export interface SourceRead { source_id: string; snapshot_id: string; path: string; revision: string; start_line: number; end_line: number; total_lines: number; content: string; truncated: boolean; source_url?: string; preview_url: string }
 export interface SourceMatch { path: string; line: number; text: string; source_url?: string }

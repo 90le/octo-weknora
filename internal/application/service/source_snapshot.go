@@ -169,6 +169,7 @@ func (s *DataSourceService) ListSourceSnapshots(ctx context.Context, kbID string
 			info.Revision = m.Revision
 			info.FileCount = len(m.Files)
 			info.Skipped = m.Skipped
+			info.SkippedDetails = m.SkippedDetails
 			info.CreatedAt = &m.CreatedAt
 		} else {
 			info.Status = "sync_required"

@@ -23,6 +23,7 @@ import LocalSourceFilesDrawer from './LocalSourceFilesDrawer.vue'
 import { canPreviewRestartRecoveryForSource } from './datasourceRestartRecoveryState'
 import { githubSourceHealth, type GitHubHealthView } from './githubSourceHealth'
 import { useAuthStore } from '@/stores/auth'
+import { listSourceSnapshots, type SourceSummary } from '@/api/source-snapshot'
 
 const props = defineProps<{ kbId: string }>()
 const emit = defineEmits<{ (e: 'count', value: number): void }>()
@@ -35,6 +36,7 @@ const authStore = useAuthStore()
 const canManageDataSource = computed(() => authStore.hasRole('admin'))
 
 const dataSources = ref<DataSource[]>([])
+const sourceSummaries = ref<Record<string, SourceSummary>>({})
 const githubHealthByID = computed<Record<string, GitHubHealthView>>(() => {
   const views: Record<string, GitHubHealthView> = {}
   for (const source of dataSources.value) {
@@ -83,6 +85,18 @@ async function loadList(silent = false) {
     const res = await listDataSources(props.kbId)
     dataSources.value = res?.data || res || []
     emit('count', dataSources.value.length)
+
+    if (dataSources.value.some(ds => ds.type === 'local_folder' && ds.config?.settings?.mode === 'source')) {
+      try {
+        const summaries = await listSourceSnapshots(props.kbId)
+        sourceSummaries.value = Object.fromEntries(summaries.map(s => [s.id, s]))
+      } catch {
+        // A missing summary must not turn an otherwise healthy source list into an error.
+        sourceSummaries.value = {}
+      }
+    } else {
+      sourceSummaries.value = {}
+    }
 
     const hasRunningSync = dataSources.value.some(ds => ds.latest_sync_log?.status === 'running')
     if (hasRunningSync) {
@@ -260,6 +274,10 @@ function isSyncRunning(ds: DataSource) {
   return ds.latest_sync_log?.status === 'running'
 }
 
+function skippedCount(source?: SourceSummary) {
+  return Object.values(source?.skipped || {}).reduce((total, count) => total + count, 0)
+}
+
 function onEditorSaved() {
   editorVisible.value = false
   loadList()
@@ -418,6 +436,14 @@ onBeforeUnmount(stopPolling)
             <div v-if="ds.error_message && (ds.type !== 'github' || ds.status === 'error')" class="ds-card__error">
               <t-icon name="error-circle-filled" size="14px" />
               <span>{{ ds.error_message }}</span>
+            </div>
+            <div v-if="ds.type === 'local_folder' && ds.config?.settings?.mode === 'source'" class="ds-card__snapshot" @click.stop>
+              <template v-if="sourceSummaries[ds.id]?.snapshot_id">
+                <span>{{ t('datasource.source.indexedCount', { count: sourceSummaries[ds.id].file_count }) }}</span>
+                <span :class="{ 'ds-card__snapshot-warning': skippedCount(sourceSummaries[ds.id]) > 0 }">{{ t('datasource.source.skippedCount', { count: skippedCount(sourceSummaries[ds.id]) }) }}</span>
+              </template>
+              <span v-else>{{ t('datasource.source.snapshotUnavailable') }}</span>
+              <t-button variant="text" size="small" @click.stop="sourceId=ds.id;sourceVisible=true">{{ t('datasource.source.browse') }}</t-button>
             </div>
             <div v-if="ds.type === 'local_folder'" class="ds-card__quick-actions" @click.stop>
               <t-button v-if="ds.config?.settings?.mode !== 'source'" variant="text" size="small" @click.stop="localFilesSource = ds; localFilesVisible = true">{{ t('storageSpaces.fileStatusTitle') }}</t-button>
@@ -791,6 +817,19 @@ onBeforeUnmount(stopPolling)
   }
 
   &__health-count { font-variant-numeric: tabular-nums; }
+
+  &__snapshot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    margin-top: 10px;
+    color: var(--td-text-color-secondary);
+    font-size: var(--app-text-sm);
+    :deep(.t-button) { height: auto; min-height: 28px; padding: 2px 4px; }
+  }
+
+  &__snapshot-warning { color: var(--td-warning-color); }
 
   &__quick-actions {
     display: flex;

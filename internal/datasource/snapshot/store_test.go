@@ -2,6 +2,7 @@ package snapshot
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -24,6 +25,8 @@ func TestSnapshotsKeepTextLanguagesAndBindScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, m.Files, 5)
 	require.Equal(t, 1, m.Skipped["binary_or_unsupported_encoding"])
+	require.Equal(t,
+		[]types.SourceSkippedFile{{Path: "binary", Reason: "binary_or_unsupported_encoding"}}, m.SkippedDetails)
 	m2, err := s.Load(ds, cfg, m.ID)
 	require.NoError(t, err)
 	require.Equal(t, m.ID, m2.ID)
@@ -40,6 +43,31 @@ func TestSnapshotsKeepTextLanguagesAndBindScope(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(s.scope(ds), "objects", object.Object), []byte("tampered"), 0o600))
 	_, err = s.Content(ds, object)
 	require.Error(t, err)
+}
+
+func TestSkippedDetailsAreBoundedAndDoNotExposeExcludedPaths(t *testing.T) {
+	s := &Store{Base: t.TempDir()}
+	ds := &types.DataSource{ID: "source", TenantID: 7, KnowledgeBaseID: "kb"}
+	cfg := &types.DataSourceConfig{Settings: map[string]interface{}{"mode": "source"}}
+	b, err := s.Begin(ds, cfg)
+	require.NoError(t, err)
+	b.SkipPath("secrets/token.key", "excluded")
+	for i := 0; i < 205; i++ {
+		b.SkipPath(fmt.Sprintf("large/%03d.bin", i), "too_large")
+	}
+	b.SkipPath("../outside", "symlink")
+	m, err := b.Finish()
+	require.NoError(t, err)
+	require.Equal(t, 205, m.Skipped["too_large"])
+	require.Equal(t, 1, m.Skipped["excluded"])
+	require.Len(t, m.SkippedDetails, 200)
+	for _, item := range m.SkippedDetails {
+		require.NotContains(t, item.Path, "secrets")
+		require.True(t, SafePath(item.Path))
+	}
+	loaded, err := s.Load(ds, cfg, m.ID)
+	require.NoError(t, err)
+	require.Equal(t, m.SkippedDetails, loaded.SkippedDetails)
 }
 
 func TestTransportPrivateDirectoryIsPerDataSourceAndDeletedWithIt(t *testing.T) {
@@ -66,6 +94,7 @@ func TestTransportPrivateDirectoryIsPerDataSourceAndDeletedWithIt(t *testing.T) 
 	_, err = store.PrivateDirectory(&types.DataSource{ID: "docs-a", TenantID: 0, KnowledgeBaseID: "kb"}, "git")
 	require.ErrorIs(t, err, ErrUnavailable)
 }
+
 func TestSnapshotPolicyDoesNotWhitelistLanguages(t *testing.T) {
 	for _, p := range []string{"src/main.js", "app.php", "nested/handler.py", ".github/workflows/check.yml", "config.toml"} {
 		require.False(t, Excluded(p, DefaultExcludes), p)

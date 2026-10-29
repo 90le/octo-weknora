@@ -66,9 +66,9 @@ func TestIsSupportedImportExtension(t *testing.T) {
 // The set is pinned so moving it to internal/utils cannot silently change it.
 func TestImportExtensionSetIsSharedAcrossPaths(t *testing.T) {
 	want := []string{
-		"csv", "doc", "docx", "epub", "flac", "gif", "htm", "html", "jpeg", "jpg",
-		"json", "m4a", "markdown", "md", "mdx", "mhtml", "mp3", "ogg", "pdf", "png", "ppt",
-		"pptx", "txt", "wav", "xls", "xlsx", "xmind",
+		"csv", "doc", "docm", "docx", "epub", "flac", "gif", "htm", "html", "jpeg", "jpg",
+		"json", "m4a", "markdown", "md", "mdx", "mhtml", "mp3", "odp", "ods", "odt", "ogg", "pdf", "png", "ppt",
+		"pptm", "pptx", "rtf", "txt", "wav", "xls", "xlsm", "xlsx", "xmind",
 	}
 	exts := secutils.SupportedImportExtensions()
 	if !slices.Equal(exts, want) {
