@@ -351,6 +351,12 @@ func dockerErrorKind(op string, err error) RemoteErrorKind {
 		}
 		return RemoteErrorKindNotFound
 	case cerrdefs.IsUnauthorized(err), cerrdefs.IsPermissionDenied(err):
+		// The dedicated Octo sandbox admission plugin reports capacity with
+		// Docker's authorization-denied status (403), not HTTP 429.
+		// Recognize only its exact marker; ordinary denials remain auth errors.
+		if strings.Contains(err.Error(), "authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached:") {
+			return RemoteErrorKindCapacity
+		}
 		return RemoteErrorKindAuthentication
 	case cerrdefs.IsInvalidArgument(err):
 		return RemoteErrorKindInvalidRequest

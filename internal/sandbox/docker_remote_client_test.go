@@ -617,6 +617,19 @@ func TestDockerClientCreateRemovesContainerThatCannotStart(t *testing.T) {
 	require.Equal(t, []string{"container-1"}, engine.removed)
 }
 
+func TestDockerClientCreateReportsOctoCapacityAndRemovesContainer(t *testing.T) {
+	engine := newFakeDockerEngine()
+	engine.imagePresent["weknora/sandbox:test"] = true
+	engine.startErr = cerrdefs.ErrPermissionDenied.WithMessage("authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached: maximum 2 running containers")
+	docker := newTestDockerClient(t, engine)
+
+	_, err := docker.Create(context.Background(), RemoteCreateRequest{TemplateID: "weknora/sandbox:test"})
+	var remoteErr *RemoteError
+	require.ErrorAs(t, err, &remoteErr)
+	require.Equal(t, RemoteErrorKindCapacity, remoteErr.Kind)
+	require.Equal(t, []string{"container-1"}, engine.removed)
+}
+
 // ContainerStart returning is not Running. A skill install used to exec
 // immediately and fail with 409 "container is not running"; waiting here is
 // what makes the first attempt succeed.
@@ -1184,6 +1197,10 @@ func TestDockerErrorKindClassification(t *testing.T) {
 		dockerErrorKind("Exec", cerrdefs.ErrConflict.WithMessage("not running")))
 	require.Equal(t, RemoteErrorKindAuthentication,
 		dockerErrorKind("List", cerrdefs.ErrPermissionDenied.WithMessage("denied")))
+	require.Equal(t, RemoteErrorKindCapacity,
+		dockerErrorKind("Create", cerrdefs.ErrPermissionDenied.WithMessage("authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached: maximum 2 running containers")))
+	require.Equal(t, RemoteErrorKindAuthentication,
+		dockerErrorKind("Create", cerrdefs.ErrPermissionDenied.WithMessage("authorization denied by plugin another: Octo sandbox capacity reached:")))
 	require.Equal(t, RemoteErrorKindTimeout,
 		dockerErrorKind("Exec", context.DeadlineExceeded))
 	require.Equal(t, RemoteErrorKindInternal,
