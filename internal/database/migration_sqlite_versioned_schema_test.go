@@ -17,7 +17,7 @@ import (
 // 000063 knowledge multi-tags, 000093 browser authorization, 000103 message
 // artifacts.
 var versionedSQLiteTables = []string{
-	"local_source_spaces", "local_source_roots", "local_source_registry_state",
+	"local_source_spaces", "local_source_roots", "local_source_registry_state", "local_source_file_states",
 	"octo_knowledge_issues", "octo_knowledge_issue_events", "octo_knowledge_contacts", "octo_knowledge_proposals",
 	"octo_message_inbox", "octo_scope_knowledge_grants", "octo_report_schedules", "octo_report_runs",
 	"octo_scopes",
@@ -82,7 +82,7 @@ var versionedSQLiteColumns = map[string][]string{
 	}, // 000028
 }
 
-const expectedSQLiteMigrationVersion = 48
+const expectedSQLiteMigrationVersion = 49
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)
@@ -199,7 +199,9 @@ func buildForkLiteMigrationRoot(t *testing.T, repoRoot string) string {
 		var version int
 		_, scanErr := fmt.Sscanf(name, "%d_", &version)
 		require.NoError(t, scanErr, "sqlite migration filename %s", name)
-		if version < 37 {
+		// Only the fork's original 0.8.0 slots belonged to the legacy range;
+		// later migrations must be applied normally after the upgrade.
+		if version < 37 || version > forkLiteLegacyMaxVersion+20 {
 			continue
 		}
 		data, readErr := os.ReadFile(filepath.Join(srcDir, name))
