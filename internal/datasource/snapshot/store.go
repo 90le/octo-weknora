@@ -20,10 +20,12 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-var hashPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
-var privateDirectoryPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
-var gitBlobPattern = regexp.MustCompile(`^[a-f0-9]{40,64}$`)
-var ErrUnavailable = errors.New("source snapshot unavailable; run a successful sync first")
+var (
+	hashPattern             = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	privateDirectoryPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	gitBlobPattern          = regexp.MustCompile(`^[a-f0-9]{40,64}$`)
+	ErrUnavailable          = errors.New("source snapshot unavailable; run a successful sync first")
+)
 
 type Store struct{ Base string }
 
@@ -34,6 +36,7 @@ func FromEnvironment() (*Store, error) {
 	}
 	return &Store{Base: p}, nil
 }
+
 func (s *Store) scope(ds *types.DataSource) string {
 	h := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%s\x00%s", ds.TenantID, ds.KnowledgeBaseID, ds.ID)))
 	return filepath.Join(s.Base, hex.EncodeToString(h[:]))
@@ -91,6 +94,7 @@ func (b *Builder) SkipPath(p, reason string) {
 		b.manifest.SkippedDetails = append(b.manifest.SkippedDetails, types.SourceSkippedFile{Path: p, Reason: reason})
 	}
 }
+
 func (b *Builder) Add(ctx context.Context, p string, body []byte, sourceURL, revision string) error {
 	return b.add(ctx, p, body, sourceURL, revision, "")
 }
@@ -294,6 +298,7 @@ func (b *Builder) Finish() (*types.SourceSnapshot, error) {
 	}
 	return b.manifest, nil
 }
+
 func (s *Store) Load(ds *types.DataSource, cfg *types.DataSourceConfig, id string) (*types.SourceSnapshot, error) {
 	if !hashPattern.MatchString(id) {
 		return nil, ErrUnavailable
@@ -320,6 +325,7 @@ func (s *Store) Load(ds *types.DataSource, cfg *types.DataSourceConfig, id strin
 	}
 	return &m, nil
 }
+
 func (s *Store) Content(ds *types.DataSource, f types.SourceFile) ([]byte, error) {
 	if !hashPattern.MatchString(f.Object) {
 		return nil, ErrUnavailable

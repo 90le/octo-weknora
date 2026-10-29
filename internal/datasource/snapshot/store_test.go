@@ -25,7 +25,8 @@ func TestSnapshotsKeepTextLanguagesAndBindScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, m.Files, 5)
 	require.Equal(t, 1, m.Skipped["binary_or_unsupported_encoding"])
-	require.Equal(t, []types.SourceSkippedFile{{Path: "binary", Reason: "binary_or_unsupported_encoding"}}, m.SkippedDetails)
+	require.Equal(t,
+		[]types.SourceSkippedFile{{Path: "binary", Reason: "binary_or_unsupported_encoding"}}, m.SkippedDetails)
 	m2, err := s.Load(ds, cfg, m.ID)
 	require.NoError(t, err)
 	require.Equal(t, m.ID, m2.ID)
@@ -93,6 +94,7 @@ func TestTransportPrivateDirectoryIsPerDataSourceAndDeletedWithIt(t *testing.T) 
 	_, err = store.PrivateDirectory(&types.DataSource{ID: "docs-a", TenantID: 0, KnowledgeBaseID: "kb"}, "git")
 	require.ErrorIs(t, err, ErrUnavailable)
 }
+
 func TestSnapshotPolicyDoesNotWhitelistLanguages(t *testing.T) {
 	for _, p := range []string{"src/main.js", "app.php", "nested/handler.py", ".github/workflows/check.yml", "config.toml"} {
 		require.False(t, Excluded(p, DefaultExcludes), p)

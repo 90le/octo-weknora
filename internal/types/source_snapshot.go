@@ -42,9 +42,10 @@ type SourceSkippedFile struct {
 	Reason string `json:"reason"`
 }
 type SourceSummary struct {
-	ID             string              `json:"id"`
-	Name           string              `json:"name"`
-	Repository     string              `json:"-"` // Canonical GitHub owner/repo from validated source config, not a display name.
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Canonical GitHub owner/repo from validated source config, not a display name.
+	Repository     string              `json:"-"`
 	Type           string              `json:"type"`
 	Status         string              `json:"status"`
 	SnapshotID     string              `json:"snapshot_id,omitempty"`
