@@ -108,5 +108,52 @@ func (c *Connector) ListFileStates(
 	if more {
 		items = items[:100]
 	}
+	// File ingestion can succeed while individual image OCR output is rejected.
+	// Surface that partial result without changing the indexed document or its
+	// sync cursor. Include only the latest attempt for each image in the current
+	// canonical document, and scope the join to the source's tenant and KB.
+	paths := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.Status == "indexed" || item.HasPrevious {
+			paths = append(paths, item.Path)
+		}
+	}
+	if len(paths) != 0 {
+		var warnings []struct {
+			Path  string
+			Count int64
+		}
+		const query = `
+WITH latest AS (
+  SELECT k.metadata->>'source_path' AS path, s.status,
+         ROW_NUMBER() OVER (
+           PARTITION BY k.id, s.name ORDER BY s.attempt DESC, s.updated_at DESC, s.id DESC
+         ) AS rank
+  FROM knowledges AS k
+  JOIN data_sources AS d ON d.id = ? AND d.tenant_id = ?
+    AND d.deleted_at IS NULL AND d.knowledge_base_id = k.knowledge_base_id AND k.tenant_id = d.tenant_id
+  JOIN local_source_file_states AS f ON f.tenant_id = d.tenant_id AND f.data_source_id = d.id
+    AND f.selection = ? AND f.path = k.metadata->>'source_path'
+    AND f.synced_version <> '' AND f.synced_version = k.metadata->>'source_version'
+  JOIN knowledge_processing_spans AS s ON s.knowledge_id = k.id
+  WHERE k.deleted_at IS NULL AND k.metadata->>'datasource_id' = d.id
+    AND k.metadata->>'sync_target_external_id' IS NULL
+    AND k.metadata->>'source_resource_id' = d.config->'settings'->>'root_id'
+    AND k.metadata->>'source_path' IN ? AND s.name LIKE 'multimodal.image[%.ocr'
+)
+SELECT path, COUNT(*) AS count FROM latest WHERE rank = 1 AND status = 'failed' GROUP BY path`
+		if err := c.registry.db.WithContext(ctx).
+			Raw(query, source, tenant, selection, paths).
+			Scan(&warnings).Error; err != nil {
+			return nil, err
+		}
+		countsByPath := make(map[string]int64, len(warnings))
+		for _, warning := range warnings {
+			countsByPath[warning.Path] = warning.Count
+		}
+		for i := range items {
+			items[i].OCRFailedImages = countsByPath[items[i].Path]
+		}
+	}
 	return &types.LocalSourceFilePage{Items: items, Counts: counts, Offset: offset, HasMore: more}, nil
 }

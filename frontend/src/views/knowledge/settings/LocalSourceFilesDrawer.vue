@@ -63,8 +63,8 @@ function reasonText(value?: string) {
     <t-loading :loading="loading">
       <p v-if="!items.length && !loading && !error" class="hint">{{ t('storageSpaces.fileStatusEmpty') }}</p>
       <div v-for="item in items" :key="item.path" class="file-row">
-        <div><strong>{{ item.path }}</strong><p class="hint">{{ reasonText(item.reason) }} <span v-if="item.status === 'failed' && item.has_previous">{{ t('storageSpaces.previousPreserved') }}</span></p><small class="hint">{{ new Date(item.observed_at).toLocaleString() }}</small></div>
-        <t-tag :theme="item.status === 'failed' || item.status === 'pending_delete' ? 'warning' : item.status === 'indexed' ? 'success' : 'default'" variant="light">{{ statusText(item.status) }}</t-tag>
+        <div><strong>{{ item.path }}</strong><p class="hint">{{ reasonText(item.reason) }} <span v-if="item.status === 'failed' && item.has_previous">{{ t('storageSpaces.previousPreserved') }}</span></p><p v-if="item.ocr_failed_images" class="hint" role="status">{{ t('storageSpaces.ocrIncomplete', { count: item.ocr_failed_images }) }}</p><small class="hint">{{ new Date(item.observed_at).toLocaleString() }}</small></div>
+        <t-tag :theme="item.status === 'failed' || item.status === 'pending_delete' || item.ocr_failed_images ? 'warning' : item.status === 'indexed' ? 'success' : 'default'" variant="light">{{ statusText(item.status) }}</t-tag>
       </div>
       <t-button v-if="page?.has_more" variant="outline" :loading="loading" @click="load(false)">{{ t('storageSpaces.reviewLoadMore') }}</t-button>
     </t-loading>

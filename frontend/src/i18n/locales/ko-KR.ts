@@ -2,6 +2,7 @@ export default {
   storageSpaces: {
     addSource: 'Add source',
     fileStatusTitle: 'File status',
+    ocrIncomplete: '색인은 완료됐지만 이미지 {count}개의 문자 인식에 실패해 이미지 텍스트가 불완전할 수 있습니다.',
     fileStatusHint: 'Shows the last observation for each file. Changes after the scan appear after the next sync.',
     fileStatusUnavailable: 'File status is unavailable. Retry.',
     fileStatusEmpty: 'No files have been observed in this category.',

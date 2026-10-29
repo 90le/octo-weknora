@@ -2,6 +2,7 @@ export default {
   storageSpaces: {
     addSource: '添加来源',
     fileStatusTitle: '文件状态',
+    ocrIncomplete: '已入库，但有 {count} 张图片文字识别失败；图片内容可能不完整。',
     fileStatusHint: '显示最近一次扫描各文件时的结果；文件在扫描后发生变化，需要再次同步才会反映。',
     fileStatusUnavailable: '文件状态暂不可用，请重试。',
     fileStatusEmpty: '还没有扫描结果，或此分类没有文件。',
