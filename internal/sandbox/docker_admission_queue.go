@@ -14,7 +14,9 @@ import (
 // a thundering herd and gives this process's waiters a predictable order.
 var dockerAdmissionQueues sync.Map // endpoint key -> *dockerAdmissionQueue
 
-const dockerAdmissionWait = 10 * time.Minute
+// Allow the default 30-minute idle TTL and one sweep interval to free a slot.
+// A caller's own earlier deadline or cancellation still takes precedence.
+const dockerAdmissionWait = 35 * time.Minute
 const dockerAdmissionPoll = time.Second
 
 type dockerAdmissionQueue struct {
