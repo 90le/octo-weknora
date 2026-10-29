@@ -24,7 +24,8 @@ var (
 	hashPattern             = regexp.MustCompile(`^[a-f0-9]{64}$`)
 	privateDirectoryPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 	gitBlobPattern          = regexp.MustCompile(`^[a-f0-9]{40,64}$`)
-	ErrUnavailable          = errors.New("source snapshot unavailable; run a successful sync first")
+	// ErrUnavailable indicates that no usable snapshot can be read.
+	ErrUnavailable = errors.New("source snapshot unavailable; run a successful sync first")
 )
 
 type Store struct{ Base string }
