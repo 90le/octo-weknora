@@ -235,7 +235,10 @@ func TestDockerIdleSweeperDoesNotStopActiveOrForeignSessions(t *testing.T) {
 func TestDockerIdleSweeperSkipsUnreadableActivity(t *testing.T) {
 	now := time.Now().UTC()
 	s, engine := newSweeperFixture(t, time.Minute, now, []container.Summary{
-		{ID: "unknown", State: "running", Created: now.Add(-time.Hour).Unix(), Labels: map[string]string{dockerManagedLabel: "true"}},
+		{
+			ID: "unknown", State: "running", Created: now.Add(-time.Hour).Unix(),
+			Labels: map[string]string{dockerManagedLabel: "true"},
+		},
 	})
 	engine.statErr = context.DeadlineExceeded
 	n, err := s.sweep(context.Background())
@@ -247,7 +250,10 @@ func TestDockerIdleSweeperSkipsUnreadableActivity(t *testing.T) {
 func TestDockerIdleSweeperSkipsZeroActivityTimestamp(t *testing.T) {
 	now := time.Now().UTC()
 	s, engine := newSweeperFixture(t, time.Minute, now, []container.Summary{
-		{ID: "unknown", State: "running", Created: now.Add(-time.Hour).Unix(), Labels: map[string]string{dockerManagedLabel: "true"}},
+		{
+			ID: "unknown", State: "running", Created: now.Add(-time.Hour).Unix(),
+			Labels: map[string]string{dockerManagedLabel: "true"},
+		},
 	})
 	engine.statResult[dockerActivityMarker] = container.PathStat{}
 	n, err := s.sweep(context.Background())
@@ -259,7 +265,10 @@ func TestDockerIdleSweeperSkipsZeroActivityTimestamp(t *testing.T) {
 func TestDockerIdleSweeperPreservesDetachedProcesses(t *testing.T) {
 	now := time.Now().UTC()
 	s, engine := newSweeperFixture(t, time.Minute, now, []container.Summary{
-		{ID: "worker", State: "running", Created: now.Add(-time.Hour).Unix(), Labels: map[string]string{dockerManagedLabel: "true"}},
+		{
+			ID: "worker", State: "running", Created: now.Add(-time.Hour).Unix(),
+			Labels: map[string]string{dockerManagedLabel: "true"},
+		},
 	})
 	engine.statResult[dockerActivityMarker] = container.PathStat{Mtime: now.Add(-time.Hour)}
 	engine.topResult.Processes = append(engine.topResult.Processes, []string{"3", "1", "python3"})

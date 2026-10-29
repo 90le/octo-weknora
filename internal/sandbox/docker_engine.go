@@ -46,7 +46,9 @@ type dockerEngineAPI interface {
 		ctx context.Context, containerID string, options client.ContainerInspectOptions,
 	) (client.ContainerInspectResult, error)
 	ContainerList(ctx context.Context, options client.ContainerListOptions) (client.ContainerListResult, error)
-	ContainerTop(ctx context.Context, containerID string, options client.ContainerTopOptions) (client.ContainerTopResult, error)
+	ContainerTop(
+		ctx context.Context, containerID string, options client.ContainerTopOptions,
+	) (client.ContainerTopResult, error)
 	ContainerRemove(
 		ctx context.Context, containerID string, options client.ContainerRemoveOptions,
 	) (client.ContainerRemoveResult, error)
@@ -379,7 +381,8 @@ func dockerErrorKind(op string, err error) RemoteErrorKind {
 
 func isOctoDockerCapacityError(err error) bool {
 	return err != nil && cerrdefs.IsPermissionDenied(err) &&
-		strings.Contains(err.Error(), "authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached:")
+		strings.Contains(err.Error(), "authorization denied by plugin octo-sandbox-limit: "+
+			"Octo sandbox capacity reached:")
 }
 
 // dockerError wraps an Engine API error as a RemoteError.

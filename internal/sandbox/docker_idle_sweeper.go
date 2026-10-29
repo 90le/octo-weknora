@@ -168,7 +168,9 @@ func (s *dockerIdleSweeper) stopIfIdle(ctx context.Context, summary RemoteSandbo
 	}
 	// Docker execs can leave detached child processes behind. Only stop a
 	// container whose process tree is exactly the idle init + sleep loop.
-	top, err := s.client.api.ContainerTop(ctx, summary.ID, client.ContainerTopOptions{Arguments: []string{"-eo", "pid,ppid,comm"}})
+	top, err := s.client.api.ContainerTop(ctx, summary.ID, client.ContainerTopOptions{
+		Arguments: []string{"-eo", "pid,ppid,comm"},
+	})
 	if err != nil {
 		return false, err
 	}

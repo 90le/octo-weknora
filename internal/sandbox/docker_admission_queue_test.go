@@ -75,7 +75,8 @@ func TestDockerAdmissionWaitsForCapacityAndRejectsOtherErrors(t *testing.T) {
 	var attempts atomic.Int32
 	engine.startHook = func(string) error {
 		if attempts.Add(1) == 1 {
-			return cerrdefs.ErrPermissionDenied.WithMessage("authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached: maximum 2 running containers")
+			return cerrdefs.ErrPermissionDenied.WithMessage(
+				"authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached: maximum 2 running containers")
 		}
 		return nil
 	}
@@ -90,7 +91,8 @@ func TestDockerAdmissionWaitsForCapacityAndRejectsOtherErrors(t *testing.T) {
 func TestDockerAdmissionCancellationDoesNotKeepQueueSlot(t *testing.T) {
 	engine := newFakeDockerEngine()
 	engine.startHook = func(string) error {
-		return cerrdefs.ErrPermissionDenied.WithMessage("authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached: full")
+		return cerrdefs.ErrPermissionDenied.WithMessage(
+			"authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached: full")
 	}
 	c := newTestDockerClient(t, engine)
 	c.admission = &dockerAdmissionQueue{}
@@ -118,7 +120,8 @@ func TestDockerQueuedCreateCancellationCleansItsUnstartedContainer(t *testing.T)
 		case tried <- struct{}{}:
 		default:
 		}
-		return cerrdefs.ErrPermissionDenied.WithMessage("authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached: full")
+		return cerrdefs.ErrPermissionDenied.WithMessage(
+			"authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached: full")
 	}
 	c := newTestDockerClient(t, engine)
 	c.admission = &dockerAdmissionQueue{}

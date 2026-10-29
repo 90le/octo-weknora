@@ -43,6 +43,8 @@ func TestBatchEmbedRejectsNonpositiveBatchSize(t *testing.T) {
 	pool, err := ants.NewPool(1)
 	require.NoError(t, err)
 	defer pool.Release()
-	_, err = NewBatchEmbedder(pool).BatchEmbedWithPool(context.Background(), &failingBatchEmbedder{}, []string{"synthetic"})
+	_, err = NewBatchEmbedder(pool).BatchEmbedWithPool(
+		context.Background(), &failingBatchEmbedder{}, []string{"synthetic"},
+	)
 	require.ErrorContains(t, err, "BATCH_EMBED_SIZE")
 }
