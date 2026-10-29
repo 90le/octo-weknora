@@ -117,5 +117,5 @@ function updateVisibility(value: boolean) {
 </template>
 
 <style scoped>
-.hint{font-size:13px;line-height:1.6;color:var(--td-text-color-secondary)}.mount-form{display:grid;gap:10px;margin:16px 0}.existing{border-top:1px solid var(--td-component-border);padding-top:14px}.existing h3{font-size:15px}.existing-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0}.existing-row div{min-width:0;overflow-wrap:anywhere}.existing-actions{display:flex;gap:8px;align-items:center}
+.hint{font-size:var(--app-text-md);line-height:1.6;color:var(--td-text-color-secondary)}.mount-form{display:grid;gap:10px;margin:16px 0}.existing{border-top:1px solid var(--td-component-border);padding-top:14px}.existing h3{font-size:var(--app-text-lg)}.existing-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0}.existing-row div{min-width:0;overflow-wrap:anywhere}.existing-actions{display:flex;gap:8px;align-items:center}
 </style>

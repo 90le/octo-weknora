@@ -72,5 +72,5 @@ function reasonText(value?: string) {
 </template>
 
 <style scoped>
-.hint{font-size:12px;line-height:1.6;color:var(--td-text-color-secondary)}.toolbar,.filters{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.file-row{display:flex;justify-content:space-between;gap:16px;padding:14px 0;border-bottom:1px solid var(--td-component-border)}.file-row strong{overflow-wrap:anywhere}.file-row p{margin:4px 0}.file-row>div{min-width:0}
+.hint{font-size:var(--app-text-sm);line-height:1.6;color:var(--td-text-color-secondary)}.toolbar,.filters{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.file-row{display:flex;justify-content:space-between;gap:16px;padding:14px 0;border-bottom:1px solid var(--td-component-border)}.file-row strong{overflow-wrap:anywhere}.file-row p{margin:4px 0}.file-row>div{min-width:0}
 </style>

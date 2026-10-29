@@ -84,5 +84,5 @@ function updateVisibility(value: boolean) {
 </template>
 
 <style scoped>
-.review-paths{max-height:320px;overflow:auto;border:1px solid var(--td-component-border);border-radius:6px;padding:12px 12px 12px 32px}.review-paths li{overflow-wrap:anywhere;padding:3px 0}p{line-height:1.6;color:var(--td-text-color-secondary)}
+.review-paths{max-height:320px;overflow:auto;border:1px solid var(--td-component-border);border-radius:var(--app-radius-sm);padding:12px 12px 12px 32px}.review-paths li{overflow-wrap:anywhere;padding:3px 0}p{line-height:1.6;color:var(--td-text-color-secondary)}
 </style>
