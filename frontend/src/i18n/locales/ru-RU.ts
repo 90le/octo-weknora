@@ -2,6 +2,7 @@ export default {
   storageSpaces: {
     addSource: 'Add source',
     fileStatusTitle: 'File status',
+    ocrIncomplete: 'Документ проиндексирован, но распознавание текста на {count} изображениях не удалось.',
     fileStatusHint: 'Shows the last observation for each file. Changes after the scan appear after the next sync.',
     fileStatusUnavailable: 'File status is unavailable. Retry.',
     fileStatusEmpty: 'No files have been observed in this category.',

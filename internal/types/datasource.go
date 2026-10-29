@@ -534,6 +534,9 @@ type LocalSourceFileState struct {
 	SyncedVersion string    `json:"-"`
 	HasPrevious   bool      `json:"has_previous"`
 	ObservedAt    time.Time `json:"observed_at"`
+	// OCRFailedImages is computed from the current indexed document's latest
+	// image OCR spans. A zero value does not imply OCR was enabled.
+	OCRFailedImages int64 `json:"ocr_failed_images,omitempty" gorm:"-"`
 }
 
 // TableName returns the persistent table for source file observations.

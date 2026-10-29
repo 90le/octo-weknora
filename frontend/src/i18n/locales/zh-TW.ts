@@ -8442,6 +8442,7 @@ export default {
   storageSpaces: {
     addSource: 'Add source',
     fileStatusTitle: 'File status',
+    ocrIncomplete: '已入庫，但有 {count} 張圖片文字辨識失敗；圖片內容可能不完整。',
     fileStatusHint: 'Shows the last observation for each file. Changes after the scan appear after the next sync.',
     fileStatusUnavailable: 'File status is unavailable. Retry.',
     fileStatusEmpty: 'No files have been observed in this category.',

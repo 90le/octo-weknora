@@ -2,6 +2,7 @@ export default {
   storageSpaces: {
     addSource: 'Add source',
     fileStatusTitle: 'File status',
+    ocrIncomplete: '登録済みですが、{count} 枚の画像の文字認識に失敗しました。画像内の文字が不足している可能性があります。',
     fileStatusHint: 'Shows the last observation for each file. Changes after the scan appear after the next sync.',
     fileStatusUnavailable: 'File status is unavailable. Retry.',
     fileStatusEmpty: 'No files have been observed in this category.',

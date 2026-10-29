@@ -517,6 +517,7 @@ export interface LocalSourceFileState {
   source_size: number
   has_previous: boolean
   observed_at: string
+  ocr_failed_images?: number
 }
 export interface LocalSourceFilePage {
   items: LocalSourceFileState[]

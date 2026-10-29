@@ -2,6 +2,7 @@ export default {
   storageSpaces: {
     addSource: 'Add source',
     fileStatusTitle: 'File status',
+    ocrIncomplete: 'Indexed, but OCR failed for {count} image(s); image text may be incomplete.',
     fileStatusHint: 'Shows the last observation for each file. Changes after the scan appear after the next sync.',
     fileStatusUnavailable: 'File status is unavailable. Retry.',
     fileStatusEmpty: 'No files have been observed in this category.',
