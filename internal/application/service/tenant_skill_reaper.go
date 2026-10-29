@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
@@ -17,8 +18,11 @@ import (
 
 const (
 	skillReaperCronSpec            = "0 */5 * * * *"
+	dockerIdleReaperCronSpec       = "0 * * * * *"
 	skillInstallInterruptedMessage = "安装进程中断: the process died before the install finished"
 )
+
+var dockerIdleReaperRunning atomic.Bool
 
 // skillReaperStore is the skill-row slice ReapStuckRuns needs.
 type skillReaperStore interface {
@@ -843,6 +847,42 @@ func (s *TenantSkillService) runSkillReaper(ctx context.Context) {
 	s.reconcileAllSnapshots(ctx)
 }
 
+// runDockerIdleReaper discovers saved Docker configs on every pass, including
+// after an application restart. It never uses unsaved configuration from a
+// connectivity test and never scans a cordoned workspace config.
+func (s *TenantSkillService) runDockerIdleReaper(ctx context.Context) {
+	enum, ok := s.configs.(sandboxConfigEnumerator)
+	if !ok || s.sandboxes == nil {
+		return
+	}
+	configs, err := enum.ListAll(ctx)
+	if err != nil {
+		logger.Warnf(ctx, "[sandbox] list configs for idle sweep failed: %v", err)
+		return
+	}
+	for _, cfg := range configs {
+		if cfg == nil || cfg.SandboxType != string(sandbox.SandboxTypeDocker) ||
+			types.IsSandboxWorkspacePolicyRow(cfg) || cfg.IsCordoned(time.Now(), types.SandboxCordonLease) {
+			continue
+		}
+		mgr, err := s.sandboxes.Resolve(ctx, cfg.TenantID, cfg.ID)
+		if err != nil {
+			logger.Warnf(ctx, "[sandbox] resolve config %s for idle sweep failed: %v", cfg.ID, err)
+			continue
+		}
+		if reaper, ok := mgr.(interface {
+			ReapIdleDocker(context.Context) (int, error)
+		}); ok {
+			sweepCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			_, err = reaper.ReapIdleDocker(sweepCtx)
+			cancel()
+			if err != nil {
+				logger.Warnf(ctx, "[sandbox] idle sweep for config %s failed: %v", cfg.ID, err)
+			}
+		}
+	}
+}
+
 // Start registers the five-minute stuck-run sweep and begins the background
 // runner. Idempotent — repeated calls are a no-op so wiring code can call
 // Start without coordinating ordering.
@@ -859,6 +899,17 @@ func (s *TenantSkillService) Start(ctx context.Context) error {
 	}
 	if _, err := s.cron.AddFunc(skillReaperCronSpec, func() {
 		s.runSkillReaper(context.Background())
+	}); err != nil {
+		return err
+	}
+	if _, err := s.cron.AddFunc(dockerIdleReaperCronSpec, func() {
+		if !dockerIdleReaperRunning.CompareAndSwap(false, true) {
+			return
+		}
+		defer dockerIdleReaperRunning.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		s.runDockerIdleReaper(ctx)
 	}); err != nil {
 		return err
 	}

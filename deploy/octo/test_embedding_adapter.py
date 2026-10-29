@@ -144,6 +144,17 @@ class AdapterTests(unittest.TestCase):
                                  [{'text': 'hello world'}])
                 self.assertEqual(len(result['data'][0]['embedding']), adapter.DIMENSIONS)
 
+    def test_batch_messages_preserves_independent_inputs(self):
+        texts = ['first', 'second']
+        messages = [[{'role': 'user', 'content': [{'type': 'text', 'text': text}]}]
+                    for text in texts]
+        with mock.patch.object(adapter.UPSTREAM_OPENER, 'open', return_value=response(output([1, 0]))) as upstream:
+            status, result = self.post({'model': adapter.MODEL, 'messages': messages})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(upstream.call_args.args[0].data)['input']['contents'],
+                         [{'text': text} for text in texts])
+        self.assertEqual([item['index'] for item in result['data']], [0, 1])
+
     def test_invalid_input_and_auth_do_not_call_upstream(self):
         with mock.patch.object(adapter.UPSTREAM_OPENER, 'open') as upstream:
             for auth in (None, 'Basic x', 'Bearer '):
@@ -151,6 +162,8 @@ class AdapterTests(unittest.TestCase):
             cases = ({'model': adapter.MODEL, 'input': []}, {'model': adapter.MODEL, 'input': ['']},
                      {'model': adapter.MODEL, 'input': ['x'] * 65}, {'model': 'other', 'input': 'x'},
                      {'model': adapter.MODEL, 'messages': [None]},
+                     {'model': adapter.MODEL, 'messages': [[{'role': 'user', 'content': [
+                         {'type': 'text', 'text': 'valid'}]}], [None]]},
                      {'model': adapter.MODEL, 'messages': [{'role': 'user', 'content': [
                          {'type': 'image', 'text': 'x'}]}]})
             for payload in cases:

@@ -13,21 +13,22 @@
 // (folded into the exec wrapper, costing no extra round-trip), and the sweep
 // reads its mtime with a single HEAD /archive call per container.
 //
-// Deleting an idle container needs no coordination with the binding store: the
-// lifecycle already treats a sandbox the provider no longer has as replaceable
-// (see CanReplaceRemoteBinding), which is exactly how an E2B sandbox reaped by
-// its own TTL is handled.
+// Idle containers are stopped rather than deleted: their files and session
+// binding survive, and Connect starts the same container on the next use.
 
 package sandbox
 
 import (
 	"context"
 	"log"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
 )
 
@@ -56,8 +57,10 @@ var dockerSweepThrottle = struct {
 // dockerIdleSweeper reclaims containers that have not executed anything for
 // longer than their TTL.
 type dockerIdleSweeper struct {
-	client *DockerRemoteClient
-	ttl    time.Duration
+	client   *DockerRemoteClient
+	ttl      time.Duration
+	scope    map[string]string
+	scopeKey string
 
 	// now is injected by tests.
 	now func() time.Time
@@ -96,7 +99,7 @@ func (s *dockerIdleSweeper) trigger(ctx context.Context) {
 
 // claimSweep reports whether this caller won the right to sweep now.
 func (s *dockerIdleSweeper) claimSweep() bool {
-	key := s.client.settings.Endpoint.key()
+	key := s.client.settings.Endpoint.key() + "\x00" + s.scopeKey
 	now := s.now()
 	dockerSweepThrottle.mu.Lock()
 	defer dockerSweepThrottle.mu.Unlock()
@@ -108,10 +111,9 @@ func (s *dockerIdleSweeper) claimSweep() bool {
 	return true
 }
 
-// sweep deletes every managed container idle beyond its own TTL and reports
-// how many went away.
+// sweep stops idle managed containers without removing their files.
 func (s *dockerIdleSweeper) sweep(ctx context.Context) (int, error) {
-	summaries, err := s.client.List(ctx, RemoteListFilter{})
+	summaries, err := s.client.List(ctx, RemoteListFilter{Metadata: s.scope})
 	if err != nil {
 		return 0, err
 	}
@@ -122,25 +124,105 @@ func (s *dockerIdleSweeper) sweep(ctx context.Context) (int, error) {
 			return reclaimed, ctx.Err()
 		default:
 		}
-		if !s.isIdle(ctx, summary) {
+		if summary.State != RemoteStateRunning || !metadataMatches(summary.Metadata, s.scope) {
 			continue
 		}
-		// Re-check immediately before deleting. Listing every container and
-		// stat'ing each one takes long enough on a busy daemon that a session
-		// can be resumed in between, and deleting it then destroys a sandbox
-		// the user is actively working in.
-		if !s.isIdle(ctx, summary) {
+		release, ok := s.client.tryReapContainer(summary.ID)
+		if !ok {
 			continue
 		}
-		if err := s.client.Delete(ctx, summary.ID); err != nil {
-			// One undeletable container must not stop the sweep; the next
-			// pass will try again.
-			log.Printf("[sandbox] docker idle sweep: delete %s: %v", summary.ID, err)
+		stopped, err := s.stopIfIdle(ctx, summary)
+		release()
+		if err != nil {
+			log.Printf("[sandbox] docker idle sweep: stop %s: %v", summary.ID, err)
 			continue
 		}
-		reclaimed++
+		if stopped {
+			reclaimed++
+		}
 	}
 	return reclaimed, nil
+}
+
+// stopIfIdle is called with the exclusive usage guard. Unknown state and any
+// running Docker exec fail safe, including a PTY opened by another client.
+func (s *dockerIdleSweeper) stopIfIdle(ctx context.Context, summary RemoteSandboxSummary) (bool, error) {
+	if !s.isIdle(ctx, summary) {
+		return false, nil
+	}
+	inspected, err := s.client.api.ContainerInspect(ctx, summary.ID, client.ContainerInspectOptions{})
+	if err != nil {
+		return false, err
+	}
+	if inspected.Container.State == nil || inspected.Container.State.Status != "running" {
+		return false, nil
+	}
+	for _, execID := range inspected.Container.ExecIDs {
+		result, err := s.client.api.ExecInspect(ctx, execID, client.ExecInspectOptions{})
+		if err != nil {
+			return false, err
+		}
+		if result.Running {
+			return false, nil
+		}
+	}
+	// Docker execs can leave detached child processes behind. Only stop a
+	// container whose process tree is exactly the idle init + sleep loop.
+	top, err := s.client.api.ContainerTop(ctx, summary.ID, client.ContainerTopOptions{
+		Arguments: []string{"-eo", "pid,ppid,comm"},
+	})
+	if err != nil {
+		return false, err
+	}
+	if !dockerOnlyIdleProcesses(top) {
+		return false, nil
+	}
+	if !s.isIdle(ctx, summary) {
+		return false, nil
+	}
+	_, err = s.client.api.ContainerStop(ctx, summary.ID, client.ContainerStopOptions{})
+	return err == nil, err
+}
+
+func dockerOnlyIdleProcesses(top client.ContainerTopResult) bool {
+	pid, ppid, command := -1, -1, -1
+	for i, title := range top.Titles {
+		switch strings.ToUpper(strings.TrimSpace(title)) {
+		case "PID":
+			pid = i
+		case "PPID":
+			ppid = i
+		case "COMMAND", "COMM", "CMD":
+			command = i
+		}
+	}
+	if pid < 0 || ppid < 0 || command < 0 || len(top.Processes) == 0 || len(top.Processes) > 2 {
+		return false
+	}
+	var initPID, sleepPPID string
+	for _, row := range top.Processes {
+		if pid >= len(row) || ppid >= len(row) || command >= len(row) {
+			return false
+		}
+		switch filepath.Base(row[command]) {
+		case "docker-init", "tini":
+			if initPID != "" {
+				return false
+			}
+			initPID = row[pid]
+		case "sleep":
+			if sleepPPID != "" {
+				return false
+			}
+			sleepPPID = row[ppid]
+		default:
+			return false
+		}
+	}
+	if sleepPPID == "" {
+		return false
+	}
+	return len(top.Processes) == 1 || (initPID != "" && sleepPPID == initPID)
 }
 
 // isIdle decides whether one container has gone unused for longer than the
@@ -175,24 +257,24 @@ func (s *dockerIdleSweeper) ttlFor(summary RemoteSandboxSummary) time.Duration {
 //
 // The marker lives inside the container and has to be writable by the account
 // the execs run as, so its mtime is attacker-influenced: a script can
-// `touch -d` it. A timestamp in the future is the one form of that which
-// would disable reclamation permanently, so it is refused outright and the
-// container falls back to its start time. Backdating only makes a sandbox look
-// idle sooner, which costs the container that did it and nothing else.
+// `touch -d` it. A marker too far in the future or an unreadable marker is
+// treated as unknown activity, so a possibly live session is not stopped.
 func (s *dockerIdleSweeper) lastActivity(
 	ctx context.Context,
 	summary RemoteSandboxSummary,
 ) time.Time {
 	stat, err := s.client.api.ContainerStatPath(ctx, summary.ID,
 		client.ContainerStatPathOptions{Path: dockerActivityMarker})
-	if err == nil && !stat.Stat.Mtime.IsZero() {
+	if err != nil && !cerrdefs.IsNotFound(err) {
+		return time.Time{}
+	}
+	if err == nil {
+		if stat.Stat.Mtime.IsZero() {
+			return time.Time{}
+		}
 		marker := stat.Stat.Mtime.UTC()
 		if marker.After(s.now().UTC().Add(dockerActivityClockSkew)) {
-			log.Printf(
-				"[sandbox] docker idle sweep: container %s reports activity at %s, "+
-					"which is in the future; falling back to its start time",
-				summary.ID, marker.Format(time.RFC3339),
-			)
+			return time.Time{}
 		} else {
 			return marker
 		}

@@ -52,6 +52,14 @@ func (a *dockerRPCTimeoutAPI) ContainerStart(
 	return a.inner.ContainerStart(rpcCtx, containerID, options)
 }
 
+func (a *dockerRPCTimeoutAPI) ContainerStop(
+	ctx context.Context, containerID string, options client.ContainerStopOptions,
+) (client.ContainerStopResult, error) {
+	rpcCtx, cancel := a.rpcCtx(ctx)
+	defer cancel()
+	return a.inner.ContainerStop(rpcCtx, containerID, options)
+}
+
 func (a *dockerRPCTimeoutAPI) ContainerUnpause(
 	ctx context.Context, containerID string, options client.ContainerUnpauseOptions,
 ) (client.ContainerUnpauseResult, error) {
@@ -74,6 +82,14 @@ func (a *dockerRPCTimeoutAPI) ContainerList(
 	rpcCtx, cancel := a.rpcCtx(ctx)
 	defer cancel()
 	return a.inner.ContainerList(rpcCtx, options)
+}
+
+func (a *dockerRPCTimeoutAPI) ContainerTop(
+	ctx context.Context, containerID string, options client.ContainerTopOptions,
+) (client.ContainerTopResult, error) {
+	rpcCtx, cancel := a.rpcCtx(ctx)
+	defer cancel()
+	return a.inner.ContainerTop(rpcCtx, containerID, options)
 }
 
 func (a *dockerRPCTimeoutAPI) ContainerRemove(

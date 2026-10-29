@@ -113,6 +113,13 @@ func (c *DockerRemoteClient) OpenTerminal(
 	if err != nil {
 		return nil, err
 	}
+	release := c.useContainer(id)
+	opened := false
+	defer func() {
+		if !opened {
+			release()
+		}
+	}()
 
 	terminalID := dockerTerminalToken()
 	execOpts := client.ExecCreateOptions{
@@ -163,6 +170,8 @@ func (c *DockerRemoteClient) OpenTerminal(
 		closedCh:    make(chan struct{}),
 		inspectCtx:  inspectCtx,
 	}
+	opened = true
+	go func() { <-session.closedCh; release() }()
 	go session.pump()
 
 	// The caller's context is part of the session's lifetime, matching Cube and

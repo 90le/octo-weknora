@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -185,6 +186,14 @@ func (r *tenantSandboxResolver) Resolve(
 		client, err := r.buildClient(effective)
 		if err != nil {
 			return nil, err
+		}
+		if docker, ok := client.(*DockerRemoteClient); ok && docker.sweeper != nil {
+			tenant := strconv.FormatUint(tenantID, 10)
+			docker.sweeper.scope = map[string]string{
+				remoteMetadataTenantID: tenant,
+				remoteMetadataConfigID: configID,
+			}
+			docker.sweeper.scopeKey = tenant + "\x00" + configID
 		}
 		return NewSessionBoundManager(SessionBoundManagerConfig{
 			Config:          effective,
