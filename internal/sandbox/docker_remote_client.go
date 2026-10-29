@@ -80,8 +80,9 @@ var dockerSandboxEntrypoint = []string{
 // daemon. It is safe for concurrent use: the moby client is, and this type
 // holds no mutable state.
 type DockerRemoteClient struct {
-	api      dockerEngineAPI
-	settings dockerRuntimeSettings
+	api       dockerEngineAPI
+	settings  dockerRuntimeSettings
+	admission *dockerAdmissionQueue
 
 	// sweeper reclaims idle containers. Nil disables idle reclamation, which
 	// is only appropriate for the connectivity-check client.
@@ -112,7 +113,9 @@ func NewDockerRemoteClient(cfg *Config) (*DockerRemoteClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newDockerRemoteClientWithAPI(withDockerRPCTimeout(api, settings.HTTPTimeout), settings), nil
+	adapter := newDockerRemoteClientWithAPI(withDockerRPCTimeout(api, settings.HTTPTimeout), settings)
+	adapter.admission = dockerQueueFor(settings.Endpoint.key())
+	return adapter, nil
 }
 
 // NewDockerRemoteClientForCheck builds a client for the connectivity check.
@@ -293,11 +296,11 @@ func (c *DockerRemoteClient) Create(
 	if err != nil {
 		return nil, dockerError("Create", err)
 	}
-	if _, err := c.api.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
+	if err := c.startQueued(ctx, created.ID, "Create"); err != nil {
 		// A container that cannot start is useless and would otherwise linger
 		// as an unbound leftover the sweep only reclaims much later.
 		c.removeQuietly(ctx, created.ID)
-		return nil, dockerError("Create", err)
+		return nil, err
 	}
 	// ContainerStart returning is not the same as State.Running: the daemon
 	// accepts the start, then PID 1 still has to replace sh. ExecCreate on a
@@ -316,10 +319,7 @@ func (c *DockerRemoteClient) Create(
 //
 // The caller's timeout policy is honoured because it is what the session
 // layer already expresses per provider; the configured value is the fallback.
-// The action (pause vs kill) is not: Docker's pause keeps the container's
-// memory resident on the host, so pausing an abandoned sandbox would reclaim
-// nothing. Idle containers are always deleted, which matches what the
-// lifecycle does with a sandbox its provider reaped.
+// Docker idle reclamation stops the container and retains its filesystem.
 func (c *DockerRemoteClient) effectiveIdleTTL(policy RemoteTimeoutPolicy) time.Duration {
 	if policy.Mode == RemoteTimeoutExplicit && policy.Value > 0 {
 		return policy.Value
@@ -387,6 +387,8 @@ func (c *DockerRemoteClient) Connect(
 	// Docker containers are not fronted by a provider gateway, so there is no
 	// inbound credential to restore; TrafficAccessToken is ignored.
 	sandboxID := request.SandboxID
+	release := c.useContainer(sandboxID)
+	defer release()
 	inspected, err := c.api.ContainerInspect(ctx, sandboxID, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, dockerError("Connect", err)
@@ -450,10 +452,7 @@ func (c *DockerRemoteClient) resume(ctx context.Context, id, status, op string) 
 		}
 		return nil
 	}
-	if _, err := c.api.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
-		return dockerError(op, err)
-	}
-	return nil
+	return c.startQueued(ctx, id, op)
 }
 
 // dockerContainerNotRunning reports the Engine 409 that ExecCreate returns
@@ -666,6 +665,8 @@ func (c *DockerRemoteClient) Exec(
 	if err != nil {
 		return nil, err
 	}
+	release := c.useContainer(id)
+	defer release()
 	if req.Shell && len(req.Args) > 0 {
 		return nil, dockerInvalidRequest("Exec", "shell requests must not carry args")
 	}

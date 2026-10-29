@@ -42,13 +42,21 @@ def request_texts(data):
     texts = data.get('input')
     if texts is None and isinstance(data.get('messages'), list):
         messages = data['messages']
-        if (len(messages) == 1 and isinstance(messages[0], dict) and
-                messages[0].get('role') == 'user' and
-                isinstance(messages[0].get('content'), list)):
-            parts = messages[0]['content']
-            if all(isinstance(p, dict) and p.get('type') == 'text' and
-                   isinstance(p.get('text'), str) for p in parts):
-                texts = [''.join(p['text'] for p in parts)]
+        # The client may send either one conversation or a batch of independent
+        # conversations. Preserve one output vector per conversation.
+        conversations = messages if messages and isinstance(messages[0], list) else [messages]
+        texts = []
+        for conversation in conversations:
+            if (not isinstance(conversation, list) or len(conversation) != 1 or
+                    not isinstance(conversation[0], dict) or
+                    conversation[0].get('role') != 'user' or
+                    not isinstance(conversation[0].get('content'), list)):
+                return None
+            parts = conversation[0]['content']
+            if not all(isinstance(p, dict) and p.get('type') == 'text' and
+                       isinstance(p.get('text'), str) for p in parts):
+                return None
+            texts.append(''.join(p['text'] for p in parts))
     if isinstance(texts, str):
         texts = [texts]
     if (data.get('model') != MODEL or not isinstance(texts, list) or

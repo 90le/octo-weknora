@@ -90,11 +90,12 @@ type SessionBoundManager struct {
 	config    *Config
 	validator *ScriptValidator
 
-	client    RemoteSandboxClient
-	bindings  SessionSandboxBindingStore
-	checker   SessionExistenceChecker
-	lifecycle *remoteSessionLifecycle
-	ephemeral *RemoteSandbox
+	client       RemoteSandboxClient
+	dockerClient *DockerRemoteClient
+	bindings     SessionSandboxBindingStore
+	checker      SessionExistenceChecker
+	lifecycle    *remoteSessionLifecycle
+	ephemeral    *RemoteSandbox
 
 	// activeType is the effective sandbox type callers observe.
 	activeType SandboxType
@@ -218,6 +219,9 @@ func NewSessionBoundManager(deps SessionBoundManagerConfig) (*SessionBoundManage
 		ephemeral:  NewRemoteSandbox(client, createRequest),
 		activeType: provider,
 	}
+	if docker, ok := deps.Client.(*DockerRemoteClient); ok {
+		m.dockerClient = docker
+	}
 
 	// Per-tenant managers are rebuilt on every request, so probing here would
 	// add a remote round-trip to each one. When a tenant explicitly configures
@@ -237,6 +241,19 @@ func NewSessionBoundManager(deps SessionBoundManagerConfig) (*SessionBoundManage
 		return nil, fmt.Errorf("remote sandbox provider unavailable: %w", err)
 	}
 	return m, nil
+}
+
+// ReapIdleDocker stops idle Docker sessions while preserving their files.
+// Other providers have their own idle lifecycle and are left untouched.
+func (m *SessionBoundManager) ReapIdleDocker(ctx context.Context) (int, error) {
+	if m == nil || m.dockerClient == nil || m.dockerClient.sweeper == nil {
+		return 0, nil
+	}
+	s := m.dockerClient.sweeper
+	if !s.claimSweep() {
+		return 0, nil
+	}
+	return s.sweep(ctx)
 }
 
 // GetType reports the current effective sandbox type.

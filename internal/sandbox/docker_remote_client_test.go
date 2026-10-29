@@ -35,6 +35,11 @@ type fakeDockerEngine struct {
 	createdID   string
 	started     []string
 	startErr    error
+	startHook   func(string) error
+	stopped     []string
+	stopErr     error
+	topResult   client.ContainerTopResult
+	topErr      error
 	unpaused    []string
 	removed     []string
 	removeErr   error
@@ -121,7 +126,14 @@ func newFakeDockerEngine() *fakeDockerEngine {
 		inspect:      make(map[string]container.InspectResponse),
 		statResult:   make(map[string]container.PathStat),
 		imagePresent: make(map[string]bool),
+		topResult:    client.ContainerTopResult{Titles: []string{"PID", "PPID", "COMMAND"}, Processes: [][]string{{"1", "0", "docker-init"}, {"2", "1", "sleep"}}},
 	}
+}
+
+func (f *fakeDockerEngine) ContainerTop(
+	_ context.Context, _ string, _ client.ContainerTopOptions,
+) (client.ContainerTopResult, error) {
+	return f.topResult, f.topErr
 }
 
 var _ dockerEngineAPI = (*fakeDockerEngine)(nil)
@@ -144,6 +156,11 @@ func (f *fakeDockerEngine) ContainerStart(
 	_ context.Context, id string, _ client.ContainerStartOptions,
 ) (client.ContainerStartResult, error) {
 	f.started = append(f.started, id)
+	if f.startHook != nil {
+		if err := f.startHook(id); err != nil {
+			return client.ContainerStartResult{}, err
+		}
+	}
 	if f.startErr != nil {
 		return client.ContainerStartResult{}, f.startErr
 	}
@@ -162,6 +179,16 @@ func (f *fakeDockerEngine) ContainerStart(
 		f.inspect[id] = found
 	}
 	return client.ContainerStartResult{}, nil
+}
+
+func (f *fakeDockerEngine) ContainerStop(
+	_ context.Context, id string, _ client.ContainerStopOptions,
+) (client.ContainerStopResult, error) {
+	f.stopped = append(f.stopped, id)
+	if f.stopErr != nil {
+		return client.ContainerStopResult{}, f.stopErr
+	}
+	return client.ContainerStopResult{}, nil
 }
 
 func (f *fakeDockerEngine) ContainerUnpause(

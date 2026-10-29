@@ -78,6 +78,8 @@ func (c *DockerRemoteClient) commitSnapshot(
 	ctx context.Context,
 	sandboxID, name, repo, comment, label, sourceLabel, op string,
 ) (RemoteSnapshotRef, error) {
+	release := c.useContainer(sandboxID)
+	defer release()
 	reference, err := dockerSnapshotReference(repo, name, sandboxID, op)
 	if err != nil {
 		return RemoteSnapshotRef{}, err

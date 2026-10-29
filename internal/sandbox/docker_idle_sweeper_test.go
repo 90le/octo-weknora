@@ -20,6 +20,9 @@ func newSweeperFixture(
 	t.Helper()
 	engine := newFakeDockerEngine()
 	engine.list = containers
+	for _, item := range containers {
+		engine.inspect[item.ID] = container.InspectResponse{ID: item.ID, State: &container.State{Status: item.State}}
+	}
 	docker := newTestDockerClient(t, engine)
 	sweeper := newDockerIdleSweeper(docker, ttl)
 	sweeper.now = func() time.Time { return now }
@@ -45,13 +48,14 @@ func TestDockerIdleSweeperReclaimsOnlyIdleContainers(t *testing.T) {
 	reclaimed, err := sweeper.sweep(context.Background())
 	require.NoError(t, err)
 	require.Zero(t, reclaimed, "a recently used sandbox must survive")
-	require.Empty(t, engine.removed)
+	require.Empty(t, engine.stopped)
 
 	engine.statResult[dockerActivityMarker] = container.PathStat{Mtime: now.Add(-90 * time.Minute)}
 	reclaimed, err = sweeper.sweep(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 2, reclaimed)
-	require.ElementsMatch(t, []string{"busy", "idle"}, engine.removed)
+	require.ElementsMatch(t, []string{"busy", "idle"}, engine.stopped)
+	require.Empty(t, engine.removed, "idle workspaces must not be deleted")
 }
 
 // A sandbox that has never executed anything has no marker, so its creation
@@ -69,7 +73,7 @@ func TestDockerIdleSweeperFallsBackToCreationTime(t *testing.T) {
 	reclaimed, err := sweeper.sweep(context.Background())
 	require.NoError(t, err)
 	require.Zero(t, reclaimed)
-	require.Empty(t, engine.removed)
+	require.Empty(t, engine.stopped)
 }
 
 // The marker has to be writable by the account the execs run as, so a script
@@ -90,9 +94,8 @@ func TestDockerIdleSweeperRejectsFutureActivityMarker(t *testing.T) {
 
 	reclaimed, err := sweeper.sweep(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, 1, reclaimed,
-		"a forged future marker must fall back to the container's start time")
-	require.Equal(t, []string{"forged"}, engine.removed)
+	require.Zero(t, reclaimed, "uncertain activity must not stop a live workspace")
+	require.Empty(t, engine.stopped)
 }
 
 // A daemon on another host may run slightly ahead of WeKnora. That must not be
@@ -113,7 +116,7 @@ func TestDockerIdleSweeperToleratesSmallClockSkew(t *testing.T) {
 	reclaimed, err := sweeper.sweep(context.Background())
 	require.NoError(t, err)
 	require.Zero(t, reclaimed)
-	require.Empty(t, engine.removed)
+	require.Empty(t, engine.stopped)
 }
 
 // Listing plus one stat per container is slow enough on a busy daemon that a
@@ -142,7 +145,7 @@ func TestDockerIdleSweeperRechecksActivityBeforeDeleting(t *testing.T) {
 	reclaimed, err := sweeper.sweep(context.Background())
 	require.NoError(t, err)
 	require.Zero(t, reclaimed)
-	require.Empty(t, engine.removed, "a sandbox used since the listing must survive")
+	require.Empty(t, engine.stopped, "a sandbox used since the listing must survive")
 	require.Equal(t, 2, calls)
 }
 
@@ -164,7 +167,7 @@ func TestDockerIdleSweeperHonoursPerContainerTTL(t *testing.T) {
 	reclaimed, err := sweeper.sweep(context.Background())
 	require.NoError(t, err)
 	require.Zero(t, reclaimed)
-	require.Empty(t, engine.removed)
+	require.Empty(t, engine.stopped)
 }
 
 // The sweep runs off the back of ordinary requests, so it must not turn into a
@@ -173,7 +176,7 @@ func TestDockerIdleSweeperThrottlesPerDaemon(t *testing.T) {
 	now := time.Now().UTC()
 	sweeper, _ := newSweeperFixture(t, time.Minute, now, nil)
 	dockerSweepThrottle.mu.Lock()
-	delete(dockerSweepThrottle.last, sweeper.client.settings.Endpoint.key())
+	delete(dockerSweepThrottle.last, sweeper.client.settings.Endpoint.key()+"\x00")
 	dockerSweepThrottle.mu.Unlock()
 
 	require.True(t, sweeper.claimSweep(), "the first caller sweeps")
@@ -185,7 +188,7 @@ func TestDockerIdleSweeperThrottlesPerDaemon(t *testing.T) {
 
 // A container the daemon refuses to delete must not abort the pass: the rest
 // of the idle set still has to be reclaimed.
-func TestDockerIdleSweeperContinuesAfterDeleteFailure(t *testing.T) {
+func TestDockerIdleSweeperContinuesAfterStopFailure(t *testing.T) {
 	now := time.Now().UTC()
 	sweeper, engine := newSweeperFixture(t, time.Minute, now, []container.Summary{
 		{
@@ -197,10 +200,71 @@ func TestDockerIdleSweeperContinuesAfterDeleteFailure(t *testing.T) {
 			Labels: map[string]string{dockerManagedLabel: "true"},
 		},
 	})
-	engine.removeErr = context.DeadlineExceeded
+	engine.stopErr = context.DeadlineExceeded
 
 	reclaimed, err := sweeper.sweep(context.Background())
 	require.NoError(t, err)
 	require.Zero(t, reclaimed)
-	require.Len(t, engine.removed, 2, "every candidate is attempted")
+	require.Len(t, engine.stopped, 2, "every candidate is attempted")
+}
+
+func TestDockerIdleSweeperDoesNotStopActiveOrForeignSessions(t *testing.T) {
+	now := time.Now().UTC()
+	owned := map[string]string{dockerManagedLabel: "true", remoteMetadataTenantID: "7", remoteMetadataConfigID: "cfg"}
+	foreign := map[string]string{dockerManagedLabel: "true", remoteMetadataTenantID: "8", remoteMetadataConfigID: "cfg"}
+	s, engine := newSweeperFixture(t, time.Minute, now, []container.Summary{
+		{ID: "in-use", State: "running", Created: now.Add(-time.Hour).Unix(), Labels: owned},
+		{ID: "running-exec", State: "running", Created: now.Add(-time.Hour).Unix(), Labels: owned},
+		{ID: "foreign", State: "running", Created: now.Add(-time.Hour).Unix(), Labels: foreign},
+	})
+	s.scope = map[string]string{remoteMetadataTenantID: "7", remoteMetadataConfigID: "cfg"}
+	engine.statResult[dockerActivityMarker] = container.PathStat{Mtime: now.Add(-time.Hour)}
+	busy := engine.inspect["running-exec"]
+	busy.ExecIDs = []string{"exec-1"}
+	engine.inspect["running-exec"] = busy
+	engine.execInspectRunning.Store(1)
+	release := s.client.useContainer("in-use")
+	n, err := s.sweep(context.Background())
+	release()
+	require.NoError(t, err)
+	require.Zero(t, n)
+	require.Empty(t, engine.stopped)
+	require.Empty(t, engine.removed)
+}
+
+func TestDockerIdleSweeperSkipsUnreadableActivity(t *testing.T) {
+	now := time.Now().UTC()
+	s, engine := newSweeperFixture(t, time.Minute, now, []container.Summary{
+		{ID: "unknown", State: "running", Created: now.Add(-time.Hour).Unix(), Labels: map[string]string{dockerManagedLabel: "true"}},
+	})
+	engine.statErr = context.DeadlineExceeded
+	n, err := s.sweep(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, n)
+	require.Empty(t, engine.stopped)
+}
+
+func TestDockerIdleSweeperSkipsZeroActivityTimestamp(t *testing.T) {
+	now := time.Now().UTC()
+	s, engine := newSweeperFixture(t, time.Minute, now, []container.Summary{
+		{ID: "unknown", State: "running", Created: now.Add(-time.Hour).Unix(), Labels: map[string]string{dockerManagedLabel: "true"}},
+	})
+	engine.statResult[dockerActivityMarker] = container.PathStat{}
+	n, err := s.sweep(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, n)
+	require.Empty(t, engine.stopped)
+}
+
+func TestDockerIdleSweeperPreservesDetachedProcesses(t *testing.T) {
+	now := time.Now().UTC()
+	s, engine := newSweeperFixture(t, time.Minute, now, []container.Summary{
+		{ID: "worker", State: "running", Created: now.Add(-time.Hour).Unix(), Labels: map[string]string{dockerManagedLabel: "true"}},
+	})
+	engine.statResult[dockerActivityMarker] = container.PathStat{Mtime: now.Add(-time.Hour)}
+	engine.topResult.Processes = append(engine.topResult.Processes, []string{"3", "1", "python3"})
+	n, err := s.sweep(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, n)
+	require.Empty(t, engine.stopped)
 }

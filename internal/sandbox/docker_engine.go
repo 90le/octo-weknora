@@ -36,6 +36,9 @@ type dockerEngineAPI interface {
 	ContainerStart(
 		ctx context.Context, containerID string, options client.ContainerStartOptions,
 	) (client.ContainerStartResult, error)
+	ContainerStop(
+		ctx context.Context, containerID string, options client.ContainerStopOptions,
+	) (client.ContainerStopResult, error)
 	ContainerUnpause(
 		ctx context.Context, containerID string, options client.ContainerUnpauseOptions,
 	) (client.ContainerUnpauseResult, error)
@@ -43,6 +46,7 @@ type dockerEngineAPI interface {
 		ctx context.Context, containerID string, options client.ContainerInspectOptions,
 	) (client.ContainerInspectResult, error)
 	ContainerList(ctx context.Context, options client.ContainerListOptions) (client.ContainerListResult, error)
+	ContainerTop(ctx context.Context, containerID string, options client.ContainerTopOptions) (client.ContainerTopResult, error)
 	ContainerRemove(
 		ctx context.Context, containerID string, options client.ContainerRemoveOptions,
 	) (client.ContainerRemoveResult, error)
@@ -354,7 +358,7 @@ func dockerErrorKind(op string, err error) RemoteErrorKind {
 		// The dedicated Octo sandbox admission plugin reports capacity with
 		// Docker's authorization-denied status (403), not HTTP 429.
 		// Recognize only its exact marker; ordinary denials remain auth errors.
-		if strings.Contains(err.Error(), "authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached:") {
+		if isOctoDockerCapacityError(err) {
 			return RemoteErrorKindCapacity
 		}
 		return RemoteErrorKindAuthentication
@@ -371,6 +375,11 @@ func dockerErrorKind(op string, err error) RemoteErrorKind {
 	default:
 		return RemoteErrorKindInternal
 	}
+}
+
+func isOctoDockerCapacityError(err error) bool {
+	return err != nil && cerrdefs.IsPermissionDenied(err) &&
+		strings.Contains(err.Error(), "authorization denied by plugin octo-sandbox-limit: Octo sandbox capacity reached:")
 }
 
 // dockerError wraps an Engine API error as a RemoteError.
