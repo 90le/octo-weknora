@@ -23,6 +23,21 @@ type localStreamRecorder struct {
 	known          []types.LocalSourceFileState
 }
 
+func TestDocumentStreamAcceptsAnydocFormats(t *testing.T) {
+	ctx, root, cfg, connector := localFixture(t)
+	cfg.Settings["mode"] = "documents"
+	for _, ext := range []string{"docm", "odp", "ods", "odt", "pptm", "rtf", "xlsm"} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, "example."+ext), []byte("fixture"), 0o600))
+	}
+	h := &localStreamRecorder{}
+	cursor, err := connector.FetchStream(ctx, cfg, nil, h)
+	require.NoError(t, err)
+	versions := cursor.ConnectorCursor["files"].(map[string]string)
+	for _, ext := range []string{"docm", "odp", "ods", "odt", "pptm", "rtf", "xlsm"} {
+		require.Contains(t, versions, "example."+ext)
+	}
+}
+
 func (h *localStreamRecorder) Emit(ctx context.Context, item types.FetchedItem) error {
 	if item.Metadata["local_unchanged"] == "true" {
 		h.items = append(h.items, item)

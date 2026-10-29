@@ -6,6 +6,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,6 +32,39 @@ func TestSupportedFileTypesMatchTheConverter(t *testing.T) {
 		if _, err := upstreamFormat(format); err != nil {
 			t.Errorf("%q maps to format %q, which the converter rejects: %v", fileType, format, err)
 		}
+	}
+}
+
+// Macro-enabled OOXML formats share the OOXML structures used by the parser;
+// these fixtures exercise their extension routing without executing macros.
+func TestNewImportFormatsConvert(t *testing.T) {
+	cases := map[string]string{
+		"docm": "testdata/upstream/docx/text.docx",
+		"odp":  "testdata/upstream/odp/pres.odp",
+		"ods":  "testdata/upstream/ods/sheet.ods",
+		"odt":  "testdata/upstream/odt/text.odt",
+		"pptm": "testdata/upstream/pptx/pres.pptx",
+		"rtf":  "testdata/upstream/rtf/text.rtf",
+		"xlsm": "testdata/upstream/xlsx/sheet.xlsx",
+	}
+	for ext, fixture := range cases {
+		t.Run(ext, func(t *testing.T) {
+			body, err := os.ReadFile(fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			format, ok := FormatForFile(ext, "sample."+ext)
+			if !ok {
+				t.Fatalf("unsupported extension %s", ext)
+			}
+			result, err := Convert(body, Options{Format: format})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.TrimSpace(result.Markdown) == "" {
+				t.Fatal("empty markdown")
+			}
+		})
 	}
 }
 

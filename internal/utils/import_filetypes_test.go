@@ -31,6 +31,8 @@ func TestIsSupportedImportExtension(t *testing.T) {
 		{"pdf", true},
 		{" .XLSX ", true},
 		{"XMIND", true},
+		{"docm", true}, {"odp", true}, {"ods", true}, {"odt", true},
+		{"pptm", true}, {"rtf", true}, {"xlsm", true},
 		{"exe", false},
 		{"mp4", false},
 		{"unknown", false},

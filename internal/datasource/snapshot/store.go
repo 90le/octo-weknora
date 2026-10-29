@@ -81,6 +81,16 @@ func (s *Store) Begin(ds *types.DataSource, cfg *types.DataSourceConfig) (*Build
 }
 func (b *Builder) SetRevision(revision string) { b.manifest.Revision = revision }
 func (b *Builder) Skip(reason string)          { b.manifest.Skipped[reason]++ }
+
+// SkipPath retains a bounded sample while always counting every omission.
+// Paths are relative to the authorized source and never filesystem paths.
+func (b *Builder) SkipPath(p, reason string) {
+	b.Skip(reason)
+	// Excluded paths can include secrets; do not disclose even their names.
+	if reason != "excluded" && SafePath(p) && len(b.manifest.SkippedDetails) < 200 {
+		b.manifest.SkippedDetails = append(b.manifest.SkippedDetails, types.SourceSkippedFile{Path: p, Reason: reason})
+	}
+}
 func (b *Builder) Add(ctx context.Context, p string, body []byte, sourceURL, revision string) error {
 	return b.add(ctx, p, body, sourceURL, revision, "")
 }
@@ -106,11 +116,11 @@ func (b *Builder) add(ctx context.Context, p string, body []byte, sourceURL, rev
 		return fmt.Errorf("source file exceeds %d bytes: %s", MaxFileBytes, p)
 	}
 	if !utf8.Valid(body) || bytes.IndexByte(body, 0) >= 0 {
-		b.Skip("binary_or_unsupported_encoding")
+		b.SkipPath(p, "binary_or_unsupported_encoding")
 		return nil
 	}
 	if bytes.HasPrefix(body, []byte("version https://git-lfs.github.com/spec/v1")) {
-		b.Skip("git_lfs_pointer")
+		b.SkipPath(p, "git_lfs_pointer")
 		return nil
 	}
 	if len(b.manifest.Files) >= MaxFiles || b.size+int64(len(body)) > MaxTotalBytes {
@@ -220,8 +230,17 @@ func (b *Builder) ReuseSnapshot(previous *types.SourceSnapshot) error {
 	if previous.Files != nil {
 		files = append(make([]types.SourceFile, 0, len(previous.Files)), previous.Files...)
 	}
+	if len(previous.SkippedDetails) > 200 {
+		return ErrUnavailable
+	}
+	for _, detail := range previous.SkippedDetails {
+		if !SafePath(detail.Path) || detail.Reason == "" || detail.Reason == "excluded" {
+			return ErrUnavailable
+		}
+	}
 	b.manifest.Files = files
 	b.manifest.Skipped = skipped
+	b.manifest.SkippedDetails = append([]types.SourceSkippedFile(nil), previous.SkippedDetails...)
 	b.size = total
 	return nil
 }

@@ -33,11 +33,21 @@ func TestListAllEnginesBuiltinIncludesDocumentFormats(t *testing.T) {
 }
 
 func TestDefaultParserEnginePrefersAnydocWhenLinked(t *testing.T) {
-	cases := []string{"pptx", "ppt", "docx"}
+	cases := []string{"docm", "odp", "ods", "odt", "pptm", "rtf", "xlsm"}
 	if anydoc.Available() {
 		for _, ft := range cases {
 			if got := types.DefaultParserEngine(ft); got != AnydocEngineName {
 				t.Errorf("DefaultParserEngine(%s) = %q, want anydoc when the binding is linked", ft, got)
+			}
+		}
+		for _, ft := range []string{"docx", "epub"} {
+			if got := types.DefaultParserEngine(ft); got != "" {
+				t.Errorf("DefaultParserEngine(%s) = %q, want builtin default", ft, got)
+			}
+		}
+		for _, ft := range []string{"ppt", "pptx"} {
+			if got := types.DefaultParserEngine(ft); got != "markitdown" {
+				t.Errorf("DefaultParserEngine(%s) = %q, want markitdown", ft, got)
 			}
 		}
 		if got := types.DefaultParserEngine("csv"); got != "" {

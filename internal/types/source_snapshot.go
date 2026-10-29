@@ -24,27 +24,35 @@ type SourceFile struct {
 	Revision  string `json:"revision,omitempty"`
 }
 type SourceSnapshot struct {
-	ID              string         `json:"id"`
-	TenantID        uint64         `json:"tenant_id"`
-	KnowledgeBaseID string         `json:"knowledge_base_id"`
-	DataSourceID    string         `json:"data_source_id"`
-	Selection       string         `json:"selection"`
-	Revision        string         `json:"revision"`
-	CreatedAt       time.Time      `json:"created_at"`
-	Files           []SourceFile   `json:"files"`
-	Skipped         map[string]int `json:"skipped"`
+	ID              string              `json:"id"`
+	TenantID        uint64              `json:"tenant_id"`
+	KnowledgeBaseID string              `json:"knowledge_base_id"`
+	DataSourceID    string              `json:"data_source_id"`
+	Selection       string              `json:"selection"`
+	Revision        string              `json:"revision"`
+	CreatedAt       time.Time           `json:"created_at"`
+	Files           []SourceFile        `json:"files"`
+	Skipped         map[string]int      `json:"skipped"`
+	SkippedDetails  []SourceSkippedFile `json:"skipped_details,omitempty"`
+}
+
+// SourceSkippedFile is a bounded, relative-path explanation of an omitted file.
+type SourceSkippedFile struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
 }
 type SourceSummary struct {
-	ID         string         `json:"id"`
-	Name       string         `json:"name"`
-	Repository string         `json:"-"` // Canonical GitHub owner/repo from validated source config, not a display name.
-	Type       string         `json:"type"`
-	Status     string         `json:"status"`
-	SnapshotID string         `json:"snapshot_id,omitempty"`
-	Revision   string         `json:"revision,omitempty"`
-	FileCount  int            `json:"file_count"`
-	Skipped    map[string]int `json:"skipped,omitempty"`
-	CreatedAt  *time.Time     `json:"created_at,omitempty"`
+	ID             string              `json:"id"`
+	Name           string              `json:"name"`
+	Repository     string              `json:"-"` // Canonical GitHub owner/repo from validated source config, not a display name.
+	Type           string              `json:"type"`
+	Status         string              `json:"status"`
+	SnapshotID     string              `json:"snapshot_id,omitempty"`
+	Revision       string              `json:"revision,omitempty"`
+	FileCount      int                 `json:"file_count"`
+	Skipped        map[string]int      `json:"skipped,omitempty"`
+	SkippedDetails []SourceSkippedFile `json:"skipped_details,omitempty"`
+	CreatedAt      *time.Time          `json:"created_at,omitempty"`
 }
 type SourceTreeEntry struct {
 	Path      string `json:"path"`
