@@ -308,6 +308,7 @@ onBeforeUnmount(stopPolling)
                     shape="square"
                     size="small"
                     class="ds-card__action-btn"
+                    :aria-label="`${t('modelCatalog.more')}: ${ds.name}`"
                     @click.stop
                   >
                     <template #icon><t-icon name="ellipsis" /></template>
@@ -418,7 +419,7 @@ onBeforeUnmount(stopPolling)
               <t-icon name="error-circle-filled" size="14px" />
               <span>{{ ds.error_message }}</span>
             </div>
-            <div v-if="ds.type === 'local_folder' && ds.latest_sync_log" class="ds-card__health" @click.stop>
+            <div v-if="ds.type === 'local_folder'" class="ds-card__quick-actions" @click.stop>
               <t-button v-if="ds.config?.settings?.mode !== 'source'" variant="text" size="small" @click.stop="localFilesSource = ds; localFilesVisible = true">{{ t('storageSpaces.fileStatusTitle') }}</t-button>
               <t-button variant="text" size="small" @click.stop="openLogs(ds)">{{ t('datasource.logs') }}</t-button>
             </div>
@@ -512,6 +513,7 @@ onBeforeUnmount(stopPolling)
 @import './datasource-surface.less';
 .ds-settings {
   width: 100%;
+  min-width: 0;
 }
 
 .section-header {
@@ -542,8 +544,10 @@ onBeforeUnmount(stopPolling)
 
 .ds-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: 16px;
+  min-width: 0;
+  align-items: stretch;
 
   .ds-card--add {
     width: 100%;
@@ -552,11 +556,12 @@ onBeforeUnmount(stopPolling)
 }
 
 .ds-card {
+  box-sizing: border-box;
   position: relative;
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 18px;
   .ds-surface-card();
   text-align: left;
   font: inherit;
@@ -574,7 +579,7 @@ onBeforeUnmount(stopPolling)
     align-items: center;
     justify-content: center;
     gap: 8px;
-    min-height: 68px;
+    min-height: 140px;
     border-style: dashed;
     background: transparent;
     color: var(--td-text-color-placeholder);
@@ -705,6 +710,7 @@ onBeforeUnmount(stopPolling)
     line-height: 1.5;
     color: var(--td-text-color-secondary);
     min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   &__status {
@@ -735,6 +741,7 @@ onBeforeUnmount(stopPolling)
     line-height: 1.45;
     color: var(--td-text-color-placeholder);
     min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   &__sync-result {
@@ -785,6 +792,24 @@ onBeforeUnmount(stopPolling)
 
   &__health-count { font-variant-numeric: tabular-nums; }
 
+  &__quick-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    min-width: 0;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--td-component-stroke);
+
+    :deep(.t-button) {
+      height: auto;
+      min-height: 28px;
+      padding: 2px 4px;
+      color: var(--td-brand-color);
+    }
+  }
+
   &__sep {
     color: var(--td-text-color-disabled);
     user-select: none;
@@ -822,9 +847,8 @@ onBeforeUnmount(stopPolling)
   &__action-btn {
     flex-shrink: 0;
     padding: 2px;
-    opacity: 0;
-    color: var(--td-text-color-placeholder);
-    transition: opacity var(--app-motion-fast) ease, color var(--app-motion-fast) ease;
+    color: var(--td-text-color-secondary);
+    transition: color var(--app-motion-fast) ease;
 
     &:hover,
     &:focus-visible {
@@ -833,11 +857,6 @@ onBeforeUnmount(stopPolling)
     }
   }
 
-  &:hover .ds-card__action-btn,
-  &:focus-within .ds-card__action-btn,
-  &__actions:focus-within .ds-card__action-btn {
-    opacity: 1;
-  }
 }
 
 .ds-status-dot {
