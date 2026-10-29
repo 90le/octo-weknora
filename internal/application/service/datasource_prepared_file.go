@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime/multipart"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/datasource/connector/localfolder"
@@ -65,7 +66,7 @@ func (s *DataSourceService) ingestPreparedFile(ctx context.Context, ds *types.Da
 			return false, types.NewDuplicateFileError(old)
 		}
 	}
-	if len(item.Content) == 0 || sourceItemVersion(item.Metadata) == "" {
+	if (len(item.Content) == 0 && item.ContentStream == nil) || sourceItemVersion(item.Metadata) == "" {
 		return old != nil, fmt.Errorf("repository document has no content or version")
 	}
 	candidateID := item.ExternalID + ":pending:" + sourceItemVersion(item.Metadata)
@@ -80,12 +81,27 @@ func (s *DataSourceService) ingestPreparedFile(ctx context.Context, ds *types.Da
 	metadata["external_id"], metadata["datasource_id"] = candidateID, ds.ID
 	metadata["source_resource_id"], metadata["sync_target_external_id"] = item.SourceResourceID, item.ExternalID
 	if candidate == nil {
-		fh, err := bytesToFileHeader(item.Content, item.FileName)
+		var fh *multipart.FileHeader
+		var form *multipart.Form
+		if item.ContentStream != nil {
+			fh, form, err = streamToFileHeader(item.ContentStream, item.FileName)
+			if form != nil {
+				defer form.RemoveAll()
+			}
+		} else {
+			fh, err = bytesToFileHeader(item.Content, item.FileName)
+		}
 		if err != nil {
 			return old != nil, err
 		}
 		candidate, err = s.knowledgeService.CreateKnowledgeFromFile(
 			withPreparedFileImport(ctx, ds, candidateID), ds.KnowledgeBaseID, fh, metadata, nil, item.FileName, tags, ds.Type, nil)
+		// CreateKnowledgeFromFile has copied the upload to its configured
+		// storage before returning. Release the multipart spool while the
+		// parser/indexer runs, which can take several minutes for large files.
+		if form != nil {
+			_ = form.RemoveAll()
+		}
 		if err != nil {
 			// Do not adopt a duplicate belonging to another source or path.
 			var duplicate *types.DuplicateKnowledgeError

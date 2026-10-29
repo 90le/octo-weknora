@@ -162,6 +162,22 @@ func (h *LocalRootHandler) DiscoverSpaces(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, v)
 }
+func (h *LocalRootHandler) BrowseDiscovery(c *gin.Context) {
+	if _, ok := h.authorize(c); !ok {
+		return
+	}
+	offset, err := browseOffset(c)
+	if err != nil {
+		rootError(c, err)
+		return
+	}
+	v, err := h.registry.BrowseDiscovery(c.Request.Context(), c.Query("directory"), offset)
+	if err != nil {
+		rootError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
+}
 func (h *LocalRootHandler) RegisterSpace(c *gin.Context) {
 	tenant, ok := h.authorize(c)
 	if !ok {
@@ -182,6 +198,19 @@ func (h *LocalRootHandler) RegisterSpace(c *gin.Context) {
 		_ = h.audit.Log(c.Request.Context(), &types.AuditLog{TenantID: tenant, ActorUserID: actor, Action: types.AuditAction("datasource.space.created"), TargetType: "local_source_space", TargetID: v.ID, Outcome: types.AuditOutcomeSuccess})
 	}
 	c.JSON(http.StatusCreated, v)
+}
+func (h *LocalRootHandler) DeleteSpace(c *gin.Context) {
+	tenant, ok := h.authorize(c)
+	if !ok {
+		return
+	}
+	id := c.Param("space_id")
+	if err := h.registry.DeleteDiscoveredSpace(c.Request.Context(), id); err != nil {
+		rootError(c, err)
+		return
+	}
+	h.log(c, tenant, "space_removed", id)
+	c.JSON(http.StatusOK, gin.H{"removed": true, "source_files_preserved": true})
 }
 func browseOffset(c *gin.Context) (int, error) {
 	value, err := strconv.Atoi(c.DefaultQuery("offset", "0"))

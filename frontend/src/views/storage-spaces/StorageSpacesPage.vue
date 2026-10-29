@@ -2,11 +2,13 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { MessagePlugin } from 'tdesign-vue-next'
+import { DialogPlugin, MessagePlugin } from 'tdesign-vue-next'
 import { useAuthStore } from '@/stores/auth'
-import { listLocalSpaces, listManagedLocalRoots, discoverLocalSpaces, registerLocalSpace, type LocalSpace, type LocalRoot, type DiscoveredSpaces, type DirectoryEntry } from '@/api/local-source-roots'
+import { listLocalSpaces, listManagedLocalRoots, discoverLocalSpaces, registerLocalSpace, deleteLocalSpace, browseMountDirectory, type LocalSpace, type LocalRoot, type DiscoveredSpaces, type DirectoryEntry } from '@/api/local-source-roots'
 import KnowledgeOperationsLayout from '@/views/integrations/KnowledgeOperationsLayout.vue'
 import LocalSourceRootManager from '@/views/knowledge/settings/LocalSourceRootManager.vue'
+import DirectoryPicker from './DirectoryPicker.vue'
+import HostMountDialog from './HostMountDialog.vue'
 import { isDiscoveredSpaceRegistered, storageErrorMessage } from './storageSpaceDisplay'
 
 const auth = useAuthStore()
@@ -24,6 +26,9 @@ const discoveryError = ref('')
 const registering = ref('')
 const registrationName = ref('')
 const savingSpace = ref(false)
+const mountPickerVisible = ref(false)
+const mountDirectory = ref('')
+const hostMountVisible = ref(false)
 let generation = 0
 let discoveryGeneration = 0
 const selectedID = computed(() => typeof route.query.space === 'string' ? route.query.space : '')
@@ -51,6 +56,12 @@ async function discover() {
   finally { if (current === discoveryGeneration) discoveryBusy.value = false }
 }
 function startRegister(entry: DirectoryEntry) { registering.value = entry.directory; registrationName.value = entry.name; discoveryError.value = '' }
+function selectMountedDirectory() {
+  if (!mountDirectory.value) { discoveryError.value = t('storageSpaces.chooseMountedDirectory'); return }
+  registering.value = mountDirectory.value
+  registrationName.value = mountDirectory.value.split('/').pop() || ''
+  discoveryError.value = ''
+}
 async function register() {
   if (!registrationName.value.trim() || !registering.value) { discoveryError.value = t('storageSpaces.required'); return }
   const current = discoveryGeneration
@@ -66,27 +77,54 @@ async function register() {
   } catch (e) { if (current === discoveryGeneration) discoveryError.value = problem(e) }
   finally { if (current === discoveryGeneration) savingSpace.value = false }
 }
+async function hostMountCreated(space: LocalSpace) {
+  await load()
+  await router.replace({name:'storageSpaces', query:{space:space.id}})
+}
+function removeSpace(space: LocalSpace) {
+  const dialog = DialogPlugin.confirm({
+    header: t('storageSpaces.removeSpace'), body: t('storageSpaces.removeSpaceHint'), theme: 'danger',
+    onConfirm: async () => {
+      try { await deleteLocalSpace(space.id); dialog.hide(); await router.replace({name:'storageSpaces'}); await load(); MessagePlugin.success(t('storageSpaces.spaceRemoved')) }
+      catch (e) { error.value = problem(e) }
+    },
+  })
+}
 watch(() => auth.effectiveTenantId, () => {
   ++generation; ++discoveryGeneration
-  spaces.value = []; roots.value = []; discovery.value = null; discoveryVisible.value = false; registering.value = ''; savingSpace.value = false; discoveryBusy.value = false
+  spaces.value = []; roots.value = []; discovery.value = null; discoveryVisible.value = false; registering.value = ''; savingSpace.value = false; discoveryBusy.value = false; mountPickerVisible.value = false; mountDirectory.value = ''
   if (auth.isSystemAdmin) void load()
 }, {immediate:true})
 </script>
 <template>
   <KnowledgeOperationsLayout v-if="auth.isSystemAdmin" :title="t('storageSpaces.title')" :description="t('storageSpaces.description')">
     <template #breadcrumb><router-link :to="{name:'knowledgeBaseList'}" class="back-link"><t-icon name="chevron-left" />{{ t('storageSpaces.back') }}</router-link></template>
-    <div class="workflow" :aria-label="t('storageSpaces.workflow')">
-      <div><strong>{{ t('storageSpaces.stepDiscover') }}</strong><p>{{ t('storageSpaces.stepDiscoverHint') }}</p></div>
-      <div><strong>{{ t('storageSpaces.stepAuthorize') }}</strong><p>{{ t('storageSpaces.stepAuthorizeHint') }}</p></div>
-      <div><strong>{{ t('storageSpaces.stepSource') }}</strong><p>{{ t('storageSpaces.stepSourceHint') }}</p></div>
-    </div>
-    <div class="space-toolbar"><div><h2>{{ t('storageSpaces.spaces') }}</h2><p>{{ t('storageSpaces.workspace', {name:auth.currentTenantName}) }}</p></div><div class="actions"><t-button :loading="discoveryBusy" :disabled="savingSpace" @click="discover">{{ t('storageSpaces.discover') }}</t-button><t-button variant="outline" :loading="busy" @click="load">{{ t('sourceRoots.refresh') }}</t-button></div></div>
+    <details class="workflow-guide">
+      <summary>{{ t('storageSpaces.workflow') }}</summary>
+      <div class="workflow" :aria-label="t('storageSpaces.workflow')">
+        <div><strong>{{ t('storageSpaces.stepDiscover') }}</strong><p>{{ t('storageSpaces.stepDiscoverHint') }}</p></div>
+        <div><strong>{{ t('storageSpaces.stepAuthorize') }}</strong><p>{{ t('storageSpaces.stepAuthorizeHint') }}</p></div>
+        <div><strong>{{ t('storageSpaces.stepSource') }}</strong><p>{{ t('storageSpaces.stepSourceHint') }}</p></div>
+      </div>
+    </details>
+    <div class="space-toolbar"><div><h2>{{ t('storageSpaces.spaces') }}</h2><p>{{ t('storageSpaces.workspace', {name:auth.currentTenantName}) }}</p></div><div class="actions">
+      <t-dropdown trigger="click" :disabled="savingSpace">
+        <t-button>{{ t('storageSpaces.addSource') }} <t-icon name="chevron-down" /></t-button>
+        <template #dropdown><t-dropdown-menu><t-dropdown-item @click="hostMountVisible = true">{{ t('storageSpaces.hostMountTitle') }}</t-dropdown-item><t-dropdown-item @click="discoveryVisible = true; mountPickerVisible = true">{{ t('storageSpaces.addMountedDirectory') }}</t-dropdown-item></t-dropdown-menu></template>
+      </t-dropdown>
+      <t-button variant="outline" :loading="discoveryBusy" :disabled="savingSpace" @click="discover">{{ t('storageSpaces.discover') }}</t-button><t-button variant="outline" :loading="busy" @click="load">{{ t('sourceRoots.refresh') }}</t-button>
+    </div></div>
     <p class="hint">{{ t('storageSpaces.sourceCountHint') }}</p>
     <t-alert v-if="error" theme="error" :message="error" />
     <section v-if="discoveryVisible" class="discovery-panel">
       <div class="section-heading"><h3>{{ t('storageSpaces.discoveredTitle') }}</h3><t-button variant="text" :disabled="savingSpace" @click="discoveryVisible = false">{{ t('storageSpaces.close') }}</t-button></div>
       <p class="hint">{{ t('storageSpaces.discoverHint') }}</p>
       <t-alert v-if="discoveryError" theme="error" :message="discoveryError" />
+      <div v-if="mountPickerVisible" class="registration-form">
+        <p class="hint">{{ t('storageSpaces.mountedDirectoryHint') }}</p>
+        <DirectoryPicker v-model="mountDirectory" :context-key="`mounts:${auth.effectiveTenantId}`" :root-label="t('storageSpaces.mountBoundary')" :load-directories="browseMountDirectory" :disabled="savingSpace" />
+        <t-button variant="outline" :disabled="!mountDirectory || savingSpace" @click="selectMountedDirectory">{{ t('storageSpaces.useMountedDirectory') }}</t-button>
+      </div>
       <t-loading :loading="discoveryBusy" style="width:100%">
         <t-alert v-if="discovery && !discovery.available" theme="warning" :message="t('storageSpaces.discoverUnavailable')" />
         <p v-else-if="discovery && !discovery.entries.length" class="hint">{{ t('storageSpaces.discoveredEmpty') }}</p>
@@ -117,14 +155,16 @@ watch(() => auth.effectiveTenantId, () => {
       <div class="selected-heading"><h2>{{ selected.name }}</h2><t-tag :theme="selected.status === 'ready' ? 'success' : 'warning'">{{ statusText(selected) }}</t-tag></div>
       <t-alert v-if="selected.status !== 'ready' || !selected.readable" theme="warning" :message="t('storageSpaces.healthHint')" />
       <LocalSourceRootManager :key="`${auth.effectiveTenantId}:${selected.id}`" :space="selected" :roots="selectedRoots" :loading="busy" @changed="load" />
+      <t-button v-if="selected.id.startsWith('discovered-')" variant="text" theme="danger" :disabled="selected.authorized_root_count > 0 || !selected.usage_complete" @click="removeSpace(selected)">{{ t('storageSpaces.removeSpace') }}</t-button>
       <details class="connection-details"><summary>{{ t('storageSpaces.adminDetails') }}</summary><dl><dt>{{ t('storageSpaces.containerPath') }}</dt><dd><code>{{ selected.path }}</code></dd></dl><p class="hint">{{ t('storageSpaces.healthHint') }}</p></details>
     </section>
     <div class="next-step"><p>{{ t('storageSpaces.stepSourceHint') }}</p><router-link :to="{name:'knowledgeBaseList'}">{{ t('storageSpaces.sourceNext') }} <t-icon name="arrow-right" /></router-link></div>
     <details class="mount-guidance"><summary>{{ t('storageSpaces.mountTitle') }}</summary><p>{{ t('storageSpaces.mountBody') }}</p><p class="hint">{{ t('storageSpaces.permissions') }}</p></details>
+    <HostMountDialog v-model:visible="hostMountVisible" :spaces="spaces" @created="hostMountCreated" />
   </KnowledgeOperationsLayout>
 </template>
 <style scoped>
-.back-link{display:inline-flex;gap:4px;align-items:center;color:var(--td-text-color-secondary);font-size:13px;text-decoration:none;margin-bottom:16px}.workflow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;padding:20px;background:var(--td-bg-color-secondarycontainer);border-radius:8px;margin-bottom:28px}.workflow strong{font-size:14px}.workflow p,.hint{font-size:13px;line-height:1.7;color:var(--td-text-color-secondary);margin:8px 0}
+.back-link{display:inline-flex;gap:4px;align-items:center;color:var(--td-text-color-secondary);font-size:13px;text-decoration:none;margin-bottom:16px}.workflow-guide{margin:16px 0 24px;color:var(--td-text-color-secondary);font-size:13px}.workflow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;padding:20px;background:var(--td-bg-color-secondarycontainer);border-radius:8px;margin-top:12px}.workflow strong{font-size:14px;color:var(--td-text-color-primary)}.workflow p,.hint{font-size:13px;line-height:1.7;color:var(--td-text-color-secondary);margin:8px 0}
 .space-toolbar,.section-heading,.selected-heading{display:flex;gap:16px;align-items:center;justify-content:space-between}.space-toolbar h2{font-size:18px;margin:0 0 6px}.space-toolbar p{font-size:13px;color:var(--td-text-color-secondary);margin:0}.actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .discovery-panel{padding:20px;border:1px solid var(--td-component-border);border-radius:8px;margin:20px 0}.section-heading h3{margin:0;font-size:16px}.discovered-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--td-component-border)}.discovered-row strong{overflow-wrap:anywhere}.registration-form{display:grid;gap:12px;max-width:520px;padding-top:20px}
 .space-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px;margin:20px 0 28px}.space-card{border:1px solid var(--td-component-border);border-radius:8px;padding:20px;text-align:start;background:var(--td-bg-color-container);color:var(--td-text-color-primary);font:inherit;cursor:pointer;min-width:0}.space-card:hover{border-color:var(--td-brand-color)}.space-card.selected{border-color:var(--td-brand-color);background:var(--td-brand-color-light)}.space-name{display:flex;gap:10px;align-items:center}.space-name strong{flex:1;overflow-wrap:anywhere}.space-tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.space-card p{margin:16px 0 6px;font-size:13px}.space-card small,.empty{color:var(--td-text-color-secondary)}.empty{padding:20px 0}

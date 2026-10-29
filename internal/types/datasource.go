@@ -3,6 +3,7 @@ package types
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"strings"
 	"time"
@@ -280,6 +281,9 @@ type DataSourceSyncSource struct {
 	// CredentialScope is an opaque, keyed identity set by the sync service.
 	// It is never accepted from persisted configuration or returned to clients.
 	CredentialScope string
+	// A manual, source-scoped review applies only if the newly scanned missing
+	// set still has exactly this digest. It is never persisted in settings.
+	ApprovedDeletionDigest string
 	// CheckAccess revalidates the exact source while a shared transport lock is
 	// held, so an old worker cannot recreate a cache after credential rotation.
 	CheckAccess func(context.Context) error
@@ -367,6 +371,10 @@ type FetchedItem struct {
 
 	// Content in bytes (Markdown format preferred)
 	Content []byte `json:"content"`
+
+	// ContentStream is an ephemeral, trusted connector input consumed during
+	// Emit. It is never serialized or persisted in the sync cursor.
+	ContentStream io.Reader `json:"-"`
 
 	// MIME type (text/markdown, text/html, application/pdf, etc.)
 	ContentType string `json:"content_type"`
@@ -483,6 +491,10 @@ type SyncResult struct {
 	// No path names or content are included in the sync result.
 	SkippedSensitive int `json:"skipped_sensitive,omitempty"`
 	SkippedExcluded  int `json:"skipped_excluded,omitempty"`
+	// Local document sources report unsupported files separately from unchanged
+	// documents. Names are sampled; the count remains exact.
+	SkippedUnsupported int      `json:"skipped_unsupported,omitempty"`
+	UnsupportedSamples []string `json:"unsupported_samples,omitempty"`
 
 	// Items that failed
 	Failed int `json:"failed"`
@@ -505,6 +517,32 @@ type SyncResult struct {
 
 	// Updated cursor for next incremental sync
 	NextCursor *SyncCursor `json:"next_cursor,omitempty"`
+}
+
+// LocalSourceFileState is an observation from the last scan that touched this
+// path. It describes indexed data, never authority to modify source files.
+type LocalSourceFileState struct {
+	TenantID      uint64    `json:"-" gorm:"primaryKey"`
+	DataSourceID  string    `json:"-" gorm:"primaryKey"`
+	Selection     string    `json:"-" gorm:"primaryKey"`
+	PathHash      string    `json:"-" gorm:"primaryKey"`
+	Path          string    `json:"path"`
+	Status        string    `json:"status"`
+	Reason        string    `json:"reason,omitempty"`
+	SourceSize    int64     `json:"source_size"`
+	SourceVersion string    `json:"-"`
+	SyncedVersion string    `json:"-"`
+	HasPrevious   bool      `json:"has_previous"`
+	ObservedAt    time.Time `json:"observed_at"`
+}
+
+func (LocalSourceFileState) TableName() string { return "local_source_file_states" }
+
+type LocalSourceFilePage struct {
+	Items   []LocalSourceFileState `json:"items"`
+	Counts  map[string]int64       `json:"counts"`
+	Offset  int                    `json:"offset"`
+	HasMore bool                   `json:"has_more"`
 }
 
 // SyncItemError is one user-facing failure sample. It carries a stable i18n
@@ -571,7 +609,8 @@ type DataSourceSyncPayload struct {
 	SyncLogID string `json:"sync_log_id"`
 
 	// Force full sync even if incremental mode is configured
-	ForceFull bool `json:"force_full"`
+	ForceFull              bool   `json:"force_full"`
+	ApprovedDeletionDigest string `json:"approved_deletion_digest,omitempty"`
 
 	// Maximum number of items to fetch (0 = unlimited)
 	MaxItems int `json:"max_items,omitempty"`

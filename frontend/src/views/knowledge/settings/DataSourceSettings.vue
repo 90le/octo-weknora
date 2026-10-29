@@ -18,6 +18,8 @@ import DataSourceTypeIcon from './DataSourceTypeIcon.vue'
 import SourceBrowserDrawer from './SourceBrowserDrawer.vue'
 import DataSourceDeleteDialog from './DataSourceDeleteDialog.vue'
 import DataSourceRestartRecoveryDialog from './DataSourceRestartRecoveryDialog.vue'
+import LocalDeletionReviewDialog from './LocalDeletionReviewDialog.vue'
+import LocalSourceFilesDrawer from './LocalSourceFilesDrawer.vue'
 import { canPreviewRestartRecoveryForSource } from './datasourceRestartRecoveryState'
 import { githubSourceHealth, type GitHubHealthView } from './githubSourceHealth'
 import { useAuthStore } from '@/stores/auth'
@@ -55,6 +57,10 @@ const deletingDs = ref<DataSource | null>(null)
 const deleteVisible = ref(false)
 const recoveringDs = ref<DataSource | null>(null)
 const restartRecoveryVisible = ref(false)
+const deletionReviewSource = ref<DataSource | null>(null)
+const deletionReviewVisible = ref(false)
+const localFilesSource = ref<DataSource | null>(null)
+const localFilesVisible = ref(false)
 const pollTimer = ref<number | null>(null)
 
 function stopPolling() {
@@ -190,7 +196,7 @@ function syncModeLabel(mode: string) {
  * generic transport schedule (incremental).
  */
 function dataSourceUsageLabel(ds: DataSource) {
-  if (ds.type === 'github') {
+  if (ds.type === 'github' || ds.type === 'local_folder') {
     return ds.config?.settings?.mode === 'source'
       ? t('datasource.source.readonly')
       : t('datasource.source.documents')
@@ -283,11 +289,9 @@ onBeforeUnmount(stopPolling)
       </div>
 
       <div v-else-if="!loading" class="ds-grid">
-        <component
-          :is="canManageDataSource ? 'button' : 'div'"
+        <article
           v-for="ds in dataSources"
           :key="ds.id"
-          :type="canManageDataSource ? 'button' : undefined"
           :class="['ds-card', `ds-card--${ds.type}`, { 'ds-card--clickable': canManageDataSource }]"
           @click="canManageDataSource ? openEdit(ds) : undefined"
         >
@@ -296,7 +300,7 @@ onBeforeUnmount(stopPolling)
           </div>
           <div class="ds-card__body">
             <div class="ds-card__header">
-              <h3 class="ds-card__title" :title="ds.name">{{ ds.name }}</h3>
+              <h3 class="ds-card__title" :title="ds.name"><button v-if="canManageDataSource" type="button" class="ds-card__title-button" @click.stop="openEdit(ds)">{{ ds.name }}</button><span v-else>{{ ds.name }}</span></h3>
               <div class="ds-card__actions" @click.stop>
                 <t-dropdown trigger="click" :min-column-width="140" attach="body">
                   <t-button
@@ -330,6 +334,12 @@ onBeforeUnmount(stopPolling)
                       </t-dropdown-item>
                       <t-dropdown-item @click="openLogs(ds)">
                         <t-icon name="root-list" /> {{ t('datasource.logs') }}
+                      </t-dropdown-item>
+                      <t-dropdown-item v-if="ds.type === 'local_folder' && ds.config?.settings?.mode !== 'source'" @click="localFilesSource = ds; localFilesVisible = true">
+                        <t-icon name="file" /> {{ t('storageSpaces.fileStatusTitle') }}
+                      </t-dropdown-item>
+                      <t-dropdown-item v-if="canManageDataSource && ds.type === 'local_folder' && ds.sync_deletions" @click="deletionReviewSource = ds; deletionReviewVisible = true">
+                        <t-icon name="browse" /> {{ t('storageSpaces.deletionReviewTitle') }}
                       </t-dropdown-item>
                       <t-dropdown-item
                         v-if="canManageDataSource && ds.status === 'active'"
@@ -408,8 +418,12 @@ onBeforeUnmount(stopPolling)
               <t-icon name="error-circle-filled" size="14px" />
               <span>{{ ds.error_message }}</span>
             </div>
+            <div v-if="ds.type === 'local_folder' && ds.latest_sync_log" class="ds-card__health" @click.stop>
+              <t-button v-if="ds.config?.settings?.mode !== 'source'" variant="text" size="small" @click.stop="localFilesSource = ds; localFilesVisible = true">{{ t('storageSpaces.fileStatusTitle') }}</t-button>
+              <t-button variant="text" size="small" @click.stop="openLogs(ds)">{{ t('datasource.logs') }}</t-button>
+            </div>
           </div>
-        </component>
+        </article>
 
         <button
           v-if="canManageDataSource"
@@ -476,6 +490,8 @@ onBeforeUnmount(stopPolling)
       :data-source-id="logsDsId"
       :data-source-name="logsDsName"
     />
+    <LocalDeletionReviewDialog v-model:visible="deletionReviewVisible" :source="deletionReviewSource" @completed="loadList(true)" />
+    <LocalSourceFilesDrawer v-model:visible="localFilesVisible" :source="localFilesSource" :can-manage="canManageDataSource" @sync="handleSync" />
   </div>
   <SourceBrowserDrawer v-model:visible="sourceVisible" :kb-id="kbId" :initial-source-id="sourceId" />
   <DataSourceDeleteDialog
@@ -663,6 +679,20 @@ onBeforeUnmount(stopPolling)
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  &__title-button {
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
   }
 
   &__subtitle {

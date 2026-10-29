@@ -60,6 +60,8 @@ export interface SyncResultDetail {
   updated?: number
   deleted?: number
   skipped?: number
+  skipped_unsupported?: number
+  unsupported_samples?: string[]
   failed?: number
   /** Per-item failure samples (capped); localised in the sync-log drawer. */
   errors?: SyncItemError[]
@@ -490,6 +492,40 @@ export function resolveResourceAncestors(id: string, resourceIds: string[]) {
 
 export function triggerSync(id: string) {
   return post(`/api/v1/datasource/${id}/sync`, {})
+}
+
+export interface LocalDeletionReviewPage {
+  digest: string
+  count: number
+  paths: string[]
+  next_offset: number
+  has_more: boolean
+}
+
+export function getLocalDeletionReview(id: string, offset = 0) {
+  return get(`/api/v1/datasource/${encodeURIComponent(id)}/local-deletion-review?offset=${offset}`)
+}
+
+export function confirmLocalDeletionReview(id: string, digest: string) {
+  return post(`/api/v1/datasource/${encodeURIComponent(id)}/local-deletion-review/confirm`, { digest })
+}
+
+export interface LocalSourceFileState {
+  path: string
+  status: 'indexed' | 'processing' | 'failed' | 'ignored' | 'missing_retained' | 'pending_delete' | 'removed'
+  reason?: string
+  source_size: number
+  has_previous: boolean
+  observed_at: string
+}
+export interface LocalSourceFilePage {
+  items: LocalSourceFileState[]
+  counts: Record<string, number>
+  offset: number
+  has_more: boolean
+}
+export function getLocalSourceFiles(id: string, status = '', offset = 0) {
+  return get(`/api/v1/datasource/${encodeURIComponent(id)}/local-files`, { params: { status, offset } })
 }
 
 export function pauseDataSource(id: string) {

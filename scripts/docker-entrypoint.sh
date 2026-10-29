@@ -19,6 +19,16 @@ for dir in "${MOUNT_DIRS[@]}"; do
     fi
 done
 
+# TMPDIR may be a deployment-provided directory under the writable file
+# storage. Ensure it exists for multipart uploads and local source staging,
+# without changing permissions on the shared system /tmp directory.
+if [ -n "${TMPDIR:-}" ] && [ "$TMPDIR" != "/tmp" ]; then
+    case "$TMPDIR" in
+        /*) gosu appuser mkdir -p -m 700 -- "$TMPDIR" || echo "weknora: configured temporary directory is unavailable" >&2 ;;
+        *) echo "weknora: TMPDIR must be an absolute directory" >&2 ;;
+    esac
+fi
+
 # ─── Docker socket access for the sandbox backend ───
 # The Engine API socket is typically root:docker 0660. This process then
 # drops to appuser via gosu, which calls initgroups and therefore drops
@@ -63,6 +73,27 @@ case "${DOCKER_HOST:-}" in
         grant_docker_sock_to_appuser "${DOCKER_HOST#unix://}"
         ;;
 esac
+
+# The host folder broker uses its own non-root GID and a private Unix socket.
+# gosu calls initgroups, so grant that group inside this container before
+# dropping privileges. This does not change host socket permissions.
+grant_mount_broker_group_to_appuser() {
+    local sock="$1" gid grp
+    [ -S "$sock" ] || return 0
+    gid="$(stat -c '%g' "$sock" 2>/dev/null || true)"
+    if [ -z "$gid" ] || [ "$gid" = "0" ]; then
+        echo "weknora: mount broker socket has no dedicated group" >&2
+        return 0
+    fi
+    if ! getent group "$gid" >/dev/null 2>&1; then
+        groupadd -g "$gid" octomount >/dev/null 2>&1 || return 0
+    fi
+    grp="$(getent group "$gid" | cut -d: -f1)"
+    [ -n "$grp" ] && usermod -aG "$grp" appuser >/dev/null 2>&1 || true
+}
+if [ -n "${OCTO_MOUNT_BROKER_SOCKET:-}" ]; then
+    grant_mount_broker_group_to_appuser "$OCTO_MOUNT_BROKER_SOCKET"
+fi
 
 # ─── Drop privileges and exec the main process ───
 exec gosu appuser "$@"
