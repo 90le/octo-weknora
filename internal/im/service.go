@@ -2043,6 +2043,16 @@ func (s *Service) executeQARequest(req *qaRequest) {
 		}
 	}
 
+	var progress ProcessingProgress
+	progressResult := ProcessingFailed
+	if notifier, ok := req.adapter.(ProcessingProgressNotifier); ok {
+		progress = notifier.StartProcessingProgress(ctx, req.msg)
+		if progress != nil {
+			ctx = context.WithValue(ctx, processingProgressContextKey{}, progress)
+			defer func() { progress.Finish(progressResult) }()
+		}
+	}
+
 	// Determine output mode from channel config.
 	streamDisabled := req.channel.OutputMode == "full"
 
@@ -2086,6 +2096,11 @@ func (s *Service) executeQARequest(req *qaRequest) {
 	if err := req.adapter.SendReply(outCtx, req.msg, reply); err != nil {
 		logger.Errorf(ctx, "[IM] Send reply failed: %v", err)
 		return
+	}
+	if strings.TrimSpace(answer) == "NO_REPLY" {
+		progressResult = ProcessingStopped
+	} else if err == nil {
+		progressResult = ProcessingCompleted
 	}
 
 	logger.Infof(ctx, "[IM] Reply sent: channel=%s platform=%s user=%s answer_len=%d",
@@ -3075,6 +3090,28 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	defer cancel()
 
 	eventBus := event.NewEventBus()
+
+	if progress, ok := ctx.Value(processingProgressContextKey{}).(ProcessingProgress); ok {
+		eventBus.On(event.EventAgentToolCall, func(_ context.Context, evt event.Event) error {
+			data, ok := evt.Data.(event.AgentToolCallData)
+			if !ok {
+				return nil
+			}
+			switch data.ToolName {
+			case "search_knowledge", "knowledge_search", "list_documents", "read_document":
+				progress.Report("knowledge")
+			case "source_browse", "github_release_lookup", "wiki_search", "wiki_read_page":
+				progress.Report("source")
+			}
+			return nil
+		})
+		eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
+			if data, ok := evt.Data.(event.AgentFinalAnswerData); ok && data.Content != "" {
+				progress.Report("answer")
+			}
+			return nil
+		})
+	}
 
 	// Thread-safe answer collection
 	var answerMu sync.Mutex

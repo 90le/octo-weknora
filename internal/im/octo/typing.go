@@ -36,6 +36,14 @@ func (a *Adapter) startProcessingWithInterval(ctx context.Context, in *im.Incomi
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		// A receipt is only sent once the request has passed execution-scope
+		// checks. It names this one message and is advisory like typing.
+		receiptCtx, receiptCancel := context.WithTimeout(runCtx, typingRequestTimeout)
+		_ = a.api.post(receiptCtx, "/v1/bot/readReceipt", map[string]any{
+			"channel_id": target, "channel_type": kind,
+			"message_ids": []string{in.Extra["octo_message_id"]},
+		}, nil)
+		receiptCancel()
 		first := true
 		delay := interval
 		for {

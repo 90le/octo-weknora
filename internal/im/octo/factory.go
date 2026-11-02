@@ -71,6 +71,19 @@ func NewFactory(db *gorm.DB) im.AdapterFactory {
 			case <-time.After(time.Second):
 			}
 			adapter.recoverInbox(runCtx, handler)
+			go func() {
+				adapter.recoverProgressCards(runCtx)
+				ticker := time.NewTicker(5 * time.Minute)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-runCtx.Done():
+						return
+					case <-ticker.C:
+						adapter.recoverProgressCards(runCtx)
+					}
+				}
+			}()
 			go adapter.retryDeliveries(runCtx)
 			err := adapter.Run(runCtx, func(_ context.Context, msg *im.IncomingMessage) error {
 				// A transient socket reconnect must not cancel already admitted QA.
@@ -248,7 +261,6 @@ func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint6
 		out := &im.ExecutionScope{ManageKnowledgeBaseIDs: managed, AccountID: account, ScopeID: stored.ID, ScopeName: stored.DisplayName, CanManageScope: canManage, AllowKnowledgeCreation: canManage && stored.AllowKnowledgeCreation, AllowPublicWeb: stored.AllowPublicWeb, Revision: fmt.Sprint(channel.ID, channel.AgentID, connection.UpdatedAt, stored.ID), SenderName: senderName}
 		for _, binding := range bindings {
 			out.KnowledgeBaseIDs = append(out.KnowledgeBaseIDs, binding.KnowledgeBaseID)
-
 		}
 		out.ReadIssueScopeIDs = []string{stored.ID}
 		if stored.SubareaID == "" && stored.AggregateChildIssues {
@@ -280,6 +292,7 @@ func safeDisplayName(name string) string {
 	}
 	return name
 }
+
 func configuredUID(config map[string]interface{}, key, uid string) bool {
 	values, ok := config[key].([]interface{})
 	if !ok {
