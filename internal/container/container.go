@@ -1854,7 +1854,7 @@ func registerIMService(imService *imPkg.Service, cleaner interfaces.ResourceClea
 	imService.RegisterAdapterFactory("wechat", wechat.NewFactory())
 	imService.RegisterAdapterFactory("qqbot", qqbot.NewFactory())
 	imService.RegisterAdapterFactory("yunzhijia", yunzhijia.NewFactory())
-	imService.RegisterAdapterFactory("octo", octoIM.NewFactory(db))
+	imService.RegisterAdapterFactory("octo", octoIM.NewFactory(db, business))
 
 	// Load and start all enabled channels from database
 	if err := imService.LoadAndStartChannels(); err != nil {

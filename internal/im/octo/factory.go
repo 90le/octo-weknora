@@ -13,6 +13,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/im"
 	"github.com/Tencent/WeKnora/internal/im/octo/wire"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/octointegration"
 	"github.com/Tencent/WeKnora/internal/utils"
 	"gorm.io/gorm"
@@ -20,7 +21,7 @@ import (
 
 // NewFactory reuses the workspace's encrypted Octo connection. IM credentials
 // contain references (account_id, bot_uid), not a second copy of its Bot Token.
-func NewFactory(db *gorm.DB) im.AdapterFactory {
+func NewFactory(db *gorm.DB, services ...*octobusiness.Service) im.AdapterFactory {
 	return func(ctx context.Context, channel *im.IMChannel, handler func(context.Context, *im.IncomingMessage) error) (im.Adapter, context.CancelFunc, error) {
 		if db == nil || channel.SessionMode == string(im.SessionModeThread) || im.ResolveMode(channel, "websocket") != "websocket" {
 			return nil, nil, errors.New("Octo requires database, websocket and per-user sessions")
@@ -48,6 +49,9 @@ func NewFactory(db *gorm.DB) im.AdapterFactory {
 		if err != nil {
 			return nil, nil, err
 		}
+		if len(services) > 0 {
+			adapter.business = services[0]
+		}
 		reg, err := adapter.api.register(ctx)
 		if err != nil {
 			return nil, nil, err
@@ -64,13 +68,15 @@ func NewFactory(db *gorm.DB) im.AdapterFactory {
 		adapter.receiptPolicy = scopedRuntimePolicy(db, adapter, channel.ID, channel.TenantID, account, connection.Token, true)
 		adapter.db, adapter.channelID, adapter.tenantID = db, channel.ID, channel.TenantID
 		runCtx, cancel := context.WithCancel(context.Background())
+		routedHandler := adapter.confirmationHandler(handler)
 		go func() {
 			select {
 			case <-runCtx.Done():
 				return
 			case <-time.After(time.Second):
 			}
-			adapter.recoverInbox(runCtx, handler)
+			adapter.recoverInbox(runCtx, routedHandler)
+			go adapter.runConfirmationEvents(runCtx, routedHandler)
 			go func() {
 				adapter.recoverProgressCards(runCtx)
 				ticker := time.NewTicker(5 * time.Minute)
@@ -88,7 +94,7 @@ func NewFactory(db *gorm.DB) im.AdapterFactory {
 			err := adapter.Run(runCtx, func(_ context.Context, msg *im.IncomingMessage) error {
 				// A transient socket reconnect must not cancel already admitted QA.
 				// The channel lifecycle still cancels work when the channel stops.
-				err := adapter.accept(runCtx, msg, handler)
+				err := adapter.accept(runCtx, msg, routedHandler)
 				if errors.Is(err, im.ErrScopeDenied) {
 					return nil
 				} // intentional silent rejection
