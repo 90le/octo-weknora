@@ -2,8 +2,11 @@ package im
 
 import (
 	"context"
+	"encoding/json"
+	"reflect"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -11,6 +14,19 @@ type scopeTestAdapter struct {
 	Adapter
 	scope *ExecutionScope
 	err   error
+}
+
+func TestScopedKnowledgeToolRejectsUnauthorizedKB(t *testing.T) {
+	requested := &types.CustomAgent{Config: types.CustomAgentConfig{AllowedTools: []string{tools.ToolSearchKnowledge}}}
+	scoped, err := scopeAgent(requested, &ExecutionScope{KnowledgeBaseIDs: []string{"allowed"}, Revision: "r"})
+	if err != nil || !reflect.DeepEqual(tools.EffectiveAllowedTools(scoped.Config.AllowedTools), []string{tools.ToolSearchKnowledge}) {
+		t.Fatalf("scoped search tool not enabled: %+v %v", scoped, err)
+	}
+	search := tools.NewSearchKnowledgeTool(nil, nil, nil, types.SearchTargets{{KnowledgeBaseID: "allowed"}}, nil, nil)
+	result, err := search.Execute(context.Background(), json.RawMessage(`{"query":"test","knowledge_base_ids":["forbidden"]}`))
+	if err == nil || result == nil || result.Success {
+		t.Fatal("search accepted an out-of-scope knowledge base")
+	}
 }
 
 func (a *scopeTestAdapter) AuthorizeExecution(context.Context, *IMChannel, *IncomingMessage) (*ExecutionScope, error) {
@@ -88,6 +104,37 @@ func TestScopedAgentPreservesExplicitNativeSourceReader(t *testing.T) {
 	}
 }
 
+func TestScopedAgentPreservesConfiguredKnowledgeTools(t *testing.T) {
+	tests := []struct {
+		name    string
+		allowed []string
+		want    []string
+	}{
+		{"current names", []string{tools.ToolSearchKnowledge, tools.ToolReadDocument, tools.ToolListDocuments, "shell_exec"}, []string{tools.ToolSearchKnowledge, tools.ToolReadDocument, tools.ToolListDocuments}},
+		{"legacy names", []string{tools.LegacyToolKnowledgeSearch, tools.LegacyToolGrepChunks, tools.LegacyToolGetDocumentInfo, tools.LegacyToolListKnowledgeChunks}, []string{tools.ToolSearchKnowledge, tools.ToolReadDocument}},
+		{"explicit restriction", []string{tools.ToolSourceBrowse, "shell_exec"}, []string{tools.ToolSourceBrowse}},
+		{"only unsafe", []string{"shell_exec"}, []string{"__no_scoped_tools__"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			original := &types.CustomAgent{Config: types.CustomAgentConfig{KBSelectionMode: "all", AllowedTools: append([]string(nil), tc.allowed...)}}
+			out, err := scopeAgent(original, &ExecutionScope{KnowledgeBaseIDs: []string{"authorized-kb"}, Revision: "r"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(out.Config.AllowedTools, tc.want) {
+				t.Fatalf("allowed tools = %v, want %v", out.Config.AllowedTools, tc.want)
+			}
+			if out.Config.KBSelectionMode != "selected" || !reflect.DeepEqual(out.Config.KnowledgeBases, []string{"authorized-kb"}) {
+				t.Fatalf("knowledge scope widened: %+v", out.Config)
+			}
+			if !reflect.DeepEqual(original.Config.AllowedTools, tc.allowed) || original.Config.KBSelectionMode != "all" {
+				t.Fatal("shared Agent configuration was mutated")
+			}
+		})
+	}
+}
+
 func TestScopedAgentPreservesExplicitGitHubReleaseLookup(t *testing.T) {
 	agent := &types.CustomAgent{Config: types.CustomAgentConfig{AllowedTools: []string{"github_release_lookup", "shell_exec"}}}
 	out, err := scopeAgent(agent, &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r"})
@@ -129,7 +176,7 @@ func TestScopedAgentPublicWebNeedsExactScopeAndAgentEnablement(t *testing.T) {
 	agent.Config.WebSearchEnabled = true
 	agent.Config.AllowedTools = []string{"knowledge_search"}
 	restricted, err := scopeAgent(agent, &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r", AllowPublicWeb: true})
-	if err != nil || len(restricted.Config.AllowedTools) != 1 || restricted.Config.AllowedTools[0] != "knowledge_search" {
+	if err != nil || len(restricted.Config.AllowedTools) != 1 || restricted.Config.AllowedTools[0] != tools.ToolSearchKnowledge {
 		t.Fatalf("Agent explicit tool selection widened: %+v %v", restricted, err)
 	}
 }

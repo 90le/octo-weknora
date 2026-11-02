@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/agent/skills"
+	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -155,7 +156,12 @@ func scopeAgent(agent *types.CustomAgent, scope *ExecutionScope) (*types.CustomA
 	// source_browse and github_release_lookup are supplied by native, read-only
 	// source capabilities. Each keeps its own full-KB grant validation; do not
 	// add a channel-specific file relay or repository identifier input.
-	readTools := []string{"knowledge_search", "get_document_info", "list_knowledge_chunks", "grep_chunks", "source_browse", "github_release_lookup", "wiki_search", "wiki_read_page", "wiki_read_source_doc", "thinking", "todo_write", "octo_knowledge_operations"}
+	// Normalize before intersecting: current Agents use search_knowledge and
+	// read_document while pre-0.8.3 configurations can still use legacy names.
+	// The scoped Agent must retain only capabilities enabled by the original
+	// Agent and must never turn an empty intersection into default tools.
+	readTools := []string{tools.ToolSearchKnowledge, tools.ToolReadDocument, tools.ToolListDocuments, tools.ToolSourceBrowse, tools.ToolGitHubReleaseLookup, tools.ToolWikiSearch, tools.ToolWikiReadPage, tools.ToolThinking, tools.ToolTodoWrite, "octo_knowledge_operations"}
+	enabledTools := tools.NormalizeAllowedTools(agent.Config.AllowedTools)
 	if out.Config.WebSearchEnabled {
 		readTools = append(readTools, "web_search", "web_fetch")
 	}
@@ -165,7 +171,7 @@ func scopeAgent(agent *types.CustomAgent, scope *ExecutionScope) (*types.CustomA
 			out.Config.AllowedTools = append(out.Config.AllowedTools, name)
 			continue
 		}
-		for _, enabled := range agent.Config.AllowedTools {
+		for _, enabled := range enabledTools {
 			if name == enabled {
 				out.Config.AllowedTools = append(out.Config.AllowedTools, name)
 				break
