@@ -17,7 +17,27 @@ import (
 )
 
 func fixtureEventKey(e storedCardEvent) string {
-	return cardEventKey(cardAction{EventID: e.EventID, MessageID: e.MessageID, ChannelID: e.TargetID, ChannelType: byte(e.TargetType), OperatorUID: e.OperatorUID, ActionID: e.ActionID})
+	return cardEventKey(
+		cardAction{
+			EventID:     e.EventID,
+			MessageID:   e.MessageID,
+			ChannelID:   e.TargetID,
+			ChannelType: byte(e.TargetType),
+			OperatorUID: e.OperatorUID,
+			ActionID:    e.ActionID,
+		},
+	)
+}
+
+func fixtureCardAction(id int, operator string) json.RawMessage {
+	raw, _ := json.Marshal(map[string]any{
+		"event_id": id, "event_type": "card_action",
+		"event_data": map[string]any{
+			"message_id": "987654", "channel_id": "group", "channel_type": 2,
+			"action_id": "knowledge_confirm", "operator_uid": operator,
+		},
+	})
+	return raw
 }
 
 func confirmationFixture(t *testing.T) (*Adapter, octobusiness.Proposal, *atomic.Int32) {
@@ -32,13 +52,22 @@ func confirmationFixture(t *testing.T) (*Adapter, octobusiness.Proposal, *atomic
 	if err := a.db.Exec("INSERT INTO tenants (id) VALUES (?)", a.tenantID).Error; err != nil {
 		t.Fatal(err)
 	}
-	scope := &im.ExecutionScope{AccountID: "account", ScopeID: "scope", Revision: "r", KnowledgeBaseIDs: []string{"kb"}, ManageKnowledgeBaseIDs: []string{"kb"}, CanManageScope: true}
+	scope := &im.ExecutionScope{
+		AccountID:              "account",
+		ScopeID:                "scope",
+		Revision:               "r",
+		KnowledgeBaseIDs:       []string{"kb"},
+		ManageKnowledgeBaseIDs: []string{"kb"},
+		CanManageScope:         true,
+	}
 	a.policy = func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error) {
 		return scope, nil
 	}
 	a.business = octobusiness.NewService(a.db, nil, nil)
 	calls := &atomic.Int32{}
-	a.business.Management = func(ctx context.Context, p octobusiness.Principal, _ octobusiness.ManagementInput, preview bool) (map[string]any, error) {
+	a.business.Management = func(
+		ctx context.Context, p octobusiness.Principal, _ octobusiness.ManagementInput, preview bool,
+	) (map[string]any, error) {
 		if tenant, ok := types.TenantInfoFromContext(ctx); !ok || tenant.ID != p.TenantID {
 			t.Error("tenant configuration missing")
 		}
@@ -55,14 +84,36 @@ func confirmationFixture(t *testing.T) (*Adapter, octobusiness.Proposal, *atomic
 	msg.ChatType = im.ChatTypeGroup
 	msg.Extra["octo_addressed"] = "true"
 	raw, _ := json.Marshal(msg)
-	if err := a.db.Create(&Inbox{TenantID: a.tenantID, ChannelID: a.channelID, MessageID: msg.MessageID, Input: string(raw), Authority: encodeAuthority(scope), State: "delivered"}).Error; err != nil {
+	source := Inbox{
+		TenantID: a.tenantID, ChannelID: a.channelID, MessageID: msg.MessageID,
+		Input: string(raw), Authority: encodeAuthority(scope), State: "delivered",
+	}
+	if err := a.db.Create(&source).Error; err != nil {
 		t.Fatal(err)
 	}
-	p := octobusiness.Proposal{ID: "OP-" + uuid.NewString(), TenantID: a.tenantID, AccountID: "account", ChannelID: a.channelID, ScopeID: "scope", UserID: msg.UserID, SourceMessageID: msg.MessageID, Action: "create_kb", Payload: types.JSON(`{"action":"create_kb","name":"synthetic"}`), Result: types.JSON(`{"action":"create_kb"}`), IdempotencyKey: uuid.NewString(), Status: "pending", ExpiresAt: time.Now().Add(time.Minute)}
+	p := octobusiness.Proposal{
+		ID:              "OP-" + uuid.NewString(),
+		TenantID:        a.tenantID,
+		AccountID:       "account",
+		ChannelID:       a.channelID,
+		ScopeID:         "scope",
+		UserID:          msg.UserID,
+		SourceMessageID: msg.MessageID,
+		Action:          "create_kb",
+		Payload:         types.JSON(`{"action":"create_kb","name":"synthetic"}`),
+		Result:          types.JSON(`{"action":"create_kb"}`),
+		IdempotencyKey:  uuid.NewString(),
+		Status:          "pending",
+		ExpiresAt:       time.Now().Add(time.Minute),
+	}
 	if err := a.db.Create(&p).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := a.db.Create(&confirmationCard{TenantID: a.tenantID, ChannelID: a.channelID, ProposalID: p.ID, MessageID: "987654", State: "sent"}).Error; err != nil {
+	binding := confirmationCard{
+		TenantID: a.tenantID, ChannelID: a.channelID, ProposalID: p.ID,
+		MessageID: "987654", State: "sent",
+	}
+	if err := a.db.Create(&binding).Error; err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -79,8 +130,20 @@ func confirmationFixture(t *testing.T) (*Adapter, octobusiness.Proposal, *atomic
 func TestCardConfirmationBindsIdentityAndNeverReplays(t *testing.T) {
 	a, p, calls := confirmationFixture(t)
 	ctx := context.Background()
-	route := a.confirmationHandler(func(context.Context, *im.IncomingMessage) error { t.Error("card went to model"); return nil })
-	event := storedCardEvent{TenantID: a.tenantID, ChannelID: a.channelID, EventID: 1, MessageID: "987654", TargetID: "group", TargetType: 2, OperatorUID: "other", ActionID: "knowledge_confirm", State: "waiting"}
+	route := a.confirmationHandler(
+		func(context.Context, *im.IncomingMessage) error { t.Error("card went to model"); return nil },
+	)
+	event := storedCardEvent{
+		TenantID:    a.tenantID,
+		ChannelID:   a.channelID,
+		EventID:     1,
+		MessageID:   "987654",
+		TargetID:    "group",
+		TargetType:  2,
+		OperatorUID: "other",
+		ActionID:    "knowledge_confirm",
+		State:       "waiting",
+	}
 	event.EventKey = fixtureEventKey(event)
 	if err := a.db.Create(&event).Error; err != nil {
 		t.Fatal(err)
@@ -141,7 +204,9 @@ func TestCardConfirmationCancelExpiryAndRevocation(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			a, p, calls := confirmationFixture(t)
 			if scenario == "expired" {
-				if err := a.db.Model(&octobusiness.Proposal{}).Where("id = ?", p.ID).Update("expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+				err := a.db.Model(&octobusiness.Proposal{}).Where("id = ?", p.ID).
+					Update("expires_at", time.Now().Add(-time.Minute)).Error
+				if err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -150,7 +215,17 @@ func TestCardConfirmationCancelExpiryAndRevocation(t *testing.T) {
 					return nil, im.ErrScopeDenied
 				}
 			}
-			e := storedCardEvent{TenantID: a.tenantID, ChannelID: a.channelID, EventID: 5, MessageID: "987654", TargetID: "group", TargetType: 2, OperatorUID: p.UserID, ActionID: "knowledge_confirm", State: "waiting"}
+			e := storedCardEvent{
+				TenantID:    a.tenantID,
+				ChannelID:   a.channelID,
+				EventID:     5,
+				MessageID:   "987654",
+				TargetID:    "group",
+				TargetType:  2,
+				OperatorUID: p.UserID,
+				ActionID:    "knowledge_confirm",
+				State:       "waiting",
+			}
 			if scenario == "cancel" {
 				e.ActionID = "knowledge_cancel"
 			}
@@ -158,7 +233,9 @@ func TestCardConfirmationCancelExpiryAndRevocation(t *testing.T) {
 			if err := a.db.Create(&e).Error; err != nil {
 				t.Fatal(err)
 			}
-			route := a.confirmationHandler(func(context.Context, *im.IncomingMessage) error { return fmt.Errorf("unexpected normal dispatch") })
+			route := a.confirmationHandler(
+				func(context.Context, *im.IncomingMessage) error { return fmt.Errorf("unexpected normal dispatch") },
+			)
 			if ok, err := a.acceptConfirmationEvent(context.Background(), e, route); !ok || err != nil {
 				t.Fatalf("event: %v %v", ok, err)
 			}
@@ -190,11 +267,14 @@ func TestCardEventPollingKeepsUnknownAndFindsLateCollidingEvents(t *testing.T) {
 			if request.EventID != 0 {
 				t.Error("completed pass did not restart")
 			}
-			late := ""
-			if polls.Add(1) > 1 {
-				late = fmt.Sprintf(`{"event_id":9,"event_type":"card_action","event_data":{"message_id":"987654","channel_id":"group","channel_type":2,"action_id":"knowledge_confirm","operator_uid":%q}},`, p.UserID)
+			events := []json.RawMessage{
+				json.RawMessage(`{"event_id":11,"event_type":"other"}`),
+				fixtureCardAction(11, "other"), fixtureCardAction(11, "other-2"),
 			}
-			_, _ = fmt.Fprintf(w, `{"results":[%s{"event_id":11,"event_type":"other","event_data":{}},{"event_id":11,"event_type":"card_action","event_data":{"message_id":"987654","channel_id":"group","channel_type":2,"action_id":"knowledge_confirm","operator_uid":"other"}},{"event_id":11,"event_type":"card_action","event_data":{"message_id":"987654","channel_id":"group","channel_type":2,"action_id":"knowledge_confirm","operator_uid":"other-2"}}]}`, late)
+			if polls.Add(1) > 1 {
+				events = append(events, fixtureCardAction(9, p.UserID))
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"results": events})
 		case "/v1/bot/sendMessage":
 			_, _ = w.Write([]byte(`{"message_id":"987655"}`))
 		default:
@@ -203,14 +283,18 @@ func TestCardEventPollingKeepsUnknownAndFindsLateCollidingEvents(t *testing.T) {
 	}))
 	defer server.Close()
 	a.api.base = server.URL
-	route := a.confirmationHandler(func(context.Context, *im.IncomingMessage) error { t.Error("card went to model"); return nil })
+	route := a.confirmationHandler(
+		func(context.Context, *im.IncomingMessage) error { t.Error("card went to model"); return nil },
+	)
 	a.pollConfirmationEvents(context.Background(), route)
 	a.pollConfirmationEvents(context.Background(), route)
 	if calls.Load() != 1 || acknowledgements.Load() != 0 {
 		t.Fatalf("mutation=%d acknowledgements=%d", calls.Load(), acknowledgements.Load())
 	}
 	var count int64
-	if err := a.db.Model(&storedCardEvent{}).Where("channel_id = ? AND state = ?", a.channelID, "processed").Count(&count).Error; err != nil || count != 3 {
+	err := a.db.Model(&storedCardEvent{}).Where("channel_id = ? AND state = ?",
+		a.channelID, "processed").Count(&count).Error
+	if err != nil || count != 3 {
 		t.Fatalf("colliding/late events processed=%d %v", count, err)
 	}
 }
@@ -231,14 +315,17 @@ func TestCardEventPollingDoesNotSkipCollisionAtFullPageBoundary(t *testing.T) {
 					t.Error("first scan did not begin at zero")
 				}
 				for i := 1; i <= 99; i++ {
-					events = append(events, json.RawMessage(fmt.Sprintf(`{"event_id":%d,"event_type":"other"}`, i)))
+					events = append(
+						events,
+						json.RawMessage(fmt.Sprintf(`{"event_id":%d,"event_type":"other"}`, i)),
+					)
 				}
-				events = append(events, json.RawMessage(`{"event_id":100,"event_type":"card_action","event_data":{"message_id":"987654","channel_id":"group","channel_type":2,"action_id":"knowledge_confirm","operator_uid":"other"}}`))
+				events = append(events, fixtureCardAction(100, "other"))
 			} else {
 				if request.EventID != 99 {
 					t.Errorf("crossed boundary: %d", request.EventID)
 				}
-				events = append(events, json.RawMessage(fmt.Sprintf(`{"event_id":100,"event_type":"card_action","event_data":{"message_id":"987654","channel_id":"group","channel_type":2,"action_id":"knowledge_confirm","operator_uid":%q}}`, p.UserID)))
+				events = append(events, fixtureCardAction(100, p.UserID))
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"results": events})
 		case "/v1/bot/sendMessage":
@@ -249,30 +336,47 @@ func TestCardEventPollingDoesNotSkipCollisionAtFullPageBoundary(t *testing.T) {
 	}))
 	defer server.Close()
 	a.api.base = server.URL
-	route := a.confirmationHandler(func(context.Context, *im.IncomingMessage) error { t.Error("card went to model"); return nil })
+	route := a.confirmationHandler(
+		func(context.Context, *im.IncomingMessage) error { t.Error("card went to model"); return nil },
+	)
 	a.pollConfirmationEvents(context.Background(), route)
 	a.pollConfirmationEvents(context.Background(), route)
 	var count int64
-	if err := a.db.Model(&storedCardEvent{}).Where("channel_id = ? AND event_id = ? AND state = ?", a.channelID, 100, "processed").Count(&count).Error; err != nil || count != 2 || calls.Load() != 1 {
+	err := a.db.Model(&storedCardEvent{}).Where("channel_id = ? AND event_id = ? AND state = ?",
+		a.channelID, 100, "processed").Count(&count).Error
+	if err != nil || count != 2 || calls.Load() != 1 {
 		t.Fatalf("boundary events=%d mutation=%d err=%v", count, calls.Load(), err)
 	}
 }
 
 func TestCardQueuedWorkRecoversWithoutReplayingMutation(t *testing.T) {
 	a, p, calls := confirmationFixture(t)
-	e := storedCardEvent{TenantID: a.tenantID, ChannelID: a.channelID, EventID: 9, MessageID: "987654", TargetID: "group", TargetType: 2, OperatorUID: p.UserID, ActionID: "knowledge_confirm", State: "waiting"}
+	e := storedCardEvent{
+		TenantID:    a.tenantID,
+		ChannelID:   a.channelID,
+		EventID:     9,
+		MessageID:   "987654",
+		TargetID:    "group",
+		TargetType:  2,
+		OperatorUID: p.UserID,
+		ActionID:    "knowledge_confirm",
+		State:       "waiting",
+	}
 	e.EventKey = fixtureEventKey(e)
 	if err := a.db.Create(&e).Error; err != nil {
 		t.Fatal(err)
 	}
 	// Represent a crash after durable inbox admission but before execution.
-	if ok, err := a.acceptConfirmationEvent(context.Background(), e, func(context.Context, *im.IncomingMessage) error { return nil }); !ok || err != nil {
+	noop := func(context.Context, *im.IncomingMessage) error { return nil }
+	if ok, err := a.acceptConfirmationEvent(context.Background(), e, noop); !ok || err != nil {
 		t.Fatalf("admit: %v %v", ok, err)
 	}
 	if calls.Load() != 0 {
 		t.Fatal("executed before recovery")
 	}
-	route := a.confirmationHandler(func(context.Context, *im.IncomingMessage) error { t.Error("card went to model"); return nil })
+	route := a.confirmationHandler(
+		func(context.Context, *im.IncomingMessage) error { t.Error("card went to model"); return nil },
+	)
 	a.recoverInbox(context.Background(), route)
 	a.recoverInbox(context.Background(), route)
 	if calls.Load() != 1 {
@@ -282,7 +386,17 @@ func TestCardQueuedWorkRecoversWithoutReplayingMutation(t *testing.T) {
 
 func TestCardConfirmationRetriesOnlyPreExecutionFailure(t *testing.T) {
 	a, p, calls := confirmationFixture(t)
-	e := storedCardEvent{TenantID: a.tenantID, ChannelID: a.channelID, EventID: 12, MessageID: "987654", TargetID: "group", TargetType: 2, OperatorUID: p.UserID, ActionID: "knowledge_confirm", State: "waiting"}
+	e := storedCardEvent{
+		TenantID:    a.tenantID,
+		ChannelID:   a.channelID,
+		EventID:     12,
+		MessageID:   "987654",
+		TargetID:    "group",
+		TargetType:  2,
+		OperatorUID: p.UserID,
+		ActionID:    "knowledge_confirm",
+		State:       "waiting",
+	}
 	e.EventKey = fixtureEventKey(e)
 	if err := a.db.Create(&e).Error; err != nil {
 		t.Fatal(err)
@@ -290,7 +404,9 @@ func TestCardConfirmationRetriesOnlyPreExecutionFailure(t *testing.T) {
 	if err := a.db.Exec("DROP TABLE tenants").Error; err != nil {
 		t.Fatal(err)
 	}
-	route := a.confirmationHandler(func(context.Context, *im.IncomingMessage) error { t.Error("card went to model"); return nil })
+	route := a.confirmationHandler(
+		func(context.Context, *im.IncomingMessage) error { t.Error("card went to model"); return nil },
+	)
 	if _, err := a.acceptConfirmationEvent(context.Background(), e, route); err == nil {
 		t.Fatal("missing tenant must be retryable")
 	}

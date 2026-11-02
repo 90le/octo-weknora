@@ -54,7 +54,16 @@ func (cardEventCursor) TableName() string { return "octo_card_event_cursors" }
 // Event IDs can collide on the upstream queue. Deduplicate by the complete
 // server-authoritative action identity rather than ID alone.
 func cardEventKey(action cardAction) string {
-	raw, _ := json.Marshal([]any{action.EventID, action.MessageID, action.ChannelID, action.ChannelType, action.OperatorUID, action.ActionID})
+	raw, _ := json.Marshal(
+		[]any{
+			action.EventID,
+			action.MessageID,
+			action.ChannelID,
+			action.ChannelType,
+			action.OperatorUID,
+			action.ActionID,
+		},
+	)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
@@ -74,7 +83,11 @@ func (a *Adapter) recordCardEvent(ctx context.Context, action cardAction) error 
 }
 
 func (a *Adapter) resetCardCursor(ctx context.Context) error {
-	return a.db.WithContext(ctx).Model(&cardEventCursor{}).Where("tenant_id = ? AND channel_id = ?", a.tenantID, a.channelID).Updates(map[string]any{"event_id": 0, "updated_at": time.Now()}).Error
+	return a.db.WithContext(ctx).
+		Model(&cardEventCursor{}).
+		Where("tenant_id = ? AND channel_id = ?", a.tenantID, a.channelID).
+		Updates(map[string]any{"event_id": 0, "updated_at": time.Now()}).
+		Error
 }
 
 // advanceCardCursor never moves backwards, including across concurrent retries.

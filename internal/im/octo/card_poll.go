@@ -29,7 +29,10 @@ func readBotEventID(raw json.RawMessage) (uint64, error) {
 // runConfirmationEvents never ACKs events: upstream ACK deletes all events
 // sharing the score, and real queues may contain score collisions. Re-scan
 // from zero after every complete pass to catch late lower-score publications.
-func (a *Adapter) runConfirmationEvents(ctx context.Context, handler func(context.Context, *im.IncomingMessage) error) {
+func (a *Adapter) runConfirmationEvents(
+	ctx context.Context,
+	handler func(context.Context, *im.IncomingMessage) error,
+) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -52,7 +55,8 @@ func (a *Adapter) pollConfirmationEvents(
 	a.processWaitingCardEvents(ctx, handler)
 	var count int64
 	if a.db.WithContext(ctx).Table("octo_card_bindings AS c").
-		Joins("JOIN octo_knowledge_proposals AS p ON p.id = c.proposal_id AND p.tenant_id = c.tenant_id AND p.channel_id = c.channel_id").
+		Joins("JOIN octo_knowledge_proposals AS p ON p.id = c.proposal_id "+
+			"AND p.tenant_id = c.tenant_id AND p.channel_id = c.channel_id").
 		Where("c.tenant_id = ? AND c.channel_id = ? AND c.state = ? AND p.status = ? AND p.expires_at > ?",
 			a.tenantID, a.channelID, "sent", "pending", time.Now()).
 		Count(&count).Error != nil || count == 0 {
@@ -73,7 +77,12 @@ func (a *Adapter) pollConfirmationEvents(
 		Results []json.RawMessage `json:"results"`
 	}
 	const pageSize = 100
-	if a.api.post(callCtx, "/v1/bot/events", map[string]any{"event_id": cursor.EventID, "limit": pageSize}, &response) != nil {
+	if a.api.post(
+		callCtx,
+		"/v1/bot/events",
+		map[string]any{"event_id": cursor.EventID, "limit": pageSize},
+		&response,
+	) != nil {
 		return
 	}
 	type entry struct {
@@ -123,7 +132,8 @@ func (a *Adapter) processWaitingCardEvents(
 ) {
 	var events []storedCardEvent
 	if a.db.WithContext(ctx).Where("tenant_id = ? AND channel_id = ? AND state = ?",
-		a.tenantID, a.channelID, "waiting").Order("updated_at, event_id").Limit(50).Find(&events).Error != nil {
+		a.tenantID, a.channelID, "waiting").
+		Order("updated_at, event_id").Limit(50).Find(&events).Error != nil {
 		return
 	}
 	for _, event := range events {

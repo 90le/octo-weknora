@@ -42,8 +42,8 @@ func (b cardBinding) matches(a cardAction) bool {
 		b.Actions[a.ActionID]
 }
 
-func validCardIdentifier(s string, max int) bool {
-	if s == "" || len(s) > max {
+func validCardIdentifier(s string, limit int) bool {
+	if s == "" || len(s) > limit {
 		return false
 	}
 	for _, r := range s {
@@ -144,7 +144,9 @@ func parseCardAction(raw []byte) (cardAction, error) {
 	}
 	return cardAction{
 		EventID: id, MessageID: data.MessageID, ChannelID: data.ChannelID,
-		ChannelType: byte(data.ChannelType), ActionID: data.ActionID, OperatorUID: data.OperatorUID, Inputs: inputs,
+		ChannelType: byte(
+			data.ChannelType,
+		), ActionID: data.ActionID, OperatorUID: data.OperatorUID, Inputs: inputs,
 	}, nil
 }
 

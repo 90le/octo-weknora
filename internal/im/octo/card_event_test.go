@@ -31,16 +31,19 @@ func TestCardActionParsesTrustedEnvelopeWithoutTrustingFormIdentity(t *testing.T
 		func(b *cardBinding) { b.MessageID = "99" },
 		func(b *cardBinding) { b.Actions = map[string]bool{"cancel": true} },
 	} {
-		copy := binding
-		change(&copy)
-		if copy.matches(got) {
+		changed := binding
+		change(&changed)
+		if changed.matches(got) {
 			t.Fatal("different identity, scope, message or action was accepted")
 		}
 	}
 }
 
 func TestCardActionDoesNotConsumeUnknownOrMalformedEvents(t *testing.T) {
-	if _, err := parseCardAction([]byte(`{"event_id":42,"event_type":"bot_task"}`)); !errors.Is(err, errNotCardAction) {
+	if _, err := parseCardAction([]byte(`{"event_id":42,"event_type":"bot_task"}`)); !errors.Is(
+		err,
+		errNotCardAction,
+	) {
 		t.Fatalf("unknown event should remain distinguishable: %v", err)
 	}
 	for _, raw := range []string{

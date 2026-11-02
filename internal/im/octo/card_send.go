@@ -63,7 +63,16 @@ func confirmationPreview(p *octobusiness.Proposal) (string, bool) {
 }
 
 func confirmationCardPayload(preview string, p *octobusiness.Proposal) map[string]any {
-	labels := map[string]string{"create_kb": "创建知识库", "rename": "重命名知识库", "save_draft": "保存草稿", "publish": "发布文档", "delete_document": "删除文档", "bind": "绑定知识库", "unbind": "解绑知识库", "delete_kb": "删除知识库"}
+	labels := map[string]string{
+		"create_kb":       "创建知识库",
+		"rename":          "重命名知识库",
+		"save_draft":      "保存草稿",
+		"publish":         "发布文档",
+		"delete_document": "删除文档",
+		"bind":            "绑定知识库",
+		"unbind":          "解绑知识库",
+		"delete_kb":       "删除知识库",
+	}
 	label := labels[p.Action]
 	if label == "" {
 		label = "知识变更"
@@ -75,7 +84,11 @@ func confirmationCardPayload(preview string, p *octobusiness.Proposal) map[strin
 			"type":    "AdaptiveCard", "version": "1.5",
 			"body": []any{
 				map[string]any{"type": "TextBlock", "text": "请核对：" + label, "weight": "Bolder", "wrap": true},
-				map[string]any{"type": "TextBlock", "text": "编号：" + p.ID + "；有效至：" + p.ExpiresAt.UTC().Format("2006-01-02 15:04:05 UTC"), "wrap": true},
+				map[string]any{
+					"type": "TextBlock",
+					"text": "编号：" + p.ID + "；有效至：" + p.ExpiresAt.UTC().Format("2006-01-02 15:04:05 UTC"),
+					"wrap": true,
+				},
 				map[string]any{"type": "TextBlock", "text": preview, "wrap": true},
 				map[string]any{"type": "TextBlock", "text": "仅发起人可确认或取消，操作会再次检查权限。", "wrap": true},
 			},
@@ -104,7 +117,8 @@ func (a *Adapter) sendConfirmationCards(ctx context.Context, in *im.IncomingMess
 		"tenant_id = ? AND account_id = ? AND channel_id = ? AND scope_id = ? AND user_id = ? "+
 			"AND source_message_id = ? AND status = ? AND expires_at > ?",
 		a.tenantID, scope.AccountID, a.channelID, scope.ScopeID, in.UserID, in.MessageID, "pending", time.Now(),
-	).Limit(5).Find(&proposals).Error != nil || len(proposals) == 0 {
+	).
+		Limit(5).Find(&proposals).Error != nil || len(proposals) == 0 {
 		return
 	}
 	var profile interactiveCardProfile

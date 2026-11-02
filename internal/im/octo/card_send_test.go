@@ -75,7 +75,8 @@ func TestConfirmationCardUsesCompletePreviewAndIsNotRepeated(t *testing.T) {
 	}
 	var binding confirmationCard
 	if err := a.db.Where("channel_id = ? AND proposal_id = ?", a.channelID, p.ID).First(&binding).Error; err != nil ||
-		binding.State != "sent" || binding.MessageID != "987654" {
+		binding.State != "sent" ||
+		binding.MessageID != "987654" {
 		t.Fatal("sent card identity was not recorded")
 	}
 }
@@ -127,10 +128,26 @@ func TestConfirmationCardDoesNotResendUncertainDelivery(t *testing.T) {
 	if err := a.db.AutoMigrate(&octobusiness.Proposal{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.db.Create(&Inbox{TenantID: a.tenantID, ChannelID: a.channelID, MessageID: msg.MessageID, Input: "{}", Authority: encodeAuthority(scope), State: "delivered"}).Error; err != nil {
+	source := Inbox{
+		TenantID: a.tenantID, ChannelID: a.channelID, MessageID: msg.MessageID,
+		Input: "{}", Authority: encodeAuthority(scope), State: "delivered",
+	}
+	if err := a.db.Create(&source).Error; err != nil {
 		t.Fatal(err)
 	}
-	p := octobusiness.Proposal{ID: "OP-uncertain", TenantID: a.tenantID, AccountID: "account", ChannelID: a.channelID, ScopeID: "scope", UserID: msg.UserID, SourceMessageID: msg.MessageID, Action: "rename", Status: "pending", ExpiresAt: time.Now().Add(time.Minute), Result: types.JSON(`{"action":"rename","name":"synthetic"}`)}
+	p := octobusiness.Proposal{
+		ID:              "OP-uncertain",
+		TenantID:        a.tenantID,
+		AccountID:       "account",
+		ChannelID:       a.channelID,
+		ScopeID:         "scope",
+		UserID:          msg.UserID,
+		SourceMessageID: msg.MessageID,
+		Action:          "rename",
+		Status:          "pending",
+		ExpiresAt:       time.Now().Add(time.Minute),
+		Result:          types.JSON(`{"action":"rename","name":"synthetic"}`),
+	}
 	if err := a.db.Create(&p).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +155,8 @@ func TestConfirmationCardDoesNotResendUncertainDelivery(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/bot/card/profile":
-			_, _ = w.Write([]byte(`{"enabled":true,"profiles":["octo/v2"],"elements":["TextBlock"],"limits":{"max_payload_bytes":524288},"config":{"card_enabled":true,"interaction_enabled":true}}`))
+			_, _ = w.Write([]byte(`{"enabled":true,"profiles":["octo/v2"],"elements":["TextBlock"],` +
+				`"limits":{"max_payload_bytes":524288},"config":{"card_enabled":true,"interaction_enabled":true}}`))
 		case "/v1/bot/sendMessage":
 			sends.Add(1)
 			http.Error(w, "ambiguous delivery", http.StatusServiceUnavailable)
@@ -154,7 +172,8 @@ func TestConfirmationCardDoesNotResendUncertainDelivery(t *testing.T) {
 		t.Fatalf("uncertain send attempted %d times", sends.Load())
 	}
 	var binding confirmationCard
-	if err := a.db.Where("channel_id = ? AND proposal_id = ?", a.channelID, p.ID).First(&binding).Error; err != nil || binding.State != "uncertain" {
+	if err := a.db.Where("channel_id = ? AND proposal_id = ?", a.channelID, p.ID).First(&binding).Error; err != nil ||
+		binding.State != "uncertain" {
 		t.Fatalf("state %s %v", binding.State, err)
 	}
 }

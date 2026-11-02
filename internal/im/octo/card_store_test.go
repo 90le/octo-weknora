@@ -47,7 +47,9 @@ func TestCardEventStoreIsIdempotentAndCursorNeverMovesBackwards(t *testing.T) {
 		t.Fatal(err)
 	}
 	var collisions int64
-	if err := a.db.Model(&storedCardEvent{}).Where("channel_id = ? AND event_id = ?", a.channelID, 42).Count(&collisions).Error; err != nil || collisions != 2 {
+	err := a.db.Model(&storedCardEvent{}).Where("channel_id = ? AND event_id = ?",
+		a.channelID, 42).Count(&collisions).Error
+	if err != nil || collisions != 2 {
 		t.Fatalf("colliding event identities lost: %d %v", collisions, err)
 	}
 	if err := a.db.Model(&storedCardEvent{}).Where("channel_id = ? AND event_id = ?", a.channelID, 42).
@@ -58,8 +60,8 @@ func TestCardEventStoreIsIdempotentAndCursorNeverMovesBackwards(t *testing.T) {
 		t.Fatal(err)
 	}
 	var event storedCardEvent
-	if err := a.db.Where("channel_id = ? AND event_key = ?", a.channelID, cardEventKey(action)).First(&event).Error; err != nil ||
-		event.State != "completed" {
+	err = a.db.Where("channel_id = ? AND event_key = ?", a.channelID, cardEventKey(action)).First(&event).Error
+	if err != nil || event.State != "completed" {
 		t.Fatal("redelivery replaced a completed event")
 	}
 	for _, id := range []uint64{42, 10, 43} {
@@ -68,8 +70,8 @@ func TestCardEventStoreIsIdempotentAndCursorNeverMovesBackwards(t *testing.T) {
 		}
 	}
 	var cursor cardEventCursor
-	if err := a.db.Where("channel_id = ? AND tenant_id = ?", a.channelID, a.tenantID).First(&cursor).Error; err != nil ||
-		cursor.EventID != 43 {
+	err = a.db.Where("channel_id = ? AND tenant_id = ?", a.channelID, a.tenantID).First(&cursor).Error
+	if err != nil || cursor.EventID != 43 {
 		t.Fatal("card event cursor did not advance monotonically")
 	}
 	otherTenant := &Adapter{db: a.db, channelID: a.channelID, tenantID: a.tenantID + 1}
