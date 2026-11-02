@@ -129,7 +129,8 @@ func TestScopedAgentPreservesConfiguredKnowledgeTools(t *testing.T) {
 			original := &types.CustomAgent{Config: types.CustomAgentConfig{
 				KBSelectionMode: "all", AllowedTools: append([]string(nil), tc.allowed...),
 			}}
-			out, err := scopeAgent(original, &ExecutionScope{KnowledgeBaseIDs: []string{"authorized-kb"}, Revision: "r"})
+			scope := &ExecutionScope{KnowledgeBaseIDs: []string{"authorized-kb"}, Revision: "r"}
+			out, err := scopeAgent(original, scope)
 			if err != nil {
 				t.Fatal(err)
 			}
