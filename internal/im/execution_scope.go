@@ -160,7 +160,11 @@ func scopeAgent(agent *types.CustomAgent, scope *ExecutionScope) (*types.CustomA
 	// read_document while pre-0.8.3 configurations can still use legacy names.
 	// The scoped Agent must retain only capabilities enabled by the original
 	// Agent and must never turn an empty intersection into default tools.
-	readTools := []string{tools.ToolSearchKnowledge, tools.ToolReadDocument, tools.ToolListDocuments, tools.ToolSourceBrowse, tools.ToolGitHubReleaseLookup, tools.ToolWikiSearch, tools.ToolWikiReadPage, tools.ToolThinking, tools.ToolTodoWrite, "octo_knowledge_operations"}
+	readTools := []string{
+		tools.ToolSearchKnowledge, tools.ToolReadDocument, tools.ToolListDocuments,
+		tools.ToolSourceBrowse, tools.ToolGitHubReleaseLookup, tools.ToolWikiSearch,
+		tools.ToolWikiReadPage, tools.ToolThinking, tools.ToolTodoWrite, "octo_knowledge_operations",
+	}
 	enabledTools := tools.NormalizeAllowedTools(agent.Config.AllowedTools)
 	if out.Config.WebSearchEnabled {
 		readTools = append(readTools, "web_search", "web_fetch")
