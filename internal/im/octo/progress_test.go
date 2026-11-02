@@ -13,7 +13,18 @@ import (
 	"github.com/Tencent/WeKnora/internal/im"
 )
 
-const supportedProgressProfile = `{"enabled":true,"config":{"card_enabled":true,"reasoning_enabled":true,"reasoning_template_ref":{"id":"ai.reasoning-process","version":"0.4.1"}},"templating":{"supported":true,"wire":"template-ref/v1","templates":[{"id":"ai.reasoning-process","version":"0.4.1","views":[{"name":"active","wire_profile":"octo/v2","states":["reasoning","answering"],"submit_actions":[]},{"name":"result","wire_profile":"octo/v1","states":["completed","stopped"],"submit_actions":[]},{"name":"error","wire_profile":"octo/v2","states":["error"],"submit_actions":[]}]}]}}`
+const supportedProgressProfile = `{
+	"enabled":true,
+	"config":{"card_enabled":true,"reasoning_enabled":true,
+		"reasoning_template_ref":{"id":"ai.reasoning-process","version":"0.4.1"}},
+	"templating":{"supported":true,"wire":"template-ref/v1","templates":[
+		{"id":"ai.reasoning-process","version":"0.4.1","views":[
+			{"name":"active","wire_profile":"octo/v2","states":["reasoning","answering"],"submit_actions":[]},
+			{"name":"result","wire_profile":"octo/v1","states":["completed","stopped"],"submit_actions":[]},
+			{"name":"error","wire_profile":"octo/v2","states":["error"],"submit_actions":[]}
+		]}
+	]}
+}`
 
 func TestProgressProfileFailsClosedForUnsupportedActionsAndVersions(t *testing.T) {
 	var profile progressProfile
@@ -26,7 +37,8 @@ func TestProgressProfileFailsClosedForUnsupportedActionsAndVersions(t *testing.T
 		{`"version":"0.4.1"`, `"version":"9.0.0"`},
 	} {
 		var p progressProfile
-		if err := json.Unmarshal([]byte(strings.Replace(supportedProgressProfile, replacement.old, replacement.new, 1)), &p); err != nil {
+		raw := strings.Replace(supportedProgressProfile, replacement.old, replacement.new, 1)
+		if err := json.Unmarshal([]byte(raw), &p); err != nil {
 			t.Fatal(err)
 		}
 		if p.supported() {

@@ -115,7 +115,10 @@ func (a *Adapter) StartProcessingProgress(ctx context.Context, msg *im.IncomingM
 	if _, _, ok := a.typingTarget(msg); !ok {
 		return nil
 	}
-	p := &progressCard{adapter: a, message: msg, updates: make(chan string, 1), finish: make(chan im.ProcessingResult, 1), done: make(chan struct{})}
+	p := &progressCard{
+		adapter: a, message: msg, updates: make(chan string, 1),
+		finish: make(chan im.ProcessingResult, 1), done: make(chan struct{}),
+	}
 	go p.run(ctx)
 	return p
 }
@@ -219,7 +222,8 @@ func (p *progressCard) run(ctx context.Context) {
 		return
 	}
 	var pending int64
-	if p.adapter.inboxQuery(callCtx, p.message.MessageID).Where("state = ?", "processing").Count(&pending).Error != nil || pending != 1 {
+	err = p.adapter.inboxQuery(callCtx, p.message.MessageID).Where("state = ?", "processing").Count(&pending).Error
+	if err != nil || pending != 1 {
 		cancel()
 		return
 	}
@@ -247,7 +251,9 @@ func (p *progressCard) run(ctx context.Context) {
 		}
 		err = p.adapter.api.post(callCtx, "/v1/bot/sendMessage", map[string]any{
 			"channel_id": target, "channel_type": kind, "client_msg_no": id,
-			"payload": map[string]any{"type": 17, "template_ref": ref, "state": "reasoning", "data": progressData(id, "reasoning", "")},
+			"payload": map[string]any{
+				"type": 17, "template_ref": ref, "state": "reasoning", "data": progressData(id, "reasoning", ""),
+			},
 		}, &sent)
 		messageID = wire.ReadID(sent.ID)
 		if err != nil || !wire.DecimalID(messageID) {
