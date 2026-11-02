@@ -2002,6 +2002,9 @@ func emptyIncomingMessageReply(msg *IncomingMessage) (string, bool) {
 	}
 	switch rawType {
 	case "audio":
+		if msg.Platform == "octo" {
+			return "目前此渠道尚未开通语音识别，请改用文字发送。", true
+		}
 		return "未能识别这条语音中的文字内容。请改用纯文本发送，或再说一遍。", true
 	case "video":
 		return "暂不支持视频消息。请改用纯文本发送；图片或文件请单独发送。", true
