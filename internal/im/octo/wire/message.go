@@ -36,7 +36,36 @@ func (p *Payload) Text() string {
 		return ""
 	}
 	if p.Type == 14 {
-		return p.Plain
+		if strings.TrimSpace(p.Plain) != "" {
+			return p.Plain
+		}
+		var blocks []json.RawMessage
+		if json.Unmarshal(p.Content, &blocks) == nil {
+			var b strings.Builder
+			for _, raw := range blocks {
+				var block struct {
+					Type string          `json:"type"`
+					Text json.RawMessage `json:"text"`
+				}
+				if json.Unmarshal(raw, &block) != nil {
+					continue
+				}
+				switch block.Type {
+				case "text":
+					var text string
+					if json.Unmarshal(block.Text, &text) == nil {
+						b.WriteString(text)
+					}
+				case "image":
+					b.WriteString("[图片]")
+				}
+			}
+			return b.String()
+		}
+		// Older producers may send a plain string instead of a block array.
+		var text string
+		_ = json.Unmarshal(p.Content, &text)
+		return text
 	}
 	var text string
 	_ = json.Unmarshal(p.Content, &text)
