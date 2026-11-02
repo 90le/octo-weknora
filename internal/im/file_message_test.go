@@ -111,7 +111,7 @@ func TestEmptyIncomingMessageReply(t *testing.T) {
 				Extra: map[string]string{"raw_msgtype": "audio"},
 			},
 			wantEmpty: true,
-			wantHint:  "目前此渠道尚未开通语音识别，请改用文字发送。",
+			wantHint:  "收到的是语音文件，小丘暂不能直接处理。请先用 Octo 转成文字再发送。",
 		},
 		{
 			name: "video uses an unsupported-type hint",

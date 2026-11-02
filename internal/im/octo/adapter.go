@@ -104,8 +104,15 @@ func (a *Adapter) Normalize(raw *wire.Message) (*im.IncomingMessage, error) {
 		return nil, errors.New("invalid Octo payload")
 	}
 	m := &im.IncomingMessage{
-		Platform: Platform, UserID: raw.Sender, UserName: raw.Sender, MessageID: "octo:" + a.uid + ":" + raw.ID, Content: p.Text(), ChatType: im.ChatTypeGroup, ChatID: raw.Channel, MessageType: im.MessageTypeText,
-		Extra: map[string]string{"octo_message_id": raw.ID, "octo_channel_id": raw.Channel, "octo_channel_type": strconv.Itoa(int(raw.ChannelType)), "octo_group_id": scope.Group, "octo_subarea_id": scope.Subarea, "octo_original_payload": string(raw.Payload), "octo_addressed": "false"},
+		Platform: Platform, UserID: raw.Sender, UserName: raw.Sender,
+		MessageID: "octo:" + a.uid + ":" + raw.ID, Content: p.Text(),
+		ChatType: im.ChatTypeGroup, ChatID: raw.Channel, MessageType: im.MessageTypeText,
+		Extra: map[string]string{
+			"octo_message_id": raw.ID, "octo_channel_id": raw.Channel,
+			"octo_channel_type": strconv.Itoa(int(raw.ChannelType)),
+			"octo_group_id":     scope.Group, "octo_subarea_id": scope.Subarea,
+			"octo_original_payload": string(raw.Payload), "octo_addressed": "false",
+		},
 	}
 	if raw.ChannelType == 1 {
 		m.ChatType = im.ChatTypeDirect
