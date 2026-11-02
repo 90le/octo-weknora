@@ -20,6 +20,7 @@ var versionedSQLiteTables = []string{
 	"local_source_spaces", "local_source_roots", "local_source_registry_state", "local_source_file_states",
 	"octo_knowledge_issues", "octo_knowledge_issue_events", "octo_knowledge_contacts", "octo_knowledge_proposals",
 	"octo_message_inbox", "octo_scope_knowledge_grants", "octo_report_schedules", "octo_report_runs",
+	"octo_card_bindings", "octo_card_events", "octo_card_event_cursors",
 	"octo_scopes",
 	"octo_connections",
 	"octo_scope_bindings",
@@ -52,6 +53,7 @@ var versionedSQLiteColumns = map[string][]string{
 	"model_catalog_configs": {"version", "overlay", "history", "updated_by", "updated_at"},        // 000031
 	"octo_scopes":           {"allow_public_web"},                                                 // 000048
 	"octo_connections":      {"verified_identity"},                                                // 000045
+	"octo_card_events":      {"event_key", "event_id", "state"},                                   // 000050
 	"memory_subjects":       {"extraction_state"},                                                 // 000094
 	"memory_items":          {"replaces_id"},                                                      // 000094
 	"tenants":               {"api_principal_config"},                                             // 000064
@@ -82,7 +84,7 @@ var versionedSQLiteColumns = map[string][]string{
 	}, // 000028
 }
 
-const expectedSQLiteMigrationVersion = 49
+const expectedSQLiteMigrationVersion = 50
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

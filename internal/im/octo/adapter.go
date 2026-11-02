@@ -22,6 +22,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/im"
 	"github.com/Tencent/WeKnora/internal/im/octo/wire"
+	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -37,6 +38,7 @@ type Adapter struct {
 	channelID     string
 	tenantID      uint64
 	api           *apiClient
+	business      *octobusiness.Service
 	uid           string
 	policy        func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error)
 	receiptPolicy func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error)
@@ -286,7 +288,23 @@ func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *
 		return errors.New("Octo delivery was not acknowledged")
 	}
 	if a.db != nil {
-		return a.inboxQuery(ctx, in.MessageID).Updates(map[string]any{"state": "delivered", "error_code": "", "updated_at": time.Now()}).Error
+		if err := a.inboxQuery(ctx, in.MessageID).Updates(
+			map[string]any{"state": "delivered", "error_code": "", "updated_at": time.Now()},
+		).Error; err != nil {
+			return err
+		}
+		if a.business != nil {
+			copyMsg := *in
+			copyMsg.Extra = make(map[string]string, len(in.Extra))
+			for key, value := range in.Extra {
+				copyMsg.Extra[key] = value
+			}
+			if in.Quote != nil {
+				copyQuote := *in.Quote
+				copyMsg.Quote = &copyQuote
+			}
+			go a.sendConfirmationCards(ctx, &copyMsg)
+		}
 	}
 	return nil
 }
