@@ -49,6 +49,40 @@ func TestNormalizationPreservesScopeAndNativeIdentity(t *testing.T) {
 	}
 }
 
+func TestVoiceAndVideoDoNotFailSilentlyInDirectOrAddressedGroups(t *testing.T) {
+	a, _ := NewAdapter("bf_test", "bot")
+	for _, tc := range []struct {
+		payload, kind string
+	}{
+		{`{"type":4,"url":"a.mp3"}`, "audio"},
+		{`{"type":5,"url":"b.mp4"}`, "video"},
+	} {
+		raw := &wire.Message{
+			ID: "123", Sender: "user", Channel: "bot", ChannelType: 1,
+			Payload: json.RawMessage(tc.payload),
+		}
+		msg, err := a.Normalize(raw)
+		if err != nil || msg == nil || msg.Content != "" || msg.Extra["raw_msgtype"] != tc.kind {
+			t.Fatalf("direct media type %s not normalized for capability response", tc.kind)
+		}
+		raw.Channel, raw.ChannelType = "group", 2
+		msg, err = a.Normalize(raw)
+		if err != nil || msg != nil {
+			t.Fatal("unaddressed group media should remain silent")
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(raw.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		payload["mention"] = map[string]any{"uids": []string{"bot"}}
+		raw.Payload, _ = json.Marshal(payload)
+		msg, err = a.Normalize(raw)
+		if err != nil || msg == nil || msg.Extra["raw_msgtype"] != tc.kind {
+			t.Fatalf("addressed group media type %s did not receive a capability path", tc.kind)
+		}
+	}
+}
+
 func TestReplyUsesOriginalTargetQuoteAndUTF16Mention(t *testing.T) {
 	var sent map[string]json.RawMessage
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

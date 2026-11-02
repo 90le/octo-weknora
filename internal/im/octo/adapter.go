@@ -49,8 +49,10 @@ func (a *Adapter) AuthorizeExecution(ctx context.Context, channel *im.IMChannel,
 	return a.policy(ctx, channel, msg)
 }
 
-var _ im.Adapter = (*Adapter)(nil)
-var _ im.FileDownloader = (*Adapter)(nil)
+var (
+	_ im.Adapter        = (*Adapter)(nil)
+	_ im.FileDownloader = (*Adapter)(nil)
+)
 
 func NewAdapter(botToken, botUID string) (*Adapter, error) {
 	if botUID == "" || strings.ContainsAny(botUID, "\r\n\t ") {
@@ -73,6 +75,7 @@ func (a *Adapter) DurableIntake() bool { return a.db != nil }
 func (a *Adapter) VerifyCallback(*gin.Context) error {
 	return errors.New("Octo uses authenticated WebSocket input")
 }
+
 func (a *Adapter) ParseCallback(*gin.Context) (*im.IncomingMessage, error) {
 	return nil, errors.New("Octo HTTP callback unsupported")
 }
@@ -100,8 +103,17 @@ func (a *Adapter) Normalize(raw *wire.Message) (*im.IncomingMessage, error) {
 	if json.Unmarshal(raw.Payload, &p) != nil {
 		return nil, errors.New("invalid Octo payload")
 	}
-	m := &im.IncomingMessage{Platform: Platform, UserID: raw.Sender, UserName: raw.Sender, MessageID: "octo:" + a.uid + ":" + raw.ID, Content: p.Text(), ChatType: im.ChatTypeGroup, ChatID: raw.Channel, MessageType: im.MessageTypeText,
-		Extra: map[string]string{"octo_message_id": raw.ID, "octo_channel_id": raw.Channel, "octo_channel_type": strconv.Itoa(int(raw.ChannelType)), "octo_group_id": scope.Group, "octo_subarea_id": scope.Subarea, "octo_original_payload": string(raw.Payload), "octo_addressed": "false"}}
+	m := &im.IncomingMessage{
+		Platform: Platform, UserID: raw.Sender, UserName: raw.Sender,
+		MessageID: "octo:" + a.uid + ":" + raw.ID, Content: p.Text(),
+		ChatType: im.ChatTypeGroup, ChatID: raw.Channel, MessageType: im.MessageTypeText,
+		Extra: map[string]string{
+			"octo_message_id": raw.ID, "octo_channel_id": raw.Channel,
+			"octo_channel_type": strconv.Itoa(int(raw.ChannelType)),
+			"octo_group_id":     scope.Group, "octo_subarea_id": scope.Subarea,
+			"octo_original_payload": string(raw.Payload), "octo_addressed": "false",
+		},
+	}
 	if raw.ChannelType == 1 {
 		m.ChatType = im.ChatTypeDirect
 		m.ChatID = ""
@@ -136,6 +148,18 @@ func (a *Adapter) Normalize(raw *wire.Message) (*im.IncomingMessage, error) {
 			if p.Type == 3 {
 				m.FileName += ".gif"
 			}
+		}
+	case 4, 5:
+		// A direct user or an explicitly addressed group message deserves an
+		// honest capability response rather than being silently discarded.
+		if m.ChatType == im.ChatTypeGroup && m.Extra["octo_addressed"] != "true" &&
+			(p.Reply == nil || p.Reply.Sender != a.uid) {
+			return nil, nil
+		}
+		m.Content = ""
+		m.Extra["raw_msgtype"] = "audio"
+		if p.Type == 5 {
+			m.Extra["raw_msgtype"] = "video"
 		}
 	default:
 		return nil, nil // structured platform events are not user questions

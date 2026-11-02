@@ -105,6 +105,15 @@ func TestEmptyIncomingMessageReply(t *testing.T) {
 			wantHint:  "未能识别这条语音中的文字内容。请改用纯文本发送，或再说一遍。",
 		},
 		{
+			name: "Octo audio reports that transcription is unavailable",
+			msg: &IncomingMessage{
+				Platform: "octo", MessageType: MessageTypeText,
+				Extra: map[string]string{"raw_msgtype": "audio"},
+			},
+			wantEmpty: true,
+			wantHint:  "收到的是语音文件，小丘暂不能直接处理。请先用 Octo 转成文字再发送。",
+		},
+		{
 			name: "video uses an unsupported-type hint",
 			msg: &IncomingMessage{
 				MessageType: MessageTypeText,
