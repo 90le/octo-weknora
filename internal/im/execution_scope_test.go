@@ -8,12 +8,67 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
 type scopeTestAdapter struct {
 	Adapter
 	scope *ExecutionScope
 	err   error
+}
+
+type syntheticScopedKB struct {
+	interfaces.KnowledgeBaseService
+	searched []string
+}
+
+func (s *syntheticScopedKB) GetKnowledgeBasesByIDsOnly(
+	_ context.Context, ids []string,
+) ([]*types.KnowledgeBase, error) {
+	kb := &types.KnowledgeBase{ID: ids[0]}
+	kb.IndexingStrategy.KeywordEnabled = true
+	return []*types.KnowledgeBase{kb}, nil
+}
+
+func (s *syntheticScopedKB) ResolveEmbeddingModelKeys(
+	context.Context, []*types.KnowledgeBase,
+) map[string]string {
+	return nil
+}
+
+func (s *syntheticScopedKB) HybridSearch(
+	_ context.Context, _ string, params types.SearchParams,
+) ([]*types.SearchResult, error) {
+	s.searched = append([]string(nil), params.KnowledgeBaseIDs...)
+	return []*types.SearchResult{{
+		ID: "synthetic-chunk", KnowledgeID: "synthetic-document", KnowledgeBaseID: "allowed",
+		Content: "SYNTHETIC_IM_SEARCH_MARKER", KnowledgeTitle: "synthetic", Score: 0.9,
+	}}, nil
+}
+
+func TestScopedKnowledgeSearchReturnsSyntheticCitation(t *testing.T) {
+	requested := &types.CustomAgent{Config: types.CustomAgentConfig{
+		AllowedTools: []string{tools.ToolSearchKnowledge},
+	}}
+	scoped, err := scopeAgent(requested, &ExecutionScope{KnowledgeBaseIDs: []string{"allowed"}, Revision: "r"})
+	if err != nil || !reflect.DeepEqual(scoped.Config.AllowedTools, []string{tools.ToolSearchKnowledge}) {
+		t.Fatalf("scoped search tool not enabled: %+v %v", scoped, err)
+	}
+	kb := &syntheticScopedKB{}
+	targets := types.SearchTargets{{Type: types.SearchTargetTypeKnowledgeBase, KnowledgeBaseID: "allowed"}}
+	search := tools.NewSearchKnowledgeTool(kb, nil, nil, targets, nil, nil)
+	result, err := search.Execute(context.Background(), json.RawMessage(`{"query":"marker","mode":"keyword"}`))
+	if err != nil || result == nil || !result.Success {
+		t.Fatalf("synthetic scoped search failed: %+v %v", result, err)
+	}
+	rows, ok := result.Data["results"].([]map[string]interface{})
+	if !ok || len(rows) != 1 || rows[0]["knowledge_base_id"] != "allowed" ||
+		rows[0]["knowledge_id"] != "synthetic-document" || rows[0]["chunk_id"] != "synthetic-chunk" {
+		t.Fatalf("synthetic citation is missing: %+v", result.Data)
+	}
+	if !reflect.DeepEqual(kb.searched, []string{"allowed"}) {
+		t.Fatalf("search scope changed: %v", kb.searched)
+	}
 }
 
 func TestScopedKnowledgeToolRejectsUnauthorizedKB(t *testing.T) {
