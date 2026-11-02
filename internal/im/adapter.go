@@ -190,14 +190,17 @@ type ProcessingProgress interface {
 	Finish(result ProcessingResult)
 }
 
+// ProcessingResult records the user-visible outcome of an auxiliary progress card.
 type ProcessingResult string
 
+// Processing outcomes do not determine the delivery state of the final answer.
 const (
 	ProcessingCompleted ProcessingResult = "completed"
 	ProcessingStopped   ProcessingResult = "stopped"
 	ProcessingFailed    ProcessingResult = "error"
 )
 
+// ProcessingProgressNotifier optionally creates a separate status display.
 type ProcessingProgressNotifier interface {
 	StartProcessingProgress(ctx context.Context, incoming *IncomingMessage) ProcessingProgress
 }

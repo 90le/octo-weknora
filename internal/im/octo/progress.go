@@ -104,6 +104,7 @@ func hasStates(states []string, required ...string) bool {
 
 var _ im.ProcessingProgressNotifier = (*Adapter)(nil)
 
+// StartProcessingProgress creates a capability-gated card for an admitted message.
 func (a *Adapter) StartProcessingProgress(ctx context.Context, msg *im.IncomingMessage) im.ProcessingProgress {
 	if a == nil || a.db == nil || msg == nil || ctx.Err() != nil {
 		return nil
@@ -187,11 +188,12 @@ func progressData(id, state, stage string) map[string]any {
 	case "answer":
 		title, detail = "正在回答", "正在整理回答"
 	}
-	if state == "completed" {
+	switch state {
+	case "completed":
 		title, detail, tone = "已完成", "处理完成", "Good"
-	} else if state == "stopped" {
+	case "stopped":
 		title, detail, tone = "已停止", "本次处理已停止", "Attention"
-	} else if state == "error" {
+	case "error":
 		title, detail, tone = "已结束", "处理未能正常完成", "Attention"
 	}
 	active := state == "reasoning" || state == "answering"
@@ -338,7 +340,8 @@ func (a *Adapter) recoverProgressCards(ctx context.Context) {
 	}
 	var rows []Inbox
 	err := a.db.WithContext(ctx).
-		Where("tenant_id = ? AND channel_id = ? AND state IN ? AND updated_at > ? AND input LIKE ? AND input NOT LIKE ?",
+		Where("tenant_id = ? AND channel_id = ? AND state IN ? AND updated_at > ? "+
+			"AND input LIKE ? AND input NOT LIKE ?",
 			a.tenantID, a.channelID, []string{"delivered", "failed", "finished"},
 			time.Now().Add(-24*time.Hour), "%octo_progress_message_id%", `%"octo_progress_closed":"true"%`).
 		Order("updated_at DESC").Limit(100).Find(&rows).Error
@@ -373,9 +376,10 @@ func (p *progressCard) finishRecovered(ctx context.Context, deliveryState string
 		return
 	}
 	state := "error"
-	if deliveryState == "delivered" {
+	switch deliveryState {
+	case "delivered":
 		state = "completed"
-	} else if deliveryState == "finished" {
+	case "finished":
 		state = "stopped"
 	}
 	id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(p.message.MessageID+":progress")).String()

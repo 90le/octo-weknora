@@ -51,7 +51,9 @@ func TestProgressCardUsesFixedStagesAndScopedTarget(t *testing.T) {
 	a, msg := durableAdapter(t)
 	msg.ChatType = im.ChatTypeDirect
 	msg.Extra["octo_channel_type"] = "1"
-	scope := &im.ExecutionScope{AccountID: "account", ScopeID: "dm:user", Revision: "r", KnowledgeBaseIDs: []string{"kb"}}
+	scope := &im.ExecutionScope{
+		AccountID: "account", ScopeID: "dm:user", Revision: "r", KnowledgeBaseIDs: []string{"kb"},
+	}
 	a.policy = func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error) {
 		return scope, nil
 	}
@@ -59,8 +61,10 @@ func TestProgressCardUsesFixedStagesAndScopedTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.db.Create(&Inbox{ChannelID: a.channelID, TenantID: a.tenantID, MessageID: msg.MessageID,
-		Input: string(input), Authority: encodeAuthority(scope), State: "processing"}).Error; err != nil {
+	if err := a.db.Create(&Inbox{
+		ChannelID: a.channelID, TenantID: a.tenantID, MessageID: msg.MessageID,
+		Input: string(input), Authority: encodeAuthority(scope), State: "processing",
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	sent := make(chan map[string]json.RawMessage, 1)
@@ -159,8 +163,10 @@ func TestProgressCardGroupMentionUsesOriginalGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.db.Create(&Inbox{ChannelID: a.channelID, TenantID: a.tenantID, MessageID: msg.MessageID,
-		Input: string(raw), Authority: encodeAuthority(scope), State: "processing"}).Error; err != nil {
+	if err := a.db.Create(&Inbox{
+		ChannelID: a.channelID, TenantID: a.tenantID, MessageID: msg.MessageID,
+		Input: string(raw), Authority: encodeAuthority(scope), State: "processing",
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	sent := make(chan string, 1)
@@ -211,8 +217,10 @@ func TestProgressCardStopsSendingAfterAuthorizationRevoked(t *testing.T) {
 		return scope, nil
 	}
 	raw, _ := json.Marshal(msg)
-	if err := a.db.Create(&Inbox{ChannelID: a.channelID, TenantID: a.tenantID, MessageID: msg.MessageID,
-		Input: string(raw), Authority: encodeAuthority(scope), State: "processing"}).Error; err != nil {
+	if err := a.db.Create(&Inbox{
+		ChannelID: a.channelID, TenantID: a.tenantID, MessageID: msg.MessageID,
+		Input: string(raw), Authority: encodeAuthority(scope), State: "processing",
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	sent := make(chan struct{}, 1)
@@ -260,8 +268,11 @@ func TestProgressRecoveryFinishesCardWithoutSendingAnotherMessage(t *testing.T) 
 		return scope, nil
 	}
 	raw, _ := json.Marshal(msg)
-	if err := a.db.Create(&Inbox{ChannelID: a.channelID, TenantID: a.tenantID, MessageID: msg.MessageID,
-		Input: string(raw), Authority: encodeAuthority(scope), State: "delivered", UpdatedAt: time.Now()}).Error; err != nil {
+	row := Inbox{
+		ChannelID: a.channelID, TenantID: a.tenantID, MessageID: msg.MessageID,
+		Input: string(raw), Authority: encodeAuthority(scope), State: "delivered", UpdatedAt: time.Now(),
+	}
+	if err := a.db.Create(&row).Error; err != nil {
 		t.Fatal(err)
 	}
 	var sends, edits atomic.Int32
