@@ -38,6 +38,19 @@ func TestProcessingTypingUsesNativeScopedTarget(t *testing.T) {
 				Kind   int    `json:"channel_type"`
 			}, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/bot/readReceipt" {
+					var body struct {
+						Target string   `json:"channel_id"`
+						Kind   int      `json:"channel_type"`
+						IDs    []string `json:"message_ids"`
+					}
+					if json.NewDecoder(r.Body).Decode(&body) != nil || body.Target != tc.want ||
+						body.Kind != int(tc.kind[0]-'0') || len(body.IDs) != 1 || body.IDs[0] != "123" {
+						t.Error("receipt was not scoped to the incoming message")
+					}
+					_, _ = w.Write([]byte(`{}`))
+					return
+				}
 				if r.URL.Path != "/v1/bot/typing" || r.Header.Get("Authorization") != "Bearer bf_test" {
 					t.Errorf("unexpected typing request: %s", r.URL.Path)
 				}
@@ -71,6 +84,10 @@ func TestProcessingTypingUsesNativeScopedTarget(t *testing.T) {
 func TestProcessingTypingBacksOffTransientFailureAndStops(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/bot/readReceipt" {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
 		calls.Add(1)
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
@@ -102,6 +119,10 @@ func TestProcessingTypingStopsAfterTerminalAPIResponse(t *testing.T) {
 			var calls atomic.Int32
 			first := make(chan struct{}, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/bot/readReceipt" {
+					_, _ = w.Write([]byte(`{}`))
+					return
+				}
 				calls.Add(1)
 				select {
 				case first <- struct{}{}:
@@ -150,4 +171,28 @@ func TestProcessingTypingSkipsInvalidOrCancelledMessages(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	a.StartProcessing(ctx, typingMessage("2", "group"))()
+}
+
+func TestReadReceiptFailureDoesNotSuppressTyping(t *testing.T) {
+	typing := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/bot/readReceipt" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if r.URL.Path == "/v1/bot/typing" {
+			typing <- struct{}{}
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer server.Close()
+	a, _ := NewAdapter("bf_test", "bot")
+	a.api.base = server.URL
+	stop := a.StartProcessing(context.Background(), typingMessage("2", "group"))
+	defer stop()
+	select {
+	case <-typing:
+	case <-time.After(time.Second):
+		t.Fatal("failed read receipt suppressed the typing hint")
+	}
 }

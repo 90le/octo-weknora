@@ -182,6 +182,28 @@ type ProcessingNotifier interface {
 	StartProcessing(ctx context.Context, incoming *IncomingMessage) (stop func())
 }
 
+// ProcessingProgress is an optional, non-authoritative status display.
+// Stages are fixed labels; model output, parameters and retrieved data must not
+// be passed to it. Final answers still use the adapter's normal delivery path.
+type ProcessingProgress interface {
+	Report(stage string)
+	Finish(result ProcessingResult)
+}
+
+type ProcessingResult string
+
+const (
+	ProcessingCompleted ProcessingResult = "completed"
+	ProcessingStopped   ProcessingResult = "stopped"
+	ProcessingFailed    ProcessingResult = "error"
+)
+
+type ProcessingProgressNotifier interface {
+	StartProcessingProgress(ctx context.Context, incoming *IncomingMessage) ProcessingProgress
+}
+
+type processingProgressContextKey struct{}
+
 // FileDownloader is an optional interface that adapters can implement to support
 // downloading file attachments from the IM platform. It allows file/image
 // messages to be supplied to QA as attachments; when a knowledge_base_id is

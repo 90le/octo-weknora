@@ -71,6 +71,19 @@ func NewFactory(db *gorm.DB) im.AdapterFactory {
 			case <-time.After(time.Second):
 			}
 			adapter.recoverInbox(runCtx, handler)
+			go func() {
+				adapter.recoverProgressCards(runCtx)
+				ticker := time.NewTicker(5 * time.Minute)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-runCtx.Done():
+						return
+					case <-ticker.C:
+						adapter.recoverProgressCards(runCtx)
+					}
+				}
+			}()
 			go adapter.retryDeliveries(runCtx)
 			err := adapter.Run(runCtx, func(_ context.Context, msg *im.IncomingMessage) error {
 				// A transient socket reconnect must not cancel already admitted QA.
