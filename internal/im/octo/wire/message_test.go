@@ -40,3 +40,24 @@ func TestIDsAndNativeMentions(t *testing.T) {
 		t.Fatal("UID mention ignored")
 	}
 }
+
+func TestRichTextFallbackPreservesTextAndImagePlaceholders(t *testing.T) {
+	p := Payload{Type: 14, Content: json.RawMessage(`[
+		{"type":"text","text":"请比较"},
+		{"type":"image","url":"a.png"},
+		{"type":"text","text":"和"},
+		{"type":"image","url":"b.png"}
+	]`)}
+	if got := p.Text(); got != "请比较[图片]和[图片]" {
+		t.Fatalf("fallback text = %q", got)
+	}
+	p.Plain = "服务端文本"
+	if p.Text() != "服务端文本" {
+		t.Fatal("server-provided plain text was not preferred")
+	}
+	p.Plain = ""
+	p.Content = json.RawMessage(`"旧版文本"`)
+	if p.Text() != "旧版文本" {
+		t.Fatal("legacy string content was not preserved")
+	}
+}

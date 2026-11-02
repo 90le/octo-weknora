@@ -613,11 +613,22 @@ type imDownloadedAttachment struct {
 // (and, for images, a bounded data URI) to the QA pipeline. This is separate
 // from the optional background knowledge-base save.
 func (s *Service) prepareIMAttachments(ctx context.Context, msg *IncomingMessage, adapter Adapter) (types.MessageAttachments, []string, *imDownloadedAttachment, error) {
-	if msg.MessageType != MessageTypeFile && msg.MessageType != MessageTypeImage {
+	var items []*IncomingMessage
+	standalone := msg.MessageType == MessageTypeFile || msg.MessageType == MessageTypeImage
+	if standalone {
+		items = append(items, msg)
+	} else if provider, ok := adapter.(InlineImageProvider); ok {
+		var err error
+		items, err = provider.InlineImages(msg)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	if len(items) == 0 {
 		return nil, nil, nil, nil
 	}
-	if msg.FileSize > maxIMAttachmentBytes {
-		return nil, nil, nil, fmt.Errorf("attachment exceeds the %d MiB limit", maxIMAttachmentBytes>>20)
+	if !standalone && len(items) > 4 {
+		return nil, nil, nil, fmt.Errorf("too many inline images")
 	}
 	downloader, ok := adapter.(FileDownloader)
 	if !ok {
@@ -625,17 +636,54 @@ func (s *Service) prepareIMAttachments(ctx context.Context, msg *IncomingMessage
 	}
 	attachmentCtx, cancel := context.WithTimeout(ctx, imAttachmentReadTimeout)
 	defer cancel()
+	var attachments types.MessageAttachments
+	var images []string
+	var downloaded *imDownloadedAttachment
+	remaining := int64(maxIMAttachmentBytes)
+	for _, item := range items {
+		if item == nil {
+			return nil, nil, nil, fmt.Errorf("invalid inline attachment")
+		}
+		if !standalone && item.FileSize > maxIMVisionAttachmentBytes {
+			return nil, nil, nil, fmt.Errorf("inline image exceeds the vision size limit")
+		}
+		attachment, urls, file, err := s.prepareIMAttachment(attachmentCtx, item, downloader, remaining)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		// A rich-text question must not silently lose an image and then receive
+		// an answer that appears to have considered all images.
+		if !standalone && len(urls) != 1 {
+			return nil, nil, nil, fmt.Errorf("inline image unavailable for vision")
+		}
+		remaining -= int64(len(file.content))
+		attachments = append(attachments, attachment)
+		images = append(images, urls...)
+		if standalone {
+			downloaded = file
+		}
+	}
+	return attachments, images, downloaded, nil
+}
+
+func (s *Service) prepareIMAttachment(
+	attachmentCtx context.Context, msg *IncomingMessage, downloader FileDownloader, maxBytes int64,
+) (types.MessageAttachment, []string, *imDownloadedAttachment, error) {
+	empty := types.MessageAttachment{}
+	if msg.FileSize > maxBytes || maxBytes <= 0 {
+		return empty, nil, nil, fmt.Errorf("attachment exceeds the %d MiB limit", maxIMAttachmentBytes>>20)
+	}
 	reader, fileName, err := downloader.DownloadFile(attachmentCtx, msg)
 	if err != nil {
-		return nil, nil, nil, err
+		return empty, nil, nil, err
 	}
 	defer reader.Close()
-	content, err := io.ReadAll(io.LimitReader(reader, maxIMAttachmentBytes+1))
+	content, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
 	if err != nil {
-		return nil, nil, nil, err
+		return empty, nil, nil, err
 	}
-	if len(content) > maxIMAttachmentBytes {
-		return nil, nil, nil, fmt.Errorf("attachment exceeds the %d MiB limit", maxIMAttachmentBytes>>20)
+	if int64(len(content)) > maxBytes {
+		return empty, nil, nil, fmt.Errorf("attachment exceeds the %d MiB limit", maxIMAttachmentBytes>>20)
 	}
 	if fileName == "" {
 		fileName = msg.FileName
@@ -645,7 +693,7 @@ func (s *Service) prepareIMAttachments(ctx context.Context, msg *IncomingMessage
 	}
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fileName), "."))
 	if ext == "" {
-		return nil, nil, nil, fmt.Errorf("attachment has no file extension")
+		return empty, nil, nil, fmt.Errorf("attachment has no file extension")
 	}
 	attachment := types.MessageAttachment{FileName: fileName, FileType: "." + ext, FileSize: int64(len(content))}
 	request := &types.ReadRequest{FileContent: content, FileName: fileName, FileType: ext}
@@ -654,7 +702,7 @@ func (s *Service) prepareIMAttachments(ctx context.Context, msg *IncomingMessage
 	if isImage && s.documentReader != nil {
 		result, err = s.documentReader.Read(attachmentCtx, request)
 		if err != nil {
-			logger.Warnf(ctx, "[IM] image OCR/document parsing failed, continuing with vision input: %v", err)
+			logger.Warnf(attachmentCtx, "[IM] image OCR/document parsing failed, continuing with vision input: %v", err)
 			result, err = nil, nil
 		}
 	}
@@ -664,7 +712,7 @@ func (s *Service) prepareIMAttachments(ctx context.Context, msg *IncomingMessage
 		result, err = s.documentReader.Read(attachmentCtx, request)
 	}
 	if err != nil {
-		logger.Warnf(ctx, "[IM] attachment parsing failed, continuing with attachment metadata: %v", err)
+		logger.Warnf(attachmentCtx, "[IM] attachment parsing failed, continuing with attachment metadata: %v", err)
 	}
 	if result != nil {
 		applyIMAttachmentTruncation(result.MarkdownContent, &attachment)
@@ -673,13 +721,14 @@ func (s *Service) prepareIMAttachments(ctx context.Context, msg *IncomingMessage
 	if isImage && len(content) <= maxIMVisionAttachmentBytes {
 		mediaType := http.DetectContentType(content)
 		if !strings.HasPrefix(mediaType, "image/") {
-			return nil, nil, nil, fmt.Errorf("invalid image content type: %s", mediaType)
+			return empty, nil, nil, fmt.Errorf("invalid image content type: %s", mediaType)
 		}
 		imageURLs = []string{"data:" + mediaType + ";base64," + base64.StdEncoding.EncodeToString(content)}
 	} else if isImage {
-		logger.Warnf(ctx, "[IM] image is too large for direct vision input: size=%d limit=%d", len(content), maxIMVisionAttachmentBytes)
+		logger.Warnf(attachmentCtx, "[IM] image is too large for direct vision input: size=%d limit=%d",
+			len(content), maxIMVisionAttachmentBytes)
 	}
-	return types.MessageAttachments{attachment}, imageURLs, &imDownloadedAttachment{fileName: fileName, content: content}, nil
+	return attachment, imageURLs, &imDownloadedAttachment{fileName: fileName, content: content}, nil
 }
 
 func applyIMAttachmentTruncation(content string, attachment *types.MessageAttachment) {

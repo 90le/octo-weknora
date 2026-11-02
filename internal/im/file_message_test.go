@@ -17,6 +17,15 @@ type attachmentTestAdapter struct {
 	fileName string
 }
 
+type inlineImageTestAdapter struct {
+	*attachmentTestAdapter
+	items []*IncomingMessage
+}
+
+func (a *inlineImageTestAdapter) InlineImages(*IncomingMessage) ([]*IncomingMessage, error) {
+	return a.items, nil
+}
+
 func (a *attachmentTestAdapter) DownloadFile(context.Context, *IncomingMessage) (io.ReadCloser, string, error) {
 	return io.NopCloser(bytes.NewReader(a.content)), a.fileName, nil
 }
@@ -198,5 +207,48 @@ func TestPrepareIMAttachmentsDetectsImageMIMEFromContent(t *testing.T) {
 	}
 	if len(imageURLs) != 1 || !strings.HasPrefix(imageURLs[0], "data:image/jpeg;base64,") {
 		t.Fatalf("image URL = %v, want JPEG data URI", imageURLs)
+	}
+}
+
+func TestPrepareIMAttachmentsIncludesOrderedInlineImages(t *testing.T) {
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00, 0x01}
+	adapter := &inlineImageTestAdapter{
+		attachmentTestAdapter: &attachmentTestAdapter{
+			lifecycleTestAdapter: &lifecycleTestAdapter{}, content: jpeg, fileName: "image.jpg",
+		},
+		items: []*IncomingMessage{
+			{MessageType: MessageTypeImage, FileKey: "first"},
+			{MessageType: MessageTypeImage, FileKey: "second"},
+		},
+	}
+	msg := &IncomingMessage{MessageType: MessageTypeText, Content: "比较两张图片"}
+	attachments, imageURLs, downloaded, err := (&Service{}).prepareIMAttachments(context.Background(), msg, adapter)
+	if err != nil || len(attachments) != 2 || len(imageURLs) != 2 || downloaded != nil {
+		t.Fatalf("inline images: attachments=%d images=%d downloaded=%v err=%v",
+			len(attachments), len(imageURLs), downloaded != nil, err)
+	}
+	if msg.Content != "比较两张图片" {
+		t.Fatal("image preparation modified the user's question")
+	}
+}
+
+func TestPrepareIMAttachmentsEnforcesInlineLimits(t *testing.T) {
+	adapter := &inlineImageTestAdapter{
+		attachmentTestAdapter: &attachmentTestAdapter{lifecycleTestAdapter: &lifecycleTestAdapter{}},
+		items: []*IncomingMessage{
+			{MessageType: MessageTypeImage, FileSize: maxIMAttachmentBytes + 1},
+		},
+	}
+	msg := &IncomingMessage{MessageType: MessageTypeText}
+	if _, _, _, err := (&Service{}).prepareIMAttachments(context.Background(), msg, adapter); err == nil {
+		t.Fatal("oversized inline image was accepted")
+	}
+	adapter.items[0].FileSize = maxIMVisionAttachmentBytes + 1
+	if _, _, _, err := (&Service{}).prepareIMAttachments(context.Background(), msg, adapter); err == nil {
+		t.Fatal("inline image too large for vision was silently accepted")
+	}
+	adapter.items = make([]*IncomingMessage, 5)
+	if _, _, _, err := (&Service{}).prepareIMAttachments(context.Background(), msg, adapter); err == nil {
+		t.Fatal("too many inline images were accepted")
 	}
 }

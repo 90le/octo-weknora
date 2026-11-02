@@ -216,3 +216,9 @@ type FileDownloader interface {
 	// Returns the file content reader, the resolved file name, and any error.
 	DownloadFile(ctx context.Context, msg *IncomingMessage) (io.ReadCloser, string, error)
 }
+
+// InlineImageProvider extracts bounded image references from one text message.
+// Each resulting message must still pass the platform's normal file download checks.
+type InlineImageProvider interface {
+	InlineImages(msg *IncomingMessage) ([]*IncomingMessage, error)
+}
