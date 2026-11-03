@@ -23,6 +23,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/common/redislock"
 	"github.com/Tencent/WeKnora/internal/config"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/event"
@@ -2033,6 +2034,11 @@ func (s *Service) persistIMLastRequestState(ctx context.Context, sessionID, agen
 // It is called by qaQueue workers and must not block indefinitely.
 func (s *Service) executeQARequest(req *qaRequest) {
 	defer req.cancel()
+	if lifecycle, ok := req.adapter.(interface {
+		ExecutionFinished(context.Context, *IncomingMessage)
+	}); ok {
+		defer lifecycle.ExecutionFinished(req.ctx, req.msg)
+	}
 	if req.channel != nil && req.channel.Platform == "octo" && req.scope != nil &&
 		req.session != nil && (req.scope.AllowFileDelivery || req.scope.AllowSandboxShell || req.scope.AllowSandboxSkills) {
 		entered := false
@@ -2046,7 +2052,11 @@ func (s *Service) executeQARequest(req *qaRequest) {
 		if err != nil && req.ctx.Err() == nil {
 			logger.Warnf(req.ctx, "[IM] Unable to acquire or retain the session sandbox turn: %v", err)
 			if !entered {
-				_ = req.adapter.SendReply(req.ctx, req.msg, &ReplyMessage{Content: "本次处理未能安全开始，请稍后重试。", IsFinal: true})
+				message := "本次处理未能安全开始，请稍后重试。"
+				if errors.Is(err, redislock.ErrLockBusy) {
+					message = "当前会话已有任务正在处理，请完成后重试。"
+				}
+				_ = req.adapter.SendReply(req.ctx, req.msg, &ReplyMessage{Content: message, IsFinal: true})
 			}
 		}
 		return
@@ -2056,11 +2066,6 @@ func (s *Service) executeQARequest(req *qaRequest) {
 
 func (s *Service) executeQARequestCore(req *qaRequest) {
 	ctx := req.ctx
-	if lifecycle, ok := req.adapter.(interface {
-		ExecutionFinished(context.Context, *IncomingMessage)
-	}); ok {
-		defer lifecycle.ExecutionFinished(ctx, req.msg)
-	}
 
 	// Track in-flight request so /stop can cancel it.
 	entry := &inflightEntry{cancel: req.cancel}

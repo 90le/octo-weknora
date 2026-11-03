@@ -11,7 +11,7 @@ import (
 )
 
 // imTurnLocks supplies the single-process fallback. A reference count removes
-// idle session entries while keeping waiting callers on the same semaphore.
+// idle session entries while concurrent callers inspect the same semaphore.
 type imTurnLocks struct {
 	mu      sync.Mutex
 	entries map[string]*imTurnLockEntry
@@ -42,6 +42,9 @@ func (l *imTurnLocks) withLock(ctx context.Context, key string, fn func(context.
 		}
 		l.mu.Unlock()
 	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	select {
 	case entry.semaphore <- struct{}{}:
 		defer func() { <-entry.semaphore }()
@@ -49,14 +52,15 @@ func (l *imTurnLocks) withLock(ctx context.Context, key string, fn func(context.
 			return err
 		}
 		return fn(ctx)
-	case <-ctx.Done():
-		return ctx.Err()
+	default:
+		return redislock.ErrLockBusy
 	}
 }
 
 // Serializing sandbox-capable turns prevents two messages in one session from
-// collecting each other's files. Other sessions and read-only channels remain
-// independent; a lost Redis lease cancels the current turn.
+// collecting each other's files. A concurrent request for the same session is
+// rejected promptly, so it cannot occupy a worker or overwrite the active
+// request's /stop entry. A lost Redis lease cancels the current turn.
 func (s *Service) withIMSessionTurnLock(
 	ctx context.Context, session *types.Session, fn func(context.Context) error,
 ) error {
@@ -64,5 +68,5 @@ func (s *Service) withIMSessionTurnLock(
 	if s.redis == nil {
 		return s.localTurnLocks.withLock(ctx, key, fn)
 	}
-	return redislock.WithRenewableLock(ctx, s.redis, key, 30*time.Second, 10*time.Second, fn)
+	return redislock.TryWithRenewableLock(ctx, s.redis, key, 30*time.Second, 10*time.Second, fn)
 }
