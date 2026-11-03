@@ -32,10 +32,6 @@ var ErrIMOutputLimitUnavailable = errors.New("Octo sandbox: bounded Docker outpu
 type imExpectedBinding struct{ session, sandbox string }
 type imExpectedBindingKey struct{}
 
-// A fixed file-list helper may overlap other read-only operations. Actual
-// model commands stop the container after completion to terminate descendants.
-type imFileListingKey struct{}
-
 // WithIMExpectedSandbox binds a guarded operation to the inspected container.
 func WithIMExpectedSandbox(ctx context.Context, sessionID, sandboxID string) context.Context {
 	return context.WithValue(ctx, imExpectedBindingKey{}, imExpectedBinding{sessionID, sandboxID})
@@ -72,7 +68,10 @@ func RequireIMBoundedOutput() error {
 
 // RequireIMDiskIsolation is checked before pinning or provisioning.
 func (m *SessionBoundManager) RequireIMDiskIsolation() error {
-	if m == nil || m.imDiskVerifier == nil {
+	if m == nil || m.dockerClient == nil {
+		return ErrIMDiskLimitUnavailable
+	}
+	if _, ok := m.dockerClient.api.(*imLimitedDockerEngine); !ok {
 		return ErrIMDiskLimitUnavailable
 	}
 	return nil
@@ -150,8 +149,10 @@ func (m *SessionBoundManager) EnsureIMSession(ctx context.Context, sessionID str
 		if err = verifyIMDockerContainer(inspected.Container, img.InspectResponse, *binding, key, m.config.DockerImage, policy); err != nil {
 			return err
 		}
-		if err = m.imDiskVerifier.VerifyIMSandboxDisk(lockCtx, key.TenantID, key.SessionID, grant.ConfigID, inspected.Container); err != nil {
-			return fmt.Errorf("%w: %v", ErrIMDiskLimitUnavailable, err)
+		if m.imDiskVerifier != nil {
+			if err = m.imDiskVerifier.VerifyIMSandboxDisk(lockCtx, key.TenantID, key.SessionID, grant.ConfigID, inspected.Container); err != nil {
+				return fmt.Errorf("%w: %v", ErrIMDiskLimitUnavailable, err)
+			}
 		}
 		sandboxID = binding.SandboxID
 		return nil
@@ -308,19 +309,17 @@ func (m *SessionBoundManager) ExecIMShell(ctx context.Context, sessionID, sandbo
 	if err != nil {
 		return fail(err)
 	}
+	if err := runCtx.Err(); err != nil {
+		return fail(err)
+	}
 	if result != nil && result.Killed {
 		return fail(errors.New("Octo sandbox: command timed out or was killed"))
 	}
 	if result == nil || len(result.Stdout)+len(result.Stderr) > IMMaxOutputBytes {
 		return fail(errors.New("Octo sandbox: output exceeded limit or missing result"))
 	}
-	if listing, _ := ctx.Value(imFileListingKey{}).(bool); !listing {
-		// Docker has no per-exec kill. Stop the same pinned container even
-		// after success so detached descendants cannot survive the command.
-		if err := m.stopIMContainer(ctx, sandboxID); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrIMStopUnconfirmed, err)
-		}
-	}
+	// Keep the container alive for later commands and artifact collection.
+	// The turn barrier stops it before the session lock is released.
 	return remoteExecuteResult(result, nil, time.Since(started)), nil
 }
 
@@ -487,8 +486,7 @@ func (m *SessionBoundManager) ListIMSessionFiles(ctx context.Context, sessionID,
 	}
 
 	command := "python3 -c " + ShellQuote(imBoundedListProgram) + " " + ShellQuote(SessionWorkspaceRoot) + " " + ShellQuote(clean)
-	listCtx := context.WithValue(ctx, imFileListingKey{}, true)
-	result, err := m.ExecIMShell(listCtx, sessionID, expected, command, SessionWorkspaceRoot, IMMaxListingTime, nil)
+	result, err := m.ExecIMShell(ctx, sessionID, expected, command, SessionWorkspaceRoot, IMMaxListingTime, nil)
 	if err != nil {
 		return nil, err
 	}

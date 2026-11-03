@@ -76,6 +76,28 @@ func imSandboxConfigFingerprint(ctx context.Context, pinner *SessionSandboxPinne
 }
 
 type imSandboxConfigBaselineKey struct{}
+type imSandboxFreshTurnKey struct{}
+
+// IsIMSandboxFreshTurn reports that the lock holder stopped the previous
+// session container before beginning this turn.
+func IsIMSandboxFreshTurn(ctx context.Context) bool {
+	fresh, _ := ctx.Value(imSandboxFreshTurnKey{}).(bool)
+	return fresh
+}
+
+// PrepareIMSandboxTurn must run while holding the IM session turn lock.
+// Stopping the old container discards its tmpfs before any new work starts.
+func (s *sessionService) PrepareIMSandboxTurn(ctx context.Context) (context.Context, error) {
+	prepared, err := s.PrepareIMSandboxContext(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	grant, _ := types.IMSandboxGrantFromContext(prepared)
+	if err := ReconcileIMSandboxBeforeTurn(prepared, s.sandboxPinner, s.sandboxResolver, grant.SessionID); err != nil {
+		return nil, err
+	}
+	return context.WithValue(prepared, imSandboxFreshTurnKey{}, true), nil
+}
 
 func withIMSandboxConfigBaseline(ctx context.Context, pinner *SessionSandboxPinner) (context.Context, error) {
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
@@ -198,10 +220,9 @@ func ReconcileIMSandboxBeforeTurn(ctx context.Context, pinner *SessionSandboxPin
 	}
 	_, err = backend.QuiesceIMSession(ctx, sessionID)
 	if errors.Is(err, sandbox.ErrIMSandboxNotFound) {
-		if pin.IsZero() {
-			return nil
-		}
-		return errors.New("Octo sandbox: existing pin has no confirmed binding")
+		// A pin can be saved before the first command creates a container.
+		// A successful authoritative lookup proving no binding is safe.
+		return nil
 	}
 	if err != nil {
 		return err

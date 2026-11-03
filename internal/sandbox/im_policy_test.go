@@ -155,10 +155,11 @@ func TestIMDockerManagerExecutesOnlyInspectedSession(t *testing.T) {
 		}
 		return nil
 	}})
-	// Production currently wires no disk verifier, so this must fail before
-	// creating or binding any container; the following verifier is a fake.
+	// Only the IM Docker wrapper may create a container for this path.
 	denied := *mgr
-	denied.imDiskVerifier = nil
+	unrestricted := *mgr.dockerClient
+	unrestricted.api = engine
+	denied.dockerClient = &unrestricted
 	_, err = denied.EnsureIMSession(ctx, "session", true)
 	require.ErrorIs(t, err, ErrIMDiskLimitUnavailable)
 	require.Empty(t, fake.created)
@@ -173,7 +174,12 @@ func TestIMDockerManagerExecutesOnlyInspectedSession(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "ok", result.Stdout)
 	require.Zero(t, streamed, "IM must not stream before final revalidation")
-	require.Contains(t, fake.stopped, id, "completed commands must stop their container")
+	require.NotContains(t, fake.stopped, id, "successful commands retain the workspace for the turn")
+	_, err = mgr.ExecIMShell(safe, "session", id, "printf again", SessionWorkspaceRoot, time.Minute, nil)
+	require.NoError(t, err)
+	require.NotContains(t, fake.stopped, id)
+	require.NoError(t, mgr.StopIMSession(safe, "session", id))
+	require.Contains(t, fake.stopped, id, "turn cleanup must stop the container")
 	require.Len(t, fake.created, 1)
 	require.Equal(t, "none", string(fake.created[0].HostConfig.NetworkMode))
 	require.Empty(t, fake.created[0].HostConfig.Binds)

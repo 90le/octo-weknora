@@ -3,6 +3,7 @@ package im
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -30,6 +31,17 @@ type qaExitResult struct {
 	err    error
 }
 
+func TestIMSandboxCancellationExplainsTemporaryFiles(t *testing.T) {
+	ctx := types.WithIMSandboxGrant(context.Background(), types.IMSandboxGrant{
+		SessionID: "session", TenantID: 7, ConfigID: "cfg", AllowShell: true,
+		Revalidate: func(context.Context) error { return nil },
+	})
+	got := imQAFailureReplyForContext(ctx, context.Canceled)
+	if got == imCancelledFallback || !strings.Contains(got, "临时文件可能丢失") {
+		t.Fatalf("cancellation notice missing: %q", got)
+	}
+}
+
 // Exercise both real consumers; for runQA, render errors as fallbackNonStream does.
 func startQAExitHandler(
 	ctx context.Context, stream, agent bool, run func(context.Context, *event.EventBus) error,
@@ -54,6 +66,7 @@ func startQAExitHandler(
 			if err == nil && !ended {
 				err = errors.New("handler returned without ending stream")
 			}
+			waitForIMSandboxQuiescence(ctx)
 			result <- qaExitResult{answer: final, err: err}
 			return
 		}
@@ -61,6 +74,7 @@ func startQAExitHandler(
 		if err != nil {
 			answer = imQAFailureReply(err)
 		}
+		waitForIMSandboxQuiescence(ctx)
 		result <- qaExitResult{answer: answer, err: err}
 	}()
 	return result
@@ -293,8 +307,8 @@ func TestIMQACancellationStopsProducer(t *testing.T) {
 	}
 }
 
-// The real stream and non-stream handlers must not return to their lock
-// owner while an asynchronous AgentQA sandbox operation or stop is pending.
+// The turn owner must not release its lock while an asynchronous AgentQA
+// sandbox operation or stop is pending.
 func TestIMQACancellationWaitsForSandboxStopBeforeReturn(t *testing.T) {
 	for _, stream := range []bool{true, false} {
 		name := "runQA"

@@ -28,16 +28,13 @@ const (
 	IMMaxOutputBytes       = 256 * 1024
 )
 
-// ErrIMDiskLimitUnavailable blocks Octo execution until a deployment supplies
-// a verifier for a durable, per-session hard write quota. CPU/memory limits
-// alone do not bound the Docker overlay filesystem.
-var ErrIMDiskLimitUnavailable = errors.New("Octo sandbox: verified persistent per-session disk quota is unavailable")
+// ErrIMDiskLimitUnavailable rejects a backend that cannot enforce the IM
+// read-only root and bounded temporary filesystem configuration.
+var ErrIMDiskLimitUnavailable = errors.New("Octo sandbox: bounded temporary filesystem isolation is unavailable")
 
-// IMSandboxDiskVerifier is a trusted deployment integration, not a user-set
-// flag. It must prove a hard write quota for the actual container and its
-// persistent workspace, including data surviving stop/restart, and reject
-// missing, shared, unverifiable or exhausted backing storage. No production
-// implementation is wired by this branch; absence fails closed.
+// IMSandboxDiskVerifier is an optional additional trusted deployment check.
+// The built-in container inspection always verifies the tmpfs limits and
+// read-only root, whether or not an additional verifier is supplied.
 type IMSandboxDiskVerifier interface {
 	VerifyIMSandboxDisk(context.Context, uint64, string, string, container.InspectResponse) error
 }

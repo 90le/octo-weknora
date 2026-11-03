@@ -188,6 +188,15 @@ func imQAFailureReply(err error) string {
 	return imErrorFallback
 }
 
+func imQAFailureReplyForContext(ctx context.Context, err error) string {
+	answer := imQAFailureReply(err)
+	grant, ok := types.IMSandboxGrantFromContext(ctx)
+	if ok && (grant.AllowShell || grant.AllowSkills) && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		return answer + "\n未完成的沙箱临时文件可能丢失；已交付的文件不受影响。"
+	}
+	return answer
+}
+
 // cleanIMContent applies all IM-specific content transformations:
 //  1. Collapse <image> XML blocks back to plain markdown
 //  2. Strip <kb/> and <web/> citation tags
@@ -356,7 +365,8 @@ type Service struct {
 	// redis is the optional Redis client for distributed state (dedup, rate
 	// limiting, leader election, cross-instance /stop). When nil the service
 	// falls back to local in-memory state (single-instance / Lite mode).
-	redis *redis.Client
+	redis          *redis.Client
+	localTurnLocks imTurnLocks
 
 	// instanceID uniquely identifies this service instance for leader election.
 	instanceID string
@@ -2036,6 +2046,23 @@ func (s *Service) persistIMLastRequestState(ctx context.Context, sessionID, agen
 // It is called by qaQueue workers and must not block indefinitely.
 func (s *Service) executeQARequest(req *qaRequest) {
 	defer req.cancel()
+	if req.channel != nil && req.channel.Platform == "octo" && req.scope != nil && req.session != nil && (req.scope.AllowSandboxShell || req.scope.AllowSandboxSkills) {
+		err := s.withIMSessionTurnLock(req.ctx, req.session, func(lockedCtx context.Context) error {
+			locked := *req
+			locked.ctx = lockedCtx
+			s.executeQARequestCore(&locked)
+			return nil
+		})
+		if err != nil && req.ctx.Err() == nil {
+			logger.Warnf(req.ctx, "[IM] sandbox session lock unavailable: %v", err)
+		}
+		return
+	}
+	s.executeQARequestCore(req)
+}
+
+func (s *Service) executeQARequestCore(req *qaRequest) {
+	ctx := req.ctx
 	if lifecycle, ok := req.adapter.(interface {
 		ExecutionFinished(context.Context, *IncomingMessage)
 	}); ok {
@@ -2109,6 +2136,22 @@ func (s *Service) executeQARequestCore(req *qaRequest) {
 		}
 	}
 	ctx = s.businessContext(ctx, req, req.scope)
+	if grant, ok := types.IMSandboxGrantFromContext(ctx); ok && (grant.AllowShell || grant.AllowSkills) {
+		preparer, ok := s.sessionService.(interface {
+			PrepareIMSandboxTurn(context.Context) (context.Context, error)
+		})
+		if !ok {
+			logger.Warnf(ctx, "[IM] sandbox turn preparation unavailable")
+			return
+		}
+		var err error
+		ctx, err = preparer.PrepareIMSandboxTurn(ctx)
+		if err != nil {
+			logger.Warnf(req.ctx, "[IM] sandbox turn preparation failed: %v", err)
+			return
+		}
+		defer waitForIMSandboxQuiescence(ctx)
+	}
 	ctx = s.beginIMArtifactTurn(ctx, req)
 	attachments, imageURLs, downloaded, err := s.prepareIMAttachments(ctx, req.msg, req.adapter)
 	if err != nil {
@@ -2176,7 +2219,7 @@ func (s *Service) executeQARequestCore(req *qaRequest) {
 	answer, err := s.runQA(ctx, req.session, req.msg.Content, req.agent, kbIDs, attachments, imageURLs, req.userKey, req.msg.Quote)
 	if err != nil {
 		logger.Errorf(ctx, "[IM] QA failed: %v, sending fallback reply", err)
-		answer = imQAFailureReply(err)
+		answer = imQAFailureReplyForContext(ctx, err)
 	}
 
 	outCtx := imOutboundContext(ctx)
@@ -2228,7 +2271,7 @@ func (s *Service) handleMessageFullOutput(
 	)
 	if qaErr != nil {
 		logger.Errorf(ctx, "[IM] Full-output QA failed: %v, sending fallback reply", qaErr)
-		answer = imQAFailureReply(qaErr)
+		answer = imQAFailureReplyForContext(ctx, qaErr)
 	}
 
 	// QA (and /stop) may have cancelled ctx. Platform updates must still run so
@@ -2719,7 +2762,6 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 	// A hard pipeline deadline would kill multi-round agent reasoning prematurely.
 	qaCtx, qaCancel := context.WithCancel(ctx)
 	defer qaCancel()
-	defer waitForIMSandboxQuiescence(qaCtx)
 
 	useAgent := customAgent != nil && customAgent.IsAgentMode()
 	eventBus := event.NewEventBus()
@@ -3132,7 +3174,7 @@ loop:
 	if noVisibleContent || finalDisplay == "" {
 		fallback := imNoAnswerFallback
 		if finalErr != nil {
-			fallback = imQAFailureReply(finalErr)
+			fallback = imQAFailureReplyForContext(ctx, finalErr)
 		}
 		finalDisplay = fallback
 		assistantMsg.IsFallback = true
@@ -3189,7 +3231,7 @@ func (s *Service) fallbackNonStream(ctx context.Context, msg *IncomingMessage, s
 	answer, err := s.runQA(ctx, session, msg.Content, customAgent, kbIDs, attachments, imageURLs, userKey, msg.Quote)
 	if err != nil {
 		logger.Errorf(ctx, "[IM] QA fallback failed: %v", err)
-		answer = imQAFailureReply(err)
+		answer = imQAFailureReplyForContext(ctx, err)
 	}
 
 	outCtx := imOutboundContext(ctx)
@@ -3205,7 +3247,6 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	// LLMCallTimeout. The context can still be cancelled by /stop.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	defer waitForIMSandboxQuiescence(ctx)
 
 	eventBus := event.NewEventBus()
 
@@ -3397,7 +3438,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 		}
 	case <-ctx.Done():
 		// Mark assistant message as completed to avoid dangling incomplete records
-		assistantMsg.Content = imCancelledFallback
+		assistantMsg.Content = imQAFailureReplyForContext(ctx, ctx.Err())
 		assistantMsg.IsCompleted = true
 		assistantMsg.IsFallback = true
 		// Use a fresh context since the original is cancelled
