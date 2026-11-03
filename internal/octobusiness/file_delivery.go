@@ -150,7 +150,9 @@ func (*fileDeliveryTool) Parameters() json.RawMessage {
 func explicitlyRequestsFile(text string) bool {
 	text = strings.ToLower(text)
 	fileWords := []string{
-		"文件", "附件", "markdown", ".md", ".txt", ".csv", ".json", ".html",
+		"文件", "附件", "压缩包", "电子表格", "演示文稿", "图片", "音频", "视频",
+		"markdown", ".md", ".txt", ".csv", ".json", ".html", ".zip", ".7z", ".rar",
+		".png", ".jpg", ".jpeg", ".svg", ".mp3", ".wav", ".mp4",
 		"pdf", "docx", "xlsx", "pptx", "word", "excel", "powerpoint", "attachment", "file",
 	}
 	requestWords := []string{
@@ -207,6 +209,15 @@ func (*fileDeliveryTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 		strings.ContainsRune(input.Content, 0) || strings.TrimSpace(input.Content) == "" || len(input.Content) > 1<<20 {
 		return toolResult(nil, argumentError("Use a plain file name with extension and nonempty UTF-8 content up to 1 MiB."))
 	}
+	contentType := mime.TypeByExtension(strings.ToLower(path.Ext(name)))
+	if contentType == "" {
+		contentType = "text/plain; charset=utf-8"
+	}
+	if !strings.HasPrefix(contentType, "text/") && !strings.Contains(contentType, "json") &&
+		!strings.Contains(contentType, "xml") && !strings.Contains(contentType, "yaml") &&
+		!strings.Contains(contentType, "toml") {
+		return toolResult(nil, argumentError("This tool only produces text; generate binary files in the sandbox."))
+	}
 	state := ctx.Value(fileDeliverySinkKey{}).(*fileDeliverySink)
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -218,15 +229,6 @@ func (*fileDeliveryTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 		return toolResult(nil, err)
 	}
 	state.attempts[name] = true
-	contentType := mime.TypeByExtension(strings.ToLower(path.Ext(name)))
-	if contentType == "" {
-		contentType = "text/plain; charset=utf-8"
-	}
-	if !strings.HasPrefix(contentType, "text/") && !strings.Contains(contentType, "json") &&
-		!strings.Contains(contentType, "xml") && !strings.Contains(contentType, "yaml") &&
-		!strings.Contains(contentType, "toml") {
-		return toolResult(nil, argumentError("This tool only produces text; generate binary files in the sandbox."))
-	}
 	file := &ReportArtifact{Name: name, Content: input.Content, ContentType: contentType}
 	if err := state.send(ctx, file); err != nil {
 		return toolResult(nil, err)

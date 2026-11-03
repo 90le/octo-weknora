@@ -345,7 +345,8 @@ type Service struct {
 	// inflight tracks in-progress QA requests, keyed by userKey
 	// ("channelID:userID:chatID"). Allows /stop to abort a running request
 	// on this instance and look up (sessionID, messageID) for StreamManager.
-	inflight sync.Map // userKey -> *inflightEntry
+	inflight       sync.Map // userKey -> *inflightEntry
+	localTurnLocks imTurnLocks
 
 	// qaQueue manages bounded queuing and worker-pool execution of QA requests,
 	// providing backpressure to protect downstream LLM resources.
@@ -2031,8 +2032,30 @@ func (s *Service) persistIMLastRequestState(ctx context.Context, sessionID, agen
 // executeQARequest is the worker handler that runs the QA pipeline for a queued request.
 // It is called by qaQueue workers and must not block indefinitely.
 func (s *Service) executeQARequest(req *qaRequest) {
-	ctx := req.ctx
 	defer req.cancel()
+	if req.channel != nil && req.channel.Platform == "octo" && req.scope != nil &&
+		req.session != nil && (req.scope.AllowFileDelivery || req.scope.AllowSandboxShell || req.scope.AllowSandboxSkills) {
+		entered := false
+		err := s.withIMSessionTurnLock(req.ctx, req.session, func(lockedCtx context.Context) error {
+			entered = true
+			locked := *req
+			locked.ctx = lockedCtx
+			s.executeQARequestCore(&locked)
+			return nil
+		})
+		if err != nil && req.ctx.Err() == nil {
+			logger.Warnf(req.ctx, "[IM] Unable to acquire or retain the session sandbox turn: %v", err)
+			if !entered {
+				_ = req.adapter.SendReply(req.ctx, req.msg, &ReplyMessage{Content: "本次处理未能安全开始，请稍后重试。", IsFinal: true})
+			}
+		}
+		return
+	}
+	s.executeQARequestCore(req)
+}
+
+func (s *Service) executeQARequestCore(req *qaRequest) {
+	ctx := req.ctx
 	if lifecycle, ok := req.adapter.(interface {
 		ExecutionFinished(context.Context, *IncomingMessage)
 	}); ok {

@@ -121,7 +121,7 @@ func TestIMArtifactTurnDeliversBoundedBinaryAndReportsPartialFailure(t *testing.
 	require.Equal(t, data, adapter.data[0])
 	require.Len(t, message.Artifacts, 2)
 	require.Contains(t, answer, "已发送文件：example.pdf")
-	require.Contains(t, answer, "文件发送失败或状态未知：example.txt")
+	require.Contains(t, answer, "文件发送状态未知，请先检查会话再重试：example.txt")
 }
 
 func TestIMArtifactTurnRechecksScopeAndContent(t *testing.T) {

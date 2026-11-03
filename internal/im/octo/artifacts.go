@@ -40,6 +40,15 @@ type fileFailure struct {
 func (e *fileFailure) Error() string { return "Octo generated file failed: " + e.code }
 func (e *fileFailure) Unwrap() error { return e.cause }
 
+// DeliveryOutcome distinguishes a known pre-send failure from an
+// unacknowledged send, where the server may already have accepted the message.
+func (e *fileFailure) DeliveryOutcome() string {
+	if e.code == "send_failed" || e.code == "send_not_acknowledged" {
+		return "unknown"
+	}
+	return "failed"
+}
+
 // Only stable codes and local identifiers may enter logs. In particular, a
 // storage *url.Error can contain the complete signed URL and must not escape.
 func (a *Adapter) fileFailure(ctx context.Context, in *im.IncomingMessage, code string, cause error) error {

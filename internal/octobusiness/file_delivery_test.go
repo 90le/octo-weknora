@@ -119,7 +119,10 @@ func TestFileDeliveryRejectsExplicitNegativeRequests(t *testing.T) {
 			t.Fatalf("negative request permitted file delivery: %q", text)
 		}
 	}
-	for _, text := range []string{"把知识生成 md 文件精简给我", "请导出 Markdown 文件", "please export a file"} {
+	for _, text := range []string{
+		"把知识生成 md 文件精简给我", "请导出 Markdown 文件", "please export a file",
+		"生成一份 PDF 给我", "请把内容做成 .zip 发送", "制作图片并发给我",
+	} {
 		if !explicitlyRequestsFile(text) {
 			t.Fatalf("explicit file request denied: %q", text)
 		}

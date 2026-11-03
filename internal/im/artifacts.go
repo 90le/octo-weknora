@@ -47,6 +47,12 @@ func (s *Service) beginIMArtifactTurn(ctx context.Context, req *qaRequest) conte
 		!octobusiness.WantsFileDelivery(req.msg.Content) {
 		return ctx
 	}
+	grant, ok := types.IMSandboxGrantFromContext(ctx)
+	if !ok || grant.SessionID != req.session.ID || grant.TenantID != req.session.TenantID {
+		// Text delivery does not require a sandbox; do not turn a successful
+		// text export into a misleading sandbox error when no grant exists.
+		return ctx
+	}
 	t := &imArtifactTurn{collector: s.artifactCollector, req: req, fingerprint: scopeFingerprint(req.scope)}
 	if t.collector == nil {
 		t.startErr = errors.New("artifact collection unavailable")
@@ -54,11 +60,6 @@ func (s *Service) beginIMArtifactTurn(ctx context.Context, req *qaRequest) conte
 	}
 	if err := t.authorize(ctx); err != nil {
 		t.startErr = err
-		return context.WithValue(ctx, imArtifactTurnKey{}, t)
-	}
-	grant, ok := types.IMSandboxGrantFromContext(ctx)
-	if !ok || grant.SessionID != req.session.ID || grant.TenantID != req.session.TenantID {
-		t.startErr = errors.New("sandbox grant unavailable")
 		return context.WithValue(ctx, imArtifactTurnKey{}, t)
 	}
 	t.snapshot, t.startErr = t.collector.SnapshotIM(
@@ -112,7 +113,7 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 	if !ok {
 		return answer + "\n\n文件发送未完成：当前渠道不支持附件投递。"
 	}
-	var sent, failed []string
+	var sent, failed, unknown []string
 	for _, artifact := range artifacts {
 		if t.authorize(callCtx) != nil || octobusiness.ValidateFileDeliveryAuthority(callCtx) != nil {
 			failed = append(failed, artifact.FileName)
@@ -128,7 +129,11 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 			contentType = "application/octet-stream"
 		}
 		if err := sender.SendGeneratedFile(callCtx, t.req.msg, artifact.FileName, data, contentType); err != nil {
-			failed = append(failed, artifact.FileName)
+			if outcome, ok := err.(interface{ DeliveryOutcome() string }); ok && outcome.DeliveryOutcome() == "failed" {
+				failed = append(failed, artifact.FileName)
+			} else {
+				unknown = append(unknown, artifact.FileName)
+			}
 			continue
 		}
 		sent = append(sent, artifact.FileName)
@@ -137,7 +142,10 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 		answer += "\n\n已发送文件：" + strings.Join(sent, "、") + "。"
 	}
 	if len(failed) > 0 {
-		answer += "\n\n文件发送失败或状态未知：" + strings.Join(failed, "、") + "。"
+		answer += "\n\n文件发送失败：" + strings.Join(failed, "、") + "。"
+	}
+	if len(unknown) > 0 {
+		answer += "\n\n文件发送状态未知，请先检查会话再重试：" + strings.Join(unknown, "、") + "。"
 	}
 	if collectErr != nil {
 		answer += "\n\n部分文件未能收集，请检查文件大小或沙箱状态后重试。"

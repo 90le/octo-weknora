@@ -28,6 +28,19 @@ func TestBusinessMarkdownCapabilityFollowsFullCurrentScope(t *testing.T) {
 		AllowGeneratedFiles: true, AllowPublicWeb: true, CanManageScope: true,
 		ManageKnowledgeBaseIDs: []string{"kb"},
 	}
+	baseline := *base
+	baselineAdapter := &fileScopeTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: &baseline}}
+	baselineReq := &qaRequest{
+		msg:       &IncomingMessage{UserID: "user", MessageID: "message", Content: "请发送文件", Extra: map[string]string{}},
+		channelID: "channel", channel: &IMChannel{TenantID: 1, Platform: "octo"}, adapter: baselineAdapter,
+	}
+	baselineCtx := (&Service{}).businessContext(context.Background(), baselineReq, base)
+	baselineResult, baselineErr := octobusiness.NewFileDeliveryTool().Execute(
+		baselineCtx, json.RawMessage(`{"name":"test.md","content":"test"}`),
+	)
+	if baselineErr != nil || !baselineResult.Success || baselineAdapter.sends != 1 {
+		t.Fatalf("legacy Markdown baseline failed: result=%+v sends=%d err=%v", baselineResult, baselineAdapter.sends, baselineErr)
+	}
 	for _, change := range []func(*ExecutionScope){
 		func(s *ExecutionScope) { s.AllowGeneratedFiles = false },
 		func(s *ExecutionScope) { s.AllowPublicWeb = false },
@@ -45,7 +58,7 @@ func TestBusinessMarkdownCapabilityFollowsFullCurrentScope(t *testing.T) {
 			t.Fatal("explicitly enabled file capability missing")
 		}
 		change(&current)
-		result, err := octobusiness.NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"test.txt","content":"test"}`))
+		result, err := octobusiness.NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"test.md","content":"test"}`))
 		if err != nil || result.Success || adapter.sends != 0 {
 			t.Fatalf("file reached sender after scope change: result=%+v sends=%d err=%v", result, adapter.sends, err)
 		}
