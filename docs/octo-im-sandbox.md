@@ -4,7 +4,7 @@ Octo 渠道的 `allow_sandbox_shell`、`allow_sandbox_skills` 和 `allow_file_de
 
 ## 镜像与部署
 
-候选实现创建只读 rootfs、96 MiB `/workspace` 和 64 MiB `/tmp` tmpfs，并核对实际容器配置。成功命令保持容器运行，同轮收集目标产物后停止；跨轮临时文件不保证保留。独立 VM 的 Docker 容器已验证连续命令共享工作区、停止后 tmpfs 清空及文档生成；当前代码路径的真实 Octo 收发仍待验收。
+已部署实现创建只读 rootfs、96 MiB `/workspace` 和 64 MiB `/tmp` tmpfs，并核对实际容器配置。成功命令保持容器运行，同轮收集目标产物后停止；跨轮临时文件不保证保留。独立 VM 的 Docker 容器已验证连续命令共享工作区、停止后 tmpfs 清空及文档生成；当前代码路径的真实 Octo 收发仍待验收。
 
 在隔离 Docker 守护进程上准备并审计干净基础镜像：不得含未授权 Skill、用户或宿主凭据、知识库数据库或 Docker socket。必须具备 `bash`、`timeout`、`python3`，且 `/workspace` 可写。镜像摘要只能固定身份，不能证明文件内容安全。Python 文档库可放在基础镜像内，不等同于授权 Skill。
 
@@ -15,7 +15,7 @@ WEKNORA_SANDBOX_DOCKER_ENABLED=true
 OCTO_IM_SANDBOX_CLEAN_IMAGE_ID=sha256:<64位本地镜像ID>
 ```
 
-例如在隔离 Docker VM 上用 `docker image inspect local/octo-sandbox:documents-651dadee --format '{{.Id}}'` 取得该标签当前的本地 ID；将输出填入 WeKnora 的部署环境，再按既有发布流程重启服务。不要把标签本身填入该变量。目标守护进程必须已有该镜像，IM 路径不会自动从仓库拉取；未配置、未审计或不可用时拒绝执行。此文档不代表生产已配置或验收。
+例如在隔离 Docker VM 上用 `docker image inspect local/octo-sandbox:documents-651dadee --format '{{.Id}}'` 取得该标签当前的本地 ID；将输出填入 WeKnora 的部署环境，再按既有发布流程重启服务。不要把标签本身填入该变量。目标守护进程必须已有该镜像，IM 路径不会自动从仓库拉取；未配置、未审计或不可用时拒绝执行。当前生产配置及验收证据见项目状态与本机运维资料。
 
 ## 边界与限制
 
