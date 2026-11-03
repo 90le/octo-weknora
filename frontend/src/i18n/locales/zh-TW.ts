@@ -8345,7 +8345,7 @@ export default {
   },
   artifactLibrary: {
     title: '產物',
-    subtitle: '這裡顯示可存取的網頁會話產物；Octo 等 IM 會話的檔案暫不顯示。',
+    subtitle: '這裡顯示可存取的網頁會話產物，以及已綁定 Octo 頻道的產物。',
     typeFilter: '按類型篩選',
     searchPlaceholder: '搜尋檔名',
     categories: {

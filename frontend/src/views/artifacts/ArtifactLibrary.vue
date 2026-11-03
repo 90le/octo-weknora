@@ -96,6 +96,7 @@
               </button>
               <button
                 type="button"
+                v-if="!item.im_channel_artifact"
                 class="session-link"
                 :title="$t('artifactLibrary.openSession')"
                 @click.stop="openSession(item)"
@@ -116,6 +117,7 @@
                 <template #icon><t-icon name="download" size="16px" /></template>
               </t-button>
               <t-button
+                v-if="!item.im_channel_artifact"
                 class="row-action row-action--danger"
                 variant="text"
                 shape="square"
@@ -156,7 +158,7 @@
           <ArtifactFileIcon class="preview-header-icon" :file-name="previewItem.file_name" />
           <div class="preview-header-text">
             <div class="preview-header-title" :title="previewItem.file_name">{{ previewItem.file_name }}</div>
-            <button type="button" class="session-link session-link--inline" @click="openSession(previewItem)">
+            <button v-if="!previewItem.im_channel_artifact" type="button" class="session-link session-link--inline" @click="openSession(previewItem)">
               <t-icon name="chat" size="12px" />
               <span>{{ previewItem.session_title || $t('artifactLibrary.untitledSession') }}</span>
             </button>
@@ -175,6 +177,7 @@
             <template #icon><t-icon name="download" size="16px" /></template>
           </t-button>
           <t-button
+            v-if="!previewItem.im_channel_artifact"
             class="row-action row-action--danger"
             variant="text"
             shape="square"
@@ -206,6 +209,7 @@
           :session-id="previewItem.session_id"
           :message-id="previewItem.message_id"
           :artifact-index="previewItem.index"
+          :channel-artifact="!!previewItem.im_channel_artifact"
           :file-type="previewFileType"
           :file-name="previewItem.file_name"
           :active="previewVisible"
@@ -222,7 +226,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { downloadArtifact } from '@/api/chat'
-import { deleteArtifactLibraryItem, listArtifactLibrary, type ArtifactLibraryItem } from '@/api/artifacts'
+import { deleteArtifactLibraryItem, downloadChannelArtifact, listArtifactLibrary, type ArtifactLibraryItem } from '@/api/artifacts'
 import {
   ARTIFACT_CATEGORIES,
   artifactCategoryExtensions,
@@ -378,7 +382,7 @@ async function handleDownload(item: ArtifactLibraryItem) {
   if (downloading[key]) return
   downloading[key] = true
   try {
-    const blob = await downloadArtifact(item.session_id, item.message_id, item.index)
+    const blob = item.im_channel_artifact ? await downloadChannelArtifact(item) : await downloadArtifact(item.session_id, item.message_id, item.index)
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url

@@ -30,6 +30,17 @@ func NewSessionRepository(db *gorm.DB) interfaces.SessionRepository {
 	return &sessionRepository{db: db}
 }
 
+// HasOctoSessionMapping includes historical mappings: clearing an IM chat
+// must never turn its artifacts into ordinary tenant-owned Web artifacts.
+func (r *sessionRepository) HasOctoSessionMapping(ctx context.Context, tenantID uint64, sessionID string) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Table("im_channel_sessions AS ics").
+		Joins("JOIN sessions AS s ON s.id = ics.session_id").
+		Where("s.id = ? AND s.tenant_id = ? AND ics.platform = ?", sessionID, tenantID, "octo").
+		Count(&count).Error
+	return count > 0, err
+}
+
 // Create creates a new session
 func (r *sessionRepository) Create(ctx context.Context, session *types.Session) (*types.Session, error) {
 	session.CreatedAt = time.Now()

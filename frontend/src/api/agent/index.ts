@@ -413,6 +413,19 @@ export function toggleIMChannel(id: string) {
   return post<{ data: IMChannel }>(`/api/v1/im-channels/${id}/toggle`);
 }
 
+// These endpoints operate only on the authenticated web account; no user ID is sent.
+export function getIMChannelWebOwner(id: string) {
+  return get<{ bound: boolean }>(`/api/v1/im-channels/${encodeURIComponent(id)}/web-owner`);
+}
+
+export function bindIMChannelWebOwner(id: string) {
+  return put<void>(`/api/v1/im-channels/${encodeURIComponent(id)}/web-owner`);
+}
+
+export function unbindIMChannelWebOwner(id: string) {
+  return del<void>(`/api/v1/im-channels/${encodeURIComponent(id)}/web-owner`);
+}
+
 // ===== 推荐问题 =====
 
 // 推荐问题

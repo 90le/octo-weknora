@@ -17,6 +17,12 @@ type deleteSessionRepo struct {
 	gotTenant uint64
 	gotUser   string
 	err       error
+	octo      bool
+	originErr error
+}
+
+func (r *deleteSessionRepo) HasOctoSessionMapping(context.Context, uint64, string) (bool, error) {
+	return r.octo, r.originErr
 }
 
 func (r *deleteSessionRepo) Get(_ context.Context, tenantID uint64, userID, id string) (*types.Session, error) {
@@ -69,6 +75,27 @@ func (r *deleteMessageRepo) CountLiveArtifactsByURL(_ context.Context, url strin
 func deleteCallerCtx() context.Context {
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
 	return context.WithValue(ctx, types.UserIDContextKey, "alice")
+}
+
+func TestDeleteSessionArtifactRejectsOctoAndUnknownOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		octo bool
+		err  error
+	}{
+		{name: "octo", octo: true},
+		{name: "origin lookup failed", err: stderrors.New("database unavailable")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &deleteMessageRepo{target: ptr(artifactRow("msg-1", 0, "resource://a", "/w/a.pptx"))}
+			s := &messageService{sessionRepo: &deleteSessionRepo{octo: tc.octo, originErr: tc.err}, messageRepo: repo}
+			_, err := s.DeleteSessionArtifact(deleteCallerCtx(), &types.ArtifactDeleteRequest{
+				SessionID: "sess-1", MessageID: "msg-1", Index: 0,
+			})
+			require.Error(t, err)
+			require.Empty(t, repo.askedURL)
+		})
+	}
 }
 
 func artifactRow(messageID string, pos int, url, path string) types.MessageArtifactRecord {

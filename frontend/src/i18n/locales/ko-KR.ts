@@ -8521,7 +8521,7 @@ export default {
   },
   artifactLibrary: {
     title: '산출물',
-    subtitle: '접근 가능한 웹 대화의 산출물을 표시합니다. Octo 등 IM 대화의 파일은 표시되지 않습니다.',
+    subtitle: '접근 가능한 웹 대화와 연결된 Octo 채널의 산출물을 표시합니다.',
     typeFilter: '유형별 필터',
     searchPlaceholder: '파일 이름 검색',
     categories: {

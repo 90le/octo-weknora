@@ -15,18 +15,20 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-var octoSourceTagRE = regexp.MustCompile(`<(kb|web)\b([^>]*)/?>`)
-var octoSourceAttrRE = regexp.MustCompile(`([A-Za-z_]+)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
-var octoSourceHeadingRE = regexp.MustCompile(`(?im)^\s*(?:\*\*)?(?:实际来源|来源|参考资料|参考|资料依据|sources?|references?)\s*(?:\*\*)?\s*[:：]\s*(?:\*\*)?`)
-var octoQuotedSourceTitleRE = regexp.MustCompile(`《([^《》\r\n]{1,400})》`)
-var octoGitCommitRE = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
-var octoGitHubLineFragmentRE = regexp.MustCompile(`^L[0-9]+(?:-L[0-9]+)?$`)
-var octoMarkdownGitHubLinkRE = regexp.MustCompile(`(?i)\[([^\]\r\n]+)\]\((<?https://(?:www\.)?github\.com\.?/[^\s)]+>?)\)`)
-var octoBareGitHubURLRE = regexp.MustCompile(`(?i)https://(?:www\.)?github\.com\.?/[^#\s<>"'\])，。；：！？,;:!?]+#(?:L|%4C)[0-9]+(?:-(?:L|%4C)[0-9]+)?`)
-var octoBareCredentialRE = regexp.MustCompile(`(?i)(?:^|[\s:=])(?:sk-|bf_|app_|uk_)[a-z0-9_-]{8,}`)
-var octoURLCredentialRE = regexp.MustCompile(`(?i)(?:^|[/#=:])(?:sk-|bf_|app_|uk_)[a-z0-9]{16,}`)
-var octoWindowsSlashPathRE = regexp.MustCompile(`(?i)^[a-z]:/`)
-var octoEmbeddedAbsolutePathRE = regexp.MustCompile(`(?i)(?:^|[\s（(:：])(?:[a-z]:/|~/|/[^/\s]+/)`)
+var (
+	octoSourceTagRE            = regexp.MustCompile(`<(kb|web)\b([^>]*)/?>`)
+	octoSourceAttrRE           = regexp.MustCompile(`([A-Za-z_]+)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+	octoSourceHeadingRE        = regexp.MustCompile(`(?im)^\s*(?:\*\*)?(?:实际来源|来源|参考资料|参考|资料依据|sources?|references?)\s*(?:\*\*)?\s*[:：]\s*(?:\*\*)?`)
+	octoQuotedSourceTitleRE    = regexp.MustCompile(`《([^《》\r\n]{1,400})》`)
+	octoGitCommitRE            = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+	octoGitHubLineFragmentRE   = regexp.MustCompile(`^L[0-9]+(?:-L[0-9]+)?$`)
+	octoMarkdownGitHubLinkRE   = regexp.MustCompile(`(?i)\[([^\]\r\n]+)\]\((<?https://(?:www\.)?github\.com\.?/[^\s)]+>?)\)`)
+	octoBareGitHubURLRE        = regexp.MustCompile(`(?i)https://(?:www\.)?github\.com\.?/[^#\s<>"'\])，。；：！？,;:!?]+#(?:L|%4C)[0-9]+(?:-(?:L|%4C)[0-9]+)?`)
+	octoBareCredentialRE       = regexp.MustCompile(`(?i)(?:^|[\s:=])(?:sk-|bf_|app_|uk_)[a-z0-9_-]{8,}`)
+	octoURLCredentialRE        = regexp.MustCompile(`(?i)(?:^|[/#=:])(?:sk-|bf_|app_|uk_)[a-z0-9]{16,}`)
+	octoWindowsSlashPathRE     = regexp.MustCompile(`(?i)^[a-z]:/`)
+	octoEmbeddedAbsolutePathRE = regexp.MustCompile(`(?i)(?:^|[\s（(:：])(?:[a-z]:/|~/|/[^/\s]+/)`)
+)
 
 const maxOctoObservedLineSubset = 12
 
@@ -191,6 +193,7 @@ func octoCitationAttrs(raw string) map[string]string {
 	}
 	return attrs
 }
+
 func octoAllowedKB(p octobusiness.Principal, id string) bool {
 	for _, kb := range p.KnowledgeBaseIDs {
 		if kb == id {
@@ -199,6 +202,7 @@ func octoAllowedKB(p octobusiness.Principal, id string) bool {
 	}
 	return false
 }
+
 func uniqueCitedKnowledge(refs []*types.SearchResult, chunk, kb, title string) *types.SearchResult {
 	byID := map[string]*types.SearchResult{}
 	for _, ref := range refs {
@@ -251,6 +255,7 @@ func safeOctoSourceURL(raw string) string {
 	}
 	return parsed.String()
 }
+
 func persistedOctoSource(k *types.Knowledge) string {
 	// Native manual metadata also contains numeric version fields. Read only
 	// the provenance fields instead of requiring every metadata value to be text.
@@ -280,6 +285,7 @@ func persistedOctoSource(k *types.Knowledge) string {
 	}
 	return candidate
 }
+
 func markdownSourceTitle(title string) string {
 	title = strings.Join(strings.Fields(title), " ")
 	return strings.NewReplacer("\\", "\\\\", "[", "\\[", "]", "\\]", "<", "&lt;", ">", "&gt;").Replace(title)
@@ -431,33 +437,48 @@ func (s *Service) appendOctoSources(ctx context.Context, answer string, refs []*
 	// Render only the same explicitly cited, current-turn sources that passed
 	// the tail-list checks above. Invalid tags disappear, including references
 	// to draft, other-tenant, other-KB, or otherwise unobserved material.
-	answer = octoSourceTagRE.ReplaceAllStringFunc(answer, func(tag string) string {
+	renderTag := func(tag string) (string, string) {
 		match := octoSourceTagRE.FindStringSubmatch(tag)
 		if len(match) != 3 {
-			return ""
+			return "", ""
 		}
 		attrs := octoCitationAttrs(match[2])
 		if match[1] == "web" {
 			valid := safeOctoSourceURL(attrs["url"])
 			source, ok := rawSources[valid]
 			if !ok {
-				return ""
+				return "", ""
 			}
 			title := source.Title
 			if title == "" {
 				title = source.Path
 			}
-			return inlineOctoSource(octoCitedSource{title: title, url: valid})
+			return inlineOctoSource(octoCitedSource{title: title, url: valid}), "web:" + valid
 		}
 		ref := uniqueCitedKnowledge(refs, attrs["chunk_id"], attrs["kb_id"], attrs["doc"])
 		if ref == nil {
-			return ""
+			return "", ""
 		}
 		if source, ok := resolvedKnowledge[ref.KnowledgeID]; ok {
-			return inlineOctoSource(source)
+			return inlineOctoSource(source), "kb:" + ref.KnowledgeID
 		}
-		return ""
-	})
+		return "", ""
+	}
+	var rendered strings.Builder
+	lastEnd := 0
+	previousKey := ""
+	for _, loc := range octoSourceTagRE.FindAllStringIndex(answer, -1) {
+		between := answer[lastEnd:loc[0]]
+		text, key := renderTag(answer[loc[0]:loc[1]])
+		if key == "" || key != previousKey || strings.Trim(between, " \t") != "" {
+			rendered.WriteString(between)
+			rendered.WriteString(text)
+		}
+		previousKey = key
+		lastEnd = loc[1]
+	}
+	rendered.WriteString(answer[lastEnd:])
+	answer = rendered.String()
 	seen := map[string]bool{}
 	lines := []string{}
 	visibleAnswer := answer

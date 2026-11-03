@@ -39,6 +39,7 @@ func (a *catalogFileAgent) GetSharedAgentForTenant(
 
 func TestCatalogFileAuthorizationRejectsPrivateHandlesInSharedText(t *testing.T) {
 	catalog, db := newResourceCatalogForTest(t)
+	addOctoOriginTables(t, db)
 	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}, &types.Chunk{}, &types.WikiPage{}))
 	ctx := newSharedAccessContext()
 	const physical = "local://7/exports/private.png"
@@ -109,6 +110,7 @@ func TestCatalogFileAuthorizationRejectsPrivateHandlesInSharedText(t *testing.T)
 
 func TestCatalogSharedAgentFileRequiresCurrentSelectionOrExactArtifactBinding(t *testing.T) {
 	catalog, db := newResourceCatalogForTest(t)
+	addOctoOriginTables(t, db)
 	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}))
 	ctx := newSharedAccessContext()
 	const physical = "local://7/exports/source.pdf"

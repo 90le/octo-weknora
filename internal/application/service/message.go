@@ -537,6 +537,7 @@ func (s *messageService) ListArtifactLibrary(
 	}
 	query.TenantID = types.MustTenantIDFromContext(ctx)
 	query.UserID = types.SessionOwnerIDFromContext(ctx)
+	query.WebOwnerID = artifactWebOwnerID(ctx)
 	pagination := &types.Pagination{Page: query.Page, PageSize: query.PageSize}
 	query.Page = pagination.GetPage()
 	query.PageSize = min(pagination.GetPageSize(), artifactLibraryMaxPageSize)
@@ -552,7 +553,7 @@ func (s *messageService) ListArtifactLibrary(
 		return nil, err
 	}
 	for _, item := range items {
-		if handle, ok := types.ParseResourcePath(item.URL); ok {
+		if handle, ok := types.ParseResourcePath(item.URL); ok && !item.IMChannelArtifact {
 			item.Handle = types.BuildResourcePath(handle)
 		}
 	}
@@ -1039,4 +1040,26 @@ func groupByRequestID(items []*types.MessageSearchResultItem) []*types.MessageSe
 
 func searchPairKey(sessionID, requestID string) string {
 	return sessionID + "\x00" + requestID
+}
+
+// artifactWebOwnerID accepts only an authenticated Web user, never an API key.
+func artifactWebOwnerID(ctx context.Context) string {
+	p, ok := ctx.Value(types.PrincipalContextKey).(types.Principal)
+	caller := types.CallerFromContext(ctx)
+	_, apiKey := types.TenantAPIKeyScopeFromContext(ctx)
+	if apiKey || !ok || p.Type != types.PrincipalWebUser || p.ID == "" || p.ID != caller.UserID || caller.TenantID == 0 || caller.TenantID != types.MustTenantIDFromContext(ctx) {
+		return ""
+	}
+	return p.ID
+}
+
+func (s *messageService) GetChannelArtifactMessage(ctx context.Context, sessionID, messageID string, position int) (*types.Message, error) {
+	userID := artifactWebOwnerID(ctx)
+	repo, ok := s.messageRepo.(interface {
+		GetChannelArtifactMessage(context.Context, uint64, string, string, string, int) (*types.Message, error)
+	})
+	if userID == "" || !ok {
+		return nil, errors.New("artifact not found")
+	}
+	return repo.GetChannelArtifactMessage(ctx, types.MustTenantIDFromContext(ctx), userID, sessionID, messageID, position)
 }

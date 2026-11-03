@@ -111,8 +111,9 @@ func (r MessageArtifactRecord) Artifact() MessageArtifact {
 // ArtifactLibraryQuery lists the artifacts across every session the caller can
 // see. TenantID and UserID are filled by the service from the request context.
 type ArtifactLibraryQuery struct {
-	TenantID uint64
-	UserID   string
+	TenantID   uint64
+	UserID     string
+	WebOwnerID string // authenticated Web principal eligible for channel grants
 	// Keyword matches the file name, case-insensitively.
 	Keyword string
 	// FileTypes restricts results to these extensions (".pdf", ".pptx", ...).
@@ -125,18 +126,19 @@ type ArtifactLibraryQuery struct {
 // Versions are the artifacts that share a session and sandbox source path:
 // regenerating report.pptx three times is one item with VersionCount 3.
 type ArtifactLibraryItem struct {
-	SessionID    string    `json:"session_id"    gorm:"column:session_id"`
-	SessionTitle string    `json:"session_title" gorm:"column:session_title"`
-	MessageID    string    `json:"message_id"    gorm:"column:message_id"`
-	Index        int       `json:"index"         gorm:"column:position"`
-	URL          string    `json:"-"             gorm:"column:url"`
-	Handle       string    `json:"handle,omitempty" gorm:"-"`
-	FileName     string    `json:"file_name"     gorm:"column:file_name"`
-	FileType     string    `json:"file_type"     gorm:"column:file_type"`
-	FileSize     int64     `json:"file_size"     gorm:"column:file_size"`
-	SourcePath   string    `json:"source_path"   gorm:"column:source_path"`
-	CreatedAt    time.Time `json:"created_at"    gorm:"column:created_at"`
-	VersionCount int       `json:"version_count" gorm:"column:version_count"`
+	IMChannelArtifact bool      `json:"im_channel_artifact" gorm:"column:im_channel_artifact"`
+	SessionID         string    `json:"session_id"    gorm:"column:session_id"`
+	SessionTitle      string    `json:"session_title" gorm:"column:session_title"`
+	MessageID         string    `json:"message_id"    gorm:"column:message_id"`
+	Index             int       `json:"index"         gorm:"column:position"`
+	URL               string    `json:"-"             gorm:"column:url"`
+	Handle            string    `json:"handle,omitempty" gorm:"-"`
+	FileName          string    `json:"file_name"     gorm:"column:file_name"`
+	FileType          string    `json:"file_type"     gorm:"column:file_type"`
+	FileSize          int64     `json:"file_size"     gorm:"column:file_size"`
+	SourcePath        string    `json:"source_path"   gorm:"column:source_path"`
+	CreatedAt         time.Time `json:"created_at"    gorm:"column:created_at"`
+	VersionCount      int       `json:"version_count" gorm:"column:version_count"`
 }
 
 // ArtifactRef addresses one artifact row by its business key. The primary key

@@ -86,9 +86,24 @@ func requireFilePathQuery(c *gin.Context) (string, bool) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing required parameter: file_path"})
 		return "", false
 	}
-	if strings.Contains(filePath, "..") {
+	// Raw local drivers also accept filesystem paths and malformed local:/
+	// wrappers. A later embedded :// can fool tenant parsing, so external
+	// routes accept only recognized provider locators or resource handles.
+	_, isResource := types.ParseResourcePath(filePath)
+	if !isResource && types.ParseProviderScheme(filePath) == "" &&
+		!strings.HasPrefix(filePath, "https://") && !strings.HasPrefix(filePath, "http://") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file path"})
 		return "", false
+	}
+	if strings.Contains(filePath, "..") {
+		// Only local paths whose lexical traversal never leaves their original
+		// tenant may proceed to the normal tenant and origin checks.
+		tenantID := secutils.ParseTenantIDFromStoragePath(filePath)
+		_, local, err := access.CanonicalLocalLocator(tenantID, filePath)
+		if !local || err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file path"})
+			return "", false
+		}
 	}
 	return filePath, true
 }
@@ -182,6 +197,10 @@ func newFileServeHandler(
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized: workspace context missing"})
 			return
 		}
+		octoArtifact, err := access.CheckOctoFile(c.Request.Context(), resourceCatalog, tenant.ID, filePath)
+		if fileAccessError(c, err) {
+			return
+		}
 		filePath, resourceResolved, ok := resolveCatalogResource(c, resourceCatalog, filePath, tenant.ID)
 		if !ok {
 			return
@@ -217,7 +236,11 @@ func newFileServeHandler(
 		}
 
 		contentType, inline := secutils.SafeContentTypeByFilename(filePath)
-		streamStoredFile(c, reader, contentType, inline, "public, max-age=86400", "/files", filePath)
+		cacheControl := "public, max-age=86400"
+		if octoArtifact {
+			cacheControl = "private, no-store"
+		}
+		streamStoredFile(c, reader, contentType, inline, cacheControl, "/files", filePath)
 	}
 }
 
@@ -658,6 +681,14 @@ func servePresignedPreview(
 			tenant, _ := ctx.Value(types.TenantInfoContextKey).(*types.Tenant)
 			if tenant == nil {
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized: workspace context missing"})
+				return
+			}
+			matched, checkErr := access.CheckOctoFile(ctx, resourceCatalog, tenant.ID, filePath)
+			if fileAccessError(c, checkErr) {
+				return
+			}
+			if matched {
+				c.Status(http.StatusForbidden)
 				return
 			}
 
