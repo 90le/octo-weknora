@@ -70,6 +70,17 @@ func (s *Service) businessContext(ctx context.Context, req *qaRequest, scope *Ex
 	ctx = octobusiness.WithRetrievalTrace(ctx)
 	if sender, ok := req.adapter.(generatedFileSender); ok {
 		sink := func(callCtx context.Context, file *octobusiness.ReportArtifact) error {
+			if reporting, ok := sender.(interface {
+				SendGeneratedFileWithResult(context.Context, *IncomingMessage, string, []byte, string) (string, error)
+			}); ok {
+				name, err := reporting.SendGeneratedFileWithResult(
+					callCtx, req.msg, file.Name, []byte(file.Content), file.ContentType,
+				)
+				if err == nil && name != "" {
+					file.Name = name
+				}
+				return err
+			}
 			return sender.SendGeneratedFile(callCtx, req.msg, file.Name, []byte(file.Content), file.ContentType)
 		}
 		ctx = octobusiness.WithReportSink(ctx, sink)

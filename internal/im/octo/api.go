@@ -53,6 +53,20 @@ func (c *apiClient) request(ctx context.Context, method, path string, body any, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Retain only this specific, non-sensitive policy code. Never expose the
+		// response body, which can contain server or request details.
+		if resp.StatusCode == http.StatusBadRequest {
+			var envelope struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, wire.MaxPacket+1))
+			if readErr == nil && len(body) <= wire.MaxPacket && json.Unmarshal(body, &envelope) == nil &&
+				envelope.Error.Code == "err.server.bot_api.file_type_unsupported" {
+				return errors.Join(&apiStatusError{Status: resp.StatusCode}, errUnsupportedFileType)
+			}
+		}
 		return &apiStatusError{Status: resp.StatusCode}
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, wire.MaxPacket+1))

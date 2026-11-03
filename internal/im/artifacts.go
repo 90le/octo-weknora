@@ -183,7 +183,7 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 	if !ok {
 		return answer + "\n\n文件发送未完成：当前渠道不支持附件投递。"
 	}
-	var sent, failed, unknown []string
+	var sent, sentDisplay, failed, unknown []string
 	for _, artifact := range artifacts {
 		if t.authorize(callCtx) != nil || octobusiness.ValidateFileDeliveryAuthority(callCtx) != nil {
 			failed = append(failed, artifact.FileName)
@@ -198,7 +198,18 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 		if contentType == "" {
 			contentType = "application/octet-stream"
 		}
-		if err := sender.SendGeneratedFile(callCtx, t.req.msg, artifact.FileName, data, contentType); err != nil {
+		deliveredName := artifact.FileName
+		var deliveryErr error
+		if reporting, ok := sender.(interface {
+			SendGeneratedFileWithResult(context.Context, *IncomingMessage, string, []byte, string) (string, error)
+		}); ok {
+			deliveredName, deliveryErr = reporting.SendGeneratedFileWithResult(
+				callCtx, t.req.msg, artifact.FileName, data, contentType,
+			)
+		} else {
+			deliveryErr = sender.SendGeneratedFile(callCtx, t.req.msg, artifact.FileName, data, contentType)
+		}
+		if err := deliveryErr; err != nil {
 			if outcome, ok := err.(interface{ DeliveryOutcome() string }); ok && outcome.DeliveryOutcome() == "failed" {
 				failed = append(failed, artifact.FileName)
 			} else {
@@ -207,15 +218,22 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 			continue
 		}
 		sent = append(sent, artifact.FileName)
+		if deliveredName != "" && deliveredName != artifact.FileName {
+			sentDisplay = append(sentDisplay, deliveredName+"（包含 "+artifact.FileName+"）")
+		} else {
+			sentDisplay = append(sentDisplay, artifact.FileName)
+		}
 	}
 	if len(sent) > 0 {
 		answer = renderDeliveredArtifactNames(answer, sent)
-		answer += "\n\n已发送文件：" + strings.Join(sent, "、") + "。"
+		answer += "\n\n已发送文件：" + strings.Join(sentDisplay, "、") + "。"
 	}
 	if len(failed) > 0 {
+		answer = renderDeliveredArtifactNames(answer, failed)
 		answer += "\n\n文件发送失败：" + strings.Join(failed, "、") + "。"
 	}
 	if len(unknown) > 0 {
+		answer = renderDeliveredArtifactNames(answer, unknown)
 		answer += "\n\n文件发送状态未知，请先检查会话再重试：" + strings.Join(unknown, "、") + "。"
 	}
 	if collectErr != nil {

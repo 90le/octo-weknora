@@ -3,6 +3,7 @@ package im
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/answerevidence"
@@ -13,6 +14,40 @@ import (
 type fileScopeTestAdapter struct {
 	*scopeTestAdapter
 	sends int
+}
+
+type resultFileScopeAdapter struct{ *fileScopeTestAdapter }
+
+func (a *resultFileScopeAdapter) SendGeneratedFileWithResult(
+	ctx context.Context, msg *IncomingMessage, name string, data []byte, contentType string,
+) (string, error) {
+	if err := a.SendGeneratedFile(ctx, msg, name, data, contentType); err != nil {
+		return "", err
+	}
+	return name + ".zip", nil
+}
+
+func TestBusinessTextFileReportsActualAttachment(t *testing.T) {
+	scope := &ExecutionScope{
+		AccountID: "account", ScopeID: "scope", KnowledgeBaseIDs: []string{"kb"},
+		Revision: "r", AllowFileDelivery: true,
+	}
+	adapter := &resultFileScopeAdapter{&fileScopeTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}}}
+	req := &qaRequest{
+		msg: &IncomingMessage{
+			UserID: "user", MessageID: "message", Content: "生成并发送文件 diagram.svg",
+			ChatType: ChatTypeDirect, Extra: map[string]string{},
+		},
+		channelID: "channel", channel: &IMChannel{TenantID: 1, Platform: "octo"}, adapter: adapter,
+	}
+	ctx := (&Service{}).businessContext(context.Background(), req, scope)
+	result, err := octobusiness.NewFileDeliveryTool().Execute(
+		ctx, json.RawMessage(`{"name":"diagram.svg","content":"<svg/>"}`),
+	)
+	encoded, _ := json.Marshal(result)
+	if err != nil || !result.Success || !strings.Contains(string(encoded), "diagram.svg.zip") {
+		t.Fatalf("actual attachment not reported: result=%s err=%v", encoded, err)
+	}
 }
 
 func (a *fileScopeTestAdapter) SendGeneratedFile(

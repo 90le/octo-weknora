@@ -81,9 +81,22 @@ func (f *memoryIMArtifactFiles) GetFile(_ context.Context, key string) (io.ReadC
 
 type artifactTestAdapter struct {
 	*scopeTestAdapter
-	sent []string
-	data [][]byte
-	fail string
+	sent        []string
+	data        [][]byte
+	fail        string
+	packageName string
+}
+
+func (a *artifactTestAdapter) SendGeneratedFileWithResult(
+	ctx context.Context, in *IncomingMessage, name string, data []byte, contentType string,
+) (string, error) {
+	if err := a.SendGeneratedFile(ctx, in, name, data, contentType); err != nil {
+		return "", err
+	}
+	if a.packageName != "" {
+		return a.packageName, nil
+	}
+	return name, nil
 }
 
 func (a *artifactTestAdapter) SendGeneratedFile(
@@ -116,7 +129,9 @@ func TestIMArtifactTurnDeliversBoundedBinaryAndReportsPartialFailure(t *testing.
 		AccountID: "account", ScopeID: "scope", Revision: "r",
 		KnowledgeBaseIDs: []string{"kb"}, AllowFileDelivery: true,
 	}
-	adapter := &artifactTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}, fail: second.FileName}
+	adapter := &artifactTestAdapter{
+		scopeTestAdapter: &scopeTestAdapter{scope: scope}, fail: second.FileName, packageName: "example.pdf.zip",
+	}
 	agent := &types.CustomAgent{TenantID: 7}
 	agent.Config.SandboxConfigID = "cfg"
 	req := &qaRequest{
@@ -147,8 +162,9 @@ func TestIMArtifactTurnDeliversBoundedBinaryAndReportsPartialFailure(t *testing.
 	require.Equal(t, []string{"example.pdf"}, adapter.sent)
 	require.Equal(t, data, adapter.data[0])
 	require.Len(t, message.Artifacts, 2)
-	require.Contains(t, answer, "已发送文件：example.pdf")
+	require.Contains(t, answer, "已发送文件：example.pdf.zip（包含 example.pdf）")
 	require.NotContains(t, answer, "sandbox:example.pdf")
+	require.NotContains(t, answer, "sandbox:example.txt")
 	require.Contains(t, answer, "文件发送状态未知，请先检查会话再重试：example.txt")
 }
 
