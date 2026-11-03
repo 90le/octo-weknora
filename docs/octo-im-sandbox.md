@@ -4,7 +4,7 @@ Octo 渠道的 `allow_sandbox_shell`、`allow_sandbox_skills` 和 `allow_file_de
 
 ## 镜像与部署
 
-IM 容器创建设置只读 rootfs、96 MiB `/workspace` 和 64 MiB `/tmp` tmpfs，并核对实际容器配置。成功命令保持容器运行，轮次结束后停止；跨轮临时文件不保证保留。该分支尚未完成与文件投递的整合，也尚未对本次代码进行真实 Docker 验收。
+候选实现创建只读 rootfs、96 MiB `/workspace` 和 64 MiB `/tmp` tmpfs，并核对实际容器配置。成功命令保持容器运行，同轮收集目标产物后停止；跨轮临时文件不保证保留。独立 VM 的 Docker 容器已验证连续命令共享工作区、停止后 tmpfs 清空及文档生成；当前代码路径的真实 Octo 收发仍待验收。
 
 在隔离 Docker 守护进程上准备并审计干净基础镜像：不得含未授权 Skill、用户或宿主凭据、知识库数据库或 Docker socket。必须具备 `bash`、`timeout`、`python3`，且 `/workspace` 可写。镜像摘要只能固定身份，不能证明文件内容安全。Python 文档库可放在基础镜像内，不等同于授权 Skill。
 
@@ -27,7 +27,7 @@ OCTO_IM_SANDBOX_CLEAN_IMAGE_ID=sha256:<64位本地镜像ID>
 
 ## 调用方与锁
 
-持有并续租会话锁后，在产物 begin 前调用 `PrepareIMSandboxContext(ctx, true)`，并在整轮保留返回的上下文；然后调用 `ReconcileIMSandboxBeforeTurn` 确认旧绑定容器已停止。只有 `ValidateIMSandboxEmptyBaseline` 确认 SQL pin 和底层 binding 都不存在，才能使用空基线；binding 已存在或读取失败时必须拒绝或安全快照。实际读取前使用 `PrepareIMSandboxContext(ctx, false)` 重新核验、确认 `EnsureIMSession(..., false)` 返回同一容器，并限定到 `/workspace/output/`，通过 `ReadSessionFileBounded` 和组件级 NOFOLLOW 读取。受控 `ReadSessionFileBounded` 自行设置必要的原始流预算；直接使用底层 Docker reader 时，输出大于默认 256 KiB 需要传递适当的 `WithIMDockerOutputLimit`，但不得超过 20 MiB；发送前还须重新核验文件投递授权。
+持有会话锁后，在产物快照前调用 `PrepareIMSandboxTurn`，确认旧容器停止并将空工作区状态绑定到本轮；未经过该准备的空基线必须同时核验 SQL pin 和底层绑定。实际读取前复核同一会话和沙箱，将读取限定到 `/workspace/output/`，通过 `ReadSessionFileBounded` 和组件级 NOFOLLOW 读取；发送前再次核验文件投递授权。
 
 整轮处理结束前封闭新操作、等待进行中的操作结束，并确认受影响容器停止；失败时持锁重试。文件投递集成必须在整条产物收集路径结束后才调用 `types.SealIMSandboxTurn`，成功后释放锁。锁失租或进程崩溃后，下一持有者执行前必须先确认旧容器停止；内存屏障本身不能证明跨进程故障下的锁隔离。
 
