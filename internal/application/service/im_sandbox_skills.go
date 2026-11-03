@@ -98,7 +98,12 @@ func (s *sessionService) withIMSkillsCheck(ctx context.Context, cfg *types.Agent
 		return nil, err
 	}
 	if len(rows) == 0 {
-		return nil, errors.New("Octo sandbox: no approved Skills are available")
+		// Enabling the channel capability does not imply that an administrator
+		// has installed a Skill. Keep ordinary QA and the independent shell
+		// available while exposing no Skill tools for this turn.
+		cfg.SkillsEnabled = false
+		cfg.AllowedSkills = nil
+		cfg.PinnedSkillNames = nil
 	}
 	cfg.TenantSkills = rows
 	allowedNames := make([]string, 0, len(rows))

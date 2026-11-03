@@ -217,6 +217,18 @@ func TestIMSkillSelectionAndCredentialIsolation(t *testing.T) {
 	require.ErrorContains(t, err, "digest")
 }
 
+func TestIMEnabledSkillCapabilityWithNoInstalledSkills(t *testing.T) {
+	cfg := &types.TenantSandboxConfig{SandboxType: "docker", Docker: &types.DockerSandboxConfig{Image: "base"}}
+	svc := &sessionService{tenantSkillRepo: &imSkillRepoFixture{}, sandboxConfigRepo: &imConfigRepoFixture{cfg: &types.TenantSandboxConfigEntity{ID: "cfg", TenantID: 7, Config: cfg}}}
+	grant := types.IMSandboxGrant{SessionID: "s-1", TenantID: 7, ConfigID: "cfg", AllowSkills: true, SkillsSelectionMode: "all", Revalidate: func(context.Context) error { return nil }}
+	runtimeConfig := &types.AgentConfig{SkillsEnabled: true}
+	ctx, err := svc.withIMSkillsCheck(types.WithIMSandboxGrant(context.Background(), grant), runtimeConfig)
+	require.NoError(t, err)
+	require.False(t, runtimeConfig.SkillsEnabled)
+	require.Empty(t, runtimeConfig.TenantSkills)
+	require.NoError(t, ctx.Value(imSkillRevalidatorKey{}).(imSkillRevalidator)(ctx))
+}
+
 func TestIMApprovedSkillToolStagesAndExecutesOnlySelected(t *testing.T) {
 	db := newPinTestDB(t)
 	require.NoError(t, db.AutoMigrate(&types.TenantSandboxConfigEntity{}))
