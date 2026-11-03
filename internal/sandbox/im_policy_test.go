@@ -156,10 +156,9 @@ func TestIMDockerManagerExecutesOnlyInspectedSession(t *testing.T) {
 		return nil
 	}})
 	// Only the IM Docker wrapper may create a container for this path.
-	denied := *mgr
-	unrestricted := *mgr.dockerClient
-	unrestricted.api = engine
-	denied.dockerClient = &unrestricted
+	unrestricted := newDockerRemoteClientWithAPI(engine, settings)
+	denied, err := NewSessionBoundManager(SessionBoundManagerConfig{Config: cfg, Client: unrestricted, Store: NewMemorySessionSandboxBindingStore(), Checker: &fakeSessionExistenceChecker{exists: true}, ConfigID: "cfg", SkipHealthProbe: true})
+	require.NoError(t, err)
 	_, err = denied.EnsureIMSession(ctx, "session", true)
 	require.ErrorIs(t, err, ErrIMDiskLimitUnavailable)
 	require.Empty(t, fake.created)
