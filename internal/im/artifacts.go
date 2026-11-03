@@ -118,6 +118,17 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 		if ambiguous && !strings.Contains(relative, "/") {
 			explicit = octobusiness.MentionsArtifactName(text, "./"+relative)
 		}
+		if imTemporaryArtifact(relative) {
+			// A basename alone must not select a file in a temporary location.
+			// Require the actual relative path, including ./ for a root file.
+			if strings.Contains(relative, "/") {
+				if !explicit {
+					return appservice.IMArtifactNotSelected
+				}
+			} else if !octobusiness.MentionsArtifactName(text, "./"+relative) {
+				return appservice.IMArtifactNotSelected
+			}
+		}
 		if ambiguous && !explicit {
 			return appservice.IMArtifactNotSelected
 		}

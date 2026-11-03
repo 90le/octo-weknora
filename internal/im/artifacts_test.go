@@ -286,6 +286,13 @@ func TestIMGroupTemporaryAndAmbiguousNamesFailClosed(t *testing.T) {
 	_ = s.finishIMArtifactTurn(ctx, &types.Message{ID: "second"}, "答复")
 	require.Equal(t, []string{"report.pdf", "report.pdf"}, adapter.sent)
 	require.Equal(t, [][]byte{[]byte("one"), []byte("two")}, adapter.data)
+
+	req.msg.Content = "请发送 tmp/draft.csv"
+	ctx = imArtifactTestGrant(s.businessContext(context.Background(), req, scope))
+	ctx = s.beginIMArtifactTurn(ctx, req)
+	_ = s.finishIMArtifactTurn(ctx, &types.Message{ID: "third"}, "答复")
+	require.Equal(t, []string{"report.pdf", "report.pdf", "draft.csv"}, adapter.sent)
+	require.Equal(t, []byte("tmp"), adapter.data[2])
 }
 
 func TestIMGroupAmbiguousRootNeedsAnExplicitRelativePath(t *testing.T) {
