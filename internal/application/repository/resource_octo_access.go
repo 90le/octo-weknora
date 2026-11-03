@@ -10,7 +10,12 @@ import (
 
 // OctoArtifactReferences finds artifact rows independently of resource bindings.
 // Local backends can expose the same file through different directory prefixes.
-func (r *resourceRepository) OctoArtifactReferences(ctx context.Context, tenantID uint64, references []string, localLocator string) (map[string][]string, error) {
+func (r *resourceRepository) OctoArtifactReferences(
+	ctx context.Context,
+	tenantID uint64,
+	references []string,
+	localLocator string,
+) (map[string][]string, error) {
 	terms := make([]string, 0, len(references)+1)
 	args := make([]interface{}, 0, len(references)+1)
 	for _, ref := range references {
@@ -42,7 +47,8 @@ func (r *resourceRepository) OctoArtifactReferences(ctx context.Context, tenantI
 		Select("a.url, cs.im_channel_id AS channel_id").
 		Joins("JOIN messages AS m ON m.id = a.message_id AND m.session_id = a.session_id").
 		Joins("JOIN sessions AS s ON s.id = m.session_id AND s.tenant_id = ?", tenantID).
-		Joins("JOIN im_channel_sessions AS cs ON cs.session_id = s.id AND cs.tenant_id = s.tenant_id AND cs.platform = ?", "octo").
+		Joins("JOIN im_channel_sessions AS cs ON cs.session_id = s.id "+
+			"AND cs.tenant_id = s.tenant_id AND cs.platform = ?", "octo").
 		Where("("+strings.Join(terms, " OR ")+")", args...).Scan(&rows).Error
 	if err != nil {
 		return nil, err
@@ -93,7 +99,11 @@ func (r *resourceRepository) OctoArtifactReferences(ctx context.Context, tenantI
 // relative path must be a suffix of the other for such prefixes to coincide.
 // The basename narrows the query; exact comparisons avoid LIKE wildcard and
 // collation behavior becoming authorization evidence.
-func (r *resourceRepository) LocalResourcesAtLocator(ctx context.Context, tenantID uint64, locator string) ([]*types.StoredResource, error) {
+func (r *resourceRepository) LocalResourcesAtLocator(
+	ctx context.Context,
+	tenantID uint64,
+	locator string,
+) ([]*types.StoredResource, error) {
 	relative := strings.TrimPrefix(locator, "local://")
 	slash := strings.LastIndex(relative, "/")
 	if slash < 0 || slash == len(relative)-1 {
@@ -102,7 +112,11 @@ func (r *resourceRepository) LocalResourcesAtLocator(ctx context.Context, tenant
 	basename := relative[slash+1:]
 	escaped := strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(basename)
 	var resources []*types.StoredResource
-	err := r.db.WithContext(ctx).Where("tenant_id = ? AND provider = ? AND state = ? AND physical_path LIKE ? ESCAPE '!'", tenantID, "local", types.ResourceStateActive, "%"+escaped+"%").Find(&resources).Error
+	err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND provider = ? AND state = ? AND physical_path LIKE ? ESCAPE '!'",
+			tenantID, "local", types.ResourceStateActive, "%"+escaped+"%").
+		Find(&resources).
+		Error
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +136,8 @@ func (r *resourceRepository) LocalResourcesAtLocator(ctx context.Context, tenant
 			continue
 		}
 		candidate := strings.TrimPrefix(physical, "local://")
-		if candidate == relative || strings.HasSuffix(candidate, "/"+relative) || strings.HasSuffix(relative, "/"+candidate) {
+		if candidate == relative || strings.HasSuffix(candidate, "/"+relative) ||
+			strings.HasSuffix(relative, "/"+candidate) {
 			out = append(out, resource)
 		}
 	}
@@ -130,7 +145,11 @@ func (r *resourceRepository) LocalResourcesAtLocator(ctx context.Context, tenant
 }
 
 // ProviderResourcesAtLocator includes aliases registered with backend wrappers.
-func (r *resourceRepository) ProviderResourcesAtLocator(ctx context.Context, tenantID uint64, locator string) ([]*types.StoredResource, error) {
+func (r *resourceRepository) ProviderResourcesAtLocator(
+	ctx context.Context,
+	tenantID uint64,
+	locator string,
+) ([]*types.StoredResource, error) {
 	if _, inner, scoped := types.ParseStorageBackendPath(locator); scoped {
 		locator = inner
 	}
@@ -139,7 +158,11 @@ func (r *resourceRepository) ProviderResourcesAtLocator(ctx context.Context, ten
 	}
 	escaped := strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(locator)
 	var resources []*types.StoredResource
-	if err := r.db.WithContext(ctx).Where("tenant_id = ? AND state = ? AND physical_path LIKE ? ESCAPE '!'", tenantID, types.ResourceStateActive, "%"+escaped).Find(&resources).Error; err != nil {
+	err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND state = ? AND physical_path LIKE ? ESCAPE '!'",
+			tenantID, types.ResourceStateActive, "%"+escaped).
+		Find(&resources).Error
+	if err != nil {
 		return nil, err
 	}
 	out := make([]*types.StoredResource, 0, len(resources))
@@ -157,23 +180,36 @@ func (r *resourceRepository) ProviderResourcesAtLocator(ctx context.Context, ten
 
 // OctoArtifactChannels also keeps a historical binding protective if its
 // artifact row is missing; absence of that row is not proof of public access.
-func (r *resourceRepository) OctoArtifactChannels(ctx context.Context, tenantID uint64, resource *types.StoredResource) ([]string, error) {
+func (r *resourceRepository) OctoArtifactChannels(
+	ctx context.Context,
+	tenantID uint64,
+	resource *types.StoredResource,
+) ([]string, error) {
 	var channels []string
 	err := r.db.WithContext(ctx).Table("resource_bindings AS b").
 		Joins("JOIN messages AS m ON m.id = b.owner_id").
 		Joins("JOIN sessions AS s ON s.id = m.session_id AND s.tenant_id = b.tenant_id").
-		Joins("JOIN im_channel_sessions AS cs ON cs.session_id = s.id AND cs.tenant_id = s.tenant_id AND cs.platform = ?", "octo").
-		Where("b.tenant_id = ? AND b.resource_id = ? AND b.owner_type = ? AND b.relation = ?", tenantID, resource.ID, types.ResourceOwnerMessage, types.ResourceRelationArtifact).
+		Joins("JOIN im_channel_sessions AS cs ON cs.session_id = s.id "+
+			"AND cs.tenant_id = s.tenant_id AND cs.platform = ?", "octo").
+		Where("b.tenant_id = ? AND b.resource_id = ? AND b.owner_type = ? AND b.relation = ?",
+			tenantID, resource.ID, types.ResourceOwnerMessage, types.ResourceRelationArtifact).
 		Distinct("cs.im_channel_id").Pluck("cs.im_channel_id", &channels).Error
 	return channels, err
 }
 
-func (r *resourceRepository) OctoWebOwnerExists(ctx context.Context, tenantID uint64, channelID, userID string) (bool, error) {
+func (r *resourceRepository) OctoWebOwnerExists(
+	ctx context.Context,
+	tenantID uint64,
+	channelID, userID string,
+) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Table("im_channel_web_owners AS o").
 		Joins("JOIN im_channels AS c ON c.id = o.im_channel_id AND c.tenant_id = o.tenant_id AND c.deleted_at IS NULL").
-		Joins("JOIN tenant_members AS tm ON tm.tenant_id = o.tenant_id AND tm.user_id = o.web_user_id AND tm.status = ? AND tm.deleted_at IS NULL", "active").
+		Joins("JOIN tenant_members AS tm ON tm.tenant_id = o.tenant_id AND tm.user_id = o.web_user_id "+
+			"AND tm.status = ? AND tm.deleted_at IS NULL", "active").
 		Joins("JOIN users AS u ON u.id = o.web_user_id AND u.is_active = ? AND u.deleted_at IS NULL", true).
-		Where("o.tenant_id = ? AND o.im_channel_id = ? AND o.web_user_id = ? AND o.deleted_at IS NULL", tenantID, channelID, userID).Count(&count).Error
+		Where("o.tenant_id = ? AND o.im_channel_id = ? AND o.web_user_id = ? AND o.deleted_at IS NULL",
+			tenantID, channelID, userID).
+		Count(&count).Error
 	return count > 0, err
 }

@@ -58,7 +58,13 @@ func TestArtifactWebOwnerIDRequiresMatchingWebPrincipal(t *testing.T) {
 	require.Empty(t, artifactWebOwnerID(ctx))
 	web := types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "alice"})
 	require.Equal(t, "alice", artifactWebOwnerID(web))
-	require.Empty(t, artifactWebOwnerID(types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "bob"})))
-	require.Empty(t, artifactWebOwnerID(types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "alice"})))
+	require.Empty(
+		t,
+		artifactWebOwnerID(types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "bob"})),
+	)
+	require.Empty(
+		t,
+		artifactWebOwnerID(types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "alice"})),
+	)
 	require.Empty(t, artifactWebOwnerID(types.WithExecutionTenant(web, 8)))
 }

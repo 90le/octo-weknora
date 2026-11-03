@@ -261,13 +261,21 @@ func (r *messageRepository) RecordRestoredArtifactMtime(
 // channelArtifactGrant does not grant ordinary session access. Historical
 // mappings retain their channel association after a chat is cleared.
 const channelArtifactGrant = `EXISTS (SELECT 1 FROM im_channel_sessions owner_ics
- JOIN im_channel_web_owners o ON o.im_channel_id = owner_ics.im_channel_id AND o.tenant_id = s.tenant_id AND o.deleted_at IS NULL
+ JOIN im_channel_web_owners o ON o.im_channel_id = owner_ics.im_channel_id
+  AND o.tenant_id = s.tenant_id AND o.deleted_at IS NULL
  JOIN im_channels c ON c.id = o.im_channel_id AND c.tenant_id = o.tenant_id AND c.deleted_at IS NULL
- JOIN tenant_members tm ON tm.tenant_id = o.tenant_id AND tm.user_id = o.web_user_id AND tm.status = 'active' AND tm.deleted_at IS NULL
+ JOIN tenant_members tm ON tm.tenant_id = o.tenant_id AND tm.user_id = o.web_user_id
+  AND tm.status = 'active' AND tm.deleted_at IS NULL
  JOIN users u ON u.id = o.web_user_id AND u.is_active = ? AND u.deleted_at IS NULL
- WHERE owner_ics.session_id = s.id AND owner_ics.tenant_id = s.tenant_id AND owner_ics.platform = 'octo' AND o.web_user_id = ?)`
+ WHERE owner_ics.session_id = s.id AND owner_ics.tenant_id = s.tenant_id
+  AND owner_ics.platform = 'octo' AND o.web_user_id = ?)`
 
-func (r *messageRepository) GetChannelArtifactMessage(ctx context.Context, tenantID uint64, userID, sessionID, messageID string, position int) (*types.Message, error) {
+func (r *messageRepository) GetChannelArtifactMessage(
+	ctx context.Context,
+	tenantID uint64,
+	userID, sessionID, messageID string,
+	position int,
+) (*types.Message, error) {
 	if tenantID == 0 || userID == "" || position < 0 {
 		return nil, gorm.ErrRecordNotFound
 	}
@@ -275,7 +283,12 @@ func (r *messageRepository) GetChannelArtifactMessage(ctx context.Context, tenan
 	err := r.db.WithContext(ctx).Table("message_artifacts ma").
 		Joins("JOIN messages m ON m.id = ma.message_id AND m.session_id = ma.session_id AND m.deleted_at IS NULL").
 		Joins("JOIN sessions s ON s.id = ma.session_id AND s.deleted_at IS NULL").
-		Where("s.tenant_id = ? AND ma.session_id = ? AND ma.message_id = ? AND ma.position = ? AND ma.deleted_at IS NULL AND "+channelArtifactGrant, tenantID, sessionID, messageID, position, true, userID).Count(&count).Error
+		Where(
+			"s.tenant_id = ? AND ma.session_id = ? AND ma.message_id = ? AND ma.position = ? "+
+				"AND ma.deleted_at IS NULL AND "+channelArtifactGrant,
+			tenantID, sessionID, messageID, position, true, userID,
+		).
+		Count(&count).Error
 	if err != nil {
 		return nil, err
 	}

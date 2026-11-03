@@ -21,8 +21,10 @@ func addOctoOriginTables(t *testing.T, db *gorm.DB) {
 		`CREATE TABLE sessions (id text, tenant_id integer)`,
 		`CREATE TABLE messages (id text, session_id text)`,
 		`CREATE TABLE message_artifacts (message_id text, session_id text, url text, deleted_at datetime)`,
-		`CREATE TABLE im_channel_sessions (session_id text, tenant_id integer, im_channel_id text, platform text, deleted_at datetime)`,
-		`CREATE TABLE im_channel_web_owners (tenant_id integer, im_channel_id text, web_user_id text, deleted_at datetime)`,
+		`CREATE TABLE im_channel_sessions (session_id text, tenant_id integer, im_channel_id text,
+			platform text, deleted_at datetime)`,
+		`CREATE TABLE im_channel_web_owners (tenant_id integer, im_channel_id text,
+			web_user_id text, deleted_at datetime)`,
 		`CREATE TABLE im_channels (id text, tenant_id integer, deleted_at datetime)`,
 		`CREATE TABLE tenant_members (tenant_id integer, user_id text, status text, deleted_at datetime)`,
 		`CREATE TABLE users (id text, is_active boolean, deleted_at datetime)`,
@@ -46,24 +48,54 @@ func TestUnboundOctoArtifactFileAccess(t *testing.T) {
 		require.NoError(t, db.Exec(sql).Error)
 	}
 	ctx := func(user string) context.Context {
-		return types.WithPrincipal(types.WithCaller(context.Background(), types.Caller{TenantID: 7, UserID: user}), types.Principal{Type: types.PrincipalWebUser, ID: user})
+		return types.WithPrincipal(
+			types.WithCaller(context.Background(), types.Caller{TenantID: 7, UserID: user}),
+			types.Principal{Type: types.PrincipalWebUser, ID: user},
+		)
 	}
-	registered, err := catalog.Register(context.Background(), 7, "local://7/exports/registered.pdf", interfaces.ResourceRegistration{})
+	registered, err := catalog.Register(
+		context.Background(),
+		7,
+		"local://7/exports/registered.pdf",
+		interfaces.ResourceRegistration{},
+	)
 	require.NoError(t, err)
-	cloud, err := catalog.Register(context.Background(), 7, "storage://first/s3://bucket/7/other.pdf", interfaces.ResourceRegistration{})
+	cloud, err := catalog.Register(
+		context.Background(),
+		7,
+		"storage://first/s3://bucket/7/other.pdf",
+		interfaces.ResourceRegistration{},
+	)
 	require.NoError(t, err)
-	cloudAlias, err := catalog.Register(context.Background(), 7, "storage://second/s3://bucket/7/other.pdf", interfaces.ResourceRegistration{})
+	cloudAlias, err := catalog.Register(
+		context.Background(),
+		7,
+		"storage://second/s3://bucket/7/other.pdf",
+		interfaces.ResourceRegistration{},
+	)
 	require.NoError(t, err)
 	for _, artifact := range []struct {
 		stored   string
 		accesses []string
 	}{
 		{registered, []string{registered, "local://7/exports/registered.pdf"}},
-		{"local://7/exports/./raw.pdf", []string{"local://7/exports/raw.pdf", "storage://backend/local://7/exports/raw.pdf"}},
-		{"s3://bucket/7/report.pdf", []string{"s3://bucket/7/report.pdf", "storage://backend/s3://bucket/7/report.pdf"}},
+		{"local://7/exports/./raw.pdf", []string{
+			"local://7/exports/raw.pdf", "storage://backend/local://7/exports/raw.pdf",
+		}},
+		{"s3://bucket/7/report.pdf", []string{
+			"s3://bucket/7/report.pdf", "storage://backend/s3://bucket/7/report.pdf",
+		}},
 		{cloud, []string{cloud, cloudAlias, "s3://bucket/7/other.pdf"}},
 	} {
-		require.NoError(t, db.Exec(`INSERT INTO message_artifacts VALUES (?,?,?,NULL)`, "message", "session", artifact.stored).Error)
+		require.NoError(
+			t,
+			db.Exec(
+				`INSERT INTO message_artifacts VALUES (?,?,?,NULL)`,
+				"message",
+				"session",
+				artifact.stored,
+			).Error,
+		)
 		for _, ref := range artifact.accesses {
 			matched, err := access.CheckOctoFile(ctx("bob"), catalog, 7, ref)
 			require.True(t, matched, ref)
@@ -72,8 +104,21 @@ func TestUnboundOctoArtifactFileAccess(t *testing.T) {
 			require.True(t, matched, ref)
 			require.NoError(t, err, ref)
 		}
-		msg := &types.Message{ID: "message", SessionID: "session", AgentTenantID: 7, Content: artifact.stored, Artifacts: types.MessageArtifacts{{URL: artifact.stored}}}
-		_, err := access.AuthorizeMessageFile(ctx("bob"), msg, artifact.stored, nil, catalog, access.MessageKBShareAuthorizer{})
+		msg := &types.Message{
+			ID:            "message",
+			SessionID:     "session",
+			AgentTenantID: 7,
+			Content:       artifact.stored,
+			Artifacts:     types.MessageArtifacts{{URL: artifact.stored}},
+		}
+		_, err := access.AuthorizeMessageFile(
+			ctx("bob"),
+			msg,
+			artifact.stored,
+			nil,
+			catalog,
+			access.MessageKBShareAuthorizer{},
+		)
 		require.ErrorIs(t, err, access.ErrForbidden)
 		_, err = access.ResolveMessageArtifact(ctx("bob"), msg, 0, nil, catalog, access.MessageKBShareAuthorizer{})
 		require.ErrorIs(t, err, access.ErrForbidden)
@@ -100,8 +145,20 @@ func TestTraceableOctoArtifactAccess(t *testing.T) {
 	const physical = "local://7/exports/report.pdf"
 	ref, err := catalog.Register(context.Background(), 7, physical, interfaces.ResourceRegistration{})
 	require.NoError(t, err)
-	require.NoError(t, catalog.Bind(context.Background(), ref, types.ResourceOwnerMessage, "message", types.ResourceRelationArtifact))
-	require.NoError(t, db.Exec(`INSERT INTO message_artifacts VALUES (?,?,?,NULL)`, "message", "session", ref).Error)
+	require.NoError(
+		t,
+		catalog.Bind(
+			context.Background(),
+			ref,
+			types.ResourceOwnerMessage,
+			"message",
+			types.ResourceRelationArtifact,
+		),
+	)
+	require.NoError(
+		t,
+		db.Exec(`INSERT INTO message_artifacts VALUES (?,?,?,NULL)`, "message", "session", ref).Error,
+	)
 	check := catalog.(access.OctoArtifactAccess)
 	ctx := func(tenant uint64, user string) context.Context {
 		c := types.WithCaller(context.Background(), types.Caller{TenantID: tenant, UserID: user})
@@ -116,11 +173,18 @@ func TestTraceableOctoArtifactAccess(t *testing.T) {
 			{"bound", ctx(7, "alice"), true, true},
 			{"other channel", ctx(7, "bob"), true, false},
 			{"other tenant", ctx(8, "alice"), false, false},
-			{"no principal", types.WithCaller(context.Background(), types.Caller{TenantID: 7, UserID: "alice"}), true, false},
+			{
+				"no principal", types.WithCaller(context.Background(), types.Caller{TenantID: 7, UserID: "alice"}),
+				true, false,
+			},
 			{"api key", types.WithTenantAPIKeyScope(ctx(7, "alice"), types.TenantAPIKeyScope{}), true, false},
 		} {
 			t.Run(tc.name+"/"+path, func(t *testing.T) {
-				matched, allowed, err := check.CheckOctoArtifactAccess(tc.ctx, types.CallerFromContext(tc.ctx).TenantID, path)
+				matched, allowed, err := check.CheckOctoArtifactAccess(
+					tc.ctx,
+					types.CallerFromContext(tc.ctx).TenantID,
+					path,
+				)
 				if tc.name == "other tenant" && path == physical {
 					require.ErrorIs(t, err, access.ErrForbidden)
 					return
@@ -132,7 +196,9 @@ func TestTraceableOctoArtifactAccess(t *testing.T) {
 		}
 	}
 	// A backend wrapper may reach an unwrapped registration's physical file.
-	for _, wrapped := range []string{"storage://backend-a/local://7/exports/report.pdf", "storage://backend-a/local://7/exports/./report.pdf"} {
+	for _, wrapped := range []string{
+		"storage://backend-a/local://7/exports/report.pdf", "storage://backend-a/local://7/exports/./report.pdf",
+	} {
 		matched, allowed, err := check.CheckOctoArtifactAccess(ctx(7, "bob"), 7, wrapped)
 		require.NoError(t, err)
 		require.True(t, matched)
@@ -149,36 +215,66 @@ func TestTraceableOctoArtifactAccess(t *testing.T) {
 	require.NoError(t, err)
 	localRef, err := catalog.Register(context.Background(), 7, localPath, interfaces.ResourceRegistration{})
 	require.NoError(t, err)
-	require.NoError(t, catalog.Bind(context.Background(), localRef, types.ResourceOwnerMessage, "message", types.ResourceRelationArtifact))
-	require.NoError(t, db.Exec(`INSERT INTO message_artifacts VALUES (?,?,?,NULL)`, "message", "session", localRef).Error)
+	require.NoError(
+		t,
+		catalog.Bind(
+			context.Background(),
+			localRef,
+			types.ResourceOwnerMessage,
+			"message",
+			types.ResourceRelationArtifact,
+		),
+	)
+	require.NoError(
+		t,
+		db.Exec(`INSERT INTO message_artifacts VALUES (?,?,?,NULL)`, "message", "session", localRef).Error,
+	)
 	wrappedPath := "storage://backend-a/" + localPath
 	matchedByGuard, err := access.CheckOctoFile(ctx(7, "bob"), catalog, 7, wrappedPath)
 	require.ErrorIs(t, err, access.ErrForbidden)
 	require.True(t, matchedByGuard)
-	reader, err := filesvc.NewBackendScopedFileService("backend-a", local).GetFile(context.Background(), wrappedPath)
+	reader, err := filesvc.NewBackendScopedFileService("backend-a", local).
+		GetFile(context.Background(), wrappedPath)
 	require.NoError(t, err)
 	data, err := io.ReadAll(reader)
 	require.NoError(t, err)
 	require.NoError(t, reader.Close())
 	require.Equal(t, "private IM", string(data))
 	// Different local prefix depths can still address one physical path.
-	matchedNested, allowedNested, err := check.CheckOctoArtifactAccess(ctx(7, "bob"), 7, "storage://nested/local://7/7/exports/report.pdf")
+	matchedNested, allowedNested, err := check.CheckOctoArtifactAccess(
+		ctx(7, "bob"),
+		7,
+		"storage://nested/local://7/7/exports/report.pdf",
+	)
 	require.NoError(t, err)
 	require.True(t, matchedNested)
 	require.False(t, allowedNested)
-	matchedNested, allowedNested, err = check.CheckOctoArtifactAccess(ctx(7, "alice"), 7, "storage://nested/local://7/7/exports/report.pdf")
+	matchedNested, allowedNested, err = check.CheckOctoArtifactAccess(
+		ctx(7, "alice"),
+		7,
+		"storage://nested/local://7/7/exports/report.pdf",
+	)
 	require.NoError(t, err)
 	require.True(t, matchedNested)
 	require.True(t, allowedNested)
 	// An exact Web registration must not hide an IM registration at the
 	// same local locator in another backend.
-	webShadow, err := catalog.Register(context.Background(), 7, "storage://web-backend/local://7/exports/report.pdf", interfaces.ResourceRegistration{})
+	webShadow, err := catalog.Register(
+		context.Background(),
+		7,
+		"storage://web-backend/local://7/exports/report.pdf",
+		interfaces.ResourceRegistration{},
+	)
 	require.NoError(t, err)
 	matchedShadow, allowedShadow, err := check.CheckOctoArtifactAccess(ctx(7, "bob"), 7, webShadow)
 	require.NoError(t, err)
 	require.True(t, matchedShadow)
 	require.False(t, allowedShadow)
-	matchedShadow, allowedShadow, err = check.CheckOctoArtifactAccess(ctx(7, "alice"), 7, "storage://web-backend/local://7/exports/report.pdf")
+	matchedShadow, allowedShadow, err = check.CheckOctoArtifactAccess(
+		ctx(7, "alice"),
+		7,
+		"storage://web-backend/local://7/exports/report.pdf",
+	)
 	require.NoError(t, err)
 	require.True(t, matchedShadow)
 	require.True(t, allowedShadow)
@@ -186,11 +282,36 @@ func TestTraceableOctoArtifactAccess(t *testing.T) {
 	// resource must independently have a channel grant.
 	require.NoError(t, db.Exec(`INSERT INTO sessions VALUES ('second-session',7)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO messages VALUES ('second-message','second-session')`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO im_channel_sessions VALUES ('second-session',7,'other','octo',NULL)`).Error)
-	secondRef, err := catalog.Register(context.Background(), 7, "storage://second-backend/local://7/exports/report.pdf", interfaces.ResourceRegistration{})
+	require.NoError(
+		t,
+		db.Exec(`INSERT INTO im_channel_sessions VALUES ('second-session',7,'other','octo',NULL)`).Error,
+	)
+	secondRef, err := catalog.Register(
+		context.Background(),
+		7,
+		"storage://second-backend/local://7/exports/report.pdf",
+		interfaces.ResourceRegistration{},
+	)
 	require.NoError(t, err)
-	require.NoError(t, catalog.Bind(context.Background(), secondRef, types.ResourceOwnerMessage, "second-message", types.ResourceRelationArtifact))
-	require.NoError(t, db.Exec(`INSERT INTO message_artifacts VALUES (?,?,?,NULL)`, "second-message", "second-session", secondRef).Error)
+	require.NoError(
+		t,
+		catalog.Bind(
+			context.Background(),
+			secondRef,
+			types.ResourceOwnerMessage,
+			"second-message",
+			types.ResourceRelationArtifact,
+		),
+	)
+	require.NoError(
+		t,
+		db.Exec(
+			`INSERT INTO message_artifacts VALUES (?,?,?,NULL)`,
+			"second-message",
+			"second-session",
+			secondRef,
+		).Error,
+	)
 	_, allowedShadow, err = check.CheckOctoArtifactAccess(ctx(7, "alice"), 7, physical)
 	require.NoError(t, err)
 	require.False(t, allowedShadow)
@@ -202,7 +323,9 @@ func TestTraceableOctoArtifactAccess(t *testing.T) {
 	require.NoError(t, err)
 	// A lexically different local path resolves to the same registered
 	// resource before the channel ownership decision.
-	for _, alias := range []string{"local://7/exports/./report.pdf", "local://7/exports//report.pdf", "local://7/exports/sub/../report.pdf"} {
+	for _, alias := range []string{
+		"local://7/exports/./report.pdf", "local://7/exports//report.pdf", "local://7/exports/sub/../report.pdf",
+	} {
 		matched, allowed, err := check.CheckOctoArtifactAccess(ctx(7, "bob"), 7, alias)
 		require.NoError(t, err)
 		require.True(t, matched)
@@ -218,11 +341,21 @@ func TestTraceableOctoArtifactAccess(t *testing.T) {
 	require.ErrorIs(t, err, access.ErrForbidden)
 	// Even an exact historical registry hit cannot authorize a path that
 	// leaves the original tenant root.
-	_, err = catalog.Register(context.Background(), 7, "local://7/../8/secret.pdf", interfaces.ResourceRegistration{})
+	_, err = catalog.Register(
+		context.Background(),
+		7,
+		"local://7/../8/secret.pdf",
+		interfaces.ResourceRegistration{},
+	)
 	require.NoError(t, err)
 	_, _, err = check.CheckOctoArtifactAccess(ctx(7, "alice"), 7, "local://7/../8/secret.pdf")
 	require.ErrorIs(t, err, access.ErrForbidden)
-	webRef, err := catalog.Register(context.Background(), 7, "local://7/exports/web.pdf", interfaces.ResourceRegistration{})
+	webRef, err := catalog.Register(
+		context.Background(),
+		7,
+		"local://7/exports/web.pdf",
+		interfaces.ResourceRegistration{},
+	)
 	require.NoError(t, err)
 	require.NotEmpty(t, webRef)
 	matched, _, err := check.CheckOctoArtifactAccess(ctx(7, "bob"), 7, "local://7/exports/./web.pdf")
@@ -234,15 +367,40 @@ func TestTraceableOctoArtifactAccess(t *testing.T) {
 	matched, _, err = check.CheckOctoArtifactAccess(ctx(7, "bob"), 7, "s3://bucket/7/exports/./report.pdf")
 	require.NoError(t, err)
 	require.True(t, matched) // no registration or origin: generic proxy fails closed
-	scopedRef, err := catalog.Register(context.Background(), 7, "storage://backend-a/local://7/exports/scoped.pdf", interfaces.ResourceRegistration{})
+	scopedRef, err := catalog.Register(
+		context.Background(),
+		7,
+		"storage://backend-a/local://7/exports/scoped.pdf",
+		interfaces.ResourceRegistration{},
+	)
 	require.NoError(t, err)
-	require.NoError(t, catalog.Bind(context.Background(), scopedRef, types.ResourceOwnerMessage, "message", types.ResourceRelationArtifact))
-	require.NoError(t, db.Exec(`INSERT INTO message_artifacts VALUES (?,?,?,NULL)`, "message", "session", scopedRef).Error)
-	matched, allowed, err := check.CheckOctoArtifactAccess(ctx(7, "bob"), 7, "storage://backend-a/local://7/exports/./scoped.pdf")
+	require.NoError(
+		t,
+		catalog.Bind(
+			context.Background(),
+			scopedRef,
+			types.ResourceOwnerMessage,
+			"message",
+			types.ResourceRelationArtifact,
+		),
+	)
+	require.NoError(
+		t,
+		db.Exec(`INSERT INTO message_artifacts VALUES (?,?,?,NULL)`, "message", "session", scopedRef).Error,
+	)
+	matched, allowed, err := check.CheckOctoArtifactAccess(
+		ctx(7, "bob"),
+		7,
+		"storage://backend-a/local://7/exports/./scoped.pdf",
+	)
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.False(t, allowed)
-	matched, allowed, err = check.CheckOctoArtifactAccess(ctx(7, "alice"), 7, "storage://backend-a/local://7/exports/./scoped.pdf")
+	matched, allowed, err = check.CheckOctoArtifactAccess(
+		ctx(7, "alice"),
+		7,
+		"storage://backend-a/local://7/exports/./scoped.pdf",
+	)
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.True(t, allowed)
@@ -255,7 +413,11 @@ func TestTraceableOctoArtifactAccess(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.True(t, allowed)
-	matched, allowed, err = check.CheckOctoArtifactAccess(ctx(7, "bob"), 7, "storage://backend-b/local://7/exports/./scoped.pdf")
+	matched, allowed, err = check.CheckOctoArtifactAccess(
+		ctx(7, "bob"),
+		7,
+		"storage://backend-b/local://7/exports/./scoped.pdf",
+	)
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.False(t, allowed)
@@ -263,8 +425,20 @@ func TestTraceableOctoArtifactAccess(t *testing.T) {
 	legacy := "local://7/exports/./legacy.pdf"
 	legacyRef, err := catalog.Register(context.Background(), 7, legacy, interfaces.ResourceRegistration{})
 	require.NoError(t, err)
-	require.NoError(t, catalog.Bind(context.Background(), legacyRef, types.ResourceOwnerMessage, "message", types.ResourceRelationArtifact))
-	require.NoError(t, db.Exec(`INSERT INTO message_artifacts VALUES (?,?,?,NULL)`, "message", "session", legacyRef).Error)
+	require.NoError(
+		t,
+		catalog.Bind(
+			context.Background(),
+			legacyRef,
+			types.ResourceOwnerMessage,
+			"message",
+			types.ResourceRelationArtifact,
+		),
+	)
+	require.NoError(
+		t,
+		db.Exec(`INSERT INTO message_artifacts VALUES (?,?,?,NULL)`, "message", "session", legacyRef).Error,
+	)
 	matched, allowed, err = check.CheckOctoArtifactAccess(ctx(7, "bob"), 7, "local://7/exports/legacy.pdf")
 	require.NoError(t, err)
 	require.True(t, matched)
@@ -273,23 +447,56 @@ func TestTraceableOctoArtifactAccess(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, matched)
 	require.False(t, allowed)
-	msg := &types.Message{ID: "message", SessionID: "session", AgentTenantID: 7, Content: ref, Artifacts: types.MessageArtifacts{{URL: ref}}}
+	msg := &types.Message{
+		ID:            "message",
+		SessionID:     "session",
+		AgentTenantID: 7,
+		Content:       ref,
+		Artifacts:     types.MessageArtifacts{{URL: ref}},
+	}
 	_, err = access.AuthorizeMessageFile(ctx(7, "bob"), msg, ref, nil, catalog, access.MessageKBShareAuthorizer{})
 	require.ErrorIs(t, err, access.ErrForbidden)
-	_, err = access.AuthorizeMessageFile(ctx(7, "alice"), msg, ref, nil, catalog, access.MessageKBShareAuthorizer{})
+	_, err = access.AuthorizeMessageFile(
+		ctx(7, "alice"),
+		msg,
+		ref,
+		nil,
+		catalog,
+		access.MessageKBShareAuthorizer{},
+	)
 	require.NoError(t, err)
 	_, err = access.ResolveMessageArtifact(ctx(7, "bob"), msg, 0, nil, catalog, access.MessageKBShareAuthorizer{})
 	require.ErrorIs(t, err, access.ErrForbidden)
 	// A separate, live KB binding retains its own authorization route.
 	require.NoError(t, db.AutoMigrate(&types.KnowledgeBase{}, &types.Knowledge{}))
 	require.NoError(t, db.Create(&types.KnowledgeBase{ID: "kb", TenantID: 7}).Error)
-	require.NoError(t, db.Create(&types.Knowledge{ID: "doc", TenantID: 7, KnowledgeBaseID: "kb", Type: "file"}).Error)
-	require.NoError(t, catalog.Bind(context.Background(), ref, types.ResourceOwnerKnowledge, "doc", types.ResourceRelationSourceFile))
+	require.NoError(
+		t,
+		db.Create(&types.Knowledge{ID: "doc", TenantID: 7, KnowledgeBaseID: "kb", Type: "file"}).Error,
+	)
+	require.NoError(
+		t,
+		catalog.Bind(
+			context.Background(),
+			ref,
+			types.ResourceOwnerKnowledge,
+			"doc",
+			types.ResourceRelationSourceFile,
+		),
+	)
 	bob := ctx(7, "bob")
-	grant := &access.KBAccess{KnowledgeBase: &types.KnowledgeBase{ID: "kb", TenantID: 7}, Caller: types.CallerFromContext(bob), EffectiveTenantID: 7, Permission: types.OrgRoleViewer}
+	grant := &access.KBAccess{
+		KnowledgeBase:     &types.KnowledgeBase{ID: "kb", TenantID: 7},
+		Caller:            types.CallerFromContext(bob),
+		EffectiveTenantID: 7,
+		Permission:        types.OrgRoleViewer,
+	}
 	_, err = access.ResolveKBFile(bob, grant, "kb", ref, catalog, catalog.(interfaces.KBResourceLookup))
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`UPDATE im_channel_web_owners SET deleted_at=CURRENT_TIMESTAMP WHERE web_user_id='alice'`).Error)
+	require.NoError(
+		t,
+		db.Exec(`UPDATE im_channel_web_owners SET deleted_at=CURRENT_TIMESTAMP WHERE web_user_id='alice'`).Error,
+	)
 	matched, allowed, err = check.CheckOctoArtifactAccess(ctx(7, "alice"), 7, ref)
 	require.NoError(t, err)
 	require.True(t, matched)

@@ -246,6 +246,7 @@ func (h *Handler) DownloadMessageArtifact(c *gin.Context) {
 	}
 }
 
+// DownloadChannelArtifact serves an artifact to its authenticated channel owner.
 func (h *Handler) DownloadChannelArtifact(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -253,12 +254,12 @@ func (h *Handler) DownloadChannelArtifact(c *gin.Context) {
 	messageID := secutils.SanitizeForLog(c.Param("message_id"))
 	indexParam := c.Param("index")
 	if sessionID == "" || messageID == "" || indexParam == "" {
-		c.Error(errors.NewBadRequestError("session_id, message_id and index are required"))
+		_ = c.Error(errors.NewBadRequestError("session_id, message_id and index are required"))
 		return
 	}
 	index, err := strconv.Atoi(indexParam)
 	if err != nil || index < 0 {
-		c.Error(errors.NewBadRequestError("invalid artifact index"))
+		_ = c.Error(errors.NewBadRequestError("invalid artifact index"))
 		return
 	}
 
@@ -290,7 +291,7 @@ func (h *Handler) DownloadChannelArtifact(c *gin.Context) {
 	}
 
 	if h.fileService == nil {
-		c.Error(errors.NewInternalServerError("file service unavailable"))
+		_ = c.Error(errors.NewInternalServerError("file service unavailable"))
 		return
 	}
 	file, err := access.ResolveMessageArtifact(ctx, msg, index, h.agentShareService, h.resourceCatalog,

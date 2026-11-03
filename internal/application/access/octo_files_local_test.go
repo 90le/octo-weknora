@@ -18,7 +18,10 @@ func TestCanonicalLocalLocator(t *testing.T) {
 		{"storage://backend-b/local://7/exports/./file", "storage://backend-b/local://7/exports/file", true, false},
 		{"local://7/exports/../file", "local://7/file", true, false},
 		{"local://7/exports/sub/../file", "local://7/exports/file", true, false},
-		{"storage://backend-a/local://7/exports/sub/../file", "storage://backend-a/local://7/exports/file", true, false},
+		{
+			"storage://backend-a/local://7/exports/sub/../file",
+			"storage://backend-a/local://7/exports/file", true, false,
+		},
 		{"local://7/../7/file", "", true, true},
 		{"local://7/exports/../../7/file", "", true, true},
 		{"local://7/../../8/file", "", true, true},

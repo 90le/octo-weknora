@@ -63,6 +63,7 @@ type OctoArtifactAccess interface {
 	CheckOctoArtifactAccess(context.Context, uint64, string) (matched, allowed bool, err error)
 }
 
+// CheckOctoFile enforces channel ownership when a file has an Octo origin.
 func CheckOctoFile(ctx context.Context, catalog interface{}, tenantID uint64, reference string) (bool, error) {
 	checker, ok := catalog.(OctoArtifactAccess)
 	if !ok {

@@ -32,7 +32,11 @@ func NewSessionRepository(db *gorm.DB) interfaces.SessionRepository {
 
 // HasOctoSessionMapping includes historical mappings: clearing an IM chat
 // must never turn its artifacts into ordinary tenant-owned Web artifacts.
-func (r *sessionRepository) HasOctoSessionMapping(ctx context.Context, tenantID uint64, sessionID string) (bool, error) {
+func (r *sessionRepository) HasOctoSessionMapping(
+	ctx context.Context,
+	tenantID uint64,
+	sessionID string,
+) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Table("im_channel_sessions AS ics").
 		Joins("JOIN sessions AS s ON s.id = ics.session_id").
@@ -53,7 +57,12 @@ func (r *sessionRepository) Create(ctx context.Context, session *types.Session) 
 }
 
 // Get retrieves a session by ID
-func (r *sessionRepository) Get(ctx context.Context, tenantID uint64, userID string, id string) (*types.Session, error) {
+func (r *sessionRepository) Get(
+	ctx context.Context,
+	tenantID uint64,
+	userID string,
+	id string,
+) (*types.Session, error) {
 	var session types.Session
 	err := applySessionUserScope(
 		r.db.WithContext(ctx).Where("tenant_id = ? AND id = ?", tenantID, id),
@@ -123,7 +132,11 @@ func (r *sessionRepository) GetIMPlatform(
 }
 
 // GetByTenantID retrieves all sessions for a tenant
-func (r *sessionRepository) GetByTenantID(ctx context.Context, tenantID uint64, userID string) ([]*types.Session, error) {
+func (r *sessionRepository) GetByTenantID(
+	ctx context.Context,
+	tenantID uint64,
+	userID string,
+) ([]*types.Session, error) {
 	var sessions []*types.Session
 	err := applySessionUserScope(
 		r.db.WithContext(ctx).Where("tenant_id = ?", tenantID),
@@ -393,7 +406,12 @@ func (r *sessionRepository) Delete(ctx context.Context, tenantID uint64, userID 
 }
 
 // BatchDelete deletes multiple sessions by IDs
-func (r *sessionRepository) BatchDelete(ctx context.Context, tenantID uint64, userID string, ids []string) (int64, error) {
+func (r *sessionRepository) BatchDelete(
+	ctx context.Context,
+	tenantID uint64,
+	userID string,
+	ids []string,
+) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
@@ -405,7 +423,11 @@ func (r *sessionRepository) BatchDelete(ctx context.Context, tenantID uint64, us
 }
 
 // DeleteAllByTenantID deletes all sessions for a tenant
-func (r *sessionRepository) DeleteAllByTenantID(ctx context.Context, tenantID uint64, userID string) (int64, error) {
+func (r *sessionRepository) DeleteAllByTenantID(
+	ctx context.Context,
+	tenantID uint64,
+	userID string,
+) (int64, error) {
 	res := applySessionUserScope(
 		r.db.WithContext(ctx).Where("tenant_id = ?", tenantID),
 		userID,

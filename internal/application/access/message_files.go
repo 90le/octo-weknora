@@ -95,7 +95,20 @@ func (a MessageKBShareAuthorizer) resourceAccessibleViaKB(
 		if kb == nil || kb.TenantID != resource.TenantID {
 			continue
 		}
-		grant, err := ResolveKB(ctx, KBRequest{Caller: types.Caller{TenantID: callerTenantID, UserID: types.CallerFromContext(ctx).UserID, Role: callerTenantRole}}, kb, types.OrgRoleViewer, a.ShareGuard, nil)
+		grant, err := ResolveKB(
+			ctx,
+			KBRequest{
+				Caller: types.Caller{
+					TenantID: callerTenantID,
+					UserID:   types.CallerFromContext(ctx).UserID,
+					Role:     callerTenantRole,
+				},
+			},
+			kb,
+			types.OrgRoleViewer,
+			a.ShareGuard,
+			nil,
+		)
 		if err == nil && grant != nil {
 			bound, bindingErr := a.Bindings.IsReferencedByKnowledgeBase(
 				ctx, resource.TenantID, kb.ID, types.BuildResourcePath(handle))

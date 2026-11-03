@@ -18,7 +18,11 @@ type octoArtifactRepository interface {
 
 // CheckOctoArtifactAccess applies only to traceable artifacts. A false match
 // does not establish that an unregistered or legacy locator is safe.
-func (s *resourceCatalog) CheckOctoArtifactAccess(ctx context.Context, tenantID uint64, ref string) (bool, bool, error) {
+func (s *resourceCatalog) CheckOctoArtifactAccess(
+	ctx context.Context,
+	tenantID uint64,
+	ref string,
+) (bool, bool, error) {
 	repo, ok := s.repo.(octoArtifactRepository)
 	if !ok {
 		return false, false, errors.New("artifact origin lookup unavailable")
@@ -111,7 +115,9 @@ func (s *resourceCatalog) CheckOctoArtifactAccess(ctx context.Context, tenantID 
 	matched := false
 	for _, channels := range origins {
 		matched = true
-		if apiKey || !principalOK || principal.Type != types.PrincipalWebUser || principal.ID == "" || principal.ID != caller.UserID || caller.TenantID != tenantID {
+		if apiKey || !principalOK || principal.Type != types.PrincipalWebUser || principal.ID == "" ||
+			principal.ID != caller.UserID ||
+			caller.TenantID != tenantID {
 			return true, false, nil
 		}
 		allowed := false
@@ -138,7 +144,9 @@ func (s *resourceCatalog) CheckOctoArtifactAccess(ctx context.Context, tenantID 
 			continue
 		}
 		matched = true
-		if apiKey || !principalOK || principal.Type != types.PrincipalWebUser || principal.ID == "" || principal.ID != caller.UserID || caller.TenantID != tenantID {
+		if apiKey || !principalOK || principal.Type != types.PrincipalWebUser || principal.ID == "" ||
+			principal.ID != caller.UserID ||
+			caller.TenantID != tenantID {
 			return true, false, nil
 		}
 		allowed := false

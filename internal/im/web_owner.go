@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// ErrWebOwnerForbidden indicates that a web channel ownership operation is not allowed.
 var ErrWebOwnerForbidden = errors.New("web channel ownership forbidden")
 
 // WebOwnerExists tests an explicit, active grant. Callers must supply the

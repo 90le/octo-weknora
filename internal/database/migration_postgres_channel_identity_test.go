@@ -17,10 +17,10 @@ func TestPostgresChannelIdentityRetirement(t *testing.T) {
 	}
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
-	defer db.Close()
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	tx, err := db.Begin()
 	require.NoError(t, err)
-	defer tx.Rollback()
+	t.Cleanup(func() { require.NoError(t, tx.Rollback()) })
 	_, err = tx.Exec(`CREATE SCHEMA octo_identity_migration_fixture;
 SET LOCAL search_path TO octo_identity_migration_fixture, public;
 CREATE TABLE im_channels(id VARCHAR(36) PRIMARY KEY, tenant_id BIGINT, platform TEXT, credentials JSONB, deleted_at TIMESTAMPTZ);
