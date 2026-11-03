@@ -31,7 +31,7 @@ const (
 
 // ErrIMDiskLimitUnavailable rejects a backend that cannot enforce the IM
 // read-only root and bounded temporary filesystem configuration.
-var ErrIMDiskLimitUnavailable = errors.New("Octo sandbox: bounded temporary filesystem isolation is unavailable")
+var ErrIMDiskLimitUnavailable = errors.New("octo sandbox: bounded temporary filesystem isolation is unavailable")
 
 // IMSandboxDiskVerifier is an optional additional trusted deployment check.
 // The built-in container inspection always verifies the tmpfs limits and
@@ -57,18 +57,18 @@ func restrictIMSandboxConfig(
 	}
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
 	if !ok || (!grant.AllowShell && !grant.AllowSkills) || grant.ConfigID != configID {
-		return fmt.Errorf("Octo sandbox: no execution authorization")
+		return fmt.Errorf("octo sandbox: no execution authorization")
 	}
 	if tenant == nil || tenant.SandboxType != string(SandboxTypeDocker) || tenant.Docker == nil || effective == nil ||
 		effective.Type != SandboxTypeDocker {
-		return fmt.Errorf("Octo sandbox: isolated Docker backend required")
+		return fmt.Errorf("octo sandbox: isolated Docker backend required")
 	}
 	if tenant.VolumeMount != nil {
-		return fmt.Errorf("Octo sandbox: shared volume configuration is not permitted")
+		return fmt.Errorf("octo sandbox: shared volume configuration is not permitted")
 	}
 	image := strings.TrimSpace(os.Getenv(IMTrustedImageEnv))
 	if !imImageID.MatchString(image) {
-		return fmt.Errorf("Octo sandbox: %s must name an audited clean image by sha256 image ID", IMTrustedImageEnv)
+		return fmt.Errorf("octo sandbox: %s must name an audited clean image by sha256 image ID", IMTrustedImageEnv)
 	}
 	effective.DockerImage = image
 	effective.TemplateFromSnapshot = false

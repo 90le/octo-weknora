@@ -1328,7 +1328,7 @@ func (m *SessionBoundManager) resolveSession(
 			return nil, err
 		}
 		if !found {
-			return nil, errors.New("Octo sandbox: inspected binding unavailable")
+			return nil, errors.New("octo sandbox: inspected binding unavailable")
 		}
 		return handle, nil
 	}

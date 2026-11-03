@@ -14,7 +14,7 @@ import (
 // decoded output limit. Ordinary tool and helper execs use IMMaxOutputBytes.
 func WithIMDockerOutputLimit(ctx context.Context, limit int64) (context.Context, error) {
 	if limit <= 0 || limit > 50<<20 {
-		return nil, errors.New("Octo sandbox: invalid Docker stream limit")
+		return nil, errors.New("octo sandbox: invalid Docker stream limit")
 	}
 	return context.WithValue(ctx, imDockerOutputLimitKey{}, limit), nil
 }
@@ -35,7 +35,7 @@ func (e *imLimitedDockerEngine) ContainerCreate(
 	options client.ContainerCreateOptions,
 ) (client.ContainerCreateResult, error) {
 	if options.HostConfig == nil {
-		return client.ContainerCreateResult{}, errors.New("Octo sandbox: Docker host config unavailable")
+		return client.ContainerCreateResult{}, errors.New("octo sandbox: Docker host config unavailable")
 	}
 	host := *options.HostConfig
 	host.CapAdd = nil
@@ -55,7 +55,7 @@ func (e *imLimitedDockerEngine) ImagePull(
 	string,
 	client.ImagePullOptions,
 ) (client.ImagePullResponse, error) {
-	return nil, errors.New("Octo sandbox: audited image is absent on the selected Docker daemon")
+	return nil, errors.New("octo sandbox: audited image is absent on the selected Docker daemon")
 }
 
 func (e *imLimitedDockerEngine) ExecAttach(
@@ -90,7 +90,7 @@ func (r *imBudgetReader) Read(p []byte) (int, error) {
 		var probe [1]byte
 		n, err := r.inner.Read(probe[:])
 		if n > 0 {
-			return 0, errors.New("Octo sandbox: Docker stream exceeded limit")
+			return 0, errors.New("octo sandbox: Docker stream exceeded limit")
 		}
 		return 0, err
 	}

@@ -22,13 +22,13 @@ const remoteMetadataIMPolicy = "weknora_im_policy"
 
 // ErrIMSandboxNotFound means the binding was read successfully and is absent.
 // No transport or database error is ever converted into this sentinel.
-var ErrIMSandboxNotFound = errors.New("Octo sandbox: no live session sandbox")
+var ErrIMSandboxNotFound = errors.New("octo sandbox: no live session sandbox")
 
 // ErrIMStopUnconfirmed is never evidence of process termination.
-var ErrIMStopUnconfirmed = errors.New("Octo sandbox: container stop could not be confirmed")
+var ErrIMStopUnconfirmed = errors.New("octo sandbox: container stop could not be confirmed")
 
 // ErrIMOutputLimitUnavailable means the backend cannot bound Docker output.
-var ErrIMOutputLimitUnavailable = errors.New("Octo sandbox: bounded Docker output is unavailable")
+var ErrIMOutputLimitUnavailable = errors.New("octo sandbox: bounded Docker output is unavailable")
 
 type (
 	imExpectedBinding    struct{ session, sandbox string }
@@ -43,7 +43,7 @@ func WithIMExpectedSandbox(ctx context.Context, sessionID, sandboxID string) con
 func expectedIMSandbox(ctx context.Context, sessionID string) (string, error) {
 	value, ok := ctx.Value(imExpectedBindingKey{}).(imExpectedBinding)
 	if !ok || value.session != sessionID || value.sandbox == "" {
-		return "", errors.New("Octo sandbox: inspected session binding required")
+		return "", errors.New("octo sandbox: inspected session binding required")
 	}
 	return value.sandbox, nil
 }
@@ -95,14 +95,14 @@ func (m *SessionBoundManager) EnsureIMSession(ctx context.Context, sessionID str
 		m.config.DockerImage != strings.TrimSpace(getIMTrustedImage()) ||
 		m.config.DockerNetworkMode != "none" ||
 		len(m.config.EnvVars) != 0 {
-		return "", errors.New("Octo sandbox: isolated Docker configuration unavailable")
+		return "", errors.New("octo sandbox: isolated Docker configuration unavailable")
 	}
 	if err := m.RequireIMDiskIsolation(); err != nil {
 		return "", err
 	}
 	policy := types.IMSandboxPolicyFromContext(ctx)
 	if !imPolicyID.MatchString(policy) || m.lifecycle.createRequest.Metadata[remoteMetadataIMPolicy] != policy {
-		return "", errors.New("Octo sandbox: turn policy is unavailable or changed")
+		return "", errors.New("octo sandbox: turn policy is unavailable or changed")
 	}
 	if err := setIMOutputLimit(&RemoteExecRequest{}, IMMaxOutputBytes/2); err != nil {
 		return "", err
@@ -139,18 +139,18 @@ func (m *SessionBoundManager) EnsureIMSession(ctx context.Context, sessionID str
 				return err
 			}
 			if binding == nil {
-				return errors.New("Octo sandbox: created binding not found")
+				return errors.New("octo sandbox: created binding not found")
 			}
 		}
 		// A stale marker alone must not destroy or strand the old session. The
 		// current image and full policy labels below still have to match.
 		if binding.Provider != SandboxTypeDocker || binding.ConfigID != grant.ConfigID ||
 			binding.TemplateID != m.config.DockerImage {
-			return errors.New("Octo sandbox: existing binding does not match the authorized clean image")
+			return errors.New("octo sandbox: existing binding does not match the authorized clean image")
 		}
 		img, err := m.dockerClient.api.ImageInspect(lockCtx, m.config.DockerImage)
 		if err != nil {
-			return fmt.Errorf("Octo sandbox: inspect clean image: %w", err)
+			return fmt.Errorf("octo sandbox: inspect clean image: %w", err)
 		}
 		inspected, err := m.dockerClient.api.ContainerInspect(
 			lockCtx,
@@ -158,7 +158,7 @@ func (m *SessionBoundManager) EnsureIMSession(ctx context.Context, sessionID str
 			client.ContainerInspectOptions{},
 		)
 		if err != nil {
-			return fmt.Errorf("Octo sandbox: inspect session container: %w", err)
+			return fmt.Errorf("octo sandbox: inspect session container: %w", err)
 		}
 		if err = verifyIMDockerContainer(
 			inspected.Container, img.InspectResponse, *binding, key, m.config.DockerImage, policy,
@@ -179,7 +179,7 @@ func (m *SessionBoundManager) EnsureIMSession(ctx context.Context, sessionID str
 		return "", err
 	}
 	if sandboxID == "" {
-		return "", errors.New("Octo sandbox: inspected container unavailable")
+		return "", errors.New("octo sandbox: inspected container unavailable")
 	}
 	return sandboxID, nil
 }
@@ -196,7 +196,7 @@ func verifyIMDockerContainer(
 	key SessionSandboxKey,
 	imageID, policy string,
 ) error {
-	deny := func(reason string) error { return fmt.Errorf("Octo sandbox: unsafe container: %s", reason) }
+	deny := func(reason string) error { return fmt.Errorf("octo sandbox: unsafe container: %s", reason) }
 	if !imImageID.MatchString(imageID) || img.ID != imageID || img.Config == nil || len(img.Config.Volumes) != 0 ||
 		c.ID != binding.SandboxID || c.Image != imageID || c.Config == nil || c.HostConfig == nil {
 		return deny("image or identity mismatch")
@@ -302,13 +302,13 @@ func (m *SessionBoundManager) ExecIMShell(
 ) (*ExecuteResult, error) {
 	expected, err := expectedIMSandbox(ctx, sessionID)
 	if err != nil || expected != sandboxID {
-		return nil, errors.New("Octo sandbox: binding changed")
+		return nil, errors.New("octo sandbox: binding changed")
 	}
 	// Even an internal caller holding the binding context must recheck the
 	// native principal and actual container before starting another command.
 	inspected, err := m.EnsureIMSession(ctx, sessionID, false)
 	if err != nil || inspected != sandboxID {
-		return nil, errors.New("Octo sandbox: authorization or inspected binding changed")
+		return nil, errors.New("octo sandbox: authorization or inspected binding changed")
 	}
 	key, err := m.sessionKey(ctx, sessionID)
 	if err != nil {
@@ -316,7 +316,7 @@ func (m *SessionBoundManager) ExecIMShell(
 	}
 	handle, found, err := m.lookupSessionHandleForKey(ctx, key, sandboxID)
 	if err != nil || !found {
-		return nil, errors.New("Octo sandbox: inspected binding unavailable")
+		return nil, errors.New("octo sandbox: inspected binding unavailable")
 	}
 	workDir, err = cleanSessionWorkDir(workDir, false)
 	if err != nil {
@@ -365,10 +365,10 @@ func (m *SessionBoundManager) ExecIMShell(
 		return fail(err)
 	}
 	if result != nil && result.Killed {
-		return fail(errors.New("Octo sandbox: command timed out or was killed"))
+		return fail(errors.New("octo sandbox: command timed out or was killed"))
 	}
 	if result == nil || len(result.Stdout)+len(result.Stderr) > IMMaxOutputBytes {
-		return fail(errors.New("Octo sandbox: output exceeded limit or missing result"))
+		return fail(errors.New("octo sandbox: output exceeded limit or missing result"))
 	}
 	// Keep the container alive for later commands and artifact collection.
 	// The turn barrier stops it before the session lock is released.
@@ -444,7 +444,7 @@ func (m *SessionBoundManager) QuiesceIMSession(ctx context.Context, sessionID st
 func (m *SessionBoundManager) StopIMSession(ctx context.Context, sessionID, sandboxID string) error {
 	expected, err := expectedIMSandbox(ctx, sessionID)
 	if err != nil || expected != sandboxID {
-		return errors.New("Octo sandbox: stop binding mismatch")
+		return errors.New("octo sandbox: stop binding mismatch")
 	}
 	key, err := m.sessionKey(ctx, sessionID)
 	if err != nil {
@@ -457,7 +457,7 @@ func (m *SessionBoundManager) StopIMSession(ctx context.Context, sessionID, sand
 		return err
 	}
 	if binding == nil || binding.SandboxID != sandboxID || binding.Provider != SandboxTypeDocker {
-		return errors.New("Octo sandbox: stop binding changed")
+		return errors.New("octo sandbox: stop binding changed")
 	}
 	return m.stopIMContainer(cleanup, sandboxID)
 }
@@ -550,7 +550,7 @@ func (m *SessionBoundManager) ListIMSessionFiles(ctx context.Context, sessionID,
 	}
 	clean := path.Clean(strings.TrimSpace(dir))
 	if len(clean) > 4096 || (clean != SessionWorkspaceRoot && !strings.HasPrefix(clean, SessionWorkspaceRoot+"/")) {
-		return nil, errors.New("Octo sandbox: directory outside workspace")
+		return nil, errors.New("octo sandbox: directory outside workspace")
 	}
 
 	command := "python3 -c " + ShellQuote(
@@ -565,7 +565,7 @@ func (m *SessionBoundManager) ListIMSessionFiles(ctx context.Context, sessionID,
 		return nil, err
 	}
 	if result == nil || result.ExitCode != 0 || result.Killed {
-		return nil, errors.New("Octo sandbox: bounded file listing failed")
+		return nil, errors.New("octo sandbox: bounded file listing failed")
 	}
 	var items []struct {
 		Name    string  `json:"name"`
@@ -574,12 +574,12 @@ func (m *SessionBoundManager) ListIMSessionFiles(ctx context.Context, sessionID,
 		ModTime float64 `json:"mtime"`
 	}
 	if err := json.Unmarshal([]byte(result.Stdout), &items); err != nil {
-		return nil, errors.New("Octo sandbox: invalid file listing")
+		return nil, errors.New("octo sandbox: invalid file listing")
 	}
 	out := make([]RemoteDirEntry, 0, len(items))
 	for _, item := range items {
 		if item.Path == "" || item.Name == "" || item.Size < 0 {
-			return nil, errors.New("Octo sandbox: invalid file entry")
+			return nil, errors.New("octo sandbox: invalid file entry")
 		}
 		out = append(
 			out,

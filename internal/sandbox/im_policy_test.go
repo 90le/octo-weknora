@@ -154,7 +154,7 @@ func TestIMOutputBudgetRejectsExcess(t *testing.T) {
 	r := &imBudgetReader{inner: bytes.NewReader(data), remaining: 100}
 	got, err := io.ReadAll(r)
 	require.Equal(t, 100, len(got))
-	require.ErrorContains(t, err, "exceeded")
+	require.ErrorContains(t, err, "octo sandbox: Docker stream exceeded limit")
 	got, err = io.ReadAll(&imBudgetReader{inner: bytes.NewReader(data[:100]), remaining: 100})
 	require.NoError(t, err)
 	require.Len(t, got, 100)

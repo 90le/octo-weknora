@@ -228,7 +228,7 @@ func (r *tenantSandboxResolver) Resolve(
 		if types.HasIMKnowledgeScope(ctx) {
 			fingerprint := types.IMSandboxPolicyFromContext(ctx)
 			if !imPolicyID.MatchString(fingerprint) {
-				return nil, errors.New("Octo sandbox: turn policy unavailable")
+				return nil, errors.New("octo sandbox: turn policy unavailable")
 			}
 			manager.lifecycle.createRequest.Metadata = map[string]string{remoteMetadataIMPolicy: fingerprint}
 		}
