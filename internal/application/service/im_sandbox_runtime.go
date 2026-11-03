@@ -44,7 +44,7 @@ func resolveIMSandboxForExecution(
 	}
 	baseline, ok := ctx.Value(imSandboxConfigBaselineKey{}).([32]byte)
 	if !ok {
-		return nil, SandboxPin{}, errors.New("Octo sandbox: configuration baseline unavailable")
+		return nil, SandboxPin{}, errors.New("octo sandbox: configuration baseline unavailable")
 	}
 	current, err := imSandboxConfigFingerprint(ctx, pinner, grant)
 	if err != nil || current != baseline {
@@ -62,7 +62,7 @@ func resolveIMSandboxForExecution(
 	}
 	backend, ok := mgr.(*sandbox.SessionBoundManager)
 	if !ok || backend.GetType() != sandbox.SandboxTypeDocker {
-		return nil, SandboxPin{}, errors.New("Octo sandbox: isolated Docker manager required")
+		return nil, SandboxPin{}, errors.New("octo sandbox: isolated Docker manager required")
 	}
 	if err := backend.RequireIMDiskIsolation(); err != nil {
 		return nil, SandboxPin{}, err
@@ -194,7 +194,7 @@ func withIMSandboxPolicy(ctx context.Context) (context.Context, error) {
 func (s *sessionService) PrepareIMSandboxContext(ctx context.Context, allowUnpinned bool) (context.Context, error) {
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
 	if !ok || (!grant.AllowShell && !grant.AllowSkills) {
-		return nil, errors.New("Octo sandbox: execution authorization unavailable")
+		return nil, errors.New("octo sandbox: execution authorization unavailable")
 	}
 	if sid, exists := types.SessionIDFromContext(ctx); exists && sid != grant.SessionID {
 		return nil, types.ErrIMSandboxDenied
