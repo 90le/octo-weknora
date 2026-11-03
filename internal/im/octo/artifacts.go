@@ -1,11 +1,13 @@
 package octo
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"io"
 	"mime"
@@ -32,6 +34,66 @@ var octoCOSHost = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*-[0-9]+\.cos\.[a-z0-9-]
 // server may enforce a lower limit. Callers must keep data unchanged until
 // delivery returns; the transport does not duplicate the file.
 const maxGeneratedFileBytes = 20 << 20
+
+var errUnsupportedFileType = errors.New("octo file type unsupported")
+
+// Restrict this compatibility path to well-formed SVG; unknown types and
+// executable formats cannot use an archive to bypass the server's policy.
+func safeZipFallback(name string, data []byte) bool {
+	if !strings.EqualFold(path.Ext(name), ".svg") || !utf8.Valid(data) {
+		return false
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	root, depth := false, 0
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			return root && depth == 0
+		}
+		if err != nil {
+			return false
+		}
+		switch v := token.(type) {
+		case xml.Directive:
+			return false
+		case xml.StartElement:
+			if depth == 0 {
+				if root || v.Name.Local != "svg" ||
+					(v.Name.Space != "" && v.Name.Space != "http://www.w3.org/2000/svg") {
+					return false
+				}
+				root = true
+			}
+			depth++
+		case xml.EndElement:
+			depth--
+		case xml.CharData:
+			if depth == 0 && strings.TrimSpace(string(v)) != "" {
+				return false
+			}
+		}
+	}
+}
+
+func zipGeneratedFile(name string, data []byte) (string, []byte, error) {
+	zipName := name + ".zip"
+	if !validGeneratedFilename(zipName) {
+		return "", nil, errors.New("invalid ZIP filename")
+	}
+	var out bytes.Buffer
+	w := zip.NewWriter(&out)
+	member, err := w.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store})
+	if err == nil {
+		_, err = member.Write(data)
+	}
+	if err == nil {
+		err = w.Close()
+	}
+	if err != nil || out.Len() > maxGeneratedFileBytes {
+		return "", nil, errors.New("ZIP creation failed or exceeds size limit")
+	}
+	return zipName, out.Bytes(), nil
+}
 
 type fileFailure struct {
 	code  string
@@ -151,6 +213,28 @@ func (a *Adapter) SendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	return a.sendGeneratedFile(ctx, in, name, data, contentType, func() error { _, err := a.AuthorizeExecution(ctx, nil, in); return err })
 }
 
+// SendGeneratedFileWithResult returns the actual attachment name after confirmed delivery.
+func (a *Adapter) SendGeneratedFileWithResult(
+	ctx context.Context, in *im.IncomingMessage, name string, data []byte, contentType string,
+) (string, error) {
+	authorize := func() error { _, err := a.AuthorizeExecution(ctx, nil, in); return err }
+	err := a.sendGeneratedFile(ctx, in, name, data, contentType, authorize)
+	if err == nil {
+		return name, nil
+	}
+	if !errors.Is(err, errUnsupportedFileType) || !safeZipFallback(name, data) {
+		return "", err
+	}
+	zipName, zipData, zipErr := zipGeneratedFile(name, data)
+	if zipErr != nil {
+		return "", a.fileFailure(ctx, in, "zip_failed", nil)
+	}
+	if err = a.sendGeneratedFile(ctx, in, zipName, zipData, "application/zip", authorize); err != nil {
+		return "", err
+	}
+	return zipName, nil
+}
+
 func (a *Adapter) sendGeneratedFile(
 	ctx context.Context,
 	in *im.IncomingMessage,
@@ -256,6 +340,14 @@ func (a *Adapter) sendGeneratedFile(
 	}
 	var signed filePresign
 	if err = a.api.request(ctx, http.MethodGet, "/v1/bot/upload/presigned?"+query.Encode(), nil, &signed); err != nil {
+		if errors.Is(err, errUnsupportedFileType) {
+			if finishErr := finish("failed", "", "file_type_unsupported"); finishErr != nil {
+				phase = "finished"
+				return a.fileFailure(ctx, in, "journal_result_unavailable", nil)
+			}
+			phase = "finished"
+			return a.fileFailure(ctx, in, "presign_failed", errUnsupportedFileType)
+		}
 		return a.fileFailure(ctx, in, "presign_failed", nil)
 	}
 	if signed.Method != http.MethodPut || signed.MaxFileSize != int64(len(data)) ||
