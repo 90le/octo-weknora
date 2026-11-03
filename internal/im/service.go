@@ -165,9 +165,9 @@ func formatIMOutboundAnswerOrFallback(
 ) string {
 	content := formatIMOutboundAnswer(ctx, raw, tenant, defaultFileSvc, storageResolvers...)
 	if strings.TrimSpace(content) == "" {
-		return imNoAnswerFallback
+		content = imNoAnswerFallback
 	}
-	return content
+	return appendSandboxUnavailableNotice(ctx, content)
 }
 
 // imOutboundContext keeps values from ctx but drops cancellation. /stop cancels
@@ -2122,17 +2122,21 @@ func (s *Service) executeQARequestCore(req *qaRequest) {
 		preparer, ok := s.sessionService.(interface {
 			PrepareIMSandboxTurn(context.Context) (context.Context, error)
 		})
-		if !ok {
-			logger.Warnf(ctx, "[IM] sandbox turn preparation unavailable")
-			return
+		var prepare func(context.Context) (context.Context, error)
+		if ok {
+			prepare = preparer.PrepareIMSandboxTurn
 		}
-		var err error
-		ctx, err = preparer.PrepareIMSandboxTurn(ctx)
+		prepared, active, err := prepareSandboxOrContinue(ctx, prepare)
 		if err != nil {
-			logger.Warnf(req.ctx, "[IM] sandbox turn preparation failed: %v", err)
+			logger.Warnf(ctx, "[IM] sandbox fallback authorization failed: %v", err)
 			return
 		}
-		defer waitForIMSandboxQuiescence(ctx)
+		ctx = prepared
+		if active {
+			defer waitForIMSandboxQuiescence(ctx)
+		} else {
+			logger.Warnf(ctx, "[IM] sandbox unavailable; continuing without execution")
+		}
 	}
 	ctx = s.beginIMArtifactTurn(ctx, req)
 	attachments, imageURLs, downloaded, err := s.prepareIMAttachments(ctx, req.msg, req.adapter)
@@ -3168,6 +3172,8 @@ loop:
 		finalDisplay = appendIMAuthNotice(finalDisplay, notice)
 		answer = appendIMAuthNotice(answer, notice)
 	}
+	finalDisplay = appendSandboxUnavailableNotice(ctx, finalDisplay)
+	answer = appendSandboxUnavailableNotice(ctx, answer)
 
 	finalizeErr := streamer.FinalizeStream(outCtx, msg, streamID, finalDisplay)
 	if finalizeErr != nil {
@@ -3457,6 +3463,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	}
 
 	// Update assistant message with the full answer (including citation tags for web rendering).
+	answer = appendSandboxUnavailableNotice(ctx, answer)
 	assistantMsg.Content = answer
 	assistantMsg.IsCompleted = true
 	if err := s.messageService.UpdateMessage(ctx, assistantMsg); err != nil {

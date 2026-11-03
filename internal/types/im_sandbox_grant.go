@@ -50,6 +50,14 @@ func IMSandboxRequestsFromContext(ctx context.Context) IMSandboxRequests {
 	return value
 }
 
+// WithoutIMSandboxExecution masks any inherited sandbox authority for this
+// turn while preserving the principal and knowledge scope in the parent.
+func WithoutIMSandboxExecution(ctx context.Context) context.Context {
+	ctx = context.WithValue(ctx, imSandboxGrantKey{}, IMSandboxGrant{})
+	ctx = WithIMSandboxRequests(ctx, false, false)
+	return WithIMSandboxPolicy(ctx, "")
+}
+
 // WithIMSandboxGrant is for the trusted IM admission path, not user input.
 func WithIMSandboxGrant(ctx context.Context, grant IMSandboxGrant) context.Context {
 	grant.SelectedSkillNames = append([]string(nil), grant.SelectedSkillNames...)
