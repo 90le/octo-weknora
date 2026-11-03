@@ -67,7 +67,9 @@ func TestIMArtifactCollectorUsesGuardedDockerSession(t *testing.T) {
 	_, err = guarded.ExecShellCommand(ctx, "s-1", "printf ready", "/workspace", 0, nil)
 	require.NoError(t, err)
 	daemon.mu.Lock()
-	daemon.listingPayload = fmt.Sprintf(`[ {"name":"report.pdf","path":"/workspace/output/report.pdf","size":%d,"mtime":100} ]`, 512*1024)
+	daemon.listingPayload = fmt.Sprintf(
+		`[ {"name":"report.pdf","path":"/workspace/output/report.pdf","size":%d,"mtime":100} ]`, 512*1024,
+	)
 	daemon.mu.Unlock()
 
 	_, ok = collector.sessionSource(ctx, "s-1").(*imGuardedSandbox)
