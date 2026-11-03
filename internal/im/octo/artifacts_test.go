@@ -197,7 +197,7 @@ func TestMarkdownToolUsesOriginalConversationAndStopsAfterRevocation(t *testing.
 			fresh := p
 			p.Validate = func(context.Context) (octobusiness.Principal, error) { return fresh, nil }
 			ctx := octobusiness.WithPrincipal(context.Background(), p)
-			ctx = octobusiness.WithMarkdownSink(ctx, func(
+			ctx = octobusiness.WithFileDeliverySink(ctx, func(
 				ctx context.Context, file *octobusiness.ReportArtifact,
 			) error {
 				return a.SendGeneratedFile(ctx, msg, file.Name, []byte(file.Content), file.ContentType)
@@ -232,7 +232,7 @@ func TestMarkdownToolUsesOriginalConversationAndStopsAfterRevocation(t *testing.
 					return fileResponse(500, nil), nil
 				}
 			})
-			result, err := octobusiness.NewMarkdownFileTool().Execute(ctx, json.RawMessage(`{"content":"data"}`))
+			result, err := octobusiness.NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"content":"data"}`))
 			if err != nil || result.Success == revoke || (revoke && sends != 0) || (!revoke && sends != 1) {
 				t.Fatalf("unexpected delivery: result=%+v sends=%d err=%v", result, sends, err)
 			}

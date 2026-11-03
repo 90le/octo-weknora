@@ -695,6 +695,30 @@ func (m *SessionBoundManager) ReadSessionFile(
 	return m.client.ReadFile(ctx, handle, filePath)
 }
 
+// ReadSessionFileBounded never provisions a sandbox and never falls back to an
+// unbounded provider read. The caller must still authorize this session.
+func (m *SessionBoundManager) ReadSessionFileBounded(
+	ctx context.Context, sessionID, filePath string, limit int64,
+) ([]byte, error) {
+	if strings.TrimSpace(filePath) == "" || limit <= 0 {
+		return nil, errors.New("sandbox: invalid bounded read")
+	}
+	handle, ok, err := m.lookupSessionHandle(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("sandbox: no live sandbox for bounded read")
+	}
+	reader, ok := m.client.(interface {
+		ReadFileBounded(context.Context, RemoteSandboxHandle, string, int64) ([]byte, error)
+	})
+	if !ok {
+		return nil, errors.New("sandbox: bounded read unavailable")
+	}
+	return reader.ReadFileBounded(ctx, handle, filePath, limit)
+}
+
 // WriteSessionFile writes an install/maintenance file into the session's live
 // sandbox. It is deliberately narrower than a general remote write: only the
 // tenant skills image root is accepted, because ordinary attachments must keep

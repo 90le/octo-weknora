@@ -28,6 +28,7 @@ type Attachment struct {
 type Principal struct {
 	CanCreateKnowledgeBase                                       bool
 	AllowGeneratedFiles                                          bool
+	AllowFileDelivery                                            bool
 	TenantID                                                     uint64
 	AccountID, ChannelID, ScopeID, ScopeName, GroupID, SubareaID string
 	UserID, UserName, MessageID, MessageText                     string

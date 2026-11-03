@@ -19,7 +19,7 @@ func (a *fileScopeTestAdapter) SendGeneratedFile(
 	ctx context.Context, _ *IncomingMessage, _ string, _ []byte, _ string,
 ) error {
 	a.sends++
-	return octobusiness.ValidateMarkdownAuthority(ctx)
+	return octobusiness.ValidateFileDeliveryAuthority(ctx)
 }
 
 func TestBusinessMarkdownCapabilityFollowsFullCurrentScope(t *testing.T) {
@@ -41,11 +41,11 @@ func TestBusinessMarkdownCapabilityFollowsFullCurrentScope(t *testing.T) {
 			msg: msg, channelID: "channel", channel: &IMChannel{TenantID: 1, Platform: "octo"}, adapter: adapter,
 		}
 		ctx := (&Service{}).businessContext(context.Background(), req, base)
-		if !octobusiness.HasMarkdownSink(ctx) {
+		if !octobusiness.HasFileDeliverySink(ctx) {
 			t.Fatal("explicitly enabled file capability missing")
 		}
 		change(&current)
-		result, err := octobusiness.NewMarkdownFileTool().Execute(ctx, json.RawMessage(`{"content":"test"}`))
+		result, err := octobusiness.NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"test.txt","content":"test"}`))
 		if err != nil || result.Success || adapter.sends != 0 {
 			t.Fatalf("file reached sender after scope change: result=%+v sends=%d err=%v", result, adapter.sends, err)
 		}
@@ -56,7 +56,7 @@ func TestBusinessMarkdownCapabilityFollowsFullCurrentScope(t *testing.T) {
 	req := &qaRequest{
 		msg: &IncomingMessage{Extra: map[string]string{}}, channel: &IMChannel{Platform: "octo"}, adapter: adapter,
 	}
-	if octobusiness.HasMarkdownSink((&Service{}).businessContext(context.Background(), req, &disabled)) {
+	if octobusiness.HasFileDeliverySink((&Service{}).businessContext(context.Background(), req, &disabled)) {
 		t.Fatal("disabled capability exposed a file sink")
 	}
 }

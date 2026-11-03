@@ -43,6 +43,8 @@ type ExecutionScope struct {
 	AllowPublicWeb bool
 	// Generated files are separately enabled by the Octo channel administrator.
 	AllowGeneratedFiles bool `json:"allow_generated_files,omitempty"`
+	// General attachment delivery requires a separate, explicit channel grant.
+	AllowFileDelivery bool `json:"allow_file_delivery,omitempty"`
 
 	KnowledgeBaseIDs []string
 	Revision         string

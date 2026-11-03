@@ -318,9 +318,10 @@ type Service struct {
 
 	// defaultFileSvc is the process-wide storage backend (STORAGE_TYPE / env).
 	// Used when tenant StorageEngineConfig cannot build a service for the URL scheme.
-	defaultFileSvc  interfaces.FileService
-	documentReader  interfaces.DocumentReader
-	storageResolver interfaces.StorageBackendResolver
+	defaultFileSvc    interfaces.FileService
+	artifactCollector imArtifactCollector
+	documentReader    interfaces.DocumentReader
+	storageResolver   interfaces.StorageBackendResolver
 
 	// cmdRegistry holds all registered slash-commands.
 	cmdRegistry *CommandRegistry
@@ -2071,6 +2072,7 @@ func (s *Service) executeQARequest(req *qaRequest) {
 		}
 	}
 	ctx = s.businessContext(ctx, req, req.scope)
+	ctx = s.beginIMArtifactTurn(ctx, req)
 	attachments, imageURLs, downloaded, err := s.prepareIMAttachments(ctx, req.msg, req.adapter)
 	if err != nil {
 		logger.Warnf(ctx, "[IM] attachment preparation failed: %v", err)
@@ -3062,6 +3064,10 @@ loop:
 
 	outCtx := imOutboundContext(ctx)
 	answer = sanitizeOctoGitHubLineLinks(outCtx, answer)
+	if finalErr == nil && !wasFallback && qaCtx.Err() == nil {
+		answer = s.finishIMArtifactTurn(ctx, assistantMsg, answer)
+		parts.Answer = answer
+	}
 	finalDisplay := s.formatIMStreamFinal(outCtx, parts, []*types.SearchResult(assistantMsg.KnowledgeReferences),
 		tenant)
 	if noVisibleContent || finalDisplay == "" {
@@ -3363,6 +3369,9 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	}
 	answer = octoGuardStoredAnswer(ctx, answer, assistantMsg)
 	answer = sanitizeOctoGitHubLineLinks(ctx, answer)
+	if qaError == nil && !wasFallback {
+		answer = s.finishIMArtifactTurn(ctx, assistantMsg, answer)
+	}
 
 	// Update assistant message with the full answer (including citation tags for web rendering).
 	assistantMsg.Content = answer

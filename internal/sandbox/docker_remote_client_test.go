@@ -1052,6 +1052,21 @@ func TestDockerClientReadFileRunsAsSandboxUserOverExec(t *testing.T) {
 		engine.execOptions[0].Cmd[3:])
 }
 
+func TestDockerClientBoundedReadPreservesBinaryAndStopsOversizeOutput(t *testing.T) {
+	engine := newFakeDockerEngine()
+	engine.execStdout = string([]byte{0x00, 0xff, 0x0a})
+	docker := newTestDockerClient(t, engine)
+	data, err := docker.ReadFileBounded(context.Background(), testHandle("c"), "/workspace/output/a.pdf", 3)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x00, 0xff, 0x0a}, data)
+	require.Len(t, engine.execOptions, 1)
+	require.Equal(t, "python3", engine.execOptions[0].Cmd[4])
+	require.Contains(t, engine.execOptions[0].Cmd, "/workspace/output/a.pdf")
+	engine.execStdout = strings.Repeat("x", 10)
+	_, err = docker.ReadFileBounded(context.Background(), testHandle("c"), "/workspace/output/b.pdf", 3)
+	require.Error(t, err, "the Docker stream must cap output even if the command misbehaves")
+}
+
 // A path the sandbox account cannot read must surface as a refusal rather than
 // as content, and must stay distinguishable from a path that simply is not
 // there: callers treat NotFound as "nothing produced yet".

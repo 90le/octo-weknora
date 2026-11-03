@@ -78,7 +78,7 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	if err := octobusiness.ValidateReportAuthority(ctx); err != nil {
 		return a.fileFailure(ctx, in, "report_authority_changed", err)
 	}
-	if err := octobusiness.ValidateMarkdownAuthority(ctx); err != nil {
+	if err := octobusiness.ValidateFileDeliveryAuthority(ctx); err != nil {
 		return a.fileFailure(ctx, in, "markdown_authority_changed", err)
 	}
 	if err := authorize(); err != nil {
@@ -108,7 +108,7 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	if err := octobusiness.ValidateReportAuthority(ctx); err != nil {
 		return a.fileFailure(ctx, in, "report_authority_changed", err)
 	}
-	if err := octobusiness.ValidateMarkdownAuthority(ctx); err != nil {
+	if err := octobusiness.ValidateFileDeliveryAuthority(ctx); err != nil {
 		return a.fileFailure(ctx, in, "markdown_authority_changed", err)
 	}
 	if err = authorize(); err != nil {
@@ -142,7 +142,7 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	if err := octobusiness.ValidateReportAuthority(ctx); err != nil {
 		return a.fileFailure(ctx, in, "report_authority_changed", err)
 	}
-	if err := octobusiness.ValidateMarkdownAuthority(ctx); err != nil {
+	if err := octobusiness.ValidateFileDeliveryAuthority(ctx); err != nil {
 		return a.fileFailure(ctx, in, "markdown_authority_changed", err)
 	}
 	if err = authorize(); err != nil {
