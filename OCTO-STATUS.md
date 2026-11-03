@@ -1,5 +1,11 @@
 # 项目进度
 
+## 2026-11-03 Octo SVG 文件投递兼容（生产）
+
+- [PR #121](https://github.com/90le/octo-weknora/pull/121) 已合并；生产后端为 `local/octo-weknora-app:file-fix-d9f62`，镜像 ID `sha256:8616586e9d60e4c41eb958542d877759b761e67cce72745557211c0724063b8a`，前端沿用原版本。候选构建基于原生产运行层，仅替换后端二进制。
+- 当前 Octo 对 SVG 预签名返回文件类型不支持，ZIP 预签名通过。代码仅对明确的类型拒绝和可验证的 SVG 使用单文件 ZIP 回退，告知实际附件名；平台禁止类型、其他未支持格式和大小限制仍可能阻止发送。失败或状态未知时不保留误导性的沙箱下载链接。
+- 针对性 IM／Octo 测试及仓库检查通过；隔离 PostgreSQL 候选健康检查通过、注册接口返回 403。生产切换前后未删除知识或重建索引，未删除的知识条目均为 1633，迁移 `133:false`、自动迁移关闭、注册关闭；原后端镜像和配置备份保留。真实 Octo 客户端 SVG 收件与解压验收待用户反馈。
+
 ## 2026-11-03 Octo 通用产物与受控沙箱（生产）
 
 - PR [#118](https://github.com/90le/octo-weknora/pull/118) 已合并到 `19b017d26d356e5b21224e2a01a912f413f8091a`，全部仓库检查通过。生产后端为 `local/octo-weknora-app:general-candidate-021ec7`，入口前端为 `local/octo-weknora-ui:general-candidate-374db7`；后端镜像包含 PostgreSQL 132／133 和 SQLite 50／51 的迁移文件。
