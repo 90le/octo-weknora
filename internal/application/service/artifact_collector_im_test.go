@@ -185,9 +185,22 @@ func TestIMCaptureSelectsOnlyTheRequestedRelativePath(t *testing.T) {
 	pinner := NewSessionSandboxPinner(db)
 	_, err := pinner.Pin(ctx, "s-1", SandboxPin{ConfigID: "cfg-docker"})
 	require.NoError(t, err)
-	a := sandbox.RemoteDirEntry{Path: "/workspace/output/a/report.pdf", Name: "report.pdf", Type: sandbox.RemoteEntryFile, Size: 1}
-	b := sandbox.RemoteDirEntry{Path: "/workspace/output/b/report.pdf", Name: "report.pdf", Type: sandbox.RemoteEntryFile, Size: 1}
-	source := &fakeSandboxSource{entries: map[string][]sandbox.RemoteDirEntry{"s-1": {}}, contents: map[string][]byte{a.Path: []byte("a"), b.Path: []byte("b")}}
+	a := sandbox.RemoteDirEntry{
+		Path: "/workspace/output/a/report.pdf",
+		Name: "report.pdf",
+		Type: sandbox.RemoteEntryFile,
+		Size: 1,
+	}
+	b := sandbox.RemoteDirEntry{
+		Path: "/workspace/output/b/report.pdf",
+		Name: "report.pdf",
+		Type: sandbox.RemoteEntryFile,
+		Size: 1,
+	}
+	source := &fakeSandboxSource{
+		entries:  map[string][]sandbox.RemoteDirEntry{"s-1": {}},
+		contents: map[string][]byte{a.Path: []byte("a"), b.Path: []byte("b")},
+	}
 	mgr := &boundedIMTestManager{artifactFallbackManager: &artifactFallbackManager{source: source}}
 	files := &fakeFileService{}
 	collector := NewArtifactCollector(source, files, &fakeStore{}, nil, ArtifactCollectorConfig{})
@@ -195,13 +208,18 @@ func TestIMCaptureSelectsOnlyTheRequestedRelativePath(t *testing.T) {
 	snapshot, err := collector.SnapshotIM(ctx, "s-1", "cfg-docker", 7, 7, nil)
 	require.NoError(t, err)
 	source.entries["s-1"] = []sandbox.RemoteDirEntry{a, b}
-	artifacts, err := collector.CollectIM(ctx, snapshot, "message-1", func(relative string, ambiguous bool) IMArtifactSelection {
-		require.True(t, ambiguous)
-		if relative == "a/report.pdf" {
-			return IMArtifactCurrentTurn
-		}
-		return IMArtifactNotSelected
-	})
+	artifacts, err := collector.CollectIM(
+		ctx,
+		snapshot,
+		"message-1",
+		func(relative string, ambiguous bool) IMArtifactSelection {
+			require.True(t, ambiguous)
+			if relative == "a/report.pdf" {
+				return IMArtifactCurrentTurn
+			}
+			return IMArtifactNotSelected
+		},
+	)
 	require.NoError(t, err)
 	require.Len(t, artifacts, 1)
 	require.Equal(t, []byte("a"), files.saved[artifacts[0].URL])
@@ -225,15 +243,26 @@ func TestIMCaptureRechecksGrantAfterEachRead(t *testing.T) {
 	require.NoError(t, err)
 	a := sandbox.RemoteDirEntry{Path: "/workspace/output/a.txt", Name: "a.txt", Type: sandbox.RemoteEntryFile, Size: 1}
 	b := sandbox.RemoteDirEntry{Path: "/workspace/output/b.txt", Name: "b.txt", Type: sandbox.RemoteEntryFile, Size: 1}
-	source := &fakeSandboxSource{entries: map[string][]sandbox.RemoteDirEntry{"s-1": {}}, contents: map[string][]byte{a.Path: []byte("a"), b.Path: []byte("b")}}
-	mgr := &boundedIMTestManager{artifactFallbackManager: &artifactFallbackManager{source: source}, afterRead: func() { allowed = false }}
+	source := &fakeSandboxSource{
+		entries:  map[string][]sandbox.RemoteDirEntry{"s-1": {}},
+		contents: map[string][]byte{a.Path: []byte("a"), b.Path: []byte("b")},
+	}
+	mgr := &boundedIMTestManager{
+		artifactFallbackManager: &artifactFallbackManager{source: source},
+		afterRead:               func() { allowed = false },
+	}
 	files := &fakeFileService{}
 	collector := NewArtifactCollector(source, files, &fakeStore{}, nil, ArtifactCollectorConfig{})
 	collector.pinner, collector.resolver = pinner, stubSandboxResolver{mgr: mgr}
 	snapshot, err := collector.SnapshotIM(ctx, "s-1", "cfg-docker", 7, 7, nil)
 	require.NoError(t, err)
 	source.entries["s-1"] = []sandbox.RemoteDirEntry{a, b}
-	artifacts, err := collector.CollectIM(ctx, snapshot, "message-1", func(string, bool) IMArtifactSelection { return IMArtifactCurrentTurn })
+	artifacts, err := collector.CollectIM(
+		ctx,
+		snapshot,
+		"message-1",
+		func(string, bool) IMArtifactSelection { return IMArtifactCurrentTurn },
+	)
 	require.Error(t, err)
 	require.Empty(t, artifacts)
 	require.Equal(t, []string{a.Path}, source.readCalls)
@@ -245,7 +274,13 @@ type revokingIMFileService struct {
 	revoke func()
 }
 
-func (f *revokingIMFileService) SaveBytes(ctx context.Context, data []byte, tenant uint64, name string, temp bool) (string, error) {
+func (f *revokingIMFileService) SaveBytes(
+	ctx context.Context,
+	data []byte,
+	tenant uint64,
+	name string,
+	temp bool,
+) (string, error) {
 	ref, err := f.fakeFileService.SaveBytes(ctx, data, tenant, name, temp)
 	f.revoke()
 	return ref, err
@@ -268,7 +303,10 @@ func TestIMCaptureRechecksGrantBetweenWrites(t *testing.T) {
 	require.NoError(t, err)
 	a := sandbox.RemoteDirEntry{Path: "/workspace/output/a.txt", Name: "a.txt", Type: sandbox.RemoteEntryFile, Size: 1}
 	b := sandbox.RemoteDirEntry{Path: "/workspace/output/b.txt", Name: "b.txt", Type: sandbox.RemoteEntryFile, Size: 1}
-	source := &fakeSandboxSource{entries: map[string][]sandbox.RemoteDirEntry{"s-1": {}}, contents: map[string][]byte{a.Path: []byte("a"), b.Path: []byte("b")}}
+	source := &fakeSandboxSource{
+		entries:  map[string][]sandbox.RemoteDirEntry{"s-1": {}},
+		contents: map[string][]byte{a.Path: []byte("a"), b.Path: []byte("b")},
+	}
 	mgr := &boundedIMTestManager{artifactFallbackManager: &artifactFallbackManager{source: source}}
 	files := &revokingIMFileService{fakeFileService: &fakeFileService{}, revoke: func() { allowed = false }}
 	collector := NewArtifactCollector(source, files, &fakeStore{}, nil, ArtifactCollectorConfig{})
@@ -276,7 +314,12 @@ func TestIMCaptureRechecksGrantBetweenWrites(t *testing.T) {
 	snapshot, err := collector.SnapshotIM(ctx, "s-1", "cfg-docker", 7, 7, nil)
 	require.NoError(t, err)
 	source.entries["s-1"] = []sandbox.RemoteDirEntry{a, b}
-	artifacts, err := collector.CollectIM(ctx, snapshot, "message-1", func(string, bool) IMArtifactSelection { return IMArtifactCurrentTurn })
+	artifacts, err := collector.CollectIM(
+		ctx,
+		snapshot,
+		"message-1",
+		func(string, bool) IMArtifactSelection { return IMArtifactCurrentTurn },
+	)
 	require.Error(t, err)
 	require.Empty(t, artifacts)
 	require.Equal(t, 1, files.seq, "no later write may start after revocation")
@@ -288,14 +331,28 @@ func TestIMCaptureRejectsOldFileEvenWhenSelected(t *testing.T) {
 	pinner := NewSessionSandboxPinner(db)
 	_, err := pinner.Pin(ctx, "s-1", SandboxPin{ConfigID: "cfg-docker"})
 	require.NoError(t, err)
-	old := sandbox.RemoteDirEntry{Path: "/workspace/output/old.txt", Name: "old.txt", Type: sandbox.RemoteEntryFile, Size: 3, ModTime: time.Unix(100, 0)}
-	source := &fakeSandboxSource{entries: map[string][]sandbox.RemoteDirEntry{"s-1": {old}}, contents: map[string][]byte{old.Path: []byte("old")}}
+	old := sandbox.RemoteDirEntry{
+		Path:    "/workspace/output/old.txt",
+		Name:    "old.txt",
+		Type:    sandbox.RemoteEntryFile,
+		Size:    3,
+		ModTime: time.Unix(100, 0),
+	}
+	source := &fakeSandboxSource{
+		entries:  map[string][]sandbox.RemoteDirEntry{"s-1": {old}},
+		contents: map[string][]byte{old.Path: []byte("old")},
+	}
 	mgr := &boundedIMTestManager{artifactFallbackManager: &artifactFallbackManager{source: source}}
 	collector := NewArtifactCollector(source, &fakeFileService{}, &fakeStore{}, nil, ArtifactCollectorConfig{})
 	collector.pinner, collector.resolver = pinner, stubSandboxResolver{mgr: mgr}
 	snapshot, err := collector.SnapshotIM(ctx, "s-1", "cfg-docker", 7, 7, func(string) bool { return true })
 	require.NoError(t, err)
-	artifacts, err := collector.CollectIM(ctx, snapshot, "message", func(string, bool) IMArtifactSelection { return IMArtifactExplicit })
+	artifacts, err := collector.CollectIM(
+		ctx,
+		snapshot,
+		"message",
+		func(string, bool) IMArtifactSelection { return IMArtifactExplicit },
+	)
 	require.NoError(t, err)
 	require.Empty(t, artifacts)
 }

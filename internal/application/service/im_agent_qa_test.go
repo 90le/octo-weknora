@@ -37,7 +37,11 @@ import (
 
 type imQAConfigLoader struct{ config *types.TenantSandboxConfig }
 
-func (l imQAConfigLoader) Load(_ context.Context, tenant uint64, id string) (sandbox.ResolvedTenantSandboxConfig, error) {
+func (l imQAConfigLoader) Load(
+	_ context.Context,
+	tenant uint64,
+	id string,
+) (sandbox.ResolvedTenantSandboxConfig, error) {
 	return sandbox.ResolvedTenantSandboxConfig{Config: l.config, Found: tenant == 7 && id == "cfg"}, nil
 }
 
@@ -86,13 +90,18 @@ func (*imQAModel) Chat(context.Context, []chat.Message, *chat.ChatOptions) (*typ
 	return &types.ChatResponse{}, nil
 }
 
-func (m *imQAModel) ChatStream(ctx context.Context, messages []chat.Message, opts *chat.ChatOptions) (<-chan types.StreamResponse, error) {
+func (m *imQAModel) ChatStream(
+	ctx context.Context,
+	messages []chat.Message,
+	opts *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
 	for _, message := range messages {
 		if strings.Contains(message.Content, "must-not-stream-after-revoke") {
 			m.leaked.Store(true)
 		}
 	}
-	if grant, ok := types.IMSandboxGrantFromContext(ctx); !ok || !grant.AllowShell || types.IMSandboxPolicyFromContext(ctx) == "" {
+	if grant, ok := types.IMSandboxGrantFromContext(ctx); !ok || !grant.AllowShell ||
+		types.IMSandboxPolicyFromContext(ctx) == "" {
 		m.contextLost.Store(true)
 	}
 	offered := false
@@ -108,9 +117,20 @@ func (m *imQAModel) ChatStream(ctx context.Context, messages []chat.Message, opt
 		if m.onTool != nil {
 			m.onTool()
 		}
-		out <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, ToolCalls: []types.LLMToolCall{{ID: "call", Type: "function", Function: types.FunctionCall{Name: tools.ToolShellExec, Arguments: `{"command":"printf octo-qa-marker"}`}}}, Done: true, FinishReason: "tool_calls"}
+		out <- types.StreamResponse{
+			ResponseType: types.ResponseTypeAnswer,
+			ToolCalls: []types.LLMToolCall{{
+				ID: "call", Type: "function",
+				Function: types.FunctionCall{
+					Name: tools.ToolShellExec, Arguments: `{"command":"printf octo-qa-marker"}`,
+				},
+			}},
+			Done: true, FinishReason: "tool_calls",
+		}
 	} else {
-		out <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: "done", Done: true, FinishReason: "stop"}
+		out <- types.StreamResponse{
+			ResponseType: types.ResponseTypeAnswer, Content: "done", Done: true, FinishReason: "stop",
+		}
 	}
 	close(out)
 	return out, nil
@@ -188,7 +208,13 @@ func (d *imQADocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if d.running {
 			status = "running"
 		}
-		response := container.InspectResponse{ID: "c1", Image: d.image, Config: d.cfg, HostConfig: d.host, State: &container.State{Status: container.ContainerState(status), Running: d.running}}
+		response := container.InspectResponse{
+			ID:         "c1",
+			Image:      d.image,
+			Config:     d.cfg,
+			HostConfig: d.host,
+			State:      &container.State{Status: container.ContainerState(status), Running: d.running},
+		}
 		d.mu.Unlock()
 		writeIMJSON(w, response)
 		return
@@ -238,7 +264,10 @@ func (d *imQADocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer func() { _ = conn.Close() }()
-		_, _ = buf.WriteString("HTTP/1.1 101 UPGRADED\r\nContent-Type: application/vnd.docker.raw-stream\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n")
+		_, _ = buf.WriteString(
+			"HTTP/1.1 101 UPGRADED\r\nContent-Type: application/vnd.docker.raw-stream\r\n" +
+				"Connection: Upgrade\r\nUpgrade: tcp\r\n\r\n",
+		)
 		if payload != "" {
 			header := make([]byte, 8)
 			header[0] = 1
@@ -281,7 +310,17 @@ func startIMQADocker(t *testing.T, image string) (*imQADocker, string, string) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	now := time.Now()
-	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "isolated fake Docker"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "isolated fake Docker"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	require.NoError(t, err)
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
@@ -310,26 +349,63 @@ func TestIMAgentQAEndToEndShellAndRevocation(t *testing.T) {
 	sandbox.ClearDockerBackendEnabledOverride()
 	t.Cleanup(sandbox.ClearDockerBackendEnabledOverride)
 	daemon, host, certs := startIMQADocker(t, image)
-	tenantConfig := &types.TenantSandboxConfig{SandboxType: "docker", AllowPrivateEndpoints: true, Docker: &types.DockerSandboxConfig{Image: "base", Host: host, TLSCertPath: certs}}
+	tenantConfig := &types.TenantSandboxConfig{
+		SandboxType:           "docker",
+		AllowPrivateEndpoints: true,
+		Docker:                &types.DockerSandboxConfig{Image: "base", Host: host, TLSCertPath: certs},
+	}
 	db := newPinTestDB(t)
 	require.NoError(t, db.AutoMigrate(&types.TenantSandboxConfigEntity{}, &types.Message{}))
-	require.NoError(t, db.Create(&types.TenantSandboxConfigEntity{ID: "cfg", TenantID: 7, Name: "test", SandboxType: "docker", Config: tenantConfig}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.TenantSandboxConfigEntity{
+				ID:          "cfg",
+				TenantID:    7,
+				Name:        "test",
+				SandboxType: "docker",
+				Config:      tenantConfig,
+			},
+		).Error,
+	)
 	pinner := NewSessionSandboxPinner(db)
-	resolver, err := sandbox.NewTenantSandboxResolver(sandbox.TenantSandboxResolverDeps{GlobalConfig: sandbox.DefaultConfig(), Loader: imQAConfigLoader{tenantConfig}, Store: sandbox.NewMemorySessionSandboxBindingStore(), Checker: imQAChecker{}, IMDiskVerifier: imQADiskVerifier{}})
+	resolver, err := sandbox.NewTenantSandboxResolver(
+		sandbox.TenantSandboxResolverDeps{
+			GlobalConfig:   sandbox.DefaultConfig(),
+			Loader:         imQAConfigLoader{tenantConfig},
+			Store:          sandbox.NewMemorySessionSandboxBindingStore(),
+			Checker:        imQAChecker{},
+			IMDiskVerifier: imQADiskVerifier{},
+		},
+	)
 	require.NoError(t, err)
 	appConfig := &config.Config{}
 	agentSvc := &agentService{cfg: appConfig, db: db, sandboxResolver: resolver, sandboxPinner: pinner}
 	model := &imQAModel{}
-	sessionSvc := &sessionService{cfg: appConfig, modelService: imQAModelService{model: model}, messageRepo: imQAMessages{}, agentService: agentSvc, sandboxResolver: resolver, sandboxPinner: pinner}
+	sessionSvc := &sessionService{
+		cfg:             appConfig,
+		modelService:    imQAModelService{model: model},
+		messageRepo:     imQAMessages{},
+		agentService:    agentSvc,
+		sandboxResolver: resolver,
+		sandboxPinner:   pinner,
+	}
 	var revoked atomic.Bool
-	grant := types.IMSandboxGrant{SessionID: "s-1", TenantID: 7, ConfigID: "cfg", AgentConfigDigest: strings.Repeat("a", 64), AllowShell: true, Revalidate: func(ctx context.Context) error {
-		principal, ok := types.PrincipalFromContext(ctx)
-		sid, has := types.SessionIDFromContext(ctx)
-		if revoked.Load() || !ok || principal.ID != "native" || !has || sid != "s-1" {
-			return types.ErrIMSandboxDenied
-		}
-		return nil
-	}}
+	grant := types.IMSandboxGrant{
+		SessionID:         "s-1",
+		TenantID:          7,
+		ConfigID:          "cfg",
+		AgentConfigDigest: strings.Repeat("a", 64),
+		AllowShell:        true,
+		Revalidate: func(ctx context.Context) error {
+			principal, ok := types.PrincipalFromContext(ctx)
+			sid, has := types.SessionIDFromContext(ctx)
+			if revoked.Load() || !ok || principal.ID != "native" || !has || sid != "s-1" {
+				return types.ErrIMSandboxDenied
+			}
+			return nil
+		},
+	}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
 	ctx = context.WithValue(ctx, types.TenantInfoContextKey, &types.Tenant{ID: 7})
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "native"})
@@ -338,8 +414,26 @@ func TestIMAgentQAEndToEndShellAndRevocation(t *testing.T) {
 	ctx = types.WithIMSandboxGrant(ctx, grant)
 	var streamed atomic.Int64
 	ctx = sandbox.WithCommandOutput(ctx, func(_ string, data []byte) { streamed.Add(int64(len(data))) })
-	agent := &types.CustomAgent{ID: "agent", TenantID: 7, Config: types.CustomAgentConfig{ModelID: "fake", WebSearchProviderID: "unused", KBSelectionMode: "none", SkillsSelectionMode: "none", SandboxConfigID: "cfg", AllowedTools: []string{"__no_scoped_tools__"}, MaxIterations: 3}}
-	req := &types.QARequest{Session: &types.Session{ID: "s-1", TenantID: 7}, CustomAgent: agent, Query: "test", AssistantMessageID: "message", TurnLeaseHeld: true}
+	agent := &types.CustomAgent{
+		ID:       "agent",
+		TenantID: 7,
+		Config: types.CustomAgentConfig{
+			ModelID:             "fake",
+			WebSearchProviderID: "unused",
+			KBSelectionMode:     "none",
+			SkillsSelectionMode: "none",
+			SandboxConfigID:     "cfg",
+			AllowedTools:        []string{"__no_scoped_tools__"},
+			MaxIterations:       3,
+		},
+	}
+	req := &types.QARequest{
+		Session:            &types.Session{ID: "s-1", TenantID: 7},
+		CustomAgent:        agent,
+		Query:              "test",
+		AssistantMessageID: "message",
+		TurnLeaseHeld:      true,
+	}
 	// The artifact collector prepares this same context before AgentQA.
 	prepared, err := sessionSvc.PrepareIMSandboxContext(ctx, true)
 	require.NoError(t, err)
@@ -373,7 +467,12 @@ func TestIMAgentQAEndToEndShellAndRevocation(t *testing.T) {
 	daemon.mu.Unlock()
 	beforeStops := daemon.stops.Load()
 	require.ErrorIs(t, ReconcileIMSandboxBeforeTurn(ctx, pinner, resolver, "s-1"), ErrIMSandboxBaselineNotEmpty)
-	require.Greater(t, daemon.stops.Load(), beforeStops, "an old bound container must be stopped before rejecting the baseline")
+	require.Greater(
+		t,
+		daemon.stops.Load(),
+		beforeStops,
+		"an old bound container must be stopped before rejecting the baseline",
+	)
 	require.ErrorIs(t, ValidateIMSandboxEmptyBaseline(ctx, pinner, resolver, "s-1"), ErrIMSandboxBaselineNotEmpty)
 	_, err = pinner.Pin(ctx, "s-1", SandboxPin{ConfigID: "cfg", TenantID: 7})
 	require.NoError(t, err)

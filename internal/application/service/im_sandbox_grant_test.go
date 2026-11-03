@@ -51,15 +51,31 @@ func TestScopedIMDoesNotTouchGlobalSandboxTurnHolder(t *testing.T) {
 func TestValidateIMSandboxPinRequiresLiveMatchingAuthorization(t *testing.T) {
 	db := newPinTestDB(t)
 	require.NoError(t, db.AutoMigrate(&types.TenantSandboxConfigEntity{}))
-	require.NoError(t, db.Create(&types.TenantSandboxConfigEntity{ID: "cfg", TenantID: 7, Name: "test", SandboxType: "docker", Config: &types.TenantSandboxConfig{SandboxType: "docker"}}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.TenantSandboxConfigEntity{
+				ID:          "cfg",
+				TenantID:    7,
+				Name:        "test",
+				SandboxType: "docker",
+				Config:      &types.TenantSandboxConfig{SandboxType: "docker"},
+			},
+		).Error,
+	)
 	pinner := NewSessionSandboxPinner(db)
 	allowed := true
-	grant := types.IMSandboxGrant{SessionID: "s-1", TenantID: 7, ConfigID: "cfg", Revalidate: func(context.Context) error {
-		if !allowed {
-			return types.ErrIMSandboxDenied
-		}
-		return nil
-	}}
+	grant := types.IMSandboxGrant{
+		SessionID: "s-1",
+		TenantID:  7,
+		ConfigID:  "cfg",
+		Revalidate: func(context.Context) error {
+			if !allowed {
+				return types.ErrIMSandboxDenied
+			}
+			return nil
+		},
+	}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
 	ctx = types.WithSessionID(ctx, "s-1")
 	ctx = types.WithIMKnowledgeScope(ctx, []string{"kb"})
@@ -89,7 +105,13 @@ func TestValidateIMSandboxPinRequiresLiveMatchingAuthorization(t *testing.T) {
 	_, err = ValidateIMSandboxPin(ctx, pinner, "s-1", false)
 	require.ErrorIs(t, err, types.ErrIMSandboxDenied)
 	allowed = true
-	policy := &types.TenantSandboxConfigEntity{ID: "kill", TenantID: 7, Name: types.SandboxWorkspacePolicyConfigName, SandboxType: "disabled", Config: &types.TenantSandboxConfig{SandboxType: "disabled"}}
+	policy := &types.TenantSandboxConfigEntity{
+		ID:          "kill",
+		TenantID:    7,
+		Name:        types.SandboxWorkspacePolicyConfigName,
+		SandboxType: "disabled",
+		Config:      &types.TenantSandboxConfig{SandboxType: "disabled"},
+	}
 	require.NoError(t, db.Create(policy).Error)
 	_, err = ValidateIMSandboxPin(ctx, pinner, "s-1", false)
 	require.ErrorIs(t, err, types.ErrIMSandboxDenied)
@@ -98,14 +120,26 @@ func TestValidateIMSandboxPinRequiresLiveMatchingAuthorization(t *testing.T) {
 	_, err = ValidateIMSandboxPin(ctx, pinner, "s-1", false)
 	require.ErrorIs(t, err, types.ErrIMSandboxDenied)
 	require.NoError(t, db.Model(&types.Session{}).Where("id = ?", "s-1").Update("sandbox_config_tenant_id", 7).Error)
-	require.NoError(t, db.Model(&types.TenantSandboxConfigEntity{}).Where("id = ?", "cfg").Update("sandbox_type", "host").Error)
+	require.NoError(
+		t,
+		db.Model(&types.TenantSandboxConfigEntity{}).Where("id = ?", "cfg").Update("sandbox_type", "host").Error,
+	)
 	_, err = ValidateIMSandboxPin(ctx, pinner, "s-1", false)
 	require.ErrorIs(t, err, types.ErrIMSandboxDenied)
-	require.NoError(t, db.Model(&types.TenantSandboxConfigEntity{}).Where("id = ?", "cfg").Update("sandbox_type", "docker").Error)
+	require.NoError(
+		t,
+		db.Model(&types.TenantSandboxConfigEntity{}).Where("id = ?", "cfg").Update("sandbox_type", "docker").Error,
+	)
 	require.NoError(t, db.Model(&types.Session{}).Where("id = ?", "s-1").Update("sandbox_config_tenant_id", -1).Error)
 	_, err = ValidateIMSandboxPin(ctx, pinner, "s-1", true)
 	require.ErrorIs(t, err, types.ErrIMSandboxDenied)
-	require.NoError(t, db.Model(&types.Session{}).Where("id = ?", "s-1").Updates(map[string]any{"sandbox_config_tenant_id": 0, "sandbox_config_id": "  "}).Error)
+	require.NoError(
+		t,
+		db.Model(&types.Session{}).
+			Where("id = ?", "s-1").
+			Updates(map[string]any{"sandbox_config_tenant_id": 0, "sandbox_config_id": "  "}).
+			Error,
+	)
 	_, err = ValidateIMSandboxPin(ctx, pinner, "s-1", true)
 	require.ErrorIs(t, err, types.ErrIMSandboxDenied)
 	missingGrant := grant

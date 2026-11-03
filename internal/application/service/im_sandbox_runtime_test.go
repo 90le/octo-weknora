@@ -48,7 +48,11 @@ func (b *imTestBackend) ExecIMShell(
 	return &sandbox.ExecuteResult{ExitCode: 0, Stdout: "backend executed"}, nil
 }
 
-func (b *imTestBackend) WriteSessionWorkspaceFiles(_ context.Context, sid string, files []sandbox.SessionWorkspaceFile) error {
+func (b *imTestBackend) WriteSessionWorkspaceFiles(
+	_ context.Context,
+	sid string,
+	files []sandbox.SessionWorkspaceFile,
+) error {
 	if sid != "s-1" || len(files) == 0 {
 		return errors.New("invalid staging")
 	}
@@ -68,21 +72,39 @@ func (*imTestBackend) ListIMSessionFiles(context.Context, string, string) ([]san
 func TestIMActualShellToolRevalidatesPinAndContext(t *testing.T) {
 	db := newPinTestDB(t)
 	require.NoError(t, db.AutoMigrate(&types.TenantSandboxConfigEntity{}))
-	require.NoError(t, db.Create(&types.TenantSandboxConfigEntity{ID: "cfg", TenantID: 7, Name: "test", SandboxType: "docker", Config: &types.TenantSandboxConfig{SandboxType: "docker"}}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.TenantSandboxConfigEntity{
+				ID:          "cfg",
+				TenantID:    7,
+				Name:        "test",
+				SandboxType: "docker",
+				Config:      &types.TenantSandboxConfig{SandboxType: "docker"},
+			},
+		).Error,
+	)
 	pinner := NewSessionSandboxPinner(db)
 	_, err := pinner.Pin(context.Background(), "s-1", SandboxPin{ConfigID: "cfg", TenantID: 7})
 	require.NoError(t, err)
 	var revoked atomic.Bool
-	grant := types.IMSandboxGrant{SessionID: "s-1", TenantID: 7, ConfigID: "cfg", AllowShell: true, AgentConfigDigest: "agent", Revalidate: func(ctx context.Context) error {
-		if revoked.Load() {
-			return types.ErrIMSandboxDenied
-		}
-		p, ok := types.PrincipalFromContext(ctx)
-		if !ok || p.ID != "native" {
-			return types.ErrIMSandboxDenied
-		}
-		return nil
-	}}
+	grant := types.IMSandboxGrant{
+		SessionID:         "s-1",
+		TenantID:          7,
+		ConfigID:          "cfg",
+		AllowShell:        true,
+		AgentConfigDigest: "agent",
+		Revalidate: func(ctx context.Context) error {
+			if revoked.Load() {
+				return types.ErrIMSandboxDenied
+			}
+			p, ok := types.PrincipalFromContext(ctx)
+			if !ok || p.ID != "native" {
+				return types.ErrIMSandboxDenied
+			}
+			return nil
+		},
+	}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
 	ctx = types.WithSessionID(ctx, "s-1")
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "native"})
@@ -139,7 +161,14 @@ func TestIMActualShellToolRevalidatesPinAndContext(t *testing.T) {
 }
 
 func TestIMPolicyFingerprintChangesWithSkillsAndAgent(t *testing.T) {
-	grant := types.IMSandboxGrant{SessionID: "s", TenantID: 7, ConfigID: "cfg", AgentConfigDigest: "agent", AllowShell: true, Revalidate: func(context.Context) error { return nil }}
+	grant := types.IMSandboxGrant{
+		SessionID:         "s",
+		TenantID:          7,
+		ConfigID:          "cfg",
+		AgentConfigDigest: "agent",
+		AllowShell:        true,
+		Revalidate:        func(context.Context) error { return nil },
+	}
 	ctx := types.WithIMSandboxGrant(context.Background(), grant)
 	ctx = context.WithValue(ctx, imSandboxConfigBaselineKey{}, [32]byte{1})
 	a, err := withIMSandboxPolicy(ctx)
@@ -165,7 +194,11 @@ type imSkillRepoFixture struct {
 	rows []*types.TenantSkillEntity
 }
 
-func (r *imSkillRepoFixture) ListSkillsByConfig(_ context.Context, tenant uint64, cfg string) ([]*types.TenantSkillEntity, error) {
+func (r *imSkillRepoFixture) ListSkillsByConfig(
+	_ context.Context,
+	tenant uint64,
+	cfg string,
+) ([]*types.TenantSkillEntity, error) {
 	if tenant != 7 || cfg != "cfg" {
 		return nil, errors.New("wrong config")
 	}
@@ -177,7 +210,11 @@ type imConfigRepoFixture struct {
 	cfg *types.TenantSandboxConfigEntity
 }
 
-func (r *imConfigRepoFixture) GetByID(_ context.Context, tenant uint64, cfg string) (*types.TenantSandboxConfigEntity, error) {
+func (r *imConfigRepoFixture) GetByID(
+	_ context.Context,
+	tenant uint64,
+	cfg string,
+) (*types.TenantSandboxConfigEntity, error) {
 	if tenant != 7 || cfg != "cfg" {
 		return nil, errors.New("wrong config")
 	}
@@ -186,15 +223,54 @@ func (r *imConfigRepoFixture) GetByID(_ context.Context, tenant uint64, cfg stri
 
 func TestIMSkillSelectionAndCredentialIsolation(t *testing.T) {
 	cfg := &types.TenantSandboxConfig{SandboxType: "docker", Docker: &types.DockerSandboxConfig{Image: "base"}}
-	cfg.SkillImage = &types.SkillImageConfig{SnapshotID: "installed", OwnerFingerprint: sandbox.SkillOwnerFingerprint(cfg)}
+	cfg.SkillImage = &types.SkillImageConfig{
+		SnapshotID:       "installed",
+		OwnerFingerprint: sandbox.SkillOwnerFingerprint(cfg),
+	}
 	rows := []*types.TenantSkillEntity{
-		{ID: "a", TenantID: 7, SandboxConfigID: "cfg", Name: "alpha", Enabled: true, Status: types.SkillStatusReady, BundleSHA256: strings.Repeat("a", 64), Envs: types.SkillEnvVars{{Name: "TOKEN", Value: "system secret"}}},
-		{ID: "b", TenantID: 7, SandboxConfigID: "cfg", Name: "beta", Enabled: true, Status: types.SkillStatusReady, BundleSHA256: strings.Repeat("b", 64)},
-		{ID: "c", TenantID: 7, SandboxConfigID: "cfg", Name: "off", Enabled: false, Status: types.SkillStatusReady, BundleSHA256: strings.Repeat("c", 64)},
+		{
+			ID:              "a",
+			TenantID:        7,
+			SandboxConfigID: "cfg",
+			Name:            "alpha",
+			Enabled:         true,
+			Status:          types.SkillStatusReady,
+			BundleSHA256:    strings.Repeat("a", 64),
+			Envs:            types.SkillEnvVars{{Name: "TOKEN", Value: "system secret"}},
+		},
+		{
+			ID:              "b",
+			TenantID:        7,
+			SandboxConfigID: "cfg",
+			Name:            "beta",
+			Enabled:         true,
+			Status:          types.SkillStatusReady,
+			BundleSHA256:    strings.Repeat("b", 64),
+		},
+		{
+			ID:              "c",
+			TenantID:        7,
+			SandboxConfigID: "cfg",
+			Name:            "off",
+			Enabled:         false,
+			Status:          types.SkillStatusReady,
+			BundleSHA256:    strings.Repeat("c", 64),
+		},
 	}
 	repo := &imSkillRepoFixture{rows: rows}
-	svc := &sessionService{tenantSkillRepo: repo, sandboxConfigRepo: &imConfigRepoFixture{cfg: &types.TenantSandboxConfigEntity{ID: "cfg", TenantID: 7, Config: cfg}}}
-	grant := types.IMSandboxGrant{SessionID: "s-1", TenantID: 7, ConfigID: "cfg", AllowSkills: true, Revalidate: func(context.Context) error { return nil }}
+	svc := &sessionService{
+		tenantSkillRepo: repo,
+		sandboxConfigRepo: &imConfigRepoFixture{
+			cfg: &types.TenantSandboxConfigEntity{ID: "cfg", TenantID: 7, Config: cfg},
+		},
+	}
+	grant := types.IMSandboxGrant{
+		SessionID:   "s-1",
+		TenantID:    7,
+		ConfigID:    "cfg",
+		AllowSkills: true,
+		Revalidate:  func(context.Context) error { return nil },
+	}
 	selected, err := svc.approvedIMSkills(context.Background(), grant, "selected", []string{"alpha"})
 	require.NoError(t, err)
 	require.Len(t, selected, 1)
@@ -222,8 +298,20 @@ func TestIMSkillSelectionAndCredentialIsolation(t *testing.T) {
 
 func TestIMEnabledSkillCapabilityWithNoInstalledSkills(t *testing.T) {
 	cfg := &types.TenantSandboxConfig{SandboxType: "docker", Docker: &types.DockerSandboxConfig{Image: "base"}}
-	svc := &sessionService{tenantSkillRepo: &imSkillRepoFixture{}, sandboxConfigRepo: &imConfigRepoFixture{cfg: &types.TenantSandboxConfigEntity{ID: "cfg", TenantID: 7, Config: cfg}}}
-	grant := types.IMSandboxGrant{SessionID: "s-1", TenantID: 7, ConfigID: "cfg", AllowSkills: true, SkillsSelectionMode: "all", Revalidate: func(context.Context) error { return nil }}
+	svc := &sessionService{
+		tenantSkillRepo: &imSkillRepoFixture{},
+		sandboxConfigRepo: &imConfigRepoFixture{
+			cfg: &types.TenantSandboxConfigEntity{ID: "cfg", TenantID: 7, Config: cfg},
+		},
+	}
+	grant := types.IMSandboxGrant{
+		SessionID:           "s-1",
+		TenantID:            7,
+		ConfigID:            "cfg",
+		AllowSkills:         true,
+		SkillsSelectionMode: "all",
+		Revalidate:          func(context.Context) error { return nil },
+	}
 	runtimeConfig := &types.AgentConfig{SkillsEnabled: true}
 	ctx, err := svc.withIMSkillsCheck(types.WithIMSandboxGrant(context.Background(), grant), runtimeConfig)
 	require.NoError(t, err)
@@ -235,17 +323,34 @@ func TestIMEnabledSkillCapabilityWithNoInstalledSkills(t *testing.T) {
 func TestIMApprovedSkillToolStagesAndExecutesOnlySelected(t *testing.T) {
 	db := newPinTestDB(t)
 	require.NoError(t, db.AutoMigrate(&types.TenantSandboxConfigEntity{}))
-	require.NoError(t, db.Create(&types.TenantSandboxConfigEntity{ID: "cfg", TenantID: 7, Name: "test", SandboxType: "docker", Config: &types.TenantSandboxConfig{SandboxType: "docker"}}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.TenantSandboxConfigEntity{
+				ID:          "cfg",
+				TenantID:    7,
+				Name:        "test",
+				SandboxType: "docker",
+				Config:      &types.TenantSandboxConfig{SandboxType: "docker"},
+			},
+		).Error,
+	)
 	pinner := NewSessionSandboxPinner(db)
 	_, err := pinner.Pin(context.Background(), "s-1", SandboxPin{ConfigID: "cfg", TenantID: 7})
 	require.NoError(t, err)
 	var revoked atomic.Bool
-	grant := types.IMSandboxGrant{SessionID: "s-1", TenantID: 7, ConfigID: "cfg", AllowSkills: true, Revalidate: func(context.Context) error {
-		if revoked.Load() {
-			return types.ErrIMSandboxDenied
-		}
-		return nil
-	}}
+	grant := types.IMSandboxGrant{
+		SessionID:   "s-1",
+		TenantID:    7,
+		ConfigID:    "cfg",
+		AllowSkills: true,
+		Revalidate: func(context.Context) error {
+			if revoked.Load() {
+				return types.ErrIMSandboxDenied
+			}
+			return nil
+		},
+	}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
 	ctx = types.WithSessionID(ctx, "s-1")
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "native"})
@@ -274,12 +379,32 @@ func TestIMApprovedSkillToolStagesAndExecutesOnlySelected(t *testing.T) {
 	svc := &agentService{sandboxPinner: pinner}
 	config := &types.AgentConfig{TenantSkills: []*types.TenantSkillEntity{{Name: "alpha"}}}
 	check := func() error { return svc.authorizeIMSkillSource(ctx, "s-1") }
-	require.ErrorIs(t, guard.WriteSessionWorkspaceFile(ctx, "s-1", "/workspace/.skills/alpha/run.py", []byte("modified")), types.ErrIMSandboxDenied)
-	require.ErrorIs(t, guard.WriteSessionWorkspaceFiles(ctx, "s-1", []sandbox.SessionWorkspaceFile{{Path: "/workspace/.skills/alpha/run.py"}}), types.ErrIMSandboxDenied)
-	manager := skills.NewManager(&skills.ManagerConfig{Enabled: true, AllowedSkills: []string{"alpha"}, StrictStagedIntegrity: true}, guard).WithTenantSource(imStagedSkillSource{SkillSource: skills.NewLoader([]string{root}), authorize: check}).WithTenantVisibilityGuard(check)
+	require.ErrorIs(
+		t,
+		guard.WriteSessionWorkspaceFile(ctx, "s-1", "/workspace/.skills/alpha/run.py", []byte("modified")),
+		types.ErrIMSandboxDenied,
+	)
+	require.ErrorIs(
+		t,
+		guard.WriteSessionWorkspaceFiles(
+			ctx,
+			"s-1",
+			[]sandbox.SessionWorkspaceFile{{Path: "/workspace/.skills/alpha/run.py"}},
+		),
+		types.ErrIMSandboxDenied,
+	)
+	manager := skills.NewManager(
+		&skills.ManagerConfig{Enabled: true, AllowedSkills: []string{"alpha"}, StrictStagedIntegrity: true}, guard,
+	).
+		WithTenantSource(imStagedSkillSource{SkillSource: skills.NewLoader([]string{root}), authorize: check}).
+		WithTenantVisibilityGuard(check)
 	require.NoError(t, manager.Initialize(ctx))
 	require.Len(t, manager.GetAllMetadata(), 1)
-	tool := tools.NewIMSkillExecTool(manager, guard, func(call context.Context, name string) error { return svc.authorizeIMSkill(call, "s-1", config, name) })
+	tool := tools.NewIMSkillExecTool(
+		manager,
+		guard,
+		func(call context.Context, name string) error { return svc.authorizeIMSkill(call, "s-1", config, name) },
+	)
 	result, err := tool.Execute(ctx, json.RawMessage(`{"skill_name":"alpha","script":"run.py","args":["hello"]}`))
 	require.NoError(t, err)
 	require.True(t, result.Success, result.Error)
@@ -331,17 +456,34 @@ func (b *imRevokingReadBackend) ReadSessionFileBounded(context.Context, string, 
 func TestIMRevocationDuringExecutionCancelsAndSuppressesOutput(t *testing.T) {
 	db := newPinTestDB(t)
 	require.NoError(t, db.AutoMigrate(&types.TenantSandboxConfigEntity{}))
-	require.NoError(t, db.Create(&types.TenantSandboxConfigEntity{ID: "cfg", TenantID: 7, Name: "test", SandboxType: "docker", Config: &types.TenantSandboxConfig{SandboxType: "docker"}}).Error)
+	require.NoError(
+		t,
+		db.Create(
+			&types.TenantSandboxConfigEntity{
+				ID:          "cfg",
+				TenantID:    7,
+				Name:        "test",
+				SandboxType: "docker",
+				Config:      &types.TenantSandboxConfig{SandboxType: "docker"},
+			},
+		).Error,
+	)
 	pinner := NewSessionSandboxPinner(db)
 	_, err := pinner.Pin(context.Background(), "s-1", SandboxPin{ConfigID: "cfg", TenantID: 7})
 	require.NoError(t, err)
 	var revoked atomic.Bool
-	grant := types.IMSandboxGrant{SessionID: "s-1", TenantID: 7, ConfigID: "cfg", AllowShell: true, Revalidate: func(context.Context) error {
-		if revoked.Load() {
-			return types.ErrIMSandboxDenied
-		}
-		return nil
-	}}
+	grant := types.IMSandboxGrant{
+		SessionID:  "s-1",
+		TenantID:   7,
+		ConfigID:   "cfg",
+		AllowShell: true,
+		Revalidate: func(context.Context) error {
+			if revoked.Load() {
+				return types.ErrIMSandboxDenied
+			}
+			return nil
+		},
+	}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
 	ctx = types.WithSessionID(ctx, "s-1")
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "native"})
@@ -350,7 +492,12 @@ func TestIMRevocationDuringExecutionCancelsAndSuppressesOutput(t *testing.T) {
 	ctx = types.WithIMSandboxPolicy(ctx, "policy")
 	hash, err := imSandboxConfigFingerprint(ctx, pinner, grant)
 	require.NoError(t, err)
-	backend := &imBlockingBackend{imTestBackend: &imTestBackend{}, started: make(chan struct{}), cancelled: make(chan struct{}), failStop: true}
+	backend := &imBlockingBackend{
+		imTestBackend: &imTestBackend{},
+		started:       make(chan struct{}),
+		cancelled:     make(chan struct{}),
+		failStop:      true,
+	}
 	guard := &imGuardedSandbox{backend: backend, pinner: pinner, configFingerprint: hash}
 	type outcome struct {
 		result *sandbox.ExecuteResult
