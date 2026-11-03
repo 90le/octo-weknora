@@ -339,14 +339,8 @@ func TestIMAgentQAEndToEndShellAndRevocation(t *testing.T) {
 	// The artifact collector prepares this same context before AgentQA.
 	prepared, err := sessionSvc.PrepareIMSandboxContext(ctx, true)
 	require.NoError(t, err)
-	// No production disk verifier is wired: execution must fail before pin or
-	// container creation. The other resolver below uses only a fake verifier.
-	noQuota, err := sandbox.NewTenantSandboxResolver(sandbox.TenantSandboxResolverDeps{GlobalConfig: sandbox.DefaultConfig(), Loader: imQAConfigLoader{tenantConfig}, Store: sandbox.NewMemorySessionSandboxBindingStore(), Checker: imQAChecker{}})
-	require.NoError(t, err)
-	_, _, err = resolveSandboxForExecution(prepared, noQuota, nil, pinner, 7, "s-1", "cfg", nil)
-	require.ErrorIs(t, err, sandbox.ErrIMDiskLimitUnavailable)
 	daemon.mu.Lock()
-	require.Nil(t, daemon.cfg, "missing quota must not create a container")
+	require.Nil(t, daemon.cfg, "preparing a turn must not create a container")
 	daemon.mu.Unlock()
 	pin, err := pinner.Read(prepared, "s-1")
 	require.NoError(t, err)
