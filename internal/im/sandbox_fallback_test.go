@@ -11,6 +11,32 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+type testSandboxPreparationError struct {
+	stage string
+	err   error
+}
+
+func (e *testSandboxPreparationError) Error() string                   { return "test error" }
+func (e *testSandboxPreparationError) Unwrap() error                   { return e.err }
+func (e *testSandboxPreparationError) SandboxPreparationStage() string { return e.stage }
+
+func TestSandboxPreparationDiagnosticUsesOnlySafeLabels(t *testing.T) {
+	for _, tc := range []struct {
+		stage                 string
+		err                   error
+		wantStage, wantReason string
+	}{
+		{"reconcile", context.DeadlineExceeded, "reconcile", "timeout"},
+		{"skills", types.ErrIMSandboxDenied, "skills", "denied"},
+		{"sensitive detail", errors.New("secret"), "unknown", "unavailable"},
+	} {
+		stage, reason := sandboxPreparationDiagnostic(&testSandboxPreparationError{stage: tc.stage, err: tc.err})
+		if stage != tc.wantStage || reason != tc.wantReason {
+			t.Fatalf("unexpected diagnostic: %q %q", stage, reason)
+		}
+	}
+}
+
 func TestMissingNamedSandboxFallsBackWithoutGrant(t *testing.T) {
 	for _, request := range []types.IMSandboxRequests{{Shell: true}, {Skills: true}, {Shell: true, Skills: true}} {
 		ctx := types.WithIMKnowledgeScope(context.Background(), []string{"allowed-kb"})

@@ -14,6 +14,64 @@ import (
 
 func allowMarkdownScope(context.Context) error { return nil }
 
+func TestDeliveredTextSnapshotRequiresConfirmedLiveAuthority(t *testing.T) {
+	p := testPrincipal()
+	p.IsDirect, p.AllowFileDelivery = true, true
+	p.MessageText = "请发送文件"
+	fresh := p
+	p.Validate = func(context.Context) (Principal, error) { return fresh, nil }
+	ctx := WithFileDeliverySink(principalContext(p), func(_ context.Context, file *ReportArtifact) error {
+		file.Name = "platform-wrapper.zip"
+		return nil
+	}, allowMarkdownScope)
+	result, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"report.txt","content":"original"}`))
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+	files, err := DeliveredTextFiles(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "report.txt", files[0].Name)
+	require.Equal(t, "original", files[0].Content)
+	files[0].Content = "changed"
+	again, err := DeliveredTextFiles(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "original", again[0].Content)
+	otherTurn := p
+	otherTurn.MessageID = "another-message"
+	_, err = DeliveredTextFiles(WithPrincipal(ctx, otherTurn))
+	require.Error(t, err)
+	fresh.AllowFileDelivery = false
+	_, err = DeliveredTextFiles(ctx)
+	require.Error(t, err)
+	ClearDeliveredTextFiles(ctx)
+	fresh.AllowFileDelivery = true
+	_, err = DeliveredTextFiles(ctx)
+	require.Error(t, err)
+}
+
+func TestDeliveredTextSnapshotExcludesFailedAndRevokedSends(t *testing.T) {
+	for _, revoke := range []bool{false, true} {
+		p := testPrincipal()
+		p.IsDirect, p.AllowFileDelivery = true, true
+		p.MessageText = "请发送文件"
+		fresh := p
+		p.Validate = func(context.Context) (Principal, error) { return fresh, nil }
+		ctx := WithFileDeliverySink(principalContext(p), func(context.Context, *ReportArtifact) error {
+			if revoke {
+				fresh.AllowFileDelivery = false
+				return nil
+			}
+			return errors.New("send failed")
+		}, allowMarkdownScope)
+		result, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"report.txt","content":"secret"}`))
+		require.NoError(t, err)
+		require.False(t, result.Success)
+		require.False(t, HasDeliveredFile(ctx))
+		files, err := DeliveredTextFiles(ctx)
+		require.NoError(t, err)
+		require.Empty(t, files)
+	}
+}
+
 func TestFileDeliveryRequiresRequestPermissionAndTrustedSink(t *testing.T) {
 	p := testPrincipal()
 	p.AllowGeneratedFiles = true

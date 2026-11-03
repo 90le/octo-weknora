@@ -8521,7 +8521,7 @@ export default {
   },
   artifactLibrary: {
     title: '产物',
-    subtitle: '智能体在各个会话中生成的文件，都会汇总在这里',
+    subtitle: '这里显示可访问的网页会话产物；Octo 等 IM 会话的文件暂不显示。',
     typeFilter: '按类型筛选',
     searchPlaceholder: '搜索文件名',
     categories: {
@@ -8559,7 +8559,7 @@ export default {
     clearFilters: '清除筛选',
     empty: {
       title: '还没有产物',
-      description: '在对话中让智能体生成报告、表格或演示文稿，文件会出现在这里'
+      description: '在网页会话中让智能体生成报告、表格或演示文稿，已记录的文件会出现在这里'
     },
     noMatches: {
       title: '没有匹配的文件',

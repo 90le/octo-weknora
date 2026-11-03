@@ -13,9 +13,11 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	appservice "github.com/Tencent/WeKnora/internal/application/service"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -40,7 +42,95 @@ type imArtifactCollector interface {
 
 type imArtifactTurnKey struct{}
 
-var imSandboxLink = regexp.MustCompile(`\[([^\]\r\n]+)\]\(sandbox:([^\s)]+)\)`)
+type imDeliveredTextCollector interface {
+	PersistDeliveredText(
+		context.Context, string, string, uint64, string, []byte, func(context.Context) error,
+	) (types.MessageArtifact, error)
+	DiscardDeliveredText(context.Context, string, types.MessageArtifact) error
+}
+
+// Save only files actually delivered in this turn, after rechecking the same
+// principal and scope. Text delivery also works when the sandbox is unavailable.
+func (s *Service) persistIMDeliveredText(ctx context.Context, msg *types.Message) []types.MessageArtifact {
+	if msg == nil || msg.ID == "" || msg.SessionID == "" {
+		return nil
+	}
+	collector, ok := s.artifactCollector.(imDeliveredTextCollector)
+	if !ok {
+		return nil
+	}
+	principal, ok := octobusiness.PrincipalFromContext(ctx)
+	sessionID, sessionOK := types.SessionIDFromContext(ctx)
+	if !ok || !sessionOK || sessionID != msg.SessionID || principal.TenantID == 0 {
+		return nil
+	}
+	files, err := octobusiness.DeliveredTextFiles(ctx)
+	if err != nil {
+		return nil
+	}
+	var persisted []types.MessageArtifact
+	for _, file := range files {
+		name, content := file.Name, file.Content
+		authorize := func(checkCtx context.Context) error {
+			current, err := octobusiness.DeliveredTextFiles(checkCtx)
+			if err != nil {
+				return err
+			}
+			for _, item := range current {
+				if item.Name == name && item.Content == content {
+					return nil
+				}
+			}
+			return ErrScopeDenied
+		}
+		artifact, err := collector.PersistDeliveredText(
+			ctx, msg.SessionID, msg.ID, principal.TenantID, name, []byte(content), authorize,
+		)
+		if err != nil {
+			logger.Warnf(ctx, "[IM] delivered text artifact was not recorded")
+			continue
+		}
+		msg.Artifacts = append(msg.Artifacts, artifact)
+		persisted = append(persisted, artifact)
+	}
+	return persisted
+}
+
+// A failed database write can have committed despite the error. Re-read the
+// message before discarding any unreferenced objects; an uncertain read keeps
+// them intact for resource reconciliation.
+func (s *Service) cleanupIMDeliveredText(ctx context.Context, msg *types.Message, files []types.MessageArtifact) {
+	collector, ok := s.artifactCollector.(imDeliveredTextCollector)
+	if !ok || s.messageService == nil || len(files) == 0 {
+		return
+	}
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	stored, err := s.messageService.GetMessage(readCtx, msg.SessionID, msg.ID)
+	if err != nil || stored == nil {
+		logger.Warnf(ctx, "[IM] delivered artifact persistence outcome uncertain")
+		return
+	}
+	for _, file := range files {
+		found := false
+		for _, item := range stored.Artifacts {
+			if item.URL == file.URL {
+				found = true
+				break
+			}
+		}
+		if !found && collector.DiscardDeliveredText(readCtx, msg.ID, file) != nil {
+			logger.Warnf(ctx, "[IM] unreferenced delivered artifact cleanup failed")
+		}
+	}
+}
+
+var (
+	imSandboxLink        = regexp.MustCompile(`!?\[([^\]\r\n]+)\]\(sandbox:([^\s)]+)\)`)
+	imDownloadBeforeLink = regexp.MustCompile(`(?:请)?点击(?:下方|这里|此处|以下)?(?:链接)?下载[：: ]*$`)
+	imDeliveryClaim      = regexp.MustCompile(`(?:文件|附件)(?:(?:已经|已)(?:成功)?(?:发送|投递)(?:成功|完成)?|` +
+		`(?:发送|投递)(?:成功|完成)|成功(?:发送|投递))|(?:(?:已经|已)(?:成功)?|成功)(?:发送|投递)(?:了)?(?:文件|附件)`)
+)
 
 type imArtifactTurn struct {
 	collector   imArtifactCollector
@@ -106,13 +196,16 @@ func (t *imArtifactTurn) authorize(ctx context.Context) error {
 func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, answer string) string {
 	t, ok := ctx.Value(imArtifactTurnKey{}).(*imArtifactTurn)
 	if !ok || t == nil || msg == nil || ctx.Err() != nil {
+		if ctx.Err() == nil && octobusiness.HasDeliveredFile(ctx) {
+			return renderIMArtifactAnswer(answer, nil, false)
+		}
 		return answer
 	}
 	if octobusiness.HasDeliveredFile(ctx) {
-		return answer
+		return renderIMArtifactAnswer(answer, nil, false)
 	}
 	if t.startErr != nil || t.authorize(ctx) != nil {
-		return answer + "\n\n文件发送未完成：无法安全读取本次会话的产物。"
+		return renderIMArtifactAnswer(answer, nil, true) + "\n\n文件发送未完成：无法安全读取本次会话的产物。"
 	}
 	callCtx := octobusiness.WithFileDeliveryExtraCheck(ctx, func(checkCtx context.Context) error {
 		if err := t.authorize(checkCtx); err != nil {
@@ -159,14 +252,14 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 	artifacts, collectErr := t.collector.CollectIM(ctx, t.snapshot, msg.ID, selected)
 	if len(artifacts) == 0 {
 		if collectErr != nil {
-			return answer + "\n\n文件未能收集，请检查文件大小或沙箱状态后重试。"
+			return renderIMArtifactAnswer(answer, nil, true) + "\n\n文件未能收集，请检查文件大小或沙箱状态后重试。"
 		}
 		var names []string
 		for name := range candidates {
 			names = append(names, name)
 		}
 		sort.Strings(names)
-		answer = renderDeliveredArtifactNames(answer, names)
+		answer = renderIMArtifactAnswer(answer, nil, true)
 		if len(names) > 0 {
 			return answer + "\n\n未发送文件：未找到可确认属于本轮的目标文件。请重新生成并指定文件名，例如：" + strings.Join(names, "、") + "。"
 		}
@@ -174,14 +267,14 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 	}
 	callCtx, err := octobusiness.WithCurrentFileDeliveryAuthority(callCtx, true)
 	if err != nil {
-		return answer + "\n\n文件发送未完成：当前会话的授权已变化。"
+		return renderIMArtifactAnswer(answer, nil, true) + "\n\n文件发送未完成：当前会话的授权已变化。"
 	}
 	if len(artifacts) > 0 {
 		msg.Artifacts = append(msg.Artifacts, artifacts...)
 	}
 	sender, ok := t.req.adapter.(generatedFileSender)
 	if !ok {
-		return answer + "\n\n文件发送未完成：当前渠道不支持附件投递。"
+		return renderIMArtifactAnswer(answer, nil, true) + "\n\n文件发送未完成：当前渠道不支持附件投递。"
 	}
 	var sent, sentDisplay, failed, unknown []string
 	for _, artifact := range artifacts {
@@ -224,16 +317,26 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 			sentDisplay = append(sentDisplay, artifact.FileName)
 		}
 	}
+	if len(failed) > 0 || len(unknown) > 0 || collectErr != nil {
+		answer = imDeliveryClaim.ReplaceAllString(answer, "文件发送状态待确认")
+	}
 	if len(sent) > 0 {
 		answer = renderDeliveredArtifactNames(answer, sent)
 		answer += "\n\n已发送文件：" + strings.Join(sentDisplay, "、") + "。"
+		for _, display := range sentDisplay {
+			if strings.Contains(display, "（包含 ") &&
+				strings.HasSuffix(strings.ToLower(strings.SplitN(display, "（", 2)[0]), ".zip") {
+				answer += "\n请下载 ZIP 压缩包并解压后查看其中的文件。"
+				break
+			}
+		}
 	}
 	if len(failed) > 0 {
-		answer = renderDeliveredArtifactNames(answer, failed)
+		answer = renderIMArtifactAnswer(answer, failed, false)
 		answer += "\n\n文件发送失败：" + strings.Join(failed, "、") + "。"
 	}
 	if len(unknown) > 0 {
-		answer = renderDeliveredArtifactNames(answer, unknown)
+		answer = renderIMArtifactAnswer(answer, unknown, false)
 		answer += "\n\n文件发送状态未知，请先检查会话再重试：" + strings.Join(unknown, "、") + "。"
 	}
 	if collectErr != nil {
@@ -278,21 +381,37 @@ func imTemporaryArtifact(relative string) bool {
 // A sandbox: URL is meaningful in Web but not in Octo. Once the actual file
 // was delivered, show its label as text rather than a broken download link.
 func renderDeliveredArtifactNames(answer string, sent []string) string {
-	allowed := make(map[string]bool, len(sent))
-	for _, name := range sent {
+	return renderIMArtifactAnswer(answer, sent, false)
+}
+
+// A nil name list removes all sandbox links without claiming they were sent.
+func renderIMArtifactAnswer(answer string, names []string, uncertain bool) string {
+	if uncertain {
+		answer = imDeliveryClaim.ReplaceAllString(answer, "文件发送状态待确认")
+	}
+	allowed := make(map[string]bool, len(names))
+	for _, name := range names {
 		allowed[name] = true
 	}
-	return imSandboxLink.ReplaceAllStringFunc(answer, func(match string) string {
-		parts := imSandboxLink.FindStringSubmatch(match)
-		if len(parts) != 3 {
-			return match
+	var result strings.Builder
+	last := 0
+	for _, indexes := range imSandboxLink.FindAllStringSubmatchIndex(answer, -1) {
+		name, err := url.PathUnescape(answer[indexes[4]:indexes[5]])
+		if err != nil || (names != nil && !allowed[name]) {
+			continue
 		}
-		name, err := url.PathUnescape(parts[2])
-		if err != nil || !allowed[name] {
-			return match
+		prefix := answer[last:indexes[0]]
+		prefix = imDownloadBeforeLink.ReplaceAllString(prefix, "")
+		result.WriteString(prefix)
+		label := answer[indexes[2]:indexes[3]]
+		if strings.Contains(label, "下载") || strings.Contains(label, "点击") {
+			label = name
 		}
-		return parts[1]
-	})
+		result.WriteString(label)
+		last = indexes[1]
+	}
+	result.WriteString(answer[last:])
+	return result.String()
 }
 
 func (s *Service) readIMArtifact(ctx context.Context, artifact types.MessageArtifact) ([]byte, error) {

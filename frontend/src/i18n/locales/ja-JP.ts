@@ -448,7 +448,7 @@ export default {
   },
   artifactLibrary: {
     title: '成果物',
-    subtitle: 'すべての会話でエージェントが生成したファイルをまとめて表示します',
+    subtitle: 'アクセス可能な Web 会話の成果物を表示します。Octo などの IM 会話のファイルは表示されません。',
     typeFilter: '種類で絞り込む',
     searchPlaceholder: 'ファイル名を検索',
     categories: {
@@ -486,7 +486,7 @@ export default {
     clearFilters: '絞り込みを解除',
     empty: {
       title: '成果物はまだありません',
-      description: '会話でエージェントにレポートや表、スライドを作成させると、ここに表示されます'
+      description: 'Web 会話でエージェントにレポートや表、スライドを作成させると、記録されたファイルがここに表示されます'
     },
     noMatches: {
       title: '一致するファイルがありません',

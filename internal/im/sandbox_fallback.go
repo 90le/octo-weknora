@@ -3,14 +3,39 @@ package im
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
 type sandboxUnavailableKey struct{}
 
-const sandboxUnavailableNotice = "本次沙箱不可用，终端和 Skill 未执行；以下回答仅使用当前授权的其他能力。"
+const sandboxUnavailableNotice = "本轮未能启用沙箱，终端和 Skill 未执行；回答仅使用其他已授权能力。"
+
+// Only fixed diagnostic labels are logged; backend errors may contain paths,
+// endpoint addresses or credentials and must not be printed here.
+func sandboxPreparationDiagnostic(err error) (string, string) {
+	stage, reason := "unknown", "unavailable"
+	var carrier interface{ SandboxPreparationStage() string }
+	if errors.As(err, &carrier) {
+		switch carrier.SandboxPreparationStage() {
+		case "pin", "configuration", "skills", "policy", "output_limit", "reconcile":
+			stage = carrier.SandboxPreparationStage()
+		}
+	}
+	var network net.Error
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		reason = "timeout"
+	case errors.Is(err, types.ErrIMSandboxDenied):
+		reason = "denied"
+	case errors.As(err, &network) && network.Timeout():
+		reason = "timeout"
+	}
+	return stage, reason
+}
 
 // missingSandboxFallback applies only after the caller has revalidated the
 // channel scope and confirmed the scoped Agent has no named sandbox.
@@ -55,6 +80,8 @@ func prepareSandboxOrContinue(
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
+	stage, reason := sandboxPreparationDiagnostic(err)
+	logger.Warnf(ctx, "[IM] sandbox preparation failed: stage=%s reason=%s", stage, reason)
 	disabled := types.WithoutIMSandboxExecution(ctx)
 	return context.WithValue(disabled, sandboxUnavailableKey{}, true), false, nil
 }
