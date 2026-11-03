@@ -8,9 +8,13 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/im"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	gormlogger "gorm.io/gorm/logger"
 )
+
+const fileDeliveryGuardKey = "octo_file_delivery_guard_v1"
 
 // Inbox persists authenticated input before the transport acknowledges it. It
 // also stores the completed reply, so delivery retries never run the model or
@@ -67,13 +71,55 @@ func (a *Adapter) inboxQuery(ctx context.Context, id string) *gorm.DB {
 	return a.db.WithContext(ctx).Model(&Inbox{}).Where("tenant_id = ? AND channel_id = ? AND message_id = ?", a.tenantID, a.channelID, id)
 }
 
+// Mark new-version processing in the existing inbox row, atomically with its
+// transition to processing. Progress-card updates preserve Extra, unlike an
+// ad-hoc top-level JSON field. No file journal row is needed for text-only turns.
+func (a *Adapter) markGuardedProcessing(ctx context.Context, msg *im.IncomingMessage) error {
+	return a.db.Session(&gorm.Session{Logger: gormlogger.Discard}).WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var row Inbox
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id = ? AND channel_id = ? AND message_id = ?", a.tenantID, a.channelID, msg.MessageID).First(&row).Error; err != nil {
+			return err
+		}
+		var original map[string]json.RawMessage
+		if json.Unmarshal([]byte(row.Input), &original) != nil || original == nil {
+			return errors.New("invalid stored Octo input")
+		}
+		extra := map[string]string{}
+		if raw := original["Extra"]; len(raw) > 0 && string(raw) != "null" {
+			if err := json.Unmarshal(raw, &extra); err != nil || extra == nil {
+				return errors.New("invalid stored Octo metadata")
+			}
+		}
+		extra[fileDeliveryGuardKey] = "1"
+		encodedExtra, err := json.Marshal(extra)
+		if err != nil {
+			return err
+		}
+		original["Extra"] = encodedExtra
+		encoded, err := json.Marshal(original)
+		if err != nil {
+			return err
+		}
+		result := tx.Model(&Inbox{}).Where("tenant_id = ? AND channel_id = ? AND message_id = ?", a.tenantID, a.channelID, msg.MessageID).
+			Updates(map[string]any{"state": "processing", "input": string(encoded), "updated_at": time.Now()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("Octo input unavailable")
+		}
+		return nil
+	})
+}
+
 func (a *Adapter) dispatch(ctx context.Context, msg *im.IncomingMessage, handler func(context.Context, *im.IncomingMessage) error) error {
 	if a.deletionReceipt(ctx, msg) != nil {
 		return a.SendReply(ctx, msg, &im.ReplyMessage{Content: deletionReceiptText, IsFinal: true})
 	}
-	if err := a.inboxQuery(ctx, msg.MessageID).Updates(map[string]any{"state": "processing", "updated_at": time.Now()}).Error; err != nil {
+	if err := a.markGuardedProcessing(ctx, msg); err != nil {
 		return err
 	}
+	ctx = context.WithValue(ctx, fileDeliveryOwnerKey{}, uuid.NewString())
 	if err := handler(ctx, msg); err != nil {
 		state := "failed"
 		if errors.Is(err, im.ErrScopeDenied) {
@@ -164,6 +210,27 @@ func (a *Adapter) recoverInbox(ctx context.Context, handler func(context.Context
 				}
 				_ = a.SendReply(ctx, &msg, &im.ReplyMessage{Content: row.Reply, IsFinal: true})
 			} else {
+				if row.State == "processing" && a.deletionReceipt(ctx, &msg) == nil {
+					journal := a.fileDeliveryStore()
+					if journal == nil {
+						logger.Warnf(ctx, "[IM] Octo file delivery recovery unavailable")
+						continue
+					}
+					_, unsafe, err := journal.recovery(ctx, fileTurn{tenant: a.tenantID, channel: a.channelID, source: row.MessageID})
+					if err != nil {
+						logger.Warnf(ctx, "[IM] Octo file delivery recovery unavailable")
+						continue
+					}
+					guarded := msg.Extra[fileDeliveryGuardKey] == "1"
+					if !guarded || unsafe {
+						code := "file_delivery_recovery_blocked"
+						if !guarded {
+							code = "file_delivery_history_unavailable"
+						}
+						_ = a.inboxQuery(ctx, row.MessageID).Where("state = ?", "processing").Updates(map[string]any{"state": "failed", "error_code": code, "updated_at": time.Now()}).Error
+						continue
+					}
+				}
 				_ = a.dispatch(ctx, &msg, handler)
 			}
 		}

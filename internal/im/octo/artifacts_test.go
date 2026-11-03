@@ -27,6 +27,28 @@ const (
 type fileRoundTripper func(*http.Request) (*http.Response, error)
 
 func (f fileRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Transport-only tests inject an explicitly permissive journal. Crash and
+// replay semantics are tested separately against the durable SQLite journal.
+type transportTestFileJournal struct{}
+
+func (transportTestFileJournal) start(context.Context, fileTurn, string) error { return nil }
+func (transportTestFileJournal) recovery(context.Context, fileTurn) (bool, bool, error) {
+	return true, false, nil
+}
+func (transportTestFileJournal) reserve(context.Context, fileTurn, string, fileDeliveryEntry) (bool, error) {
+	return false, nil
+}
+func (transportTestFileJournal) markUploading(context.Context, fileTurn, string, string) error {
+	return nil
+}
+func (transportTestFileJournal) markSending(context.Context, fileTurn, string, string) error {
+	return nil
+}
+func (transportTestFileJournal) finish(context.Context, fileTurn, string, string, string, string, string) error {
+	return nil
+}
+
 func fileResponse(status int, body any) *http.Response {
 	data, _ := json.Marshal(body)
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(data)))}
@@ -42,6 +64,7 @@ func generatedFileFixture(t *testing.T) (*Adapter, *im.IncomingMessage) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	a.fileJournal = transportTestFileJournal{}
 	a.policy = func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error) {
 		return &im.ExecutionScope{KnowledgeBaseIDs: []string{"kb"}}, nil
 	}

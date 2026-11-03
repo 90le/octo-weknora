@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime"
 	"net/http"
@@ -43,7 +44,7 @@ func (e *fileFailure) Unwrap() error { return e.cause }
 // DeliveryOutcome distinguishes a known pre-send failure from an
 // unacknowledged send, where the server may already have accepted the message.
 func (e *fileFailure) DeliveryOutcome() string {
-	if e.code == "send_failed" || e.code == "send_not_acknowledged" {
+	if e.code == "send_failed" || e.code == "send_not_acknowledged" || e.code == "delivery_uncertain" || e.code == "journal_result_unavailable" || e.code == "upload_unavailable" || strings.HasPrefix(e.code, "upload_http_") {
 		return "unknown"
 	}
 	return "failed"
@@ -146,7 +147,7 @@ func (a *Adapter) SendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	return a.sendGeneratedFile(ctx, in, name, data, contentType, func() error { _, err := a.AuthorizeExecution(ctx, nil, in); return err })
 }
 
-func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage, name string, data []byte, contentType string, authorize func() error) error {
+func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage, name string, data []byte, contentType string, authorize func() error) (resultErr error) {
 	if in == nil || len(data) == 0 || len(data) > maxGeneratedFileBytes || !validGeneratedFilename(name) {
 		return a.fileFailure(ctx, in, "invalid_file", nil)
 	}
@@ -171,6 +172,57 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 		return a.fileFailure(ctx, in, "invalid_target", nil)
 	}
 
+	contentHash := sha256.Sum256(data)
+	identity, _ := json.Marshal([]string{strconv.FormatUint(a.tenantID, 10), a.channelID, strconv.Itoa(kind), target, in.MessageID, name, hex.EncodeToString(contentHash[:])})
+	clientMessageID := uuid.NewSHA1(uuid.NameSpaceOID, identity).String()
+	fileKeyHash := sha256.Sum256(identity)
+	fileKey := hex.EncodeToString(fileKeyHash[:])
+	turn := fileTurn{tenant: a.tenantID, channel: a.channelID, source: in.MessageID}
+	journal := a.fileDeliveryStore()
+	if journal == nil {
+		return a.fileFailure(ctx, in, "journal_unavailable", nil)
+	}
+	owner, _ := ctx.Value(fileDeliveryOwnerKey{}).(string)
+	if err := journal.start(ctx, turn, owner); err != nil {
+		if errors.Is(err, errFileDeliveryUncertain) || errors.Is(err, errFileDeliveryFenced) {
+			return a.fileFailure(ctx, in, "delivery_uncertain", nil)
+		}
+		return a.fileFailure(ctx, in, "journal_unavailable", nil)
+	}
+	entry := fileDeliveryEntry{FileKey: fileKey, FileName: name, ContentHash: hex.EncodeToString(contentHash[:]), ClientMsgNo: clientMessageID}
+	alreadySent, err := journal.reserve(ctx, turn, owner, entry)
+	if err != nil {
+		if errors.Is(err, errFileDeliveryUncertain) || errors.Is(err, errFileDeliveryFenced) {
+			return a.fileFailure(ctx, in, "delivery_uncertain", nil)
+		}
+		return a.fileFailure(ctx, in, "journal_unavailable", nil)
+	}
+	if alreadySent {
+		return nil
+	}
+	// A detached, bounded write preserves the outcome even if the request's
+	// context expired. A failed write leaves the conservative prior state.
+	finish := func(state, platformID, code string) error {
+		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		return journal.finish(writeCtx, turn, owner, fileKey, state, platformID, code)
+	}
+	phase := "preparing"
+	defer func() {
+		if resultErr != nil && (phase == "preparing" || phase == "uploading") {
+			code := "before_send_failed"
+			var failure *fileFailure
+			if errors.As(resultErr, &failure) {
+				code = failure.code
+			}
+			state := "failed"
+			if phase == "uploading" {
+				state = "unknown"
+			}
+			_ = finish(state, "", code)
+		}
+	}()
+
 	query := url.Values{"filename": []string{name}, "fileSize": []string{strconv.Itoa(len(data))}, "contentType": []string{generatedFileContentType(name, contentType)}}
 	var signed filePresign
 	if err = a.api.request(ctx, http.MethodGet, "/v1/bot/upload/presigned?"+query.Encode(), nil, &signed); err != nil {
@@ -189,9 +241,6 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	if err = authorize(); err != nil {
 		return a.fileFailure(ctx, in, "scope_denied", err)
 	}
-	contentHash := sha256.Sum256(data)
-	identity, _ := json.Marshal([]string{strconv.Itoa(kind), target, in.MessageID, name, hex.EncodeToString(contentHash[:])})
-	clientMessageID := uuid.NewSHA1(uuid.NameSpaceOID, identity).String()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPut, signed.UploadURL, bytes.NewReader(data))
 	if err != nil {
 		return a.fileFailure(ctx, in, "upload_request_invalid", nil)
@@ -207,6 +256,14 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	storageClient.Jar = nil
 	storageClient.Timeout = 5 * time.Minute
 	storageClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	// Once a PUT begins, even a timeout can leave bytes in external storage.
+	if err = journal.markUploading(ctx, turn, owner, fileKey); err != nil {
+		if errors.Is(err, errFileDeliveryFenced) {
+			return a.fileFailure(ctx, in, "delivery_uncertain", nil)
+		}
+		return a.fileFailure(ctx, in, "journal_unavailable", nil)
+	}
+	phase = "uploading"
 	response, err := storageClient.Do(request)
 	if err != nil {
 		return a.fileFailure(ctx, in, "upload_unavailable", nil)
@@ -237,12 +294,42 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	var result struct {
 		ID json.RawMessage `json:"message_id"`
 	}
+	// Commit the uncertainty boundary before the external message can be sent.
+	if err = journal.markSending(ctx, turn, owner, fileKey); err != nil {
+		if errors.Is(err, errFileDeliveryFenced) {
+			return a.fileFailure(ctx, in, "delivery_uncertain", nil)
+		}
+		return a.fileFailure(ctx, in, "journal_unavailable", nil)
+	}
+	phase = "sending"
+	abortBeforeSend := func(code string, cause error) error {
+		if err := finish("not_sent", "", code); err != nil {
+			return a.fileFailure(ctx, in, "journal_result_unavailable", nil)
+		}
+		return a.fileFailure(ctx, in, code, cause)
+	}
+	// The journal write can be slow; recheck authorization after it, too.
+	if err := octobusiness.ValidateReportAuthority(ctx); err != nil {
+		return abortBeforeSend("report_authority_changed", err)
+	}
+	if err := octobusiness.ValidateFileDeliveryAuthority(ctx); err != nil {
+		return abortBeforeSend("file_authority_changed", err)
+	}
+	if err = authorize(); err != nil {
+		return abortBeforeSend("scope_denied", err)
+	}
 	err = a.api.post(ctx, "/v1/bot/sendMessage", map[string]any{"channel_id": target, "channel_type": kind, "client_msg_no": clientMessageID, "payload": payload}, &result)
 	if err != nil {
+		_ = finish("unknown", "", "send_failed")
 		return a.fileFailure(ctx, in, "send_failed", nil)
 	}
-	if wire.ReadID(result.ID) == "" {
+	platformID := wire.ReadID(result.ID)
+	if platformID == "" {
+		_ = finish("unknown", "", "send_not_acknowledged")
 		return a.fileFailure(ctx, in, "send_not_acknowledged", nil)
+	}
+	if err = finish("sent", platformID, ""); err != nil {
+		return a.fileFailure(ctx, in, "journal_result_unavailable", nil)
 	}
 	return nil
 }
