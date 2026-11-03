@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net/url"
 	"path"
+	"regexp"
 	"strings"
 
 	appservice "github.com/Tencent/WeKnora/internal/application/service"
@@ -23,6 +25,8 @@ type imArtifactCollector interface {
 }
 
 type imArtifactTurnKey struct{}
+
+var imSandboxLink = regexp.MustCompile(`\[([^\]\r\n]+)\]\(sandbox:([^\s)]+)\)`)
 
 type imArtifactTurn struct {
 	collector   imArtifactCollector
@@ -139,6 +143,7 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 		sent = append(sent, artifact.FileName)
 	}
 	if len(sent) > 0 {
+		answer = renderDeliveredArtifactNames(answer, sent)
 		answer += "\n\n已发送文件：" + strings.Join(sent, "、") + "。"
 	}
 	if len(failed) > 0 {
@@ -151,6 +156,26 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 		answer += "\n\n部分文件未能收集，请检查文件大小或沙箱状态后重试。"
 	}
 	return answer
+}
+
+// A sandbox: URL is meaningful in Web but not in Octo. Once the actual file
+// was delivered, show its label as text rather than a broken download link.
+func renderDeliveredArtifactNames(answer string, sent []string) string {
+	allowed := make(map[string]bool, len(sent))
+	for _, name := range sent {
+		allowed[name] = true
+	}
+	return imSandboxLink.ReplaceAllStringFunc(answer, func(match string) string {
+		parts := imSandboxLink.FindStringSubmatch(match)
+		if len(parts) != 3 {
+			return match
+		}
+		name, err := url.PathUnescape(parts[2])
+		if err != nil || !allowed[name] {
+			return match
+		}
+		return parts[1]
+	})
 }
 
 func (s *Service) readIMArtifact(ctx context.Context, artifact types.MessageArtifact) ([]byte, error) {

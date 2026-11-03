@@ -114,13 +114,14 @@ func TestIMArtifactTurnDeliversBoundedBinaryAndReportsPartialFailure(t *testing.
 	ctx = imArtifactTestGrant(ctx)
 	ctx = s.beginIMArtifactTurn(ctx, req)
 	message := &types.Message{ID: "answer"}
-	answer := s.finishIMArtifactTurn(ctx, message, "已整理。")
+	answer := s.finishIMArtifactTurn(ctx, message, "已整理：[PDF](sandbox:example.pdf)。")
 	require.Equal(t, 1, collector.snapshots)
 	require.Equal(t, 1, collector.collects)
 	require.Equal(t, []string{"example.pdf"}, adapter.sent)
 	require.Equal(t, data, adapter.data[0])
 	require.Len(t, message.Artifacts, 2)
 	require.Contains(t, answer, "已发送文件：example.pdf")
+	require.NotContains(t, answer, "sandbox:example.pdf")
 	require.Contains(t, answer, "文件发送状态未知，请先检查会话再重试：example.txt")
 }
 
