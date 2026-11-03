@@ -19,7 +19,8 @@ func (p *imParallelFixture) check(ctx context.Context, sid string) error {
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
 	identity, has := types.PrincipalFromContext(ctx)
 	session, hasSession := types.SessionIDFromContext(ctx)
-	if !ok || !has || !hasSession || sid != "s" || session != "s" || identity.ID != "native" || types.IMSandboxPolicyFromContext(ctx) != "policy" || !types.HasIMKnowledgeScope(ctx) {
+	if !ok || !has || !hasSession || sid != "s" || session != "s" || identity.ID != "native" ||
+		types.IMSandboxPolicyFromContext(ctx) != "policy" || !types.HasIMKnowledgeScope(ctx) {
 		return errors.New("IM context missing")
 	}
 	if err := grant.Revalidate(ctx); err != nil {
@@ -28,25 +29,31 @@ func (p *imParallelFixture) check(ctx context.Context, sid string) error {
 	p.calls.Add(1)
 	return nil
 }
-func (p *imParallelFixture) ExecShellCommand(ctx context.Context, sid, command, workdir string, timeout time.Duration, env map[string]string) (*sandbox.ExecuteResult, error) {
+
+func (p *imParallelFixture) ExecShellCommand(
+	ctx context.Context, sid, _, _ string, _ time.Duration, _ map[string]string,
+) (*sandbox.ExecuteResult, error) {
 	if err := p.check(ctx, sid); err != nil {
 		return nil, err
 	}
 	return &sandbox.ExecuteResult{Stdout: "sandbox"}, nil
 }
-func (p *imParallelFixture) StatSessionFile(ctx context.Context, sid, path string) (*sandbox.RemoteStatEntry, error) {
+
+func (p *imParallelFixture) StatSessionFile(ctx context.Context, sid, _ string) (*sandbox.RemoteStatEntry, error) {
 	if err := p.check(ctx, sid); err != nil {
 		return nil, err
 	}
 	return &sandbox.RemoteStatEntry{Type: sandbox.RemoteEntryFile, Size: 4}, nil
 }
-func (p *imParallelFixture) ReadSessionFile(ctx context.Context, sid, path string) ([]byte, error) {
+
+func (p *imParallelFixture) ReadSessionFile(ctx context.Context, sid, _ string) ([]byte, error) {
 	if err := p.check(ctx, sid); err != nil {
 		return nil, err
 	}
 	return []byte("data"), nil
 }
-func (p *imParallelFixture) ListSessionFiles(ctx context.Context, sid, path string) ([]sandbox.RemoteDirEntry, error) {
+
+func (p *imParallelFixture) ListSessionFiles(ctx context.Context, sid, _ string) ([]sandbox.RemoteDirEntry, error) {
 	if err := p.check(ctx, sid); err != nil {
 		return nil, err
 	}
@@ -59,7 +66,10 @@ func TestIMContextSurvivesParallelEngineAndRealTools(t *testing.T) {
 	backend := &imParallelFixture{}
 	engine.toolRegistry.RegisterTool(tools.NewReadFileTool(backend))
 	engine.toolRegistry.RegisterTool(tools.NewShellExecTool(backend, nil))
-	grant := types.IMSandboxGrant{SessionID: "s", TenantID: 7, ConfigID: "cfg", AllowShell: true, Revalidate: func(context.Context) error { return nil }}
+	grant := types.IMSandboxGrant{
+		SessionID: "s", TenantID: 7, ConfigID: "cfg", AllowShell: true,
+		Revalidate: func(context.Context) error { return nil },
+	}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
 	ctx = types.WithSessionID(ctx, "s")
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "native"})

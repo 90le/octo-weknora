@@ -19,6 +19,7 @@ import (
 // inspect the image independently before configuring it.
 const IMTrustedImageEnv = "OCTO_IM_SANDBOX_CLEAN_IMAGE_ID"
 
+// Resource and execution limits for IM sandboxes.
 const (
 	IMMaxCPU               = 1.0
 	IMMaxMemoryBytes int64 = 1024 * 1024 * 1024
@@ -85,13 +86,15 @@ func restrictIMSandboxConfig(ctx context.Context, configID string, tenant *types
 	return nil
 }
 
-// WithIMSkillStaging marks writes made by the trusted approved-bundle loader.
-// It does not confer permission and cannot be populated by tool arguments.
 type imSkillStagingKey struct{}
 
+// WithIMSkillStaging marks writes made by the trusted approved-bundle loader.
+// It does not confer permission and cannot be populated by tool arguments.
 func WithIMSkillStaging(ctx context.Context) context.Context {
 	return context.WithValue(ctx, imSkillStagingKey{}, true)
 }
+
+// IsIMSkillStaging reports whether the context marks trusted Skill staging.
 func IsIMSkillStaging(ctx context.Context) bool {
 	ok, _ := ctx.Value(imSkillStagingKey{}).(bool)
 	return ok

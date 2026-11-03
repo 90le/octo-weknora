@@ -66,7 +66,7 @@ func (m *stagingManager) SessionShellExecutor() sandbox.SessionShellExecutor { r
 
 func TestShellStagesHostResourcesOncePerSession(t *testing.T) {
 	root := hostSkillDir(t, "host-skill", "host resource staging")
-	require.NoError(t, os.WriteFile(filepath.Join(root, "host-skill", "asset.bin"), []byte{0, 255, 1}, 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "host-skill", "asset.bin"), []byte{0, 255, 1}, 0o644))
 	store := &stagingStore{files: make(map[string][]byte)}
 	backend := &stagingManager{store: store}
 	mgr := NewManager(&ManagerConfig{Enabled: true, SkillDirs: []string{root}, AllowedSkills: []string{"host-skill"}}, backend)
@@ -119,7 +119,10 @@ func TestShellStagingFailureDoesNotPublishReadyEnvironment(t *testing.T) {
 func TestStrictStagedSkillRejectsChangedScripts(t *testing.T) {
 	root := hostSkillDir(t, "host-skill", "verified staging")
 	store := &stagingStore{files: make(map[string][]byte)}
-	mgr := NewManager(&ManagerConfig{Enabled: true, SkillDirs: []string{root}, StrictStagedIntegrity: true}, &stagingManager{store: store})
+	mgr := NewManager(
+		&ManagerConfig{Enabled: true, SkillDirs: []string{root}, StrictStagedIntegrity: true},
+		&stagingManager{store: store},
+	)
 	require.NoError(t, mgr.Initialize(context.Background()))
 	_, env, err := mgr.PrepareShellEnvironment(context.Background(), "session", "host-skill", "true", nil)
 	require.NoError(t, err)

@@ -307,7 +307,11 @@ func (t *ShellExecTool) Description() string {
 		return t.description
 	}
 	if t != nil && t.skillAuthorizer != nil {
-		return "Execute a command in this session's isolated Docker sandbox. Network and stored credentials are unavailable. Use /workspace for work, /workspace/input for attachments and /workspace/output for deliverables. When Skills are enabled, skill_name stages one approved Skill's resources for this command. Commands can execute arbitrary code; output and execution time are bounded."
+		return "Execute a command in this session's isolated Docker sandbox. " +
+			"Network and stored credentials are unavailable. " +
+			"Use /workspace for work, /workspace/input for attachments and /workspace/output for deliverables. " +
+			"When Skills are enabled, skill_name stages one approved Skill's resources for this command. " +
+			"Commands can execute arbitrary code; output and execution time are bounded."
 	}
 	return shellExecDescription(t.boundLayout())
 }
@@ -318,12 +322,13 @@ func (t *ShellExecTool) Parameters() json.RawMessage {
 		return t.schema
 	}
 	schema := schemaForLayout(t.schema, t.boundLayout())
-	if t != nil && t.skillAuthorizer != nil {
+	if t.skillAuthorizer != nil {
 		var document map[string]any
 		if json.Unmarshal(schema, &document) == nil {
 			if properties, ok := document["properties"].(map[string]any); ok {
 				if skill, ok := properties["skill_name"].(map[string]any); ok {
-					skill["description"] = "Optional approved Skill name; stages its resources without stored credentials."
+					skill["description"] = "Optional approved Skill name; stages its resources " +
+						"without stored credentials."
 				}
 			}
 			if encoded, err := json.Marshal(document); err == nil {

@@ -13,10 +13,14 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+// ToolExecuteApprovedSkill identifies the approved Skill execution tool.
 const ToolExecuteApprovedSkill = "execute_approved_skill"
 
+// ApprovedSkillExecutor runs an approved Skill in a session sandbox.
 type ApprovedSkillExecutor interface {
-	ExecApprovedSkill(context.Context, string, string, string, time.Duration, map[string]string) (*sandbox.ExecuteResult, error)
+	ExecApprovedSkill(
+		context.Context, string, string, string, time.Duration, map[string]string,
+	) (*sandbox.ExecuteResult, error)
 }
 
 type imSkillExecTool struct {
@@ -25,16 +29,25 @@ type imSkillExecTool struct {
 	authorize func(context.Context, string) error
 }
 
-func NewIMSkillExecTool(manager *skills.Manager, executor ApprovedSkillExecutor, authorize func(context.Context, string) error) types.Tool {
+// NewIMSkillExecTool constructs a tool for authorized Skill scripts.
+func NewIMSkillExecTool(
+	manager *skills.Manager, executor ApprovedSkillExecutor, authorize func(context.Context, string) error,
+) types.Tool {
 	return &imSkillExecTool{manager: manager, executor: executor, authorize: authorize}
 }
 func (*imSkillExecTool) Name() string { return ToolExecuteApprovedSkill }
 func (*imSkillExecTool) Description() string {
-	return "Run one listed approved Skill script in this session's isolated sandbox. Read skill://<name>/SKILL.md first. Only scripts from that Skill package may run; arguments are passed as separate values. Network and stored credentials are unavailable."
+	return "Run one listed approved Skill script in this session's isolated sandbox. " +
+		"Read skill://<name>/SKILL.md first. Only scripts from that Skill package may run; " +
+		"arguments are passed as separate values. Network and stored credentials are unavailable."
 }
+
 func (*imSkillExecTool) Parameters() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"skill_name":{"type":"string"},"script":{"type":"string","description":"Relative path to a listed .py, .sh, .js, .mjs or .cjs script"},"args":{"type":"array","items":{"type":"string"}}},"required":["skill_name","script"]}`)
+	return json.RawMessage(`{"type":"object","properties":{"skill_name":{"type":"string"},` +
+		`"script":{"type":"string","description":"Relative path to a listed .py, .sh, .js, .mjs or .cjs script"},` +
+		`"args":{"type":"array","items":{"type":"string"}}},"required":["skill_name","script"]}`)
 }
+
 func (t *imSkillExecTool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	fail := func(err error) (*types.ToolResult, error) {
 		return &types.ToolResult{Success: false, Error: err.Error()}, nil
@@ -58,7 +71,8 @@ func (t *imSkillExecTool) Execute(ctx context.Context, args json.RawMessage) (*t
 		return fail(errors.New("session required"))
 	}
 	script := input.Script
-	if script == "" || len(script) > 1024 || path.IsAbs(script) || path.Clean(script) != script || script == ".." || strings.HasPrefix(script, "../") || strings.ContainsAny(script, "\\\x00") {
+	if script == "" || len(script) > 1024 || path.IsAbs(script) || path.Clean(script) != script ||
+		script == ".." || strings.HasPrefix(script, "../") || strings.ContainsAny(script, "\\\x00") {
 		return fail(errors.New("invalid Skill script path"))
 	}
 	if len(input.Args) > 64 {
@@ -100,7 +114,9 @@ func (t *imSkillExecTool) Execute(ctx context.Context, args json.RawMessage) (*t
 	if err != nil {
 		return fail(err)
 	}
-	result, err := t.executor.ExecApprovedSkill(ctx, sid, command, sandbox.SessionWorkspaceRoot, sandbox.IMMaxCommandTime, env)
+	result, err := t.executor.ExecApprovedSkill(
+		ctx, sid, command, sandbox.SessionWorkspaceRoot, sandbox.IMMaxCommandTime, env,
+	)
 	if err != nil {
 		return fail(err)
 	}
@@ -111,5 +127,8 @@ func (t *imSkillExecTool) Execute(ctx context.Context, args json.RawMessage) (*t
 	if result.Stderr != "" {
 		output += "\n" + result.Stderr
 	}
-	return &types.ToolResult{Success: result.IsSuccess(), Output: output, Error: result.Error, Data: map[string]interface{}{"exit_code": result.ExitCode, "skill_name": input.SkillName}}, nil
+	return &types.ToolResult{
+		Success: result.IsSuccess(), Output: output, Error: result.Error,
+		Data: map[string]interface{}{"exit_code": result.ExitCode, "skill_name": input.SkillName},
+	}, nil
 }

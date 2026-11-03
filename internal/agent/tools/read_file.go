@@ -259,7 +259,9 @@ func (t *ReadFileTool) readSkillResource(ctx context.Context, input ReadFileInpu
 				"(host virtualenvs and node_modules are not copied). "+
 				"Deliverables belong in /workspace/output.\n\n", name, dir)
 		} else if t.skillRunner != "" {
-			fmt.Fprintf(&b, "Execution: %s(skill_name=%q, script=<listed relative path>, args=[...]). Only approved package scripts are executable. Deliverables belong in /workspace/output.\n\n", t.skillRunner, name)
+			fmt.Fprintf(&b, "Execution: %s(skill_name=%q, script=<listed relative path>, args=[...]). "+
+				"Only approved package scripts are executable. Deliverables belong in /workspace/output.\n\n",
+				t.skillRunner, name)
 		} else {
 			b.WriteString("Execution is unavailable: this agent has no sandbox shell. The skill instructions can be read; configuring a shell-capable sandbox is required to run scripts.\n\n")
 		}

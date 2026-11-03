@@ -20,6 +20,7 @@ type IMSandboxTurnBarrier struct {
 	stops  map[string]func(context.Context) error
 }
 
+// NewIMSandboxTurnBarrier creates a barrier for an admitted IM turn.
 func NewIMSandboxTurnBarrier() *IMSandboxTurnBarrier {
 	idle := make(chan struct{})
 	close(idle)

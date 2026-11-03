@@ -27,10 +27,13 @@ var ErrIMSandboxNotFound = errors.New("Octo sandbox: no live session sandbox")
 // ErrIMStopUnconfirmed is never evidence of process termination.
 var ErrIMStopUnconfirmed = errors.New("Octo sandbox: container stop could not be confirmed")
 
+// ErrIMOutputLimitUnavailable means the backend cannot bound Docker output.
 var ErrIMOutputLimitUnavailable = errors.New("Octo sandbox: bounded Docker output is unavailable")
 
-type imExpectedBinding struct{ session, sandbox string }
-type imExpectedBindingKey struct{}
+type (
+	imExpectedBinding    struct{ session, sandbox string }
+	imExpectedBindingKey struct{}
+)
 
 // WithIMExpectedSandbox binds a guarded operation to the inspected container.
 func WithIMExpectedSandbox(ctx context.Context, sessionID, sandboxID string) context.Context {
