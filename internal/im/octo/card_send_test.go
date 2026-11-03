@@ -99,6 +99,32 @@ func TestConfirmationPreviewRejectsTruncationAndUnsafeControlCharacters(t *testi
 	}
 }
 
+func TestConfirmationPreviewShowsDecisionFactsAndLocalDeadline(t *testing.T) {
+	p := &octobusiness.Proposal{
+		ID: "OP-1", Action: "create_kb", ExpiresAt: time.Date(2026, 11, 3, 2, 17, 0, 0, time.UTC),
+		Result: types.JSON(`{"action":"create_kb","name":"测试库","scope":"测试区域",` +
+			`"template_knowledge_base":"模板库","notice":"仅创建空库","revision":"internal-revision",` +
+			`"extra_effect":"必须保留的额外影响"}`),
+	}
+	preview, ok := confirmationPreview(p)
+	if !ok {
+		t.Fatal("complete safe preview rejected")
+	}
+	for _, want := range []string{"知识库名称：测试库", "当前区域：测试区域", "模板知识库：模板库", "影响说明：仅创建空库", "必须保留的额外影响"} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("missing decision fact %q: %s", want, preview)
+		}
+	}
+	if strings.Contains(preview, "internal-revision") || strings.Contains(preview, `"action"`) {
+		t.Fatal("internal JSON metadata leaked into the visible preview")
+	}
+	raw, _ := json.Marshal(confirmationCardPayload(preview, p))
+	if !strings.Contains(string(raw), "2026-11-03 10:17:00（北京时间）") ||
+		!strings.Contains(string(raw), "knowledge_cancel") {
+		t.Fatal("card lost local deadline or native cancellation action")
+	}
+}
+
 func TestConfirmationCardRequiresDeclaredInteractionAndPayloadLimit(t *testing.T) {
 	p := interactiveCardProfile{Enabled: true, Profiles: []string{"octo/v2"}, Elements: []string{"TextBlock"}}
 	p.Config.CardEnabled, p.Config.InteractionEnabled = true, true

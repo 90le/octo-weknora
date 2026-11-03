@@ -9,8 +9,23 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/im"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"gorm.io/gorm"
 )
+
+// Report operational conditions without logging event contents or user input.
+func (a *Adapter) warnCardPolling(ctx context.Context, code string) {
+	a.cardDiagMu.Lock()
+	defer a.cardDiagMu.Unlock()
+	if a.cardDiagAt == nil {
+		a.cardDiagAt = make(map[string]time.Time)
+	}
+	if time.Since(a.cardDiagAt[code]) < time.Minute {
+		return
+	}
+	a.cardDiagAt[code] = time.Now()
+	logger.Warnf(ctx, "[IM] Octo confirmation event polling issue: code=%s channel=%s", code, a.channelID)
+}
 
 func readBotEventID(raw json.RawMessage) (uint64, error) {
 	var header struct {
@@ -83,6 +98,7 @@ func (a *Adapter) pollConfirmationEvents(
 		map[string]any{"event_id": cursor.EventID, "limit": pageSize},
 		&response,
 	) != nil {
+		a.warnCardPolling(ctx, "api_unavailable")
 		return
 	}
 	type entry struct {
@@ -93,6 +109,7 @@ func (a *Adapter) pollConfirmationEvents(
 	for _, raw := range response.Results {
 		id, err := readBotEventID(raw)
 		if err != nil || id <= cursor.EventID {
+			a.warnCardPolling(ctx, "invalid_event_page")
 			return
 		}
 		events = append(events, entry{id: id, raw: raw})
@@ -123,6 +140,9 @@ func (a *Adapter) pollConfirmationEvents(
 		if i >= 0 && a.advanceCardCursor(callCtx, events[i].id) != nil {
 			return
 		}
+		if i < 0 {
+			a.warnCardPolling(ctx, "same_score_page_stalled")
+		}
 	}
 	a.processWaitingCardEvents(ctx, handler)
 }
@@ -142,6 +162,9 @@ func (a *Adapter) processWaitingCardEvents(
 		}
 		recognized, err := a.acceptConfirmationEvent(ctx, event, handler)
 		if err != nil {
+			// Retry this event later without letting it starve newer clicks.
+			_ = a.setCardEventState(ctx, event.EventKey, "waiting")
+			a.warnCardPolling(ctx, "event_retry")
 			continue
 		}
 		if !recognized && event.CreatedAt.Before(time.Now().Add(-15*time.Minute)) {

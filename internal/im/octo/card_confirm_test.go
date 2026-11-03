@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -196,6 +197,61 @@ func TestCardConfirmationBindsIdentityAndNeverReplays(t *testing.T) {
 	var saved octobusiness.Proposal
 	if err := a.db.First(&saved, "id = ?", p.ID).Error; err != nil || saved.Status != "completed" {
 		t.Fatalf("proposal status: %s %v", saved.Status, err)
+	}
+}
+
+func TestCardCancellationUsesCurrentDisplayNameWithoutEmptyQuote(t *testing.T) {
+	a, p, calls := confirmationFixture(t)
+	scope := &im.ExecutionScope{
+		AccountID: "account", ScopeID: "scope", Revision: "r", SenderName: "丘😀",
+		KnowledgeBaseIDs: []string{"kb"}, ManageKnowledgeBaseIDs: []string{"kb"}, CanManageScope: true,
+	}
+	a.policy = func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error) {
+		return scope, nil
+	}
+	var payload struct {
+		Content string          `json:"content"`
+		Reply   json.RawMessage `json:"reply"`
+		Mention struct {
+			UIDs     []string `json:"uids"`
+			Entities []struct {
+				Length int `json:"length"`
+			} `json:"entities"`
+		} `json:"mention"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Payload json.RawMessage `json:"payload"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		if err := json.Unmarshal(request.Payload, &payload); err != nil {
+			t.Error(err)
+		}
+		_, _ = w.Write([]byte(`{"message_id":"987655"}`))
+	}))
+	defer server.Close()
+	a.api.base = server.URL
+	event := storedCardEvent{
+		TenantID: a.tenantID, ChannelID: a.channelID, EventID: 42, MessageID: "987654",
+		TargetID: "group", TargetType: 2, OperatorUID: p.UserID, ActionID: "knowledge_cancel", State: "waiting",
+	}
+	event.EventKey = fixtureEventKey(event)
+	if err := a.db.Create(&event).Error; err != nil {
+		t.Fatal(err)
+	}
+	route := a.confirmationHandler(func(context.Context, *im.IncomingMessage) error {
+		t.Error("card cancellation went to model")
+		return nil
+	})
+	if ok, err := a.acceptConfirmationEvent(context.Background(), event, route); !ok || err != nil {
+		t.Fatalf("cancel: %v %v", ok, err)
+	}
+	if !strings.HasPrefix(payload.Content, "@丘😀 ") || len(payload.Reply) != 0 ||
+		len(payload.Mention.UIDs) != 1 || payload.Mention.UIDs[0] != p.UserID ||
+		len(payload.Mention.Entities) != 1 || payload.Mention.Entities[0].Length != 4 || calls.Load() != 0 {
+		t.Fatalf("incorrect cancellation presentation: %+v", payload)
 	}
 }
 

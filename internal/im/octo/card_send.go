@@ -1,9 +1,12 @@
 package octo
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -28,19 +31,30 @@ type interactiveCardProfile struct {
 	} `json:"config"`
 }
 
+// A valid UUID with a version marker lets the reconciler distinguish newly
+// created cards without rewriting older cards or changing the database schema.
+func confirmationCardClientID(proposalID string) string {
+	id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(proposalID+":confirmation-card-v2"))
+	copy(id[:4], []byte{0xc0, 0x4d, 0x00, 0x02})
+	return id.String()
+}
+
 func (p interactiveCardProfile) supportsConfirmation() bool {
 	return p.Enabled && p.Config.CardEnabled && p.Config.InteractionEnabled && p.Limits.MaxPayloadBytes > 0 &&
 		hasStates(p.Profiles, "octo/v2") && hasStates(p.Elements, "TextBlock")
 }
 
-// confirmationPreview must include the complete server-generated preview.
-// Large or visually ambiguous text falls back to the existing typed commands.
+// confirmationPreview includes every decision-relevant server preview field.
+// The internal revision remains in the proposal for concurrency checks. Large
+// or visually ambiguous text falls back to the existing typed commands.
 func confirmationPreview(p *octobusiness.Proposal) (string, bool) {
 	if p == nil || p.ID == "" || len(p.Result) == 0 || len(p.Result) > 6000 {
 		return "", false
 	}
 	var preview map[string]any
-	if json.Unmarshal(p.Result, &preview) != nil || preview["action"] != p.Action {
+	dec := json.NewDecoder(bytes.NewReader(p.Result))
+	dec.UseNumber()
+	if !json.Valid(p.Result) || dec.Decode(&preview) != nil || preview["action"] != p.Action {
 		return "", false
 	}
 	raw, err := json.MarshalIndent(preview, "", "  ")
@@ -52,10 +66,76 @@ func confirmationPreview(p *octobusiness.Proposal) (string, bool) {
 			return "", false
 		}
 	}
-	// TextBlock may render Markdown. Escape link and HTML delimiters so
-	// preview data cannot create a platform navigation action.
-	text := strings.NewReplacer("\\", "\\\\", "[", "\\[", "]", "\\]", "*", "\\*", "_", "\\_",
-		"`", "\\`", "#", "\\#", "~", "\\~", "|", "\\|", "<", "&lt;", ">", "&gt;").Replace(string(raw))
+	labels := map[string]string{
+		"scope": "当前区域", "name": "名称", "knowledge_base_name": "知识库",
+		"knowledge_base_id": "知识库编号", "knowledge_id": "文档编号", "content": "正文",
+		"template_knowledge_base": "模板知识库", "inheriting_subareas": "受影响的继承子区数量", "notice": "影响说明",
+	}
+	if p.Action == "create_kb" || p.Action == "rename" || p.Action == "delete_kb" {
+		labels["name"] = "知识库名称"
+	}
+	if p.Action == "save_draft" || p.Action == "publish" {
+		labels["name"] = "文档标题"
+	}
+	order := []string{
+		"name",
+		"scope",
+		"knowledge_base_name",
+		"knowledge_base_id",
+		"knowledge_id",
+		"template_knowledge_base",
+		"content",
+		"inheriting_subareas",
+		"notice",
+	}
+	seen := map[string]bool{"action": true, "revision": true}
+	var extra []string
+	for _, key := range order {
+		seen[key] = true
+	}
+	for key := range preview {
+		if !seen[key] {
+			extra = append(extra, key)
+		}
+	}
+	sort.Strings(extra)
+	order = append(order, extra...)
+	escape := strings.NewReplacer("\\", "\\\\", "[", "\\[", "]", "\\]", "*", "\\*", "_", "\\_",
+		"`", "\\`", "#", "\\#", "~", "\\~", "|", "\\|", "<", "&lt;", ">", "&gt;")
+	var lines []string
+	for _, key := range order {
+		value, exists := preview[key]
+		if !exists || value == nil {
+			continue
+		}
+		var display string
+		if s, ok := value.(string); ok {
+			if s == "" {
+				continue
+			}
+			if strings.TrimSpace(s) != s || strings.ContainsAny(s, "\r\n\t") {
+				encoded, _ := json.Marshal(s)
+				display = string(encoded)
+			} else {
+				display = s
+			}
+		} else {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return "", false
+			}
+			display = string(encoded)
+		}
+		label := labels[key]
+		if label == "" {
+			label = key
+		}
+		lines = append(lines, fmt.Sprintf("%s：%s", escape.Replace(label), escape.Replace(display)))
+	}
+	if len(lines) == 0 {
+		return "", false
+	}
+	text := strings.Join(lines, "\n")
 	if len(text) > 8000 {
 		return "", false
 	}
@@ -86,7 +166,9 @@ func confirmationCardPayload(preview string, p *octobusiness.Proposal) map[strin
 				map[string]any{"type": "TextBlock", "text": "请核对：" + label, "weight": "Bolder", "wrap": true},
 				map[string]any{
 					"type": "TextBlock",
-					"text": "编号：" + p.ID + "；有效至：" + p.ExpiresAt.UTC().Format("2006-01-02 15:04:05 UTC"),
+					"text": "有效至：" + p.ExpiresAt.In(time.FixedZone("北京时间", 8*60*60)).
+						Format("2006-01-02 15:04:05") +
+						"（北京时间）",
 					"wrap": true,
 				},
 				map[string]any{"type": "TextBlock", "text": preview, "wrap": true},
@@ -138,13 +220,19 @@ func (a *Adapter) sendConfirmationCards(ctx context.Context, in *im.IncomingMess
 		}
 		payload := confirmationCardPayload(preview, p)
 		if id := in.Extra["octo_message_id"]; wire.DecimalID(id) {
-			payload["reply"] = map[string]any{"message_id": id}
+			var original map[string]json.RawMessage
+			if json.Unmarshal([]byte(in.Extra["octo_original_payload"]), &original) == nil &&
+				len(original) > 0 {
+				payload["reply"] = map[string]any{
+					"message_id": id, "from_uid": in.UserID, "from_name": in.UserName, "payload": original,
+				}
+			}
 		}
 		encodedPayload, err := json.Marshal(payload)
 		if err != nil || len(encodedPayload) > profile.Limits.MaxPayloadBytes {
 			continue
 		}
-		clientID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(p.ID+":confirmation-card")).String()
+		clientID := confirmationCardClientID(p.ID)
 		binding := confirmationCard{
 			TenantID: a.tenantID, ChannelID: a.channelID,
 			ProposalID: p.ID, ClientMsgNo: clientID, State: "sending",

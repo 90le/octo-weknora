@@ -3149,11 +3149,22 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 			if !ok {
 				return nil
 			}
-			switch data.ToolName {
-			case "search_knowledge", "knowledge_search", "list_documents", "read_document":
-				progress.Report("knowledge")
-			case "source_browse", "github_release_lookup", "wiki_search", "wiki_read_page":
-				progress.Report("source")
+			if stage := safeProgressToolStage(data.ToolName); stage != "" {
+				progress.Report(stage)
+			}
+			return nil
+		})
+		eventBus.On(event.EventAgentToolResult, func(_ context.Context, evt event.Event) error {
+			data, ok := evt.Data.(event.AgentToolResultData)
+			if !ok {
+				return nil
+			}
+			if stage := safeProgressToolStage(data.ToolName); stage != "" {
+				if data.Success {
+					progress.Report(stage + ":done")
+				} else {
+					progress.Report(stage + ":failed")
+				}
 			}
 			return nil
 		})

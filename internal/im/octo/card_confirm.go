@@ -58,6 +58,11 @@ func (a *Adapter) acceptConfirmationEvent(
 		!permitsReply(source.Authority, scope) {
 		return true, a.setCardEventState(ctx, event.EventKey, "processed")
 	}
+	if name := safeDisplayName(scope.SenderName); name != "" {
+		msg.UserName = name
+	} else if msg.UserName == "" || msg.UserName == msg.UserID {
+		msg.UserName = "发起人"
+	}
 	msg.MessageID = fmt.Sprintf("octo:%s:card:%s", a.uid, event.EventKey)
 	msg.MessageType = im.MessageTypeText
 	msg.Content = "确认 " + proposal.ID

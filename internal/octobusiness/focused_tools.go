@@ -20,6 +20,18 @@ const (
 	ToolReport             = "octo_report"
 )
 
+const knowledgePreviewDescription = "Preview a knowledge change; action is required. To create a library " +
+	"use action=create_kb and name. An optional creation template needs read permission, not management " +
+	"permission; the server's preview decides current creation authorization. Do not infer denial from " +
+	"an empty manageable list. rename/save_draft may default the KB only when exactly one is manageable. " +
+	"Resolve library targets with octo_configuration; use octo_knowledge_documents list/get to find saved " +
+	"drafts and retrieve their exact title/body before publish or revision. Drafts are intentionally absent " +
+	"from public RAG, not missing knowledge. Return the exact preview and proposal_id. Put " +
+	"confirmation_command and cancellation_command verbatim together as concise backup instructions; " +
+	"never shorten them because their OP-ID is required. An Octo confirmation card may also be offered; " +
+	"only the same user in the same conversation can use it. No change is executed until an authorized " +
+	"explicit confirmation. Never publish automatically."
+
 // NewTools exposes focused model-facing signatures while reusing the same
 // principal validation, authorization, idempotency and confirmation executor.
 // octo_knowledge_operations remains the settings group and legacy entry point.
@@ -59,9 +71,22 @@ func NewTools(service *Service) []types.Tool {
 			"action":                      map[string]any{"type": "string", "enum": []string{"create", "list", "get", "update"}, "description": "Required. create: kind+title+description and an authorized knowledge_base_id (defaults only with one readable KB); bug also needs steps+expected. get/update: issue_id; update also needs status. list supports optional filters."},
 			"input_clarifications_needed": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Only facts unclear in the user's own input, e.g. which product or reproduction steps. NOT the unknown answer. A clear question such as asking the price has no input ambiguity even when no price exists in the knowledge base; use [] and record the missing answer as kind=missing after verified retrieval."},
 		}),
-		makeTool(ToolKnowledgePreview, "Preview a knowledge change; action is required. To create a library use action=create_kb and name. An optional creation template needs read permission, not management permission; the server's preview decides current creation authorization. Do not infer denial from an empty manageable list. rename/save_draft may default the KB only when exactly one is manageable. Resolve library targets with octo_configuration; use octo_knowledge_documents list/get to find saved drafts and retrieve their exact title/body before publish or revision. Drafts are intentionally absent from public RAG, not missing knowledge. Return the exact preview and proposal_id, and reproduce confirmation_command and cancellation_command verbatim in the reply. Never shorten these commands to 确认创建 or 确认保存; the server requires their OP-ID. No change is executed until the same user sends the exact command. Never publish automatically.", []string{"action", "knowledge_base_id", "knowledge_id", "name", "content", "scope_id"}, []string{"action"}, map[string]any{
-			"action": map[string]any{"type": "string", "enum": []string{"create_kb", "rename", "save_draft", "publish", "delete_document", "bind", "unbind", "delete_kb"}, "description": "Required. create_kb: name (template KB optional/readable); rename: name; save_draft: name+content; publish: knowledge_id+name+content; delete_document: knowledge_id. All except create_kb need an authorized target KB; rename/save_draft can default only the sole manageable KB. bind/unbind/delete_kb need an explicit resolved knowledge_base_id."},
-		}),
+		makeTool(ToolKnowledgePreview, knowledgePreviewDescription,
+			[]string{"action", "knowledge_base_id", "knowledge_id", "name", "content", "scope_id"},
+			[]string{"action"}, map[string]any{
+				"action": map[string]any{
+					"type": "string",
+					"enum": []string{
+						"create_kb", "rename", "save_draft", "publish",
+						"delete_document", "bind", "unbind", "delete_kb",
+					},
+					"description": "Required. create_kb: name (template KB optional/readable); rename: name; " +
+						"save_draft: name+content; publish: knowledge_id+name+content; " +
+						"delete_document: knowledge_id. All except create_kb need an authorized target KB; " +
+						"rename/save_draft can default only the sole manageable KB. " +
+						"bind/unbind/delete_kb need an explicit resolved knowledge_base_id.",
+				},
+			}),
 		makeTool(ToolKnowledgeConfirm, "Confirm or cancel a previously returned knowledge preview only after the same user sends the exact confirmation_command or cancellation_command returned by the server in this conversation. The command includes its OP-ID. A bare confirmation such as 确认创建 is incomplete, not a permission denial: show the exact server command. Never confirm on behalf of the user; the existing server authorization and replay guards remain authoritative.", []string{"proposal_id"}, []string{"proposal_id", "decision"}, map[string]any{
 			"decision": map[string]any{"type": "string", "enum": []string{"confirm", "cancel"}, "description": "The same user's explicit decision for this proposal."},
 		}),
@@ -84,6 +109,7 @@ func (t *focusedTool) Description() string { return t.description }
 func (t *focusedTool) Parameters() json.RawMessage {
 	return append(json.RawMessage(nil), t.parameters...)
 }
+
 func (t *focusedTool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	if _, err := currentPrincipal(ctx); err != nil {
 		return toolResult(nil, err)
