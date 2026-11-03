@@ -265,14 +265,12 @@ func (j *dbFileDeliveryJournal) finish(ctx context.Context, t fileTurn, owner, k
 	previous := []string{"sending"}
 	if state == "failed" {
 		previous = []string{"preparing"}
-	} else if state == "not_sent" {
-		// The message was not sent, but its bytes already left for storage.
-		// Preserve that fact as a recovery barrier.
 	} else if state == "unknown" {
 		previous = []string{"uploading", "sending"}
-	} else if state != "sent" && state != "unknown" {
+	} else if state != "sent" && state != "not_sent" {
 		return errFileJournalUnavailable
 	}
+	// For not_sent, the bytes already left for storage, so retain the sending barrier.
 	result := t.query(j.withContext(ctx).Model(&fileDeliveryEntry{})).Where("file_key = ? AND owner_id = ? AND state IN ?", key, owner, previous).
 		Updates(map[string]any{"state": state, "platform_message_id": platformID, "error_code": code, "updated_at": time.Now()})
 	if result.Error != nil {

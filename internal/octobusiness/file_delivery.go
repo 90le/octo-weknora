@@ -253,6 +253,7 @@ type legacyMarkdownFileTool struct{}
 
 var namedArtifactInText = regexp.MustCompile(`[\p{L}\p{N}_-][\p{L}\p{N}_.-]*\.[\p{L}\p{N}]{1,16}`)
 
+// NewLegacyMarkdownFileTool returns the compatibility alias for Markdown file delivery.
 func NewLegacyMarkdownFileTool() types.Tool  { return &legacyMarkdownFileTool{} }
 func (*legacyMarkdownFileTool) Name() string { return "octo_send_markdown" }
 func (*legacyMarkdownFileTool) Description() string {

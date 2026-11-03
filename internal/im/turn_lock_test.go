@@ -20,7 +20,7 @@ func TestIMSessionTurnLockRejectsBusyWithoutBlockingOtherSessions(t *testing.T) 
 			if mode == "redis" {
 				server := miniredis.RunT(t)
 				service.redis = redis.NewClient(&redis.Options{Addr: server.Addr()})
-				defer service.redis.Close()
+				defer func() { _ = service.redis.Close() }()
 			}
 			session := &types.Session{ID: "one", TenantID: 7}
 			entered := make(chan struct{})

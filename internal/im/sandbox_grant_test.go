@@ -17,7 +17,7 @@ func TestIMSandboxGrantRechecksIdentitySessionAndAgent(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	defer sqlDB.Close()
+	defer func() { _ = sqlDB.Close() }()
 	for _, statement := range []string{
 		`CREATE TABLE im_channels (id TEXT PRIMARY KEY, tenant_id INTEGER, agent_id TEXT, platform TEXT, enabled BOOLEAN, mode TEXT, session_mode TEXT, credentials BLOB, updated_at DATETIME, deleted_at DATETIME)`,
 		`CREATE TABLE im_channel_sessions (id TEXT PRIMARY KEY, im_channel_id TEXT, tenant_id INTEGER, agent_id TEXT, platform TEXT, user_id TEXT, chat_id TEXT, session_id TEXT, status TEXT, metadata BLOB, updated_at DATETIME, deleted_at DATETIME)`,

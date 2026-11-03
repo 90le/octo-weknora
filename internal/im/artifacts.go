@@ -274,7 +274,7 @@ func (s *Service) readIMArtifact(ctx context.Context, artifact types.MessageArti
 	if err != nil || reader == nil {
 		return nil, errors.New("captured artifact unavailable")
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	data, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
 	if err != nil || int64(len(data)) != artifact.FileSize {
 		return nil, errors.New("captured artifact size changed")
