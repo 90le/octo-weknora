@@ -19,7 +19,9 @@ type channelArtifactMessageStub struct {
 	denied  bool
 }
 
-func (s *channelArtifactMessageStub) GetChannelArtifactMessage(_ context.Context, sessionID, messageID string, index int) (*types.Message, error) {
+func (s *channelArtifactMessageStub) GetChannelArtifactMessage(
+	_ context.Context, sessionID, messageID string, index int,
+) (*types.Message, error) {
 	if s.denied || sessionID != "s" || messageID != "m" || index != 0 {
 		return nil, errors.New("denied")
 	}
@@ -28,7 +30,13 @@ func (s *channelArtifactMessageStub) GetChannelArtifactMessage(_ context.Context
 
 func TestChannelArtifactDownloadDoesNotGrantSessionAccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	msg := &channelArtifactMessageStub{stubMessageServiceForArtifacts: &stubMessageServiceForArtifacts{}, message: &types.Message{ID: "m", SessionID: "s", Artifacts: types.MessageArtifacts{{URL: "local://42/out/report.txt", FileName: "report.txt", FileSize: 4}}}}
+	msg := &channelArtifactMessageStub{
+		stubMessageServiceForArtifacts: &stubMessageServiceForArtifacts{},
+		message: &types.Message{
+			ID: "m", SessionID: "s",
+			Artifacts: types.MessageArtifacts{{URL: "local://42/out/report.txt", FileName: "report.txt", FileSize: 4}},
+		},
+	}
 	files := &fakeArtifactFileService{url: "local://42/out/report.txt", data: []byte("test")}
 	h := &Handler{messageService: msg, fileService: files}
 	r := gin.New()

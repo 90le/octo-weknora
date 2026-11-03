@@ -33,7 +33,8 @@ func TestOctoFilesProxyUnregisteredArtifact(t *testing.T) {
 		`CREATE TABLE messages (id text, session_id text)`,
 		`CREATE TABLE message_artifacts (message_id text, session_id text, url text)`,
 		`CREATE TABLE im_channel_sessions (session_id text, tenant_id integer, im_channel_id text, platform text)`,
-		`CREATE TABLE im_channel_web_owners (tenant_id integer, im_channel_id text, web_user_id text, deleted_at datetime)`,
+		`CREATE TABLE im_channel_web_owners (
+			tenant_id integer, im_channel_id text, web_user_id text, deleted_at datetime)`,
 		`CREATE TABLE im_channels (id text, tenant_id integer, deleted_at datetime)`,
 		`CREATE TABLE tenant_members (tenant_id integer, user_id text, status text, deleted_at datetime)`,
 		`CREATE TABLE users (id text, is_active boolean, deleted_at datetime)`,
@@ -56,7 +57,8 @@ func TestOctoFilesProxyUnregisteredArtifact(t *testing.T) {
 	engine := gin.New()
 	engine.GET("/files", newFileServeHandler(fs, nil, catalog))
 	request := func(user string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/files?file_path="+url.QueryEscape("local://7/exports/private.pdf"), nil)
+		req := httptest.NewRequest(http.MethodGet,
+			"/files?file_path="+url.QueryEscape("local://7/exports/private.pdf"), nil)
 		ctx := context.WithValue(req.Context(), types.TenantInfoContextKey, &types.Tenant{ID: 7})
 		ctx = types.WithCaller(ctx, types.Caller{TenantID: 7, UserID: user})
 		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: user})
@@ -79,7 +81,12 @@ func (s *octoRouterCatalog) CheckOctoArtifactAccess(context.Context, uint64, str
 func TestOctoFilesProxyChecksBeforeStorage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	const ref = "resource://abcdefghijklmnopqrstuv"
-	catalog := &octoRouterCatalog{stubResourceCatalog: &stubResourceCatalog{resource: &types.StoredResource{TenantID: 7, PhysicalPath: "local://7/report.pdf"}}, matched: true}
+	catalog := &octoRouterCatalog{
+		stubResourceCatalog: &stubResourceCatalog{
+			resource: &types.StoredResource{TenantID: 7, PhysicalPath: "local://7/report.pdf"},
+		},
+		matched: true,
+	}
 	opens := 0
 	fs := &stubFileService{getFile: func(context.Context, string) (io.ReadCloser, error) {
 		opens++

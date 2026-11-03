@@ -24,13 +24,27 @@ func TestIMWebOwnerAPI(t *testing.T) {
 	require.NoError(t, err)
 	for _, sql := range []string{
 		`CREATE TABLE users (id TEXT PRIMARY KEY, is_active BOOLEAN NOT NULL, deleted_at DATETIME)`,
-		`CREATE TABLE tenant_members (id INTEGER PRIMARY KEY, user_id TEXT, tenant_id INTEGER, role TEXT, status TEXT, deleted_at DATETIME)`,
-		`CREATE TABLE im_channels (id TEXT PRIMARY KEY, tenant_id INTEGER, platform TEXT, deleted_at DATETIME, credentials TEXT)`,
-		`CREATE TABLE im_channel_sessions (id TEXT PRIMARY KEY, tenant_id INTEGER, im_channel_id TEXT, platform TEXT, deleted_at DATETIME)`,
-		`CREATE TABLE audit_logs (id INTEGER PRIMARY KEY, tenant_id INTEGER, actor_user_id TEXT, actor_role TEXT, action TEXT, scope_type TEXT, scope_id TEXT, target_type TEXT, target_id TEXT, target_user_id TEXT, request_path TEXT, request_method TEXT, outcome TEXT, details TEXT, created_at DATETIME)`,
+		`CREATE TABLE tenant_members (id INTEGER PRIMARY KEY, user_id ` +
+			`TEXT, tenant_id INTEGER, role TEXT, status TEXT, deleted_at ` +
+			`DATETIME)`,
+		`CREATE TABLE im_channels (id TEXT PRIMARY KEY, tenant_id INTEGER,` +
+			` platform TEXT, deleted_at DATETIME, credentials TEXT)`,
+		`CREATE TABLE im_channel_sessions (id TEXT PRIMARY KEY, tenant_id ` +
+			`INTEGER, im_channel_id TEXT, platform TEXT, deleted_at DATETIME)`,
+		`CREATE TABLE audit_logs (id INTEGER PRIMARY KEY, tenant_id ` +
+			`INTEGER, actor_user_id TEXT, actor_role TEXT, action TEXT, ` +
+			`scope_type TEXT, scope_id TEXT, target_type TEXT, target_id TEXT,` +
+			` target_user_id TEXT, request_path TEXT, request_method TEXT, ` +
+			`outcome TEXT, details TEXT, created_at DATETIME)`,
 		`INSERT INTO users VALUES ('owner',1,NULL), ('other',1,NULL), ('viewer',1,NULL), ('inactive',0,NULL)`,
-		`INSERT INTO tenant_members VALUES (1,'owner',1,'owner','active',NULL), (2,'other',1,'admin','active',NULL), (3,'viewer',1,'viewer','active',NULL), (4,'inactive',1,'admin','active',NULL), (5,'owner',2,'owner','active',NULL)`,
-		`INSERT INTO im_channels VALUES ('octo',1,'octo',NULL,'{"account_id":"a","bot_uid":"b"}'), ('foreign',2,'octo',NULL,'{}'), ('slack',1,'slack',NULL,'{}'), ('deleted',1,'octo',CURRENT_TIMESTAMP,'{}')`,
+		`INSERT INTO tenant_members VALUES (1,'owner',1,'owner','active',` +
+			`NULL), (2,'other',1,'admin','active',NULL), (3,'viewer',1,` +
+			`'viewer','active',NULL), (4,'inactive',1,'admin','active',NULL), ` +
+			`(5,'owner',2,'owner','active',NULL)`,
+		`INSERT INTO im_channels VALUES ('octo',1,'octo',NULL,` +
+			`'{"account_id":"a","bot_uid":"b"}'), ('foreign',2,'octo',NULL,` +
+			`'{}'), ('slack',1,'slack',NULL,'{}'), ('deleted',1,'octo',` +
+			`CURRENT_TIMESTAMP,'{}')`,
 	} {
 		require.NoError(t, db.Exec(sql).Error)
 	}
@@ -106,7 +120,9 @@ func TestIMWebOwnerAPI(t *testing.T) {
 	principalType = types.PrincipalAPIExternalUser
 	require.Equal(t, http.StatusForbidden, call(http.MethodPut, "octo", "").Code)
 	principalType = types.PrincipalWebUser
-	require.NoError(t, db.Exec(`UPDATE tenant_members SET status='suspended' WHERE user_id='owner' AND tenant_id=1`).Error)
+	require.NoError(t,
+		db.Exec(`UPDATE tenant_members SET status='suspended' WHERE user_id='owner' AND tenant_id=1`).Error,
+	)
 	require.Equal(t, http.StatusForbidden, call(http.MethodGet, "octo", "").Code)
 	bound, err = im.WebOwnerExists(context.Background(), db, 1, "octo", "owner")
 	require.NoError(t, err)
@@ -121,23 +137,41 @@ func TestIMWebOwnerAPI(t *testing.T) {
 	// old identity is later restored. Recreating the same ID cannot revive them.
 	require.Equal(t, http.StatusNoContent, call(http.MethodPut, "octo", "").Code)
 	// Ordinary settings, formatting, and JSON key order are not identity changes.
-	require.NoError(t, db.Exec(`UPDATE im_channels SET credentials='{"bot_uid":"b","allow_file_delivery":true,"account_id":"a"}' WHERE id='octo'`).Error)
+	require.NoError(t,
+		db.Exec(`UPDATE im_channels SET credentials='{"bot_uid":"b",`+
+			`"allow_file_delivery":true,"account_id":"a"}' WHERE id='octo'`).Error,
+	)
 	require.JSONEq(t, `{"bound":true}`, call(http.MethodGet, "octo", "").Body.String())
-	require.NoError(t, db.Exec(`UPDATE im_channels SET credentials='{"account_id":"a","bot_uid":"b","allow_file_delivery":false}' WHERE id='octo'`).Error)
+	require.NoError(t,
+		db.Exec(`UPDATE im_channels SET credentials='{"account_id":"a",`+
+			`"bot_uid":"b","allow_file_delivery":false}' WHERE id='octo'`).Error,
+	)
 	require.JSONEq(t, `{"bound":true}`, call(http.MethodGet, "octo", "").Body.String())
-	require.NoError(t, db.Exec(`UPDATE im_channels SET credentials='{"account_id":"new","bot_uid":"b"}' WHERE id='octo'`).Error)
+	require.NoError(t,
+		db.Exec(`UPDATE im_channels SET credentials='{"account_id":"new","bot_uid":"b"}' WHERE id='octo'`).Error,
+	)
 	require.JSONEq(t, `{"bound":false}`, call(http.MethodGet, "octo", "").Body.String())
-	require.NoError(t, db.Exec(`UPDATE im_channels SET credentials='{"account_id":"a","bot_uid":"b"}' WHERE id='octo'`).Error)
+	require.NoError(t,
+		db.Exec(`UPDATE im_channels SET credentials='{"account_id":"a","bot_uid":"b"}' WHERE id='octo'`).Error,
+	)
 	require.JSONEq(t, `{"bound":false}`, call(http.MethodGet, "octo", "").Body.String())
 	require.Equal(t, http.StatusNoContent, call(http.MethodPut, "octo", "").Code)
-	require.NoError(t, db.Exec(`UPDATE im_channels SET credentials='{"account_id":"a","bot_uid":"new"}' WHERE id='octo'`).Error)
+	require.NoError(t,
+		db.Exec(`UPDATE im_channels SET credentials='{"account_id":"a","bot_uid":"new"}' WHERE id='octo'`).Error,
+	)
 	require.JSONEq(t, `{"bound":false}`, call(http.MethodGet, "octo", "").Body.String())
 	require.Equal(t, http.StatusNoContent, call(http.MethodPut, "octo", "").Code)
 	require.NoError(t, db.Exec(`DELETE FROM im_channels WHERE id='octo'`).Error)
-	require.NoError(t, db.Exec(`INSERT INTO im_channels(id,tenant_id,platform,deleted_at,credentials) VALUES ('octo',1,'octo',NULL,'{"account_id":"a","bot_uid":"new"}')`).Error)
+	require.NoError(t,
+		db.Exec(`INSERT INTO im_channels(id,tenant_id,platform,deleted_at,`+
+			`credentials) VALUES ('octo',1,'octo',NULL,'{"account_id":"a",`+
+			`"bot_uid":"new"}')`).Error,
+	)
 	require.JSONEq(t, `{"bound":false}`, call(http.MethodGet, "octo", "").Body.String())
 	actions = nil
-	require.NoError(t, db.Table("audit_logs").Where("action = ?", "im_channel.web_owner_revoked").Pluck("action", &actions).Error)
+	require.NoError(t,
+		db.Table("audit_logs").Where("action = ?", "im_channel.web_owner_revoked").Pluck("action", &actions).Error,
+	)
 	require.Len(t, actions, 3)
 	for _, invalid := range []string{
 		`{`, `{}`, `[]`, `null`, `{"account_id":3,"bot_uid":"b"}`,
@@ -151,16 +185,24 @@ func TestIMWebOwnerAPI(t *testing.T) {
 		require.NoError(t, db.Exec(`UPDATE im_channels SET credentials=? WHERE id='octo'`, invalid).Error)
 		require.JSONEq(t, `{"bound":false}`, call(http.MethodGet, "octo", "").Body.String())
 		require.Equal(t, http.StatusForbidden, call(http.MethodPut, "octo", "").Code)
-		require.NoError(t, db.Exec(`UPDATE im_channels SET credentials='{"account_id":"a","bot_uid":"new"}' WHERE id='octo'`).Error)
+		require.NoError(t,
+			db.Exec(`UPDATE im_channels SET credentials='{"account_id":"a","bot_uid":"new"}' WHERE id='octo'`).Error,
+		)
 	}
-	require.NoError(t, db.Exec(`UPDATE im_channels SET credentials='{"account_id":"账户","bot_uid":"机器人"}' WHERE id='octo'`).Error)
+	require.NoError(t,
+		db.Exec(`UPDATE im_channels SET credentials='{"account_id":"账户","bot_uid":"机器人"}' WHERE id='octo'`).Error,
+	)
 	require.Equal(t, http.StatusNoContent, call(http.MethodPut, "octo", "").Code)
 	require.Equal(t, http.StatusNoContent, call(http.MethodDelete, "octo", "").Code)
-	require.NoError(t, db.Exec(`UPDATE im_channels SET credentials='{"account_id":"a","bot_uid":"new"}' WHERE id='octo'`).Error)
+	require.NoError(t,
+		db.Exec(`UPDATE im_channels SET credentials='{"account_id":"a","bot_uid":"new"}' WHERE id='octo'`).Error,
+	)
 	// Channel changes also roll back when revocation cannot be audited.
 	require.Equal(t, http.StatusNoContent, call(http.MethodPut, "octo", "").Code)
 	require.NoError(t, db.Exec(`DROP TABLE audit_logs`).Error)
-	require.Error(t, db.Exec(`UPDATE im_channels SET credentials='{"account_id":"other","bot_uid":"other"}' WHERE id='octo'`).Error)
+	require.Error(t,
+		db.Exec(`UPDATE im_channels SET credentials='{"account_id":"other","bot_uid":"other"}' WHERE id='octo'`).Error,
+	)
 	bound, err = im.WebOwnerExists(context.Background(), db, 1, "octo", "owner")
 	require.NoError(t, err)
 	require.True(t, bound)

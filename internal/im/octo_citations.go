@@ -16,14 +16,20 @@ import (
 )
 
 var (
-	octoSourceTagRE            = regexp.MustCompile(`<(kb|web)\b([^>]*)/?>`)
-	octoSourceAttrRE           = regexp.MustCompile(`([A-Za-z_]+)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
-	octoSourceHeadingRE        = regexp.MustCompile(`(?im)^\s*(?:\*\*)?(?:实际来源|来源|参考资料|参考|资料依据|sources?|references?)\s*(?:\*\*)?\s*[:：]\s*(?:\*\*)?`)
-	octoQuotedSourceTitleRE    = regexp.MustCompile(`《([^《》\r\n]{1,400})》`)
-	octoGitCommitRE            = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
-	octoGitHubLineFragmentRE   = regexp.MustCompile(`^L[0-9]+(?:-L[0-9]+)?$`)
-	octoMarkdownGitHubLinkRE   = regexp.MustCompile(`(?i)\[([^\]\r\n]+)\]\((<?https://(?:www\.)?github\.com\.?/[^\s)]+>?)\)`)
-	octoBareGitHubURLRE        = regexp.MustCompile(`(?i)https://(?:www\.)?github\.com\.?/[^#\s<>"'\])，。；：！？,;:!?]+#(?:L|%4C)[0-9]+(?:-(?:L|%4C)[0-9]+)?`)
+	octoSourceTagRE     = regexp.MustCompile(`<(kb|web)\b([^>]*)/?>`)
+	octoSourceAttrRE    = regexp.MustCompile(`([A-Za-z_]+)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+	octoSourceHeadingRE = regexp.MustCompile(
+		`(?im)^\s*(?:\*\*)?(?:实际来源|来源|参考资料|参考|资料依据|sources?|references?)\s*(?:\*\*)?\s*[:：]\s*(?:\*\*)?`,
+	)
+	octoQuotedSourceTitleRE  = regexp.MustCompile(`《([^《》\r\n]{1,400})》`)
+	octoGitCommitRE          = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+	octoGitHubLineFragmentRE = regexp.MustCompile(`^L[0-9]+(?:-L[0-9]+)?$`)
+	octoMarkdownGitHubLinkRE = regexp.MustCompile(
+		`(?i)\[([^\]\r\n]+)\]\((<?https://(?:www\.)?github\.com\.?/[^\s)]+>?)\)`,
+	)
+	octoBareGitHubURLRE = regexp.MustCompile(
+		`(?i)https://(?:www\.)?github\.com\.?/[^#\s<>"'\])，。；：！？,;:!?]+#(?:L|%4C)[0-9]+(?:-(?:L|%4C)[0-9]+)?`,
+	)
 	octoBareCredentialRE       = regexp.MustCompile(`(?i)(?:^|[\s:=])(?:sk-|bf_|app_|uk_)[a-z0-9_-]{8,}`)
 	octoURLCredentialRE        = regexp.MustCompile(`(?i)(?:^|[/#=:])(?:sk-|bf_|app_|uk_)[a-z0-9]{16,}`)
 	octoWindowsSlashPathRE     = regexp.MustCompile(`(?i)^[a-z]:/`)

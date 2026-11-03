@@ -23,17 +23,24 @@ func TestPostgresChannelIdentityRetirement(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, tx.Rollback()) })
 	_, err = tx.Exec(`CREATE SCHEMA octo_identity_migration_fixture;
 SET LOCAL search_path TO octo_identity_migration_fixture, public;
-CREATE TABLE im_channels(id VARCHAR(36) PRIMARY KEY, tenant_id BIGINT, platform TEXT, credentials JSONB, deleted_at TIMESTAMPTZ);
-CREATE TABLE im_channel_sessions(id VARCHAR(36) PRIMARY KEY, tenant_id BIGINT, im_channel_id VARCHAR(36), platform TEXT, deleted_at TIMESTAMPTZ);
-CREATE TABLE audit_logs(id BIGSERIAL PRIMARY KEY, tenant_id BIGINT, action TEXT, target_type TEXT, target_id TEXT, target_user_id TEXT, outcome TEXT);
+CREATE TABLE im_channels(id VARCHAR(36) PRIMARY KEY, tenant_id BIGINT, platform TEXT,
+    credentials JSONB, deleted_at TIMESTAMPTZ);
+CREATE TABLE im_channel_sessions(id VARCHAR(36) PRIMARY KEY, tenant_id BIGINT,
+    im_channel_id VARCHAR(36), platform TEXT, deleted_at TIMESTAMPTZ);
+CREATE TABLE audit_logs(id BIGSERIAL PRIMARY KEY, tenant_id BIGINT, action TEXT, target_type TEXT,
+    target_id TEXT, target_user_id TEXT, outcome TEXT);
 INSERT INTO im_channels VALUES ('c',7,'octo','{"account_id":"a","bot_uid":"b"}',NULL);
 INSERT INTO im_channel_sessions VALUES ('old',7,'c','octo',NULL),('cleared',7,'c','octo',now());`)
 	require.NoError(t, err)
-	migration, err := os.ReadFile(filepath.Join(sqliteRepoRoot(t), "migrations", "versioned", "000134_im_channel_web_owners.up.sql"))
+	migration, err := os.ReadFile(
+		filepath.Join(sqliteRepoRoot(t), "migrations", "versioned", "000134_im_channel_web_owners.up.sql"),
+	)
 	require.NoError(t, err)
 	_, err = tx.Exec(string(migration))
 	require.NoError(t, err)
-	_, err = tx.Exec(`INSERT INTO im_channel_web_owners(id,tenant_id,im_channel_id,web_user_id) VALUES ('o',7,'c','u'); UPDATE im_channels SET credentials='{"account_id":"new","bot_uid":"b"}' WHERE id='c'`)
+	_, err = tx.Exec(`INSERT INTO im_channel_web_owners(id,tenant_id,im_channel_id,web_user_id)
+VALUES ('o',7,'c','u');
+UPDATE im_channels SET credentials='{"account_id":"new","bot_uid":"b"}' WHERE id='c'`)
 	require.NoError(t, err)
 	var retired, bound int
 	var generation string

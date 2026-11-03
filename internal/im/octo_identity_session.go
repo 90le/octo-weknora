@@ -15,7 +15,9 @@ import (
 // change trigger holds the same row lock while retiring existing mappings.
 // Thus a message accepted by an old adapter cannot create a mapping for the
 // new identity after that trigger has run.
-func (s *Service) resolveOctoIdentitySession(ctx context.Context, msg *IncomingMessage, tenantID uint64, agentID, channelID string) (*ChannelSession, error) {
+func (s *Service) resolveOctoIdentitySession(
+	ctx context.Context, msg *IncomingMessage, tenantID uint64, agentID, channelID string,
+) (*ChannelSession, error) {
 	type identity struct {
 		AccountID string `json:"account_id"`
 		BotUID    string `json:"bot_uid"`
@@ -31,17 +33,25 @@ func (s *Service) resolveOctoIdentitySession(ctx context.Context, msg *IncomingM
 				Credentials             string
 				OwnerIdentityGeneration string
 			}
-			err := tx.Table("im_channels").Select("credentials, owner_identity_generation").Clauses(clause.Locking{Strength: "UPDATE"}).
-				Where("id = ? AND tenant_id = ? AND platform = ? AND deleted_at IS NULL", channelID, tenantID, "octo").Take(&channel).Error
+			err := tx.Table("im_channels").Select("credentials, owner_identity_generation").
+				Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("id = ? AND tenant_id = ? AND platform = ? AND deleted_at IS NULL", channelID, tenantID, "octo").
+				Take(&channel).Error
 			if err != nil {
 				return err
 			}
 			var current identity
-			if !validWebOwnerIdentity([]byte(channel.Credentials)) || json.Unmarshal([]byte(channel.Credentials), &current) != nil || current != expected || channel.OwnerIdentityGeneration != msg.octoIdentityGeneration {
+			if !validWebOwnerIdentity([]byte(channel.Credentials)) ||
+				json.Unmarshal([]byte(channel.Credentials), &current) != nil ||
+				current != expected || channel.OwnerIdentityGeneration != msg.octoIdentityGeneration {
 				return ErrScopeDenied
 			}
 			var mapping ChannelSession
-			err = tx.Where("platform = ? AND user_id = ? AND chat_id = ? AND tenant_id = ? AND agent_id = ? AND im_channel_id = ? AND deleted_at IS NULL", "octo", msg.UserID, msg.ChatID, tenantID, agentID, channelID).First(&mapping).Error
+			err = tx.Where(
+				"platform = ? AND user_id = ? AND chat_id = ? AND tenant_id = ? AND agent_id = ? "+
+					"AND im_channel_id = ? AND deleted_at IS NULL",
+				"octo", msg.UserID, msg.ChatID, tenantID, agentID, channelID,
+			).First(&mapping).Error
 			if err == nil && sessionScopeMatches(&mapping, msg.executionScope) {
 				result = &mapping
 				return nil
@@ -56,7 +66,11 @@ func (s *Service) resolveOctoIdentitySession(ctx context.Context, msg *IncomingM
 			if created == nil {
 				return nil
 			}
-			mapping = ChannelSession{Platform: "octo", UserID: msg.UserID, ChatID: msg.ChatID, SessionID: created.ID, TenantID: tenantID, AgentID: agentID, IMChannelID: channelID, Metadata: sessionScopeMetadata(msg.executionScope)}
+			mapping = ChannelSession{
+				Platform: "octo", UserID: msg.UserID, ChatID: msg.ChatID, SessionID: created.ID,
+				TenantID: tenantID, AgentID: agentID, IMChannelID: channelID,
+				Metadata: sessionScopeMetadata(msg.executionScope),
+			}
 			if err := tx.Create(&mapping).Error; err != nil {
 				return err
 			}
@@ -70,7 +84,10 @@ func (s *Service) resolveOctoIdentitySession(ctx context.Context, msg *IncomingM
 	if result != nil {
 		return result, nil
 	}
-	created, err := s.sessionService.CreateSession(ctx, &types.Session{TenantID: tenantID, Title: imInitialSessionTitle(msg, buildUserSessionTitle), Description: "Auto-created from octo IM integration"})
+	created, err := s.sessionService.CreateSession(ctx, &types.Session{
+		TenantID: tenantID, Title: imInitialSessionTitle(msg, buildUserSessionTitle),
+		Description: "Auto-created from octo IM integration",
+	})
 	if err != nil {
 		return nil, err
 	}

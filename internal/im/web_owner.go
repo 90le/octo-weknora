@@ -28,10 +28,13 @@ func WebOwnerExists(ctx context.Context, db *gorm.DB, tenantID uint64, channelID
 	}
 	var count int64
 	err := db.WithContext(ctx).Table("im_channel_web_owners AS o").
-		Joins("JOIN im_channels c ON c.id = o.im_channel_id AND c.tenant_id = o.tenant_id AND c.platform = ? AND c.deleted_at IS NULL", "octo").
-		Joins("JOIN tenant_members m ON m.tenant_id = o.tenant_id AND m.user_id = o.web_user_id AND m.status = ? AND m.deleted_at IS NULL", "active").
+		Joins("JOIN im_channels c ON c.id = o.im_channel_id AND c.tenant_id = o.tenant_id "+
+			"AND c.platform = ? AND c.deleted_at IS NULL", "octo").
+		Joins("JOIN tenant_members m ON m.tenant_id = o.tenant_id AND m.user_id = o.web_user_id "+
+			"AND m.status = ? AND m.deleted_at IS NULL", "active").
 		Joins("JOIN users u ON u.id = o.web_user_id AND u.is_active = ? AND u.deleted_at IS NULL", true).
-		Where("o.tenant_id = ? AND o.im_channel_id = ? AND o.web_user_id = ? AND o.deleted_at IS NULL", tenantID, channelID, userID).Count(&count).Error
+		Where("o.tenant_id = ? AND o.im_channel_id = ? AND o.web_user_id = ? AND o.deleted_at IS NULL",
+			tenantID, channelID, userID).Count(&count).Error
 	return count > 0, err
 }
 
@@ -74,7 +77,10 @@ func validWebOwnerIdentity(data []byte) bool {
 			}
 			seen[name] = true
 			var identity string
-			if json.Unmarshal(value, &identity) != nil || strings.TrimSpace(identity) == "" || strings.IndexFunc(identity, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) >= 0 {
+			if json.Unmarshal(value, &identity) != nil || strings.TrimSpace(identity) == "" ||
+				strings.IndexFunc(identity, func(r rune) bool {
+					return unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+				}) >= 0 {
 				return false
 			}
 		}
@@ -97,7 +103,8 @@ func webOwnerCaller(ctx context.Context) (types.Caller, error) {
 	p, ok := ctx.Value(types.PrincipalContextKey).(types.Principal)
 	caller := types.CallerFromContext(ctx)
 	_, apiKey := types.TenantAPIKeyScopeFromContext(ctx)
-	if apiKey || !ok || p.Type != types.PrincipalWebUser || p.ID == "" || p.ID != caller.UserID || caller.TenantID == 0 {
+	if apiKey || !ok || p.Type != types.PrincipalWebUser || p.ID == "" ||
+		p.ID != caller.UserID || caller.TenantID == 0 {
 		return types.Caller{}, ErrWebOwnerForbidden
 	}
 	return caller, nil
@@ -111,9 +118,11 @@ func (s *Service) WebOwnerStatus(ctx context.Context, channelID string) (bool, e
 	}
 	var count int64
 	err = s.db.WithContext(ctx).Table("im_channels AS c").
-		Joins("JOIN tenant_members m ON m.tenant_id = c.tenant_id AND m.user_id = ? AND m.status = ? AND m.deleted_at IS NULL", caller.UserID, "active").
+		Joins("JOIN tenant_members m ON m.tenant_id = c.tenant_id AND m.user_id = ? "+
+			"AND m.status = ? AND m.deleted_at IS NULL", caller.UserID, "active").
 		Joins("JOIN users u ON u.id = m.user_id AND u.is_active = ? AND u.deleted_at IS NULL", true).
-		Where("c.id = ? AND c.tenant_id = ? AND c.platform = ? AND c.deleted_at IS NULL", channelID, caller.TenantID, "octo").Count(&count).Error
+		Where("c.id = ? AND c.tenant_id = ? AND c.platform = ? AND c.deleted_at IS NULL",
+			channelID, caller.TenantID, "octo").Count(&count).Error
 	if err != nil {
 		return false, err
 	}
@@ -125,7 +134,9 @@ func (s *Service) WebOwnerStatus(ctx context.Context, channelID string) (bool, e
 
 // SetWebOwner binds or unbinds the authenticated user, and records every
 // effective change in the same transaction. It never accepts a target user.
-func (s *Service) SetWebOwner(ctx context.Context, channelID string, bind bool, requestPath, requestMethod string) error {
+func (s *Service) SetWebOwner(
+	ctx context.Context, channelID string, bind bool, requestPath, requestMethod string,
+) error {
 	caller, err := webOwnerCaller(ctx)
 	if err != nil || strings.TrimSpace(channelID) == "" {
 		return ErrWebOwnerForbidden
@@ -133,7 +144,9 @@ func (s *Service) SetWebOwner(ctx context.Context, channelID string, bind bool, 
 	userID := caller.UserID
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var member types.TenantMember
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id = ? AND user_id = ? AND status = ? AND role IN ?", caller.TenantID, userID, "active", []string{"owner", "admin"}).First(&member).Error
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("tenant_id = ? AND user_id = ? AND status = ? AND role IN ?",
+				caller.TenantID, userID, "active", []string{"owner", "admin"}).First(&member).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrWebOwnerForbidden
 		}
@@ -141,7 +154,8 @@ func (s *Service) SetWebOwner(ctx context.Context, channelID string, bind bool, 
 			return err
 		}
 		var user types.User
-		err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND is_active = ?", userID, true).First(&user).Error
+		err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND is_active = ?", userID, true).First(&user).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrWebOwnerForbidden
 		}
@@ -154,7 +168,9 @@ func (s *Service) SetWebOwner(ctx context.Context, channelID string, bind bool, 
 			ID          string
 			Credentials string
 		}
-		err = tx.Table("im_channels").Select("id, credentials").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND tenant_id = ? AND platform = ? AND deleted_at IS NULL", channelID, caller.TenantID, "octo").Take(&channel).Error
+		err = tx.Table("im_channels").Select("id, credentials").Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND tenant_id = ? AND platform = ? AND deleted_at IS NULL",
+				channelID, caller.TenantID, "octo").Take(&channel).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrWebOwnerForbidden
 		}
@@ -170,9 +186,12 @@ func (s *Service) SetWebOwner(ctx context.Context, channelID string, bind bool, 
 		action := types.AuditAction("im_channel.web_owner_unbound")
 		if bind {
 			action = types.AuditAction("im_channel.web_owner_bound")
-			result = tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&webOwner{ID: uuid.NewString(), TenantID: caller.TenantID, IMChannelID: channelID, WebUserID: userID})
+			result = tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&webOwner{
+				ID: uuid.NewString(), TenantID: caller.TenantID, IMChannelID: channelID, WebUserID: userID,
+			})
 		} else {
-			result = tx.Where("tenant_id = ? AND im_channel_id = ? AND web_user_id = ?", caller.TenantID, channelID, userID).Delete(&webOwner{})
+			result = tx.Where("tenant_id = ? AND im_channel_id = ? AND web_user_id = ?",
+				caller.TenantID, channelID, userID).Delete(&webOwner{})
 		}
 		if result.Error != nil {
 			return result.Error
@@ -180,6 +199,11 @@ func (s *Service) SetWebOwner(ctx context.Context, channelID string, bind bool, 
 		if result.RowsAffected == 0 {
 			return nil
 		}
-		return tx.Create(&types.AuditLog{TenantID: caller.TenantID, ActorUserID: userID, ActorRole: string(member.Role), Action: action, TargetType: "im_channel", TargetID: channelID, TargetUserID: userID, RequestPath: requestPath, RequestMethod: requestMethod, Outcome: types.AuditOutcomeSuccess, Details: types.JSON("{}")}).Error
+		return tx.Create(&types.AuditLog{
+			TenantID: caller.TenantID, ActorUserID: userID, ActorRole: string(member.Role),
+			Action: action, TargetType: "im_channel", TargetID: channelID, TargetUserID: userID,
+			RequestPath: requestPath, RequestMethod: requestMethod,
+			Outcome: types.AuditOutcomeSuccess, Details: types.JSON("{}"),
+		}).Error
 	})
 }
