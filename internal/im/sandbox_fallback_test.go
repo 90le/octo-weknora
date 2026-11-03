@@ -11,6 +11,30 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+func TestMissingNamedSandboxFallsBackWithoutGrant(t *testing.T) {
+	for _, request := range []types.IMSandboxRequests{{Shell: true}, {Skills: true}, {Shell: true, Skills: true}} {
+		ctx := types.WithIMKnowledgeScope(context.Background(), []string{"allowed-kb"})
+		ctx = types.WithIMSandboxRequests(ctx, request.Shell, request.Skills)
+		degraded := missingSandboxFallback(ctx, true)
+		if got := types.IMSandboxRequestsFromContext(degraded); got.Shell || got.Skills {
+			t.Fatalf("sandbox request not cleared: %+v", got)
+		}
+		if _, ok := types.IMSandboxGrantFromContext(degraded); ok {
+			t.Fatal("fallback created a sandbox grant")
+		}
+		config := types.RestrictIMAgentConfig(degraded, &types.AgentConfig{KnowledgeBases: []string{"other"}, SandboxConfigID: "cfg", SkillsEnabled: true})
+		if len(config.KnowledgeBases) != 1 || config.KnowledgeBases[0] != "allowed-kb" || config.SandboxConfigID != "" || config.SkillsEnabled {
+			t.Fatalf("unexpected authority after fallback: %+v", config)
+		}
+		if !strings.Contains(appendSandboxUnavailableNotice(degraded, "知识答案"), sandboxUnavailableNotice) {
+			t.Fatal("fallback notice missing")
+		}
+		if missingSandboxFallback(ctx, false) != ctx {
+			t.Fatal("fallback masked a missing grant for a named sandbox")
+		}
+	}
+}
+
 func TestSandboxPreparationFailureRetainsOnlyKnowledgeAuthority(t *testing.T) {
 	ctx := types.WithIMKnowledgeScope(context.Background(), []string{"allowed-kb"})
 	ctx = types.WithIMSandboxRequests(ctx, true, true)

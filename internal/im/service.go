@@ -2138,6 +2138,10 @@ func (s *Service) executeQARequestCore(req *qaRequest) {
 		} else {
 			logger.Warnf(ctx, "[IM] sandbox unavailable; continuing without execution")
 		}
+	} else if req.scope != nil && req.agent != nil {
+		// The queued scope was revalidated above. An Agent without a named
+		// sandbox cannot receive an execution grant, so keep only knowledge QA.
+		ctx = missingSandboxFallback(ctx, strings.TrimSpace(req.agent.Config.SandboxConfigID) == "")
 	}
 	ctx = s.beginIMArtifactTurn(ctx, req)
 	attachments, imageURLs, downloaded, err := s.prepareIMAttachments(ctx, req.msg, req.adapter)

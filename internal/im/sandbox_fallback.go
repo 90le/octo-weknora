@@ -12,6 +12,17 @@ type sandboxUnavailableKey struct{}
 
 const sandboxUnavailableNotice = "本次沙箱不可用，终端和 Skill 未执行；以下回答仅使用当前授权的其他能力。"
 
+// missingSandboxFallback applies only after the caller has revalidated the
+// channel scope and confirmed the scoped Agent has no named sandbox.
+func missingSandboxFallback(ctx context.Context, missingNamedSandbox bool) context.Context {
+	requests := types.IMSandboxRequestsFromContext(ctx)
+	_, granted := types.IMSandboxGrantFromContext(ctx)
+	if !missingNamedSandbox || granted || !types.HasIMKnowledgeScope(ctx) || (!requests.Shell && !requests.Skills) {
+		return ctx
+	}
+	return context.WithValue(types.WithoutIMSandboxExecution(ctx), sandboxUnavailableKey{}, true)
+}
+
 // prepareSandboxOrContinue never broadens access: if preparation fails, the
 // original scope must still be valid before sandbox authority is masked.
 func prepareSandboxOrContinue(
