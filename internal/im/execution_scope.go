@@ -11,6 +11,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	"github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -45,7 +46,7 @@ type ExecutionScope struct {
 	AllowGeneratedFiles bool `json:"allow_generated_files,omitempty"`
 	// Generic file delivery is separate from legacy Markdown delivery.
 	AllowFileDelivery bool `json:"allow_file_delivery,omitempty"`
-	// Reserved requests affect session reuse but do not yet grant execution.
+	// Independent capabilities participate in session scope fingerprints.
 	AllowSandboxShell  bool `json:"allow_sandbox_shell,omitempty"`
 	AllowSandboxSkills bool `json:"allow_sandbox_skills,omitempty"`
 
@@ -152,6 +153,22 @@ func scopeAgent(agent *types.CustomAgent, scope *ExecutionScope) (*types.CustomA
 	out.Config.SkillsSelectionMode = "none"
 	out.Config.SelectedSkills = nil
 	out.Config.SandboxConfigID = ""
+	configID := strings.TrimSpace(agent.Config.SandboxConfigID)
+	if (scope.AllowSandboxShell || scope.AllowSandboxSkills) && configID != "" &&
+		configID != types.SandboxConfigIDGlobalDefault && !sandbox.IsHostSkillTarget(configID) {
+		out.Config.SandboxConfigID = configID
+		if scope.AllowSandboxSkills {
+			switch agent.Config.SkillsSelectionMode {
+			case "all":
+				out.Config.SkillsSelectionMode = "all"
+			case "selected":
+				if len(agent.Config.SelectedSkills) > 0 {
+					out.Config.SkillsSelectionMode = "selected"
+					out.Config.SelectedSkills = append([]string(nil), agent.Config.SelectedSkills...)
+				}
+			}
+		}
+	}
 	// The original Agent's search setting is a second, tenant-controlled gate.
 	// An explicitly authorized Octo scope can also fetch public pages to verify
 	// search results; the runtime tool still enforces public-URL restrictions.

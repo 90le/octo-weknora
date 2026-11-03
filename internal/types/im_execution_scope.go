@@ -57,12 +57,18 @@ func RestrictIMAgentConfig(ctx context.Context, config *AgentConfig) *AgentConfi
 	out.MCPSelectionMode = "none"
 	out.MCPServices = nil
 	out.PinnedMCPServiceIDs = nil
-	out.SandboxConfigID = ""
-	out.SkillsEnabled = false
-	out.AllowedSkills = nil
-	out.TenantSkills = nil
+	grant, granted := IMSandboxGrantFromContext(ctx)
+	if !granted || (!grant.AllowShell && !grant.AllowSkills) || config.SandboxConfigID != grant.ConfigID {
+		out.SandboxConfigID = ""
+	}
+	if out.SandboxConfigID == "" || !granted || !grant.AllowSkills {
+		out.SkillsEnabled = false
+		out.AllowedSkills = nil
+		out.TenantSkills = nil
+		out.PinnedSkillNames = nil
+	}
+	// Never consult a local host skill tree in an IM turn.
 	out.SkillDirs = nil
-	out.PinnedSkillNames = nil
 	off := false
 	out.MemoryEnabled = &off
 	out.SharedAgentReadOnly = true

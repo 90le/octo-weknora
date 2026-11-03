@@ -292,3 +292,78 @@ func TestIMQACancellationStopsProducer(t *testing.T) {
 		})
 	}
 }
+
+// The real stream and non-stream handlers must not return to their lock
+// owner while an asynchronous AgentQA sandbox operation or stop is pending.
+func TestIMQACancellationWaitsForSandboxStopBeforeReturn(t *testing.T) {
+	for _, stream := range []bool{true, false} {
+		name := "runQA"
+		if stream {
+			name = "stream"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				base, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				ctx := types.WithIMSandboxGrant(base, types.IMSandboxGrant{SessionID: "session", TenantID: 7, ConfigID: "cfg", AllowShell: true, Revalidate: func(context.Context) error { return nil }})
+				started, finishOp, stopStarted, finishStop := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+				attempts := 0
+				result := startQAExitHandler(ctx, stream, true, func(callCtx context.Context, _ *event.EventBus) error {
+					grant, ok := types.IMSandboxGrantFromContext(callCtx)
+					if !ok {
+						return errors.New("grant missing")
+					}
+					track, done, err := grant.TurnBarrier.Begin()
+					if err != nil {
+						return err
+					}
+					track("container", func(context.Context) error {
+						attempts++
+						if attempts == 1 {
+							return errors.New("Docker unavailable")
+						}
+						close(stopStarted)
+						<-finishStop
+						return nil
+					})
+					close(started)
+					<-callCtx.Done()
+					<-finishOp
+					done()
+					return callCtx.Err()
+				})
+				<-started
+				cancel()
+				synctest.Wait()
+				select {
+				case <-result:
+					t.Fatal("handler returned while sandbox operation was active")
+				default:
+				}
+				grant, _ := types.IMSandboxGrantFromContext(ctx)
+				_, _, err := grant.TurnBarrier.Begin()
+				if err == nil {
+					t.Fatal("sealed turn accepted another sandbox operation")
+				}
+				close(finishOp)
+				<-stopStarted
+				if attempts != 2 {
+					t.Fatalf("expected stop retry, got %d", attempts)
+				}
+				synctest.Wait()
+				select {
+				case <-result:
+					t.Fatal("handler returned before container stop was confirmed")
+				default:
+				}
+				close(finishStop)
+				synctest.Wait()
+				select {
+				case <-result:
+				default:
+					t.Fatal("handler did not return after confirmed stop")
+				}
+			})
+		})
+	}
+}

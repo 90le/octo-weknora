@@ -19,11 +19,13 @@ import (
 type ReadFileTool struct {
 	BaseTool
 	sessionBound
-	webPages    WebPageSource
-	attachments *attachmentFileReader
-	workspace   *workspaceFileReader
-	skills      *skills.Manager
-	shell       bool
+	webPages        WebPageSource
+	attachments     *attachmentFileReader
+	workspace       *workspaceFileReader
+	skills          *skills.Manager
+	shell           bool
+	skillRunner     string
+	skillAuthorizer func(context.Context, string) error
 }
 
 type ReadFileInput struct {
@@ -62,6 +64,12 @@ func (t *ReadFileTool) WithSkills(manager *skills.Manager, shell bool) *ReadFile
 
 // BindSession records the session so Description() and Parameters() advertise
 // that session's workspace instead of the remote /workspace copy.
+// WithIMSkillAccess retains call-context authorization for IM resources.
+func (t *ReadFileTool) WithIMSkillAccess(authorize func(context.Context, string) error, runner string) *ReadFileTool {
+	t.skillAuthorizer, t.skillRunner = authorize, runner
+	return t
+}
+
 func (t *ReadFileTool) BindSession(id string) {
 	if t == nil {
 		return
@@ -214,6 +222,11 @@ func (t *ReadFileTool) readSkillResource(ctx context.Context, input ReadFileInpu
 	if strings.ContainsAny(name+rel, "\\\x00") {
 		return fail(fmt.Errorf("invalid skill resource path"))
 	}
+	if t.skillAuthorizer != nil {
+		if err := t.skillAuthorizer(ctx, name); err != nil {
+			return fail(err)
+		}
+	}
 	listed := false
 	for _, metadata := range t.skills.GetAllMetadata() {
 		if metadata != nil && metadata.Name == name {
@@ -245,6 +258,8 @@ func (t *ReadFileTool) readSkillResource(ctx context.Context, input ReadFileInpu
 				"Host skill resources are staged into the session automatically "+
 				"(host virtualenvs and node_modules are not copied). "+
 				"Deliverables belong in /workspace/output.\n\n", name, dir)
+		} else if t.skillRunner != "" {
+			fmt.Fprintf(&b, "Execution: %s(skill_name=%q, script=<listed relative path>, args=[...]). Only approved package scripts are executable. Deliverables belong in /workspace/output.\n\n", t.skillRunner, name)
 		} else {
 			b.WriteString("Execution is unavailable: this agent has no sandbox shell. The skill instructions can be read; configuring a shell-capable sandbox is required to run scripts.\n\n")
 		}
@@ -260,6 +275,11 @@ func (t *ReadFileTool) readSkillResource(ctx context.Context, input ReadFileInpu
 		var err error
 		content, err = t.skills.ReadSkillFile(ctx, name, rel)
 		if err != nil {
+			return fail(err)
+		}
+	}
+	if t.skillAuthorizer != nil {
+		if err := t.skillAuthorizer(ctx, name); err != nil {
 			return fail(err)
 		}
 	}

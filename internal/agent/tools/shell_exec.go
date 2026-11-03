@@ -266,6 +266,14 @@ type ShellExecTool struct {
 	// inject them. Install-mode tools never invoke it.
 	envCapture       SkillEnvCapture
 	skillEnvironment *skills.Manager
+	// Optional IM guard; ordinary Web and other channels leave this nil.
+	skillAuthorizer func(context.Context, string) error
+}
+
+// WithSkillAuthorizer restricts named Skill preparation for scoped callers.
+func (t *ShellExecTool) WithSkillAuthorizer(authorize func(context.Context, string) error) *ShellExecTool {
+	t.skillAuthorizer = authorize
+	return t
 }
 
 func (t *ShellExecTool) WithSkillEnvironment(manager *skills.Manager) *ShellExecTool {
@@ -298,6 +306,9 @@ func (t *ShellExecTool) Description() string {
 	if t != nil && t.installMode {
 		return t.description
 	}
+	if t != nil && t.skillAuthorizer != nil {
+		return "Execute a command in this session's isolated Docker sandbox. Network and stored credentials are unavailable. Use /workspace for work, /workspace/input for attachments and /workspace/output for deliverables. When Skills are enabled, skill_name stages one approved Skill's resources for this command. Commands can execute arbitrary code; output and execution time are bounded."
+	}
 	return shellExecDescription(t.boundLayout())
 }
 
@@ -306,7 +317,21 @@ func (t *ShellExecTool) Parameters() json.RawMessage {
 	if t != nil && t.installMode {
 		return t.schema
 	}
-	return schemaForLayout(t.schema, t.boundLayout())
+	schema := schemaForLayout(t.schema, t.boundLayout())
+	if t != nil && t.skillAuthorizer != nil {
+		var document map[string]any
+		if json.Unmarshal(schema, &document) == nil {
+			if properties, ok := document["properties"].(map[string]any); ok {
+				if skill, ok := properties["skill_name"].(map[string]any); ok {
+					skill["description"] = "Optional approved Skill name; stages its resources without stored credentials."
+				}
+			}
+			if encoded, err := json.Marshal(document); err == nil {
+				return encoded
+			}
+		}
+	}
+	return schema
 }
 
 func (t *ShellExecTool) boundLayout() sandbox.WorkspaceLayout {
@@ -443,6 +468,11 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 			Success: false,
 			Error:   "shell_exec is not available in this deployment (remote sandbox required)",
 		}, nil
+	}
+	if input.SkillName != "" && t.skillAuthorizer != nil {
+		if err := t.skillAuthorizer(ctx, input.SkillName); err != nil {
+			return &types.ToolResult{Success: false, Error: err.Error()}, nil
+		}
 	}
 	if input.SkillName != "" && t.skillEnvironment == nil {
 		return &types.ToolResult{Success: false, Error: "no skill environment is available for this call; omit skill_name for system commands"}, nil

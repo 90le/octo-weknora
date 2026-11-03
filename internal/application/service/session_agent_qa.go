@@ -16,6 +16,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/models/rerank"
 	"github.com/Tencent/WeKnora/internal/octobusiness"
+	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/types"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
@@ -67,6 +68,36 @@ func (s *sessionService) AgentQA(
 	agentConfig, err := s.buildAgentConfig(ctx, req, tenantInfo, agentTenantID)
 	if err != nil {
 		return err
+	}
+	if types.HasIMKnowledgeScope(ctx) {
+		requests := types.IMSandboxRequestsFromContext(ctx)
+		grant, hasGrant := types.IMSandboxGrantFromContext(ctx)
+		if (requests.Shell || requests.Skills) && !hasGrant {
+			return errors.New("Octo sandbox: Agent must select a named remote sandbox")
+		}
+		if hasGrant && grant.SkillsRequested && !grant.AllowSkills {
+			return errors.New("Octo sandbox: selected Agent has no enabled Skills")
+		}
+		ctx, err = withIMSandboxConfigBaseline(ctx, s.sandboxPinner)
+		if err != nil {
+			return fmt.Errorf("Octo sandbox authorization: %w", err)
+		}
+		ctx, err = s.withIMSkillsCheck(ctx, agentConfig)
+		if err != nil {
+			return err
+		}
+		ctx, err = withIMSandboxPolicy(ctx)
+		if err != nil {
+			return fmt.Errorf("Octo sandbox policy: %w", err)
+		}
+		if hasGrant && (grant.AllowShell || grant.AllowSkills) {
+			if err := sandbox.RequireIMBoundedOutput(); err != nil {
+				return err
+			}
+			if _, _, err := resolveSandboxForExecution(ctx, s.sandboxResolver, s.sandboxMgr, s.sandboxPinner, grant.TenantID, sessionID, agentConfig.SandboxConfigID, s.sandboxPolicy, withLiteDesktop(s.hostDesktop)); err != nil {
+				return fmt.Errorf("Octo sandbox: %w", err)
+			}
+		}
 	}
 	if types.HasIMKnowledgeScope(ctx) && agentConfig.WebSearchEnabled {
 		if types.IMPublicWebAuthorizer(ctx) == nil {

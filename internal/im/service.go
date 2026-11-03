@@ -1847,6 +1847,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 	sessionCtx = withIMIdentity(sessionCtx, channel, msg)
 	if scope != nil {
 		sessionCtx = types.WithIMKnowledgeScope(sessionCtx, scope.KnowledgeBaseIDs)
+		sessionCtx = types.WithIMSandboxRequests(sessionCtx, scope.AllowSandboxShell, scope.AllowSandboxSkills)
 		if scope.AllowPublicWeb {
 			admittedFingerprint := scopeFingerprint(scope)
 			sessionCtx = types.WithIMPublicWebAuthorizer(sessionCtx, func(checkCtx context.Context) error {
@@ -1926,6 +1927,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 
 	sessionCtx = types.WithSessionID(sessionCtx, session.ID)
 	// A grant carries only the selected identity; execution requires independent checks.
+	// Bind the original Agent identity; each execution revalidates the live scope.
 	sessionCtx = s.withIMSandboxGrant(sessionCtx, adapter, channel, msg, channelSession, session, savedAgent, scope)
 
 	// Title an untitled IM session from its first text message, like web chats.
@@ -2680,6 +2682,27 @@ func briefToolSummary(output string) string {
 	return output
 }
 
+// waitForIMSandboxQuiescence runs before a scoped handler returns to its
+// session-lock holder. If Docker cannot confirm a stop, keep the handler (and
+// its renewable lock) alive and retry; a process crash still requires a
+// durable distributed quarantine in the lock owner.
+func waitForIMSandboxQuiescence(ctx context.Context) {
+	grant, ok := types.IMSandboxGrantFromContext(ctx)
+	if !ok || (!grant.AllowShell && !grant.AllowSkills) {
+		return
+	}
+	for {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		err := types.SealIMSandboxTurn(cleanup)
+		cancel()
+		if err == nil {
+			return
+		}
+		logger.Warnf(context.WithoutCancel(ctx), "[IM] sandbox cleanup is unconfirmed; retaining session turn lock: %v", err)
+		time.Sleep(time.Second)
+	}
+}
+
 // handleMessageStream runs the QA pipeline and streams answer chunks to the IM platform
 // in real-time via the StreamSender interface. Chunks are batched at streamFlushInterval
 // to avoid API rate-limiting.
@@ -2696,6 +2719,7 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 	// A hard pipeline deadline would kill multi-round agent reasoning prematurely.
 	qaCtx, qaCancel := context.WithCancel(ctx)
 	defer qaCancel()
+	defer waitForIMSandboxQuiescence(qaCtx)
 
 	useAgent := customAgent != nil && customAgent.IsAgentMode()
 	eventBus := event.NewEventBus()
@@ -3181,6 +3205,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	// LLMCallTimeout. The context can still be cancelled by /stop.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	defer waitForIMSandboxQuiescence(ctx)
 
 	eventBus := event.NewEventBus()
 

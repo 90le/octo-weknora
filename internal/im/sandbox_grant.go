@@ -49,7 +49,12 @@ func (s *Service) withIMSandboxGrant(ctx context.Context, adapter Adapter, chann
 	}
 	channelID, tenantID, agentID := channel.ID, channel.TenantID, agent.ID
 	mappingID, sessionID := mapping.ID, session.ID
-	grant := types.IMSandboxGrant{SessionID: sessionID, TenantID: tenantID, ConfigID: configID}
+	skillsSelected := agent.Config.SkillsSelectionMode == "all" ||
+		(agent.Config.SkillsSelectionMode == "selected" && len(agent.Config.SelectedSkills) > 0)
+	grant := types.IMSandboxGrant{SessionID: sessionID, TenantID: tenantID, ConfigID: configID, AgentConfigDigest: fmt.Sprintf("%x", agentFingerprint),
+		AllowShell: scope.AllowSandboxShell, AllowSkills: scope.AllowSandboxSkills && skillsSelected,
+		SkillsRequested: scope.AllowSandboxSkills, SkillsSelectionMode: agent.Config.SkillsSelectionMode,
+		SelectedSkillNames: append([]string(nil), agent.Config.SelectedSkills...)}
 	grant.Revalidate = func(checkCtx context.Context) error {
 		if p, ok := types.PrincipalFromContext(checkCtx); !ok || p != wantPrincipal {
 			return ErrScopeDenied

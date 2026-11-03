@@ -86,6 +86,9 @@ func (m *Manager) stageShellSkill(ctx context.Context, sessionID, name string) (
 		if err != nil {
 			return "", fmt.Errorf("read skill resource %s: %w", rel, err)
 		}
+		if m.strictStagedIntegrity && len(file.Content) > sandbox.IMMaxOutputBytes {
+			return "", fmt.Errorf("skill %q resource %q exceeds the bounded integrity-read limit", name, rel)
+		}
 		total += len(file.Content)
 		if total > maxStagedSkillBytes {
 			return "", fmt.Errorf("skill %q exceeds the %d-byte staging limit; install it into the sandbox image", name, maxStagedSkillBytes)
@@ -105,7 +108,7 @@ func (m *Manager) stageShellSkill(ctx context.Context, sessionID, name string) (
 			Content: file.data,
 		})
 	}
-	if err := store.WriteSessionWorkspaceFiles(ctx, sessionID, payload); err != nil {
+	if err := store.WriteSessionWorkspaceFiles(sandbox.WithIMSkillStaging(ctx), sessionID, payload); err != nil {
 		return "", fmt.Errorf("prepare skill %q: %w; command was not started", name, err)
 	}
 	if m.stagedSkills == nil {
@@ -171,6 +174,19 @@ func (m *Manager) stagedSkillStillIntact(
 		}
 		if entry == nil || entry.Type != sandbox.RemoteEntryFile {
 			return false, nil
+		}
+		if m.strictStagedIntegrity {
+			expected, err := source.LoadSkillFile(name, rel)
+			if err != nil {
+				return false, err
+			}
+			actual, err := store.ReadSessionFile(ctx, sessionID, path.Join(dir, rel))
+			if err != nil {
+				return false, err
+			}
+			if !bytes.Equal(actual, []byte(expected.Content)) {
+				return false, nil
+			}
 		}
 	}
 	return true, nil
