@@ -3,14 +3,20 @@ package octo
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"path"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/im"
 	"github.com/Tencent/WeKnora/internal/im/octo/wire"
@@ -20,6 +26,11 @@ import (
 )
 
 var octoCOSHost = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*-[0-9]+\.cos\.[a-z0-9-]+\.myqcloud\.com$`)
+
+// Bound one file in line with the sandbox's planned collection limit. The Octo
+// server may enforce a lower limit. Callers must keep data unchanged until
+// delivery returns; the transport does not duplicate the file.
+const maxGeneratedFileBytes = 20 << 20
 
 type fileFailure struct {
 	code  string
@@ -61,25 +72,80 @@ func validFileURL(raw string, storage bool) bool {
 	return host == "cdn.deepminer.com.cn"
 }
 
-// SendGeneratedFile accepts bounded report bytes, never a local filesystem path
-// or a caller-selected recipient. Octo's multipart endpoint is retired; use its
-// official presigned PUT flow and send the returned CDN reference afterward.
+func validGeneratedFilename(name string) bool {
+	if name == "" || name == "." || name == ".." || !utf8.ValidString(name) ||
+		utf8.RuneCountInString(name) > 255 || name != path.Base(name) ||
+		strings.TrimSpace(name) != name || strings.HasSuffix(name, ".") ||
+		strings.ContainsAny(name, `\/:*?"<>|`) {
+		return false
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// The server remains authoritative about extensions and size. This is only a
+// MIME hint for servers that use it; the signed response is authoritative for
+// the PUT. Supply portable Office defaults when the OS MIME database is sparse.
+func generatedFileContentType(name, supplied string) string {
+	if len(supplied) <= 512 {
+		if mediaType, params, err := mime.ParseMediaType(supplied); err == nil && mediaType != "application/octet-stream" {
+			if formatted := mime.FormatMediaType(mediaType, params); formatted != "" {
+				return formatted
+			}
+		}
+	}
+	ext := strings.ToLower(path.Ext(name))
+	switch ext {
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".xlsx":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case ".pptx":
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	case ".doc":
+		return "application/msword"
+	case ".xls":
+		return "application/vnd.ms-excel"
+	case ".ppt":
+		return "application/vnd.ms-powerpoint"
+	case ".pdf":
+		return "application/pdf"
+	}
+	if inferred := mime.TypeByExtension(ext); inferred != "" {
+		return inferred
+	}
+	return "application/octet-stream"
+}
+
+func validSignedFileHeader(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if (value[i] < 0x20 && value[i] != '\t') || value[i] == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// SendGeneratedFile accepts bounded attachment bytes, never a local filesystem path
+// or a caller-selected recipient. It uses Octo's presigned PUT flow and sends
+// the returned CDN reference afterward.
 func (a *Adapter) SendGeneratedFile(ctx context.Context, in *im.IncomingMessage, name string, data []byte, contentType string) error {
 	return a.sendGeneratedFile(ctx, in, name, data, contentType, func() error { _, err := a.AuthorizeExecution(ctx, nil, in); return err })
 }
 
 func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage, name string, data []byte, contentType string, authorize func() error) error {
-	if in == nil || len(data) == 0 || len(data) > 2<<20 || name == "" || name == "." || name != path.Base(name) || strings.ContainsAny(name, "\\\r\n\x00") {
+	if in == nil || len(data) == 0 || len(data) > maxGeneratedFileBytes || !validGeneratedFilename(name) {
 		return a.fileFailure(ctx, in, "invalid_file", nil)
-	}
-	if contentType != "text/html; charset=utf-8" && contentType != "text/markdown; charset=utf-8" && contentType != "text/csv; charset=utf-8" && contentType != "text/html" && contentType != "text/markdown" && contentType != "text/csv" {
-		return a.fileFailure(ctx, in, "unsupported_type", nil)
 	}
 	if err := octobusiness.ValidateReportAuthority(ctx); err != nil {
 		return a.fileFailure(ctx, in, "report_authority_changed", err)
 	}
 	if err := octobusiness.ValidateFileDeliveryAuthority(ctx); err != nil {
-		return a.fileFailure(ctx, in, "markdown_authority_changed", err)
+		return a.fileFailure(ctx, in, "file_authority_changed", err)
 	}
 	if err := authorize(); err != nil {
 		return a.fileFailure(ctx, in, "scope_denied", err)
@@ -96,12 +162,12 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 		return a.fileFailure(ctx, in, "invalid_target", nil)
 	}
 
-	query := url.Values{"filename": []string{name}, "fileSize": []string{strconv.Itoa(len(data))}}
+	query := url.Values{"filename": []string{name}, "fileSize": []string{strconv.Itoa(len(data))}, "contentType": []string{generatedFileContentType(name, contentType)}}
 	var signed filePresign
 	if err = a.api.request(ctx, http.MethodGet, "/v1/bot/upload/presigned?"+query.Encode(), nil, &signed); err != nil {
 		return a.fileFailure(ctx, in, "presign_failed", nil)
 	}
-	if signed.Method != http.MethodPut || signed.MaxFileSize != int64(len(data)) || !validFileURL(signed.UploadURL, true) || !validFileURL(signed.DownloadURL, false) || signed.ContentType == "" || len(signed.ContentType) > 512 || len(signed.ContentDisposition) > 4096 || strings.ContainsAny(signed.ContentType+signed.ContentDisposition, "\r\n\x00") {
+	if signed.Method != http.MethodPut || signed.MaxFileSize != int64(len(data)) || !validFileURL(signed.UploadURL, true) || !validFileURL(signed.DownloadURL, false) || signed.ContentType == "" || len(signed.ContentType) > 512 || len(signed.ContentDisposition) > 4096 || !validSignedFileHeader(signed.ContentType) || !validSignedFileHeader(signed.ContentDisposition) {
 		return a.fileFailure(ctx, in, "presign_invalid", nil)
 	}
 	// A slow presign request must not allow data to leave after access changes.
@@ -109,11 +175,14 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 		return a.fileFailure(ctx, in, "report_authority_changed", err)
 	}
 	if err := octobusiness.ValidateFileDeliveryAuthority(ctx); err != nil {
-		return a.fileFailure(ctx, in, "markdown_authority_changed", err)
+		return a.fileFailure(ctx, in, "file_authority_changed", err)
 	}
 	if err = authorize(); err != nil {
 		return a.fileFailure(ctx, in, "scope_denied", err)
 	}
+	contentHash := sha256.Sum256(data)
+	identity, _ := json.Marshal([]string{strconv.Itoa(kind), target, in.MessageID, name, hex.EncodeToString(contentHash[:])})
+	clientMessageID := uuid.NewSHA1(uuid.NameSpaceOID, identity).String()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPut, signed.UploadURL, bytes.NewReader(data))
 	if err != nil {
 		return a.fileFailure(ctx, in, "upload_request_invalid", nil)
@@ -127,6 +196,7 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	// an API cookie jar onto this separate request, and never follow redirects.
 	storageClient := *a.api.http
 	storageClient.Jar = nil
+	storageClient.Timeout = 5 * time.Minute
 	storageClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	response, err := storageClient.Do(request)
 	if err != nil {
@@ -143,7 +213,7 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 		return a.fileFailure(ctx, in, "report_authority_changed", err)
 	}
 	if err := octobusiness.ValidateFileDeliveryAuthority(ctx); err != nil {
-		return a.fileFailure(ctx, in, "markdown_authority_changed", err)
+		return a.fileFailure(ctx, in, "file_authority_changed", err)
 	}
 	if err = authorize(); err != nil {
 		return a.fileFailure(ctx, in, "scope_denied", err)
@@ -158,7 +228,7 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	var result struct {
 		ID json.RawMessage `json:"message_id"`
 	}
-	err = a.api.post(ctx, "/v1/bot/sendMessage", map[string]any{"channel_id": target, "channel_type": kind, "client_msg_no": uuid.NewSHA1(uuid.NameSpaceOID, []byte(in.MessageID+":artifact:"+name)).String(), "payload": payload}, &result)
+	err = a.api.post(ctx, "/v1/bot/sendMessage", map[string]any{"channel_id": target, "channel_type": kind, "client_msg_no": clientMessageID, "payload": payload}, &result)
 	if err != nil {
 		return a.fileFailure(ctx, in, "send_failed", nil)
 	}
