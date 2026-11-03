@@ -269,3 +269,76 @@ func TestScopedAgentPublicWebNeedsExactScopeAndAgentEnablement(t *testing.T) {
 		t.Fatalf("Agent explicit tool selection widened: %+v %v", restricted, err)
 	}
 }
+
+func TestSandboxRequestsRequireIndependentAgentSelection(t *testing.T) {
+	scope := &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r", AllowGeneratedFiles: true}
+	original := scopeFingerprint(scope)
+	agent := &types.CustomAgent{
+		Config: types.CustomAgentConfig{
+			SandboxConfigID:     "sandbox",
+			SkillsSelectionMode: "selected",
+			SelectedSkills:      []string{"allowed"},
+		},
+	}
+	for _, tc := range []struct {
+		name          string
+		shell, skills bool
+		wantMode      string
+	}{
+		{"legacy markdown", false, false, "none"},
+		{"shell only", true, false, "none"},
+		{"skills only", false, true, "selected"},
+		{"both", true, true, "selected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			next := *scope
+			next.AllowSandboxShell = tc.shell
+			next.AllowSandboxSkills = tc.skills
+			if (tc.shell || tc.skills) && scopeFingerprint(&next) == original {
+				t.Fatal("switch absent from fingerprint")
+			}
+			got, err := scopeAgent(agent, &next)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantID := ""
+			if tc.shell || tc.skills {
+				wantID = "sandbox"
+			}
+			if got.Config.SandboxConfigID != wantID || got.Config.SkillsSelectionMode != tc.wantMode {
+				t.Fatalf("unexpected scope: %+v", got.Config)
+			}
+			if tc.skills {
+				got.Config.SelectedSkills[0] = "other"
+				if agent.Config.SelectedSkills[0] != "allowed" {
+					t.Fatal("selection shared")
+				}
+			}
+		})
+	}
+	host := *agent
+	host.Config.SandboxConfigID = "host"
+	got, err := scopeAgent(
+		&host,
+		&ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r", AllowSandboxShell: true},
+	)
+	if err != nil || got.Config.SandboxConfigID != "" {
+		t.Fatal("host config admitted")
+	}
+}
+
+func TestFileDeliveryScopeFingerprintIsIndependentOfLegacyMarkdown(t *testing.T) {
+	legacy := &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r", AllowGeneratedFiles: true}
+	if legacy.AllowFileDelivery || legacy.AllowSandboxShell || legacy.AllowSandboxSkills || legacy.AllowPublicWeb {
+		t.Fatal("legacy permission widened")
+	}
+	newer := *legacy
+	newer.AllowFileDelivery = true
+	if scopeFingerprint(&newer) == scopeFingerprint(legacy) {
+		t.Fatal("generic file delivery not bound to scope")
+	}
+	newer.AllowGeneratedFiles = false
+	if !newer.AllowFileDelivery {
+		t.Fatal("generic permission depends on Markdown")
+	}
+}

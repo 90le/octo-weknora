@@ -20,6 +20,14 @@ Octo 原生消息 → WeKnora IM 适配器 → 身份／区域授权 → WeKnora
 
 公开群默认只开放经审计的只读知识工具与当前授权的反馈草稿／确认工具。Skills 可教 Agent 如何查证、澄清和表达，但不能赋权；新增 GitHub Issue 或 Loop Task 属于外部写操作，须单独连接、目的地映射、原生身份授权、预览确认、幂等和审计。私人小丘／OpenClaw 可承担较长的资料研究或知识草稿任务，审核后再进入正式知识库；它不成为公共问答的必需中继。
 
+## 目标演进：通用会话产物与受控执行
+
+在现有 WeKnora Agent 和渠道链路上演进会话产物、独立沙箱、Skills 与原会话投递，复用知识业务授权；服务端负责身份、资源范围与发送结果。目标、旧 Markdown 兼容和工具退役条件统一见 [产品需求](OCTO-REQUIREMENTS.md) 的 R18–R20；候选源码不代表当前生产已部署或真实客户端已验收。当前渠道能力见 [能力清单](internal/im/octo/CAPABILITIES.md)。
+
+沙箱文档依赖的候选构建定义位于 [Dockerfile](deploy/octo/sandbox-artifacts.Dockerfile) 和 [版本及摘要锁定清单](deploy/octo/sandbox-artifacts-requirements.lock)，具体复现步骤见 [沙箱镜像构建说明](deploy/octo/SANDBOX-ARTIFACTS.md)。多阶段构建只把安装后的库带入最终镜像；运行沙箱不因此获得联网权限。镜像、依赖和实际配置的部署状态以 [OCTO-STATUS](OCTO-STATUS.md) 与本机运维资料为准。
+
+2026-11-03 在独立沙箱 VM 使用合成资料验证候选镜像：分别以 1 CPU／1 GiB 和 2 CPU／2 GiB 运行，生成并重新读取 1,000 段 Word、10,000 行 Excel、12 页 PPT 和 50 页 PDF；两组均完成，cgroup 记录峰值约 62 MiB。此为单容器、小样本结果，不等于大文件或并发容量。现有 VM 为 4 vCPU／6 GiB，四个 2 GiB 容器的上限总和超过其内存；保持现有限额，需扩大时先重新测量并协调并发上限。
+
 ## 数据与边界
 
 | 对象 | 权威存储／职责 |

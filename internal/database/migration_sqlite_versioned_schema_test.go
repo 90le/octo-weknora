@@ -19,7 +19,8 @@ import (
 var versionedSQLiteTables = []string{
 	"local_source_spaces", "local_source_roots", "local_source_registry_state", "local_source_file_states",
 	"octo_knowledge_issues", "octo_knowledge_issue_events", "octo_knowledge_contacts", "octo_knowledge_proposals",
-	"octo_message_inbox", "octo_scope_knowledge_grants", "octo_report_schedules", "octo_report_runs",
+	"octo_message_inbox", "octo_file_deliveries", "octo_scope_knowledge_grants",
+	"octo_report_schedules", "octo_report_runs",
 	"octo_card_bindings", "octo_card_events", "octo_card_event_cursors",
 	"octo_scopes",
 	"octo_connections",
@@ -84,7 +85,7 @@ var versionedSQLiteColumns = map[string][]string{
 	}, // 000028
 }
 
-const expectedSQLiteMigrationVersion = 50
+const expectedSQLiteMigrationVersion = 51
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

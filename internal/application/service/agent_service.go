@@ -310,6 +310,9 @@ func (s *agentService) CreateAgentEngine(
 	if offerSkills {
 		skillsManager, err := s.initializeSkillsManager(ctx, sessionID, config, toolRegistry)
 		if err != nil {
+			if types.HasIMKnowledgeScope(ctx) && config.SkillsEnabled {
+				return nil, fmt.Errorf("octo sandbox: initialize Skills: %w", err)
+			}
 			logger.Warnf(ctx, "Failed to initialize skills manager: %v", err)
 		} else if skillsManager != nil {
 			engine.SetSkillsManager(skillsManager)
@@ -478,11 +481,13 @@ func (s *agentService) registerSandboxFileTools(
 		toolRegistry.RegisterTool(tools.NewReadFileTool(store))
 		// The per-round completion budget, not a fixed byte count, is what
 		// bounds one write; the tool advertises a limit derived from it.
-		toolRegistry.RegisterTool(tools.NewWriteSandboxFileTool(
-			store,
-			types.AgentRoundMaxCompletionTokensFor(config.MaxCompletionTokens, config.SandboxConfigID),
-		))
-		toolRegistry.RegisterTool(tools.NewEditSandboxFileTool(store))
+		grant, scoped := types.IMSandboxGrantFromContext(ctx)
+		if !types.HasIMKnowledgeScope(ctx) || (scoped && grant.AllowShell) {
+			toolRegistry.RegisterTool(tools.NewWriteSandboxFileTool(
+				store, types.AgentRoundMaxCompletionTokensFor(config.MaxCompletionTokens, config.SandboxConfigID),
+			))
+			toolRegistry.RegisterTool(tools.NewEditSandboxFileTool(store))
+		}
 		logger.Infof(ctx, "Registered sandbox file primitives (listing is a no-shell fallback)")
 	} else {
 		logger.Infof(ctx, "Sandbox backend does not advertise session filesystem capability; "+
@@ -567,6 +572,10 @@ func (s *agentService) registerSandboxShellIfAllowed(
 	if config == nil {
 		return
 	}
+	grant, isIM := types.IMSandboxGrantFromContext(ctx)
+	if types.HasIMKnowledgeScope(ctx) && (!isIM || !grant.AllowShell) {
+		return
+	}
 	sandboxMgr, err := s.resolveWorkspaceSandbox(ctx, sessionID, config)
 	if err != nil {
 		logger.Warnf(ctx, "Failed to resolve sandbox for shell_exec: %v", err)
@@ -578,7 +587,7 @@ func (s *agentService) registerSandboxShellIfAllowed(
 	// Remote backends keep the skills entitlement: a shell there only exists
 	// to serve skill scripts. The host backend IS the feature, so gating it on
 	// skills would leave Lite with a sandbox nobody can reach.
-	if sandboxMgr.GetType() != sandbox.SandboxTypeHost &&
+	if !types.HasIMKnowledgeScope(ctx) && sandboxMgr.GetType() != sandbox.SandboxTypeHost &&
 		!config.SkillsEnabled && !config.SkillInstallMode() {
 		return
 	}
@@ -703,11 +712,28 @@ func (s *agentService) initializeSkillsManager(
 	logger.Infof(ctx, "Workspace sandbox in use: config=%s workspace=%d type=%s",
 		pin.ConfigID, pin.TenantOr(tenantID), sandboxMgr.GetType())
 
+	// Preserve the native channel's instruction-only Skills while the Agent's
+	// selected installed Skills stay separately checked at execution time.
+	allowedSkills := append([]string(nil), config.AllowedSkills...)
+	if types.HasIMKnowledgeScope(ctx) && config.SkillsEnabled && len(allowedSkills) > 0 {
+		if source := skills.InstructionSourceFromContext(ctx); source != nil {
+			metadata, err := source.DiscoverSkills()
+			if err != nil {
+				return nil, err
+			}
+			for _, item := range metadata {
+				if item != nil {
+					allowedSkills = append(allowedSkills, item.Name)
+				}
+			}
+		}
+	}
 	// Create skills manager
 	skillsConfig := &skills.ManagerConfig{
-		SkillDirs:     config.SkillDirs,
-		AllowedSkills: config.AllowedSkills,
-		Enabled:       config.SkillsEnabled || skills.InstructionSourceFromContext(ctx) != nil,
+		SkillDirs:             config.SkillDirs,
+		AllowedSkills:         allowedSkills,
+		Enabled:               config.SkillsEnabled || skills.InstructionSourceFromContext(ctx) != nil,
+		StrictStagedIntegrity: types.HasIMKnowledgeScope(ctx),
 	}
 
 	skillsManager := skills.NewManager(skillsConfig, sandboxMgr)
@@ -715,6 +741,11 @@ func (s *agentService) initializeSkillsManager(
 		skillsManager.WithSkillsRoot(s.hostSkillsRoot)
 	}
 	if source := s.tenantSkillSource(ctx, config); source != nil {
+		if types.HasIMKnowledgeScope(ctx) {
+			check := func() error { return s.authorizeIMSkillSource(ctx, sessionID) }
+			skillsManager.WithTenantVisibilityGuard(check)
+			source = imStagedSkillSource{SkillSource: source, authorize: check}
+		}
 		skillsManager.WithTenantSource(source)
 	}
 	skillsManager.WithInstructionSource(skills.InstructionSourceFromContext(ctx))
@@ -731,7 +762,9 @@ func (s *agentService) initializeSkillsManager(
 	shellEnabled := false
 	if tool, err := toolRegistry.GetTool(tools.ToolShellExec); err == nil {
 		if shell, ok := tool.(*tools.ShellExecTool); ok {
-			shell.WithSkillEnvironment(skillsManager)
+			if !types.HasIMKnowledgeScope(ctx) || config.SkillsEnabled {
+				shell.WithSkillEnvironment(skillsManager)
+			}
 			shellEnabled = true
 		}
 	}
@@ -746,6 +779,21 @@ func (s *agentService) initializeSkillsManager(
 			toolRegistry.RegisterTool(reader)
 		}
 		reader.WithSkills(skillsManager, shellEnabled)
+		if types.HasIMKnowledgeScope(ctx) && config.SkillsEnabled {
+			runtime, ok := sandboxMgr.(*imGuardedSandbox)
+			if !ok {
+				return nil, errors.New("octo sandbox: guarded Skill backend unavailable")
+			}
+			if len(config.TenantSkills) > 0 {
+				authorize := func(callCtx context.Context, name string) error {
+					return s.authorizeIMSkill(callCtx, sessionID, config, name)
+				}
+				toolRegistry.RegisterTool(tools.NewIMSkillExecTool(skillsManager, runtime, authorize))
+			}
+			reader.WithIMSkillAccess(func(callCtx context.Context, name string) error {
+				return s.authorizeIMSkillResource(callCtx, sessionID, config, name)
+			}, tools.ToolExecuteApprovedSkill)
+		}
 		logger.Infof(ctx, "Attached skill resources to read_file")
 	}
 
@@ -780,7 +828,15 @@ func (s *agentService) tenantSkillSource(
 		root = s.hostSkillsRoot
 	}
 	return skills.NewTenantSkillSourceAt(root, rows, func(row *types.TenantSkillEntity) ([]byte, error) {
-		return s.loadInstalledSkillBundle(ctx, ownerTenantID, row)
+		archive, err := s.loadInstalledSkillBundle(ctx, ownerTenantID, row)
+		if err != nil {
+			return nil, err
+		}
+		if types.HasIMKnowledgeScope(ctx) && (strings.TrimSpace(row.BundleSHA256) == "" ||
+			!archiveMatchesSHA(archive, strings.TrimSpace(row.BundleSHA256))) {
+			return nil, errors.New("octo sandbox: Skill bundle digest mismatch")
+		}
+		return archive, nil
 	})
 }
 
@@ -1012,10 +1068,23 @@ func (s *agentService) registerSandboxShellTool(
 		return
 	}
 	if executor := sessionSandboxShellExecutor(sandboxMgr); executor != nil {
-		resolver := s.userEnvResolver(ctx, config)
-		toolRegistry.RegisterTool(
-			tools.NewShellExecTool(executor, resolver).WithEnvCapture(s.skillEnvCapture(config)),
-		)
+		if types.HasIMKnowledgeScope(ctx) {
+			// The synthetic system user is not a native IM credential owner.
+			toolRegistry.RegisterTool(tools.NewShellExecTool(executor, nil).WithSkillAuthorizer(
+				func(callCtx context.Context, name string) error {
+					sid, ok := types.SessionIDFromContext(callCtx)
+					if !ok || sid == "" {
+						return types.ErrIMSandboxDenied
+					}
+					return s.authorizeIMSkill(callCtx, sid, config, name)
+				},
+			))
+		} else {
+			resolver := s.userEnvResolver(ctx, config)
+			toolRegistry.RegisterTool(
+				tools.NewShellExecTool(executor, resolver).WithEnvCapture(s.skillEnvCapture(config)),
+			)
+		}
 		logger.Infof(ctx, "Registered shell_exec tool")
 	} else {
 		logger.Infof(ctx, "Sandbox backend does not advertise remote shell capability; shell_exec not registered")
@@ -1367,8 +1436,9 @@ func (s *agentService) registerTools(
 	}
 
 	// This tool is admitted only by an explicit Octo channel capability.
-	if octobusiness.HasMarkdownSink(ctx) {
-		registry.RegisterTool(octobusiness.NewMarkdownFileTool())
+	if octobusiness.HasFileDeliverySink(ctx) {
+		registry.RegisterTool(octobusiness.NewFileDeliveryTool())
+		registry.RegisterDeferredTool(octobusiness.NewLegacyMarkdownFileTool())
 	}
 	logger.Infof(ctx, "Registered %d tools", len(registry.ListTools()))
 	return nil

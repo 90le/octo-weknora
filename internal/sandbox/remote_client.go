@@ -314,6 +314,10 @@ type RemoteExecRequest struct {
 	// observation hook only; callers must not retain the supplied bytes.
 	OnOutput func(stream string, chunk []byte) `json:"-"`
 
+	// MaxOutputBytes is an optional hard cap on captured stdout and stderr.
+	// Zero preserves the backend's existing behavior.
+	MaxOutputBytes int64 `json:"-"`
+
 	// Command is the executable name (Shell=false) or the shell expression
 	// (Shell=true).
 	Command string

@@ -43,7 +43,8 @@ func (s *Service) businessContext(ctx context.Context, req *qaRequest, scope *Ex
 		}
 		p := octobusiness.Principal{
 			CanCreateKnowledgeBase: current.AllowKnowledgeCreation, AllowGeneratedFiles: current.AllowGeneratedFiles,
-			TenantID: req.channel.TenantID, AccountID: current.AccountID, ChannelID: req.channelID,
+			AllowFileDelivery: current.AllowFileDelivery,
+			TenantID:          req.channel.TenantID, AccountID: current.AccountID, ChannelID: req.channelID,
 			ScopeID: current.ScopeID, ScopeName: current.ScopeName, GroupID: req.msg.Extra["octo_group_id"],
 			SubareaID: req.msg.Extra["octo_subarea_id"], UserID: req.msg.UserID, UserName: current.SenderName,
 			MessageID: req.msg.MessageID, MessageText: text, IsDirect: req.msg.ChatType == ChatTypeDirect,
@@ -72,17 +73,17 @@ func (s *Service) businessContext(ctx context.Context, req *qaRequest, scope *Ex
 			return sender.SendGeneratedFile(callCtx, req.msg, file.Name, []byte(file.Content), file.ContentType)
 		}
 		ctx = octobusiness.WithReportSink(ctx, sink)
-		if scope.AllowGeneratedFiles {
+		if scope.AllowGeneratedFiles || scope.AllowFileDelivery {
 			expected := scopeFingerprint(scope)
 			validate := func(callCtx context.Context) error {
 				current, err := authorizeExecution(callCtx, req.adapter, req.channel, req.msg)
-				if err != nil || current == nil || !current.AllowGeneratedFiles ||
+				if err != nil || current == nil || (!current.AllowGeneratedFiles && !current.AllowFileDelivery) ||
 					scopeFingerprint(current) != expected {
 					return ErrScopeDenied
 				}
 				return nil
 			}
-			ctx = octobusiness.WithMarkdownSink(ctx, sink, validate)
+			ctx = octobusiness.WithFileDeliverySink(ctx, sink, validate)
 		}
 	}
 	return ctx

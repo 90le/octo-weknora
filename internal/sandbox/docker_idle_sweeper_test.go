@@ -58,6 +58,18 @@ func TestDockerIdleSweeperReclaimsOnlyIdleContainers(t *testing.T) {
 	require.Empty(t, engine.removed, "idle workspaces must not be deleted")
 }
 
+func TestDockerIdleSweeperLeavesIMTurnContainerAlone(t *testing.T) {
+	now := time.Now().UTC()
+	sweeper, engine := newSweeperFixture(t, time.Minute, now, []container.Summary{{
+		ID: "im-turn", State: "running", Created: now.Add(-time.Hour).Unix(),
+		Labels: map[string]string{dockerManagedLabel: "true", remoteMetadataIMPolicy: "policy"},
+	}})
+	reclaimed, err := sweeper.sweep(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, reclaimed)
+	require.Empty(t, engine.stopped)
+}
+
 // A sandbox that has never executed anything has no marker, so its creation
 // time decides. Without this a freshly created container would look infinitely
 // idle and be deleted out from under the session that just created it.

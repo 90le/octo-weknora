@@ -16,6 +16,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/models/rerank"
 	"github.com/Tencent/WeKnora/internal/octobusiness"
+	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/types"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
@@ -67,6 +68,46 @@ func (s *sessionService) AgentQA(
 	agentConfig, err := s.buildAgentConfig(ctx, req, tenantInfo, agentTenantID)
 	if err != nil {
 		return err
+	}
+	if types.HasIMKnowledgeScope(ctx) {
+		requests := types.IMSandboxRequestsFromContext(ctx)
+		grant, hasGrant := types.IMSandboxGrantFromContext(ctx)
+		if (requests.Shell || requests.Skills) && !hasGrant {
+			return errors.New("octo sandbox: Agent must select a named remote sandbox")
+		}
+		if hasGrant && grant.SkillsRequested && !grant.AllowSkills {
+			return errors.New("octo sandbox: selected Agent has no enabled Skills")
+		}
+		ctx, err = withIMSandboxConfigBaseline(ctx, s.sandboxPinner)
+		if err != nil {
+			return fmt.Errorf("octo sandbox authorization: %w", err)
+		}
+		ctx, err = s.withIMSkillsCheck(ctx, agentConfig)
+		if err != nil {
+			return err
+		}
+		ctx, err = withIMSandboxPolicy(ctx)
+		if err != nil {
+			return fmt.Errorf("octo sandbox policy: %w", err)
+		}
+		if hasGrant && (grant.AllowShell || grant.AllowSkills) {
+			if err := sandbox.RequireIMBoundedOutput(); err != nil {
+				return err
+			}
+			if _, _, err := resolveSandboxForExecution(
+				ctx,
+				s.sandboxResolver,
+				s.sandboxMgr,
+				s.sandboxPinner,
+				grant.TenantID,
+				sessionID,
+				agentConfig.SandboxConfigID,
+				s.sandboxPolicy,
+				withLiteDesktop(s.hostDesktop),
+			); err != nil {
+				return fmt.Errorf("octo sandbox: %w", err)
+			}
+		}
 	}
 	if types.HasIMKnowledgeScope(ctx) && agentConfig.WebSearchEnabled {
 		if types.IMPublicWebAuthorizer(ctx) == nil {
@@ -439,13 +480,16 @@ func (s *sessionService) buildAgentConfig(
 		skillConfigID string
 		tenantSkills  []*types.TenantSkillEntity
 	)
-	if s.hostDesktop {
-		skillConfigID, tenantSkills = hostSkillsForRun(ctx, s.tenantSkillRepo, s.hostSkillTree, sandboxTenantID)
-	} else {
-		skillConfigID, tenantSkills = skillsForRun(
-			ctx, s.sandboxPinner, s.sandboxConfigRepo, s.tenantSkillRepo,
-			sandboxTenantID, req.Session.ID, agentConfig.SandboxConfigID,
-		)
+	// IM knowledge scope must not enumerate host skills or a previously pinned image.
+	if !types.HasIMKnowledgeScope(ctx) {
+		if s.hostDesktop {
+			skillConfigID, tenantSkills = hostSkillsForRun(ctx, s.tenantSkillRepo, s.hostSkillTree, sandboxTenantID)
+		} else {
+			skillConfigID, tenantSkills = skillsForRun(
+				ctx, s.sandboxPinner, s.sandboxConfigRepo, s.tenantSkillRepo,
+				sandboxTenantID, req.Session.ID, agentConfig.SandboxConfigID,
+			)
+		}
 	}
 	agentConfig.TenantSkills = tenantSkills
 	if len(tenantSkills) > 0 {

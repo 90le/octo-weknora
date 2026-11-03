@@ -44,6 +44,7 @@ type Adapter struct {
 	uid           string
 	policy        func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error)
 	receiptPolicy func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error)
+	fileJournal   fileDeliveryJournal // optional test seam; production uses the database
 }
 
 func (a *Adapter) AuthorizeExecution(ctx context.Context, channel *im.IMChannel, msg *im.IncomingMessage) (*im.ExecutionScope, error) {

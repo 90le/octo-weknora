@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
@@ -38,6 +39,20 @@ func wrapLangfuseRemoteClient(inner RemoteSandboxClient) RemoteSandboxClient {
 
 type langfuseRemoteClient struct {
 	inner RemoteSandboxClient
+}
+
+// ReadFileBounded forwards a provider's opt-in safe bounded reader. Providers
+// without it fail closed instead of falling back to an unbounded file read.
+func (c *langfuseRemoteClient) ReadFileBounded(
+	ctx context.Context, handle RemoteSandboxHandle, path string, limit int64,
+) ([]byte, error) {
+	reader, ok := c.inner.(interface {
+		ReadFileBounded(context.Context, RemoteSandboxHandle, string, int64) ([]byte, error)
+	})
+	if !ok {
+		return nil, errors.New("bounded sandbox file reads are unavailable")
+	}
+	return reader.ReadFileBounded(ctx, handle, path, limit)
 }
 
 func (c *langfuseRemoteClient) Provider() RemoteProvider { return c.inner.Provider() }

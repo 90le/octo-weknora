@@ -136,6 +136,10 @@ func (a *Adapter) DeliverReport(ctx context.Context, s octobusiness.ReportSchedu
 	}
 	msg := &im.IncomingMessage{UserID: s.RecipientUID, MessageID: s.RunKey, Extra: map[string]string{"octo_channel_id": target, "octo_channel_type": strconv.Itoa(kind)}}
 	if file != nil {
+		ctx, err = a.startFileDeliveryTurn(ctx, msg.MessageID)
+		if err != nil {
+			return err
+		}
 		return a.sendGeneratedFile(ctx, msg, file.Name, []byte(file.Content), file.ContentType, func() error { _, e := a.reportPrincipal(ctx, s); return e })
 	}
 	// The report generator includes explicit period, scope and count limits.

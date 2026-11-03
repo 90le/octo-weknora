@@ -2,8 +2,10 @@ package types
 
 import "context"
 
-type imKnowledgeScopeKey struct{}
-type imPublicWebAuthorizerKey struct{}
+type (
+	imKnowledgeScopeKey      struct{}
+	imPublicWebAuthorizerKey struct{}
+)
 
 // IMWebAuthorizer rechecks a native IM scope immediately before public network
 // access. It is provided by the admitted channel, not by a model or user prompt.
@@ -57,10 +59,18 @@ func RestrictIMAgentConfig(ctx context.Context, config *AgentConfig) *AgentConfi
 	out.MCPSelectionMode = "none"
 	out.MCPServices = nil
 	out.PinnedMCPServiceIDs = nil
-	out.SandboxConfigID = ""
-	out.TenantSkills = nil
+	grant, granted := IMSandboxGrantFromContext(ctx)
+	if !granted || (!grant.AllowShell && !grant.AllowSkills) || config.SandboxConfigID != grant.ConfigID {
+		out.SandboxConfigID = ""
+	}
+	if out.SandboxConfigID == "" || !granted || !grant.AllowSkills {
+		out.SkillsEnabled = false
+		out.AllowedSkills = nil
+		out.TenantSkills = nil
+		out.PinnedSkillNames = nil
+	}
+	// Never consult a local host skill tree in an IM turn.
 	out.SkillDirs = nil
-	out.PinnedSkillNames = nil
 	off := false
 	out.MemoryEnabled = &off
 	out.SharedAgentReadOnly = true

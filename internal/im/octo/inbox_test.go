@@ -25,7 +25,7 @@ func durableAdapter(t *testing.T) (*Adapter, *im.IncomingMessage) {
 	}
 	sqlDB, _ := db.DB()
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err = db.AutoMigrate(&Inbox{}); err != nil {
+	if err = db.AutoMigrate(&Inbox{}, &fileDeliveryEntry{}); err != nil {
 		t.Fatal(err)
 	}
 	a, err := NewAdapter("bf_test", "bot")

@@ -90,12 +90,13 @@ type SessionBoundManager struct {
 	config    *Config
 	validator *ScriptValidator
 
-	client       RemoteSandboxClient
-	dockerClient *DockerRemoteClient
-	bindings     SessionSandboxBindingStore
-	checker      SessionExistenceChecker
-	lifecycle    *remoteSessionLifecycle
-	ephemeral    *RemoteSandbox
+	client         RemoteSandboxClient
+	dockerClient   *DockerRemoteClient
+	imDiskVerifier IMSandboxDiskVerifier
+	bindings       SessionSandboxBindingStore
+	checker        SessionExistenceChecker
+	lifecycle      *remoteSessionLifecycle
+	ephemeral      *RemoteSandbox
 
 	// activeType is the effective sandbox type callers observe.
 	activeType SandboxType
@@ -109,10 +110,11 @@ type SessionBoundManager struct {
 // the production container use it so callers only have to name the moving
 // parts they actually override.
 type SessionBoundManagerConfig struct {
-	Config  *Config
-	Client  RemoteSandboxClient
-	Store   SessionSandboxBindingStore
-	Checker SessionExistenceChecker
+	Config         *Config
+	Client         RemoteSandboxClient
+	Store          SessionSandboxBindingStore
+	Checker        SessionExistenceChecker
+	IMDiskVerifier IMSandboxDiskVerifier
 
 	// ConfigID identifies the tenant sandbox config this manager serves. It is
 	// stamped onto sandbox metadata so cleanup can target one config without
@@ -210,14 +212,15 @@ func NewSessionBoundManager(deps SessionBoundManagerConfig) (*SessionBoundManage
 	}
 
 	m := &SessionBoundManager{
-		config:     cfg,
-		validator:  NewScriptValidator(),
-		client:     client,
-		bindings:   deps.Store,
-		checker:    deps.Checker,
-		lifecycle:  lifecycle,
-		ephemeral:  NewRemoteSandbox(client, createRequest),
-		activeType: provider,
+		config:         cfg,
+		validator:      NewScriptValidator(),
+		client:         client,
+		bindings:       deps.Store,
+		checker:        deps.Checker,
+		imDiskVerifier: deps.IMDiskVerifier,
+		lifecycle:      lifecycle,
+		ephemeral:      NewRemoteSandbox(client, createRequest),
+		activeType:     provider,
 	}
 	if docker, ok := deps.Client.(*DockerRemoteClient); ok {
 		m.dockerClient = docker
@@ -349,12 +352,16 @@ func (m *SessionBoundManager) prepareSessionDirs(
 	ctx, span := startSandboxSpan(ctx, "sandbox.ensure_workspace",
 		map[string]interface{}{"directories": dirs, "user": user}, sandboxHandleMeta(handle))
 	defer func() { span.Finish(nil, nil, prepErr) }()
-	result, err := m.client.Exec(ctx, handle, RemoteExecRequest{
-		Shell:   true,
-		Command: workspaceBootstrapCommand(dirs...),
-		User:    user,
+	request := RemoteExecRequest{
+		Shell: true, Command: workspaceBootstrapCommand(dirs...), User: user,
 		Timeout: sessionArtifactDirBootstrapTimeout,
-	})
+	}
+	if types.HasIMKnowledgeScope(ctx) {
+		if err := setIMOutputLimit(&request, IMMaxOutputBytes/2); err != nil {
+			return err
+		}
+	}
+	result, err := m.client.Exec(ctx, handle, request)
 	if err != nil {
 		return fmt.Errorf("sandbox: workspace preparation failed for user %s: %w; command was not started", user, err)
 	}
@@ -693,6 +700,30 @@ func (m *SessionBoundManager) ReadSessionFile(
 		return nil, fmt.Errorf("sandbox: no live sandbox for session %s", sessionID)
 	}
 	return m.client.ReadFile(ctx, handle, filePath)
+}
+
+// ReadSessionFileBounded never provisions a sandbox and never falls back to an
+// unbounded provider read. The caller must still authorize this session.
+func (m *SessionBoundManager) ReadSessionFileBounded(
+	ctx context.Context, sessionID, filePath string, limit int64,
+) ([]byte, error) {
+	if strings.TrimSpace(filePath) == "" || limit <= 0 {
+		return nil, errors.New("sandbox: invalid bounded read")
+	}
+	handle, ok, err := m.lookupSessionHandle(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("sandbox: no live sandbox for bounded read")
+	}
+	reader, ok := m.client.(interface {
+		ReadFileBounded(context.Context, RemoteSandboxHandle, string, int64) ([]byte, error)
+	})
+	if !ok {
+		return nil, errors.New("sandbox: bounded read unavailable")
+	}
+	return reader.ReadFileBounded(ctx, handle, filePath, limit)
 }
 
 // WriteSessionFile writes an install/maintenance file into the session's live
@@ -1287,6 +1318,20 @@ func (m *SessionBoundManager) resolveSession(
 	if err != nil {
 		return nil, err
 	}
+	if types.HasIMKnowledgeScope(ctx) {
+		expected, err := expectedIMSandbox(ctx, sessionID)
+		if err != nil {
+			return nil, err
+		}
+		handle, found, err := m.lookupSessionHandleForKey(ctx, key, expected)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, errors.New("octo sandbox: inspected binding unavailable")
+		}
+		return handle, nil
+	}
 	return m.lifecycle.Resolve(ctx, key)
 }
 
@@ -1378,6 +1423,13 @@ func (m *SessionBoundManager) lookupSessionHandle(
 	key, err := m.sessionKey(ctx, sessionID)
 	if err != nil {
 		return nil, false, err
+	}
+	if types.HasIMKnowledgeScope(ctx) {
+		expected, err := expectedIMSandbox(ctx, sessionID)
+		if err != nil {
+			return nil, false, err
+		}
+		return m.lookupSessionHandleForKey(ctx, key, expected)
 	}
 	// Serialise scope lookups so even concurrent reads connect only once.
 	// The scope is owned by one operation, not by this long-lived manager.

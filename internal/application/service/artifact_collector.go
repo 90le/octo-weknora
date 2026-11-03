@@ -23,11 +23,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/agent/skills"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
@@ -78,6 +82,14 @@ type ArtifactCollectorConfig struct {
 // sandbox client learns to stream to disk.
 const defaultMaxArtifactFileBytes int64 = 50 * 1024 * 1024
 
+// IM uses a deliberately smaller aggregate budget because its sender buffers
+// attachment bytes again when calling the platform's presigned-upload API.
+const (
+	maxIMArtifactFileBytes  int64 = 20 << 20
+	maxIMArtifactTotalBytes int64 = 40 << 20
+	maxIMArtifactFiles            = 5
+)
+
 // Resource binding coordinates for collected artifacts. The owner is the
 // assistant message that produced the file (mirrors how knowledge uploads
 // bind to "knowledge" and chat attachments bind to "temporary_document"),
@@ -111,6 +123,9 @@ type ArtifactCollector struct {
 	// fallbackMgr is the deployment-wide SessionBoundManager. Sentinel pins
 	// ("-") resolve to it rather than a per-config manager.
 	fallbackMgr sandbox.Manager
+	// imSourceForTest is an explicit in-package test seam. It is never set by
+	// production constructors and does not replace native grant/pin checks.
+	imSourceForTest func(context.Context, string) SandboxArtifactSource
 }
 
 // NewArtifactCollector wires up an ArtifactCollector. Callers keep a single
@@ -191,6 +206,28 @@ func (c *ArtifactCollector) sessionSource(ctx context.Context, sessionID string)
 	}
 	if pin.IsZero() {
 		return c.hostSessionSource(ctx, sessionID)
+	}
+	if types.HasIMKnowledgeScope(ctx) {
+		if c.imSourceForTest != nil {
+			if _, err := ValidateIMSandboxPin(ctx, c.pinner, sessionID, false); err != nil {
+				return nil
+			}
+			return c.imSourceForTest(ctx, sessionID)
+		}
+		// IM artifacts must use the same inspected, bounded and revalidated
+		// session capability as shell execution. The raw manager's generic
+		// filesystem methods do not establish an IM container identity.
+		mgr, _, err := resolveIMSandboxForExecution(
+			ctx, c.resolver, c.fallbackMgr, c.pinner, sessionTenantID, sessionID, pin.ConfigID, nil,
+		)
+		if err != nil {
+			logger.Warnf(ctx, "[ArtifactCollector] resolve authorized IM sandbox failed: %v", err)
+			return nil
+		}
+		if source, ok := mgr.(SandboxArtifactSource); ok {
+			return source
+		}
+		return nil
 	}
 	mgr, err := resolveTenantSandboxForConfig(
 		ctx, c.resolver, c.fallbackMgr, pin.TenantOr(sessionTenantID), pin.ConfigID, nil,
@@ -295,7 +332,7 @@ func (c *ArtifactCollector) Collect(
 	tenantID uint64,
 	outputDir string,
 ) (types.MessageArtifacts, error) {
-	return c.collect(ctx, sessionID, messageID, tenantID, outputDir, nil)
+	return c.collect(ctx, sessionID, messageID, tenantID, outputDir, nil, nil, nil, nil)
 }
 
 // CollectWithNotify is Collect plus a progress hook fired after files have
@@ -311,7 +348,233 @@ func (c *ArtifactCollector) CollectWithNotify(
 	outputDir string,
 	notify func(pending int),
 ) (types.MessageArtifacts, error) {
-	return c.collect(ctx, sessionID, messageID, tenantID, outputDir, notify)
+	return c.collect(ctx, sessionID, messageID, tenantID, outputDir, notify, nil, nil, nil)
+}
+
+// IMArtifactSnapshot binds an output snapshot to a single authorized session
+// and sandbox configuration. It contains metadata only, never file contents.
+type IMArtifactSnapshot struct {
+	sessionID       string
+	configID        string
+	sessionTenantID uint64
+	configTenantID  uint64
+	dir             string
+	entries         map[string]imArtifactBaseline
+	hadPin          bool
+}
+
+type imArtifactBaseline struct {
+	entry sandbox.RemoteDirEntry
+	hash  string
+}
+
+// IMArtifactSelection marks files selected for current-turn verification.
+type IMArtifactSelection uint8
+
+// IMArtifactSelection values distinguish unselected, explicitly selected, and current-turn files.
+const (
+	IMArtifactNotSelected IMArtifactSelection = iota
+	IMArtifactExplicit
+	IMArtifactCurrentTurn
+)
+
+// SnapshotIM records the session's pin and output layout before the turn. A
+// named remote backend is required; host and deployment defaults are excluded.
+func (c *ArtifactCollector) SnapshotIM(
+	ctx context.Context, sessionID, configID string, sessionTenantID, configTenantID uint64,
+	baselineWanted func(string) bool,
+) (*IMArtifactSnapshot, error) {
+	if c == nil || c.pinner == nil || c.resolver == nil || c.fileService == nil ||
+		strings.TrimSpace(sessionID) == "" || !hasNamedSandboxConfig(configID) ||
+		sessionTenantID == 0 || configTenantID == 0 {
+		return nil, errors.New("im artifact capture unavailable")
+	}
+	snapshot := &IMArtifactSnapshot{
+		sessionID: sessionID, configID: configID, sessionTenantID: sessionTenantID,
+		configTenantID: configTenantID, entries: map[string]imArtifactBaseline{},
+	}
+	grant, err := ValidateIMSandboxPin(ctx, c.pinner, sessionID, true)
+	if err != nil || grant.ConfigID != configID || grant.TenantID != configTenantID ||
+		grant.TenantID != sessionTenantID {
+		return nil, errors.New("im artifact grant unavailable")
+	}
+	pin, err := c.pinner.Read(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	// Turn preparation has stopped the prior container while holding the
+	// session lock. Its bounded tmpfs is gone, so the new turn starts empty.
+	if IsIMSandboxFreshTurn(ctx) {
+		return snapshot, nil
+	}
+	if pin.IsZero() {
+		if err := ValidateIMSandboxEmptyBaseline(ctx, c.pinner, c.resolver, sessionID); err != nil {
+			return nil, err
+		}
+		return snapshot, nil
+	}
+	if pin.ConfigID != configID || pin.TenantOr(sessionTenantID) != configTenantID {
+		return nil, errors.New("im sandbox pin does not match the authorized agent")
+	}
+	snapshot.hadPin = true
+	dir, skip := c.CollectTarget(ctx, sessionID)
+	if skip {
+		return nil, errors.New("im sandbox output directory unavailable")
+	}
+	if dir == "" {
+		dir = skills.ArtifactOutputDir()
+	}
+	snapshot.dir = path.Clean(dir)
+	source := c.sessionSource(ctx, sessionID)
+	if source == nil {
+		return nil, errors.New("im sandbox source unavailable")
+	}
+	ctx = sandbox.WithSessionFileOperation(ctx)
+	entries, err := source.ListSessionFiles(ctx, sessionID, snapshot.dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.ValidateIM(ctx, snapshot, false); err != nil {
+		return nil, err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+	for _, entry := range entries {
+		if validIMArtifactEntry(snapshot.dir, entry) {
+			snapshot.entries[entry.Path] = imArtifactBaseline{entry: entry}
+		}
+	}
+	reader, ok := source.(interface {
+		ReadSessionFileBounded(context.Context, string, string, int64) ([]byte, error)
+	})
+	if !ok || baselineWanted == nil {
+		return snapshot, nil
+	}
+	var count int
+	var total int64
+	for _, entry := range entries {
+		if !validIMArtifactEntry(snapshot.dir, entry) ||
+			!baselineWanted(strings.TrimPrefix(entry.Path, snapshot.dir+"/")) ||
+			entry.Size <= 0 || entry.Size > maxIMArtifactFileBytes || entry.Size > maxIMArtifactTotalBytes-total {
+			continue
+		}
+		if count >= maxIMArtifactFiles {
+			break
+		}
+		count++
+		total += entry.Size
+		if err := c.ValidateIM(ctx, snapshot, false); err != nil {
+			return nil, err
+		}
+		data, readErr := reader.ReadSessionFileBounded(ctx, sessionID, entry.Path, entry.Size)
+		if err := c.ValidateIM(ctx, snapshot, false); err != nil {
+			return nil, err
+		}
+		if readErr == nil && int64(len(data)) == entry.Size {
+			baseline := snapshot.entries[entry.Path]
+			baseline.hash = artifactContentHash(data)
+			snapshot.entries[entry.Path] = baseline
+		}
+	}
+	return snapshot, nil
+}
+
+// ValidateIM rechecks the live grant and session pin for every file read and
+// each stage of external delivery. It never creates a sandbox.
+func (c *ArtifactCollector) ValidateIM(ctx context.Context, snapshot *IMArtifactSnapshot, allowCreate bool) error {
+	if c == nil || snapshot == nil {
+		return errors.New("im artifact snapshot unavailable")
+	}
+	grant, err := ValidateIMSandboxPin(ctx, c.pinner, snapshot.sessionID, allowCreate)
+	if err != nil || grant.ConfigID != snapshot.configID || grant.TenantID != snapshot.configTenantID ||
+		grant.TenantID != snapshot.sessionTenantID {
+		return errors.New("im artifact grant changed")
+	}
+	return nil
+}
+
+func validIMArtifactEntry(dir string, entry sandbox.RemoteDirEntry) bool {
+	clean := path.Clean(entry.Path)
+	return entry.Type == sandbox.RemoteEntryFile && entry.Name != "" &&
+		clean == entry.Path && path.Base(clean) == entry.Name &&
+		strings.HasPrefix(clean, path.Clean(dir)+"/")
+}
+
+// CollectIM persists only individually selected session outputs. Explicitly
+// selected files must also be confirmed as changed this turn.
+// The selector receives a relative path and whether its base
+// name is ambiguous; it must not authorize an ambiguous basename by itself.
+func (c *ArtifactCollector) CollectIM(
+	ctx context.Context, snapshot *IMArtifactSnapshot, messageID string,
+	selected func(string, bool) IMArtifactSelection,
+) (types.MessageArtifacts, error) {
+	if c == nil || c.pinner == nil || snapshot == nil || messageID == "" || selected == nil {
+		return nil, errors.New("im artifact snapshot unavailable")
+	}
+	if err := c.ValidateIM(ctx, snapshot, true); err != nil {
+		return nil, err
+	}
+	pin, err := c.pinner.Read(ctx, snapshot.sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if pin.IsZero() && !snapshot.hadPin {
+		return nil, nil
+	}
+	if err := c.ValidateIM(ctx, snapshot, false); err != nil {
+		return nil, err
+	}
+	if pin.ConfigID != snapshot.configID || pin.TenantOr(snapshot.sessionTenantID) != snapshot.configTenantID {
+		return nil, errors.New("im sandbox pin changed during the turn")
+	}
+	dir, skip := c.CollectTarget(ctx, snapshot.sessionID)
+	if skip {
+		return nil, errors.New("im sandbox output directory unavailable")
+	}
+	if dir == "" {
+		dir = skills.ArtifactOutputDir()
+	}
+	dir = path.Clean(dir)
+	if snapshot.hadPin && snapshot.dir != dir {
+		return nil, errors.New("im sandbox output directory changed during the turn")
+	}
+	approved := func(entry sandbox.RemoteDirEntry, ambiguous bool) IMArtifactSelection {
+		if !validIMArtifactEntry(dir, entry) {
+			return IMArtifactNotSelected
+		}
+		relative := strings.TrimPrefix(entry.Path, dir+"/")
+		return selected(relative, ambiguous)
+	}
+	changed := func(entry sandbox.RemoteDirEntry, data []byte) (bool, error) {
+		previous, exists := snapshot.entries[entry.Path]
+		if !exists {
+			return true, nil
+		}
+		if previous.hash != "" {
+			return previous.hash != artifactContentHash(data), nil
+		}
+		if previous.entry.Size != entry.Size || !previous.entry.ModTime.Equal(entry.ModTime) {
+			return true, nil
+		}
+		return false, errors.New("cannot confirm the selected file changed in this turn")
+	}
+	validate := func(checkCtx context.Context) error { return c.ValidateIM(checkCtx, snapshot, false) }
+	artifacts, collectErr := c.collect(
+		ctx,
+		snapshot.sessionID,
+		messageID,
+		snapshot.sessionTenantID,
+		dir,
+		nil,
+		approved,
+		validate,
+		changed,
+	)
+	current, err := c.pinner.Read(ctx, snapshot.sessionID)
+	if err != nil || c.ValidateIM(ctx, snapshot, false) != nil || current.ConfigID != snapshot.configID ||
+		current.TenantOr(snapshot.sessionTenantID) != snapshot.configTenantID {
+		return nil, errors.New("im sandbox pin changed while collecting artifacts")
+	}
+	return artifacts, collectErr
 }
 
 func (c *ArtifactCollector) collect(
@@ -321,6 +584,9 @@ func (c *ArtifactCollector) collect(
 	tenantID uint64,
 	outputDir string,
 	notify func(pending int),
+	filter func(sandbox.RemoteDirEntry, bool) IMArtifactSelection,
+	authorize func(context.Context) error,
+	changed func(sandbox.RemoteDirEntry, []byte) (bool, error),
 ) (artifacts types.MessageArtifacts, err error) {
 	if c == nil || c.fileService == nil {
 		logger.Infof(ctx, "[ArtifactCollector] skipped: collector or dependencies nil (session=%s)", sessionID)
@@ -364,11 +630,24 @@ func (c *ArtifactCollector) collect(
 	logger.Infof(ctx, "[ArtifactCollector] begin session=%s dir=%s", sessionID, outputDir)
 
 	ctx = sandbox.WithSessionFileOperation(ctx)
+	if authorize != nil {
+		if err := authorize(ctx); err != nil {
+			return nil, err
+		}
+	}
 	entries, err := source.ListSessionFiles(ctx, sessionID, outputDir)
 	if err != nil {
 		logger.Warnf(ctx, "[ArtifactCollector] list sandbox files failed: session=%s dir=%s err=%v",
 			sessionID, outputDir, err)
+		if filter != nil {
+			return nil, errors.New("im artifact listing failed")
+		}
 		return nil, nil
+	}
+	if authorize != nil {
+		if err := authorize(ctx); err != nil {
+			return nil, err
+		}
 	}
 	if len(entries) == 0 {
 		// The most common cause of "download button never appears" is
@@ -384,7 +663,10 @@ func (c *ArtifactCollector) collect(
 	// Build a "already recorded" set so we don't double-attach the same
 	// file when several turns share the sandbox. Errors here degrade to an
 	// empty set: attaching duplicates is a soft failure, aborting is not.
-	known := c.loadKnownSet(ctx, sessionID)
+	known := newArtifactKnownSet()
+	if filter == nil {
+		known = c.loadKnownSet(ctx, sessionID)
+	}
 	if known.len() > 0 {
 		logger.Infof(ctx, "[ArtifactCollector] known set size=%d (session=%s)", known.len(), sessionID)
 	}
@@ -393,7 +675,62 @@ func (c *ArtifactCollector) collect(
 	// acceptEntry (mtime miss) before the read would treat a git restore as
 	// "about to persist" and spin the toolbar on an empty attach.
 	var uploads []pendingArtifactUpload
+	var captureErr error
+	var totalBytes int64
+	nameCounts := map[string]int{}
+	if filter != nil {
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+		for _, entry := range entries {
+			if validIMArtifactEntry(outputDir, entry) {
+				nameCounts[entry.Name]++
+			}
+		}
+	}
 	for _, entry := range entries {
+		selection := IMArtifactNotSelected
+		if filter != nil {
+			selection = filter(entry, nameCounts[entry.Name] > 1)
+			if selection != IMArtifactExplicit && selection != IMArtifactCurrentTurn {
+				continue
+			}
+		}
+		if filter != nil {
+			reader, ok := source.(interface {
+				ReadSessionFileBounded(context.Context, string, string, int64) ([]byte, error)
+			})
+			remaining := maxIMArtifactTotalBytes - totalBytes
+			limit := min(maxIMArtifactFileBytes, remaining)
+			if !ok || len(uploads) >= maxIMArtifactFiles || entry.Size <= 0 ||
+				entry.Size > limit || limit <= 0 {
+				captureErr = errors.New("one or more IM artifacts could not be collected")
+				continue
+			}
+			if err := authorize(ctx); err != nil {
+				return nil, err
+			}
+			data, readErr := reader.ReadSessionFileBounded(ctx, sessionID, entry.Path, limit)
+			if err := authorize(ctx); err != nil {
+				return nil, err
+			}
+			if readErr != nil || len(data) == 0 || int64(len(data)) > limit {
+				captureErr = errors.New("one or more IM artifacts could not be collected")
+				continue
+			}
+			if selection == IMArtifactCurrentTurn || selection == IMArtifactExplicit {
+				isChanged, changeErr := changed(entry, data)
+				if changeErr != nil {
+					captureErr = changeErr
+					continue
+				}
+				if !isChanged {
+					continue
+				}
+			}
+			totalBytes += int64(len(data))
+			hash := artifactContentHash(data)
+			uploads = append(uploads, pendingArtifactUpload{entry: entry, data: data, hash: hash})
+			continue
+		}
 		data, hash, ok := c.readNewContent(ctx, source, sessionID, entry, known)
 		if !ok {
 			continue
@@ -409,8 +746,21 @@ func (c *ArtifactCollector) collect(
 
 	artifacts = make(types.MessageArtifacts, 0, len(uploads))
 	for _, item := range uploads {
-		art, ok := c.persistBytes(ctx, sessionID, messageID, tenantID, item.entry, item.data, item.hash)
+		if authorize != nil {
+			if err := authorize(ctx); err != nil {
+				return nil, err
+			}
+		}
+		art, ok := c.persistBytes(ctx, sessionID, messageID, tenantID, item.entry, item.data, item.hash, authorize)
+		if authorize != nil {
+			if err := authorize(ctx); err != nil {
+				return nil, err
+			}
+		}
 		if !ok {
+			if filter != nil {
+				captureErr = errors.New("one or more IM artifacts could not be stored")
+			}
 			continue
 		}
 		artifacts = append(artifacts, art)
@@ -418,7 +768,7 @@ func (c *ArtifactCollector) collect(
 	}
 	logger.Infof(ctx, "[ArtifactCollector] done session=%s listed=%d attached=%d",
 		sessionID, len(entries), len(artifacts))
-	return artifacts, nil
+	return artifacts, captureErr
 }
 
 // loadKnownSet returns the artifacts already recorded against the session.
@@ -516,7 +866,11 @@ func (c *ArtifactCollector) persistBytes(
 	entry sandbox.RemoteDirEntry,
 	data []byte,
 	hash string,
+	authorize func(context.Context) error,
 ) (types.MessageArtifact, bool) {
+	if authorize != nil && authorize(ctx) != nil {
+		return types.MessageArtifact{}, false
+	}
 	storageName := "artifact_" + uuid.NewString() + "_" + safeFileName(entry.Name)
 	storagePath, err := c.fileService.SaveBytes(ctx, data, tenantID, storageName, false)
 	if err != nil {
@@ -525,6 +879,9 @@ func (c *ArtifactCollector) persistBytes(
 		return types.MessageArtifact{}, false
 	}
 
+	if authorize != nil && authorize(ctx) != nil {
+		return types.MessageArtifact{}, false
+	}
 	c.bindArtifactResource(ctx, storagePath, messageID)
 
 	return types.MessageArtifact{

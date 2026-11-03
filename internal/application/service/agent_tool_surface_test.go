@@ -15,13 +15,18 @@ func TestRegisterMarkdownToolRequiresAdmittedNativeSink(t *testing.T) {
 	svc := newToolSurfaceService(kb)
 	registry := tools.NewToolRegistry()
 	require.NoError(t, svc.registerTools(t.Context(), registry, toolSurfaceConfig(), nil, nil, "session"))
-	require.NotContains(t, registry.ListTools(), "octo_send_markdown")
-	ctx := octobusiness.WithMarkdownSink(t.Context(), func(context.Context, *octobusiness.ReportArtifact) error {
+	require.NotContains(t, registry.ListTools(), "deliver_text_file")
+	ctx := octobusiness.WithFileDeliverySink(t.Context(), func(context.Context, *octobusiness.ReportArtifact) error {
 		return nil
 	}, func(context.Context) error { return nil })
 	registry = tools.NewToolRegistry()
 	require.NoError(t, svc.registerTools(ctx, registry, toolSurfaceConfig(), nil, nil, "session"))
-	require.Contains(t, registry.ListTools(), "octo_send_markdown")
+	require.Contains(t, registry.ListTools(), "deliver_text_file")
+	_, err := registry.GetTool("octo_send_markdown")
+	require.NoError(t, err, "old saved tool calls remain resolvable")
+	for _, definition := range registry.GetModelFunctionDefinitions() {
+		require.NotEqual(t, "octo_send_markdown", definition.Name, "legacy alias must not clutter the model's tools")
+	}
 }
 
 type toolSurfaceKBService struct {

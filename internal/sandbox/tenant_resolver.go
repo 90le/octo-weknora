@@ -28,12 +28,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+var imPolicyID = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 // ErrSandboxConfigNotFound means the referenced config is gone (deleted, or
 // never existed). Callers must surface it rather than degrade to the default
@@ -84,6 +87,8 @@ type TenantSandboxResolverDeps struct {
 	Loader  TenantSandboxConfigLoader
 	Store   SessionSandboxBindingStore
 	Checker SessionExistenceChecker
+	// Optional trusted disk isolation verifier; nil keeps IM execution closed.
+	IMDiskVerifier IMSandboxDiskVerifier
 
 	// Bootstrapper customises the first sandbox create of individual sessions
 	// (session fork). Optional: nil is the ordinary path.
@@ -175,6 +180,9 @@ func (r *tenantSandboxResolver) Resolve(
 	if err != nil {
 		return nil, err
 	}
+	if err := restrictIMSandboxConfig(ctx, configID, resolved.Config, effective); err != nil {
+		return nil, err
+	}
 	if err := EnsureDockerBackendAllowed(effective.Type); err != nil {
 		return nil, err
 	}
@@ -187,6 +195,10 @@ func (r *tenantSandboxResolver) Resolve(
 		if err != nil {
 			return nil, err
 		}
+		if docker, ok := client.(*DockerRemoteClient); ok && types.HasIMKnowledgeScope(ctx) {
+			// Limit raw streams for helper execs too, before provider buffers.
+			docker.api = &imLimitedDockerEngine{dockerEngineAPI: docker.api}
+		}
 		if docker, ok := client.(*DockerRemoteClient); ok && docker.sweeper != nil {
 			tenant := strconv.FormatUint(tenantID, 10)
 			docker.sweeper.scope = map[string]string{
@@ -195,15 +207,32 @@ func (r *tenantSandboxResolver) Resolve(
 			}
 			docker.sweeper.scopeKey = tenant + "\x00" + configID
 		}
-		return NewSessionBoundManager(SessionBoundManagerConfig{
+		bootstrapper := r.deps.Bootstrapper
+		if types.HasIMKnowledgeScope(ctx) {
+			// A fork snapshot could contain another session's files or skills.
+			bootstrapper = nil
+		}
+		manager, err := NewSessionBoundManager(SessionBoundManagerConfig{
 			Config:          effective,
 			Client:          client,
 			Store:           r.deps.Store,
 			Checker:         r.deps.Checker,
+			IMDiskVerifier:  r.deps.IMDiskVerifier,
 			SkipHealthProbe: true,
 			ConfigID:        configID,
-			Bootstrapper:    r.deps.Bootstrapper,
+			Bootstrapper:    bootstrapper,
 		})
+		if err != nil {
+			return nil, err
+		}
+		if types.HasIMKnowledgeScope(ctx) {
+			fingerprint := types.IMSandboxPolicyFromContext(ctx)
+			if !imPolicyID.MatchString(fingerprint) {
+				return nil, errors.New("octo sandbox: turn policy unavailable")
+			}
+			manager.lifecycle.createRequest.Metadata = map[string]string{remoteMetadataIMPolicy: fingerprint}
+		}
+		return manager, nil
 	default:
 		return NewDisabledManager(), nil
 	}

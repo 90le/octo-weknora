@@ -38,3 +38,52 @@ func TestIMPublicWebNeedsTrustedAuthorizerAndSavedAgentSwitch(t *testing.T) {
 		t.Fatal("unconfigured scope has a public-web authorizer")
 	}
 }
+
+func TestIMScopeDisablesAgentSkillsEvenWhenRuntimeWasPreconfigured(t *testing.T) {
+	in := &AgentConfig{
+		SkillsEnabled:    true,
+		AllowedSkills:    []string{"allowed"},
+		SandboxConfigID:  "remote",
+		PinnedSkillNames: []string{"allowed"},
+	}
+	out := RestrictIMAgentConfig(WithIMKnowledgeScope(context.Background(), []string{"kb"}), in)
+	if out.SkillsEnabled || len(out.AllowedSkills) > 0 || len(out.PinnedSkillNames) > 0 || out.SandboxConfigID != "" {
+		t.Fatalf("skills or sandbox remained enabled: %+v", out)
+	}
+	if !in.SkillsEnabled || in.SandboxConfigID != "remote" {
+		t.Fatal("original mutated")
+	}
+}
+
+func TestIMSandboxAndSkillSwitchesIntersectAgent(t *testing.T) {
+	ctx := WithIMKnowledgeScope(context.Background(), []string{"kb"})
+	in := &AgentConfig{
+		SandboxConfigID: "cfg",
+		SkillsEnabled:   true,
+		AllowedSkills:   []string{"chosen"},
+		SkillDirs:       []string{"host"},
+	}
+	grant := IMSandboxGrant{
+		SessionID:  "s",
+		TenantID:   7,
+		ConfigID:   "cfg",
+		Revalidate: func(context.Context) error { return nil },
+	}
+	for _, tc := range []struct{ shell, skills bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		grant.AllowShell, grant.AllowSkills = tc.shell, tc.skills
+		out := RestrictIMAgentConfig(WithIMSandboxGrant(ctx, grant), in)
+		if (out.SandboxConfigID != "") != (tc.shell || tc.skills) || out.SkillsEnabled != tc.skills ||
+			len(out.SkillDirs) != 0 {
+			t.Fatalf("switch intersection failed: %+v", out)
+		}
+	}
+	grant.ConfigID = "other"
+	grant.AllowShell, grant.AllowSkills = true, true
+	out := RestrictIMAgentConfig(WithIMSandboxGrant(ctx, grant), in)
+	if out.SandboxConfigID != "" || out.SkillsEnabled {
+		t.Fatal("mismatched config admitted")
+	}
+	if RestrictIMAgentConfig(context.Background(), in) != in {
+		t.Fatal("unscoped channels changed")
+	}
+}

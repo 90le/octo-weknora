@@ -39,8 +39,10 @@ const skillDirEnvVar = "WEKNORA_SKILL_DIR"
 // never injected — a skill's Python packages arrive through its venv
 // interpreter — but stays on the blacklist below, because a stored PYTHONPATH
 // could otherwise shadow exactly those packages.
-const pythonPathEnvVar = "PYTHONPATH"
-const nodePathEnvVar = "NODE_PATH"
+const (
+	pythonPathEnvVar = "PYTHONPATH"
+	nodePathEnvVar   = "NODE_PATH"
+)
 
 // InjectedSandboxEnvVars is every name skill environment preparation writes into the sandbox
 // environment. The skill-env declaration blacklist must reject these so a
@@ -100,14 +102,16 @@ type Manager struct {
 	// tenantSource holds the skills installed into this run's sandbox image.
 	// When set it is the only source the model is told about: a host skill
 	// directory is not what execution would find inside the sandbox.
-	tenantSource      SkillSource
-	instructionSource SkillSource
-	instructionNames  map[string]bool
+	tenantSource          SkillSource
+	instructionSource     SkillSource
+	instructionNames      map[string]bool
+	tenantVisibilityGuard func() error
 
 	// Configuration
-	skillDirs     []string
-	allowedSkills []string // Empty means all skills are allowed
-	enabled       bool
+	skillDirs             []string
+	allowedSkills         []string // Empty means all skills are allowed
+	enabled               bool
+	strictStagedIntegrity bool
 	// skillsRoot overrides the installed-skill root used for discovery and
 	// shell env. Empty means the remote image root.
 	skillsRoot string
@@ -121,9 +125,10 @@ type Manager struct {
 
 // ManagerConfig holds configuration for the skill manager
 type ManagerConfig struct {
-	SkillDirs     []string // Directories to search for skills
-	AllowedSkills []string // Skill names whitelist (empty = allow all)
-	Enabled       bool     // Whether skills are enabled
+	SkillDirs             []string // Directories to search for skills
+	AllowedSkills         []string // Skill names whitelist (empty = allow all)
+	Enabled               bool     // Whether skills are enabled
+	StrictStagedIntegrity bool     // Require all staged files to match their approved source.
 }
 
 // NewManager creates a new skill manager with the given configuration
@@ -135,11 +140,12 @@ func NewManager(config *ManagerConfig, sandboxMgr sandbox.Manager) *Manager {
 	}
 
 	return &Manager{
-		loader:        NewLoader(config.SkillDirs),
-		sandboxMgr:    sandboxMgr,
-		skillDirs:     config.SkillDirs,
-		allowedSkills: config.AllowedSkills,
-		enabled:       config.Enabled,
+		loader:                NewLoader(config.SkillDirs),
+		sandboxMgr:            sandboxMgr,
+		skillDirs:             config.SkillDirs,
+		allowedSkills:         config.AllowedSkills,
+		enabled:               config.Enabled,
+		strictStagedIntegrity: config.StrictStagedIntegrity,
 	}
 }
 
@@ -154,6 +160,13 @@ func (m *Manager) IsEnabled() bool {
 // manager - so it takes no lock.
 func (m *Manager) WithTenantSource(source SkillSource) *Manager {
 	m.tenantSource = source
+	return m
+}
+
+// WithTenantVisibilityGuard revalidates cached tenant Skill discovery before
+// exposing it to a model. Instruction-only sources remain independent.
+func (m *Manager) WithTenantVisibilityGuard(check func() error) *Manager {
+	m.tenantVisibilityGuard = check
 	return m
 }
 
@@ -289,9 +302,15 @@ func (m *Manager) GetAllMetadata() []*SkillMetadata {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Return a copy to prevent external modification
-	result := make([]*SkillMetadata, len(m.metadataCache))
-	copy(result, m.metadataCache)
+	// A revoked tenant Skill may remain cached for the rest of a turn; do
+	// not advertise it again. Native instruction-only sources are separate.
+	tenantAllowed := m.tenantVisibilityGuard == nil || m.tenantVisibilityGuard() == nil
+	result := make([]*SkillMetadata, 0, len(m.metadataCache))
+	for _, item := range m.metadataCache {
+		if tenantAllowed || (item != nil && m.instructionNames[item.Name]) {
+			result = append(result, item)
+		}
+	}
 	return result
 }
 

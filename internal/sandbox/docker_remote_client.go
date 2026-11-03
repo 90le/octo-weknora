@@ -705,7 +705,7 @@ func (c *DockerRemoteClient) Exec(
 	}
 
 	start := time.Now()
-	stdout, stderr, err := c.streamExec(execCtx, created.ID, req.Stdin, req.OnOutput)
+	stdout, stderr, err := c.streamExec(execCtx, created.ID, req.Stdin, req.MaxOutputBytes, req.OnOutput)
 	if err != nil {
 		return nil, err
 	}
@@ -737,6 +737,7 @@ func (c *DockerRemoteClient) streamExec(
 	ctx context.Context,
 	execID string,
 	stdin string,
+	maxOutputBytes int64,
 	output ...func(string, []byte),
 ) (string, string, error) {
 	attached, err := c.api.ExecAttach(ctx, execID, client.ExecAttachOptions{})
@@ -768,9 +769,13 @@ func (c *DockerRemoteClient) streamExec(
 	done := make(chan error, 1)
 	go func() {
 		var out, errOut io.Writer = &stdout, &stderr
+		if maxOutputBytes > 0 {
+			out = &dockerBoundedWriter{writer: &stdout, limit: maxOutputBytes}
+			errOut = &dockerBoundedWriter{writer: &stderr, limit: maxOutputBytes}
+		}
 		if len(output) > 0 && output[0] != nil {
-			out = io.MultiWriter(&stdout, remoteOutputWriter{stream: "stdout", callback: output[0]})
-			errOut = io.MultiWriter(&stderr, remoteOutputWriter{stream: "stderr", callback: output[0]})
+			out = io.MultiWriter(out, remoteOutputWriter{stream: "stdout", callback: output[0]})
+			errOut = io.MultiWriter(errOut, remoteOutputWriter{stream: "stderr", callback: output[0]})
 		}
 		_, copyErr := stdcopy.StdCopy(out, errOut, attached.Reader)
 		done <- copyErr
@@ -793,6 +798,21 @@ func (c *DockerRemoteClient) streamExec(
 			return "", "", dockerError("Exec", ctx.Err())
 		}
 	}
+}
+
+type dockerBoundedWriter struct {
+	writer  io.Writer
+	limit   int64
+	written int64
+}
+
+func (w *dockerBoundedWriter) Write(data []byte) (int, error) {
+	if int64(len(data)) > w.limit-w.written {
+		return 0, errors.New("sandbox output exceeded the configured limit")
+	}
+	n, err := w.writer.Write(data)
+	w.written += int64(n)
+	return n, err
 }
 
 // dockerExecDrainGrace bounds how long a cancelled exec waits for its output
@@ -933,6 +953,51 @@ func (c *DockerRemoteClient) ReadFile(
 	}
 	if result.ExitCode != 0 {
 		return nil, c.dockerFileOpFailed(ctx, id, "ReadFile", clean, result.Stderr, result.ExitCode)
+	}
+	return []byte(result.Stdout), nil
+}
+
+// ReadFileBounded reads a regular file through no-follow directory handles.
+// The command and the Docker stream both enforce the size limit. A sandbox
+// without python3 cannot provide this guarantee and fails closed.
+func (c *DockerRemoteClient) ReadFileBounded(
+	ctx context.Context, handle RemoteSandboxHandle, filePath string, limit int64,
+) ([]byte, error) {
+	clean, err := dockerCleanPath("ReadFileBounded", filePath)
+	if err != nil || limit <= 0 || limit > 50<<20 {
+		return nil, errors.New("invalid bounded sandbox file read")
+	}
+	const script = `import os,stat,sys
+p=sys.argv[1]
+limit=int(sys.argv[2])
+parts=[x for x in p.split('/') if x]
+if not parts or any(x in ('.','..') for x in parts): raise ValueError('path')
+fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY)
+for name in parts[:-1]:
+    nxt=os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd)
+    os.close(fd)
+    fd=nxt
+f=os.open(parts[-1],os.O_RDONLY|os.O_NOFOLLOW,dir_fd=fd)
+os.close(fd)
+before=os.fstat(f)
+if not stat.S_ISREG(before.st_mode) or before.st_size>limit: raise ValueError('file')
+left=limit+1
+while left:
+    chunk=os.read(f,min(65536,left))
+    if not chunk: break
+    sys.stdout.buffer.write(chunk)
+    left-=len(chunk)
+after=os.fstat(f)
+os.close(f)
+if left==0 or (before.st_size,before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns):
+    raise ValueError('file changed')
+`
+	result, err := c.Exec(ctx, handle, RemoteExecRequest{
+		Command: "python3", Args: []string{"-c", script, clean, strconv.FormatInt(limit, 10)},
+		User: remoteFileUser(ctx), Timeout: dockerFilesystemOpTimeout, MaxOutputBytes: limit + 1,
+	})
+	if err != nil || result == nil || result.ExitCode != 0 || int64(len(result.Stdout)) > limit {
+		return nil, errors.New("bounded sandbox file read failed")
 	}
 	return []byte(result.Stdout), nil
 }

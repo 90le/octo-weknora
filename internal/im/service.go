@@ -23,6 +23,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/common/redislock"
 	"github.com/Tencent/WeKnora/internal/config"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/event"
@@ -164,9 +165,9 @@ func formatIMOutboundAnswerOrFallback(
 ) string {
 	content := formatIMOutboundAnswer(ctx, raw, tenant, defaultFileSvc, storageResolvers...)
 	if strings.TrimSpace(content) == "" {
-		return imNoAnswerFallback
+		content = imNoAnswerFallback
 	}
-	return content
+	return appendSandboxUnavailableNotice(ctx, content)
 }
 
 // imOutboundContext keeps values from ctx but drops cancellation. /stop cancels
@@ -185,6 +186,16 @@ func imQAFailureReply(err error) string {
 		return imCancelledFallback
 	}
 	return imErrorFallback
+}
+
+func imQAFailureReplyForContext(ctx context.Context, err error) string {
+	answer := imQAFailureReply(err)
+	grant, ok := types.IMSandboxGrantFromContext(ctx)
+	if ok && (grant.AllowShell || grant.AllowSkills) &&
+		(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		return answer + "\n未完成的沙箱临时文件可能丢失；已交付的文件不受影响。"
+	}
+	return answer
 }
 
 // cleanIMContent applies all IM-specific content transformations:
@@ -318,9 +329,10 @@ type Service struct {
 
 	// defaultFileSvc is the process-wide storage backend (STORAGE_TYPE / env).
 	// Used when tenant StorageEngineConfig cannot build a service for the URL scheme.
-	defaultFileSvc  interfaces.FileService
-	documentReader  interfaces.DocumentReader
-	storageResolver interfaces.StorageBackendResolver
+	defaultFileSvc    interfaces.FileService
+	artifactCollector imArtifactCollector
+	documentReader    interfaces.DocumentReader
+	storageResolver   interfaces.StorageBackendResolver
 
 	// cmdRegistry holds all registered slash-commands.
 	cmdRegistry *CommandRegistry
@@ -344,7 +356,8 @@ type Service struct {
 	// inflight tracks in-progress QA requests, keyed by userKey
 	// ("channelID:userID:chatID"). Allows /stop to abort a running request
 	// on this instance and look up (sessionID, messageID) for StreamManager.
-	inflight sync.Map // userKey -> *inflightEntry
+	inflight       sync.Map // userKey -> *inflightEntry
+	localTurnLocks imTurnLocks
 
 	// qaQueue manages bounded queuing and worker-pool execution of QA requests,
 	// providing backpressure to protect downstream LLM resources.
@@ -1844,6 +1857,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 	sessionCtx = withIMIdentity(sessionCtx, channel, msg)
 	if scope != nil {
 		sessionCtx = types.WithIMKnowledgeScope(sessionCtx, scope.KnowledgeBaseIDs)
+		sessionCtx = types.WithIMSandboxRequests(sessionCtx, scope.AllowSandboxShell, scope.AllowSandboxSkills)
 		if scope.AllowPublicWeb {
 			admittedFingerprint := scopeFingerprint(scope)
 			sessionCtx = types.WithIMPublicWebAuthorizer(sessionCtx, func(checkCtx context.Context) error {
@@ -1872,6 +1886,9 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 			customAgent = agent
 		}
 	}
+
+	// Preserve the saved selection for later revalidation; scopeAgent returns a deep copy.
+	savedAgent := customAgent
 
 	// ── Slash-command dispatch ──
 	// Commands are handled before the QA pipeline so they respond instantly.
@@ -1917,6 +1934,11 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 			return fmt.Errorf("get session: %w", err)
 		}
 	}
+
+	sessionCtx = types.WithSessionID(sessionCtx, session.ID)
+	// A grant carries only the selected identity; execution requires independent checks.
+	// Bind the original Agent identity; each execution revalidates the live scope.
+	sessionCtx = s.withIMSandboxGrant(sessionCtx, adapter, channel, msg, channelSession, session, savedAgent, scope)
 
 	// Title an untitled IM session from its first text message, like web chats.
 	// GenerateTitleAsync self-guards on a non-empty title and persists to the DB;
@@ -2023,13 +2045,39 @@ func (s *Service) persistIMLastRequestState(ctx context.Context, sessionID, agen
 // executeQARequest is the worker handler that runs the QA pipeline for a queued request.
 // It is called by qaQueue workers and must not block indefinitely.
 func (s *Service) executeQARequest(req *qaRequest) {
-	ctx := req.ctx
 	defer req.cancel()
 	if lifecycle, ok := req.adapter.(interface {
 		ExecutionFinished(context.Context, *IncomingMessage)
 	}); ok {
-		defer lifecycle.ExecutionFinished(ctx, req.msg)
+		defer lifecycle.ExecutionFinished(req.ctx, req.msg)
 	}
+	if req.channel != nil && req.channel.Platform == "octo" && req.scope != nil && req.session != nil &&
+		(req.scope.AllowFileDelivery || req.scope.AllowSandboxShell || req.scope.AllowSandboxSkills) {
+		entered := false
+		err := s.withIMSessionTurnLock(req.ctx, req.session, func(lockedCtx context.Context) error {
+			entered = true
+			locked := *req
+			locked.ctx = lockedCtx
+			s.executeQARequestCore(&locked)
+			return nil
+		})
+		if err != nil && req.ctx.Err() == nil {
+			logger.Warnf(req.ctx, "[IM] Unable to acquire or retain the session sandbox turn: %v", err)
+			if !entered {
+				message := "本次处理未能安全开始，请稍后重试。"
+				if errors.Is(err, redislock.ErrLockBusy) {
+					message = "当前会话已有任务正在处理，请完成后重试。"
+				}
+				_ = req.adapter.SendReply(req.ctx, req.msg, &ReplyMessage{Content: message, IsFinal: true})
+			}
+		}
+		return
+	}
+	s.executeQARequestCore(req)
+}
+
+func (s *Service) executeQARequestCore(req *qaRequest) {
+	ctx := req.ctx
 
 	// Track in-flight request so /stop can cancel it.
 	entry := &inflightEntry{cancel: req.cancel}
@@ -2071,6 +2119,31 @@ func (s *Service) executeQARequest(req *qaRequest) {
 		}
 	}
 	ctx = s.businessContext(ctx, req, req.scope)
+	if grant, ok := types.IMSandboxGrantFromContext(ctx); ok && (grant.AllowShell || grant.AllowSkills) {
+		preparer, ok := s.sessionService.(interface {
+			PrepareIMSandboxTurn(context.Context) (context.Context, error)
+		})
+		var prepare func(context.Context) (context.Context, error)
+		if ok {
+			prepare = preparer.PrepareIMSandboxTurn
+		}
+		prepared, active, err := prepareSandboxOrContinue(ctx, prepare)
+		if err != nil {
+			logger.Warnf(ctx, "[IM] sandbox fallback authorization failed: %v", err)
+			return
+		}
+		ctx = prepared
+		if active {
+			defer waitForIMSandboxQuiescence(ctx)
+		} else {
+			logger.Warnf(ctx, "[IM] sandbox unavailable; continuing without execution")
+		}
+	} else if req.scope != nil && req.agent != nil {
+		// The queued scope was revalidated above. An Agent without a named
+		// sandbox cannot receive an execution grant, so keep only knowledge QA.
+		ctx = missingSandboxFallback(ctx, strings.TrimSpace(req.agent.Config.SandboxConfigID) == "")
+	}
+	ctx = s.beginIMArtifactTurn(ctx, req)
 	attachments, imageURLs, downloaded, err := s.prepareIMAttachments(ctx, req.msg, req.adapter)
 	if err != nil {
 		logger.Warnf(ctx, "[IM] attachment preparation failed: %v", err)
@@ -2137,7 +2210,7 @@ func (s *Service) executeQARequest(req *qaRequest) {
 	answer, err := s.runQA(ctx, req.session, req.msg.Content, req.agent, kbIDs, attachments, imageURLs, req.userKey, req.msg.Quote)
 	if err != nil {
 		logger.Errorf(ctx, "[IM] QA failed: %v, sending fallback reply", err)
-		answer = imQAFailureReply(err)
+		answer = imQAFailureReplyForContext(ctx, err)
 	}
 
 	outCtx := imOutboundContext(ctx)
@@ -2189,7 +2262,7 @@ func (s *Service) handleMessageFullOutput(
 	)
 	if qaErr != nil {
 		logger.Errorf(ctx, "[IM] Full-output QA failed: %v, sending fallback reply", qaErr)
-		answer = imQAFailureReply(qaErr)
+		answer = imQAFailureReplyForContext(ctx, qaErr)
 	}
 
 	// QA (and /stop) may have cancelled ctx. Platform updates must still run so
@@ -2643,6 +2716,31 @@ func briefToolSummary(output string) string {
 	return output
 }
 
+// waitForIMSandboxQuiescence runs before a scoped handler returns to its
+// session-lock holder. If Docker cannot confirm a stop, keep the handler (and
+// its renewable lock) alive and retry; a process crash still requires a
+// durable distributed quarantine in the lock owner.
+func waitForIMSandboxQuiescence(ctx context.Context) {
+	grant, ok := types.IMSandboxGrantFromContext(ctx)
+	if !ok || (!grant.AllowShell && !grant.AllowSkills) {
+		return
+	}
+	for {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		err := types.SealIMSandboxTurn(cleanup)
+		cancel()
+		if err == nil {
+			return
+		}
+		logger.Warnf(
+			context.WithoutCancel(ctx),
+			"[IM] sandbox cleanup is unconfirmed; retaining session turn lock: %v",
+			err,
+		)
+		time.Sleep(time.Second)
+	}
+}
+
 // handleMessageStream runs the QA pipeline and streams answer chunks to the IM platform
 // in real-time via the StreamSender interface. Chunks are batched at streamFlushInterval
 // to avoid API rate-limiting.
@@ -3062,12 +3160,16 @@ loop:
 
 	outCtx := imOutboundContext(ctx)
 	answer = sanitizeOctoGitHubLineLinks(outCtx, answer)
+	if finalErr == nil && !wasFallback && qaCtx.Err() == nil {
+		answer = s.finishIMArtifactTurn(ctx, assistantMsg, answer)
+		parts.Answer = answer
+	}
 	finalDisplay := s.formatIMStreamFinal(outCtx, parts, []*types.SearchResult(assistantMsg.KnowledgeReferences),
 		tenant)
 	if noVisibleContent || finalDisplay == "" {
 		fallback := imNoAnswerFallback
 		if finalErr != nil {
-			fallback = imQAFailureReply(finalErr)
+			fallback = imQAFailureReplyForContext(ctx, finalErr)
 		}
 		finalDisplay = fallback
 		assistantMsg.IsFallback = true
@@ -3079,6 +3181,8 @@ loop:
 		finalDisplay = appendIMAuthNotice(finalDisplay, notice)
 		answer = appendIMAuthNotice(answer, notice)
 	}
+	finalDisplay = appendSandboxUnavailableNotice(ctx, finalDisplay)
+	answer = appendSandboxUnavailableNotice(ctx, answer)
 
 	finalizeErr := streamer.FinalizeStream(outCtx, msg, streamID, finalDisplay)
 	if finalizeErr != nil {
@@ -3124,7 +3228,7 @@ func (s *Service) fallbackNonStream(ctx context.Context, msg *IncomingMessage, s
 	answer, err := s.runQA(ctx, session, msg.Content, customAgent, kbIDs, attachments, imageURLs, userKey, msg.Quote)
 	if err != nil {
 		logger.Errorf(ctx, "[IM] QA fallback failed: %v", err)
-		answer = imQAFailureReply(err)
+		answer = imQAFailureReplyForContext(ctx, err)
 	}
 
 	outCtx := imOutboundContext(ctx)
@@ -3331,7 +3435,7 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 		}
 	case <-ctx.Done():
 		// Mark assistant message as completed to avoid dangling incomplete records
-		assistantMsg.Content = imCancelledFallback
+		assistantMsg.Content = imQAFailureReplyForContext(ctx, ctx.Err())
 		assistantMsg.IsCompleted = true
 		assistantMsg.IsFallback = true
 		// Use a fresh context since the original is cancelled
@@ -3363,8 +3467,12 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	}
 	answer = octoGuardStoredAnswer(ctx, answer, assistantMsg)
 	answer = sanitizeOctoGitHubLineLinks(ctx, answer)
+	if qaError == nil && !wasFallback {
+		answer = s.finishIMArtifactTurn(ctx, assistantMsg, answer)
+	}
 
 	// Update assistant message with the full answer (including citation tags for web rendering).
+	answer = appendSandboxUnavailableNotice(ctx, answer)
 	assistantMsg.Content = answer
 	assistantMsg.IsCompleted = true
 	if err := s.messageService.UpdateMessage(ctx, assistantMsg); err != nil {

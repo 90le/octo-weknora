@@ -292,13 +292,35 @@
                 <t-tag-input v-model="formData.credentials.management_bot_uids" placeholder="默认不允许；必须同时在上方提问名单中" />
                 <p class="form-desc">仅用于明确授权的 Bot 联调。平台无法核验 Bot 管理员字段时，此名单可授权已核验的 Bot 成员维护本区已授权资产，不授予工作区权限。正式使用可留空。</p>
               </div>
-              <div class="setting-row setting-row--last">
+              <div class="setting-row">
                 <div class="setting-info">
-                  <label>生成并发送 Markdown 文件</label>
-                  <p class="form-desc">允许已授权会话在用户请求文件时生成 Markdown，发送到原会话；不开放本机文件或沙箱。</p>
+                  <label>发送生成的文件</label>
+                  <p class="form-desc">允许向已授权的原会话发送智能体生成的文件；沙箱终端和技能权限需单独配置。</p>
+                  <p v-if="formData.credentials.allow_generated_files" class="form-desc">
+                    已保留旧版 Markdown 发送权限，可单独关闭。
+                    <t-link theme="primary" @click="formData.credentials.allow_generated_files = false">关闭旧版权限</t-link>
+                  </p>
                 </div>
                 <div class="setting-control">
-                  <t-switch v-model="formData.credentials.allow_generated_files" size="small" />
+                  <t-switch v-model="formData.credentials.allow_file_delivery" size="small" />
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-info">
+                  <label>沙箱终端</label>
+                  <p class="form-desc">允许已授权会话在隔离沙箱中运行命令；不连接网络，不挂载宿主机文件。临时工作区仅在本次任务内保留。</p>
+                </div>
+                <div class="setting-control">
+                  <t-switch v-model="formData.credentials.allow_sandbox_shell" size="small" />
+                </div>
+              </div>
+              <div class="setting-row setting-row--last">
+                <div class="setting-info">
+                  <label>沙箱技能</label>
+                  <p class="form-desc">允许使用已安装并授权给智能体的技能。技能和终端权限独立；须先为智能体配置相应沙箱及技能。</p>
+                </div>
+                <div class="setting-control">
+                  <t-switch v-model="formData.credentials.allow_sandbox_skills" size="small" />
                 </div>
               </div>
             </template>
@@ -937,7 +959,7 @@ function onPlatformChange(val: string | number | boolean) {
     formData.value.mode = 'websocket';
     formData.value.output_mode = 'full';
     formData.value.session_mode = 'user';
-    formData.value.credentials = { account_id: '', bot_uid: '', allowed_dm_uids: [], allowed_bot_uids: [], management_bot_uids: [], dm_knowledge_base_ids: [], allow_generated_files: false };
+    formData.value.credentials = { account_id: '', bot_uid: '', allowed_dm_uids: [], allowed_bot_uids: [], management_bot_uids: [], dm_knowledge_base_ids: [], allow_generated_files: false, allow_file_delivery: false, allow_sandbox_shell: false, allow_sandbox_skills: false };
   } else if (val === 'wechat') {
     editingEnabled.value = true;
     formData.value.mode = 'longpoll';

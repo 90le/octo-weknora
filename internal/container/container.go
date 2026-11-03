@@ -1842,7 +1842,11 @@ func registerWebSearchProviders(registry *infra_web_search.Registry) {
 // registerIMService registers adapter factories, loads enabled channels, and
 // wires the process-lifetime shutdown hook. Each platform's factory lives in
 // its own subpackage to keep this file focused on wiring.
-func registerIMService(imService *imPkg.Service, cleaner interfaces.ResourceCleaner, db *gorm.DB, business *octobusiness.Service, queue interfaces.TaskEnqueuer) {
+func registerIMService(
+	imService *imPkg.Service, cleaner interfaces.ResourceCleaner, db *gorm.DB,
+	business *octobusiness.Service, queue interfaces.TaskEnqueuer, artifacts *service.ArtifactCollector,
+) {
+	imService.ConfigureArtifactCollector(artifacts)
 	imService.RegisterAdapterFactory("wecom", wecom.NewFactory())
 	imService.RegisterAdapterFactory("feishu", feishu.NewFactory(feishu.RegionFeishu))
 	// Lark is Feishu's international cloud: same adapter, different host/tenant.
