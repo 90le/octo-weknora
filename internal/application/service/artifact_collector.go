@@ -204,6 +204,22 @@ func (c *ArtifactCollector) sessionSource(ctx context.Context, sessionID string)
 	if pin.IsZero() {
 		return c.hostSessionSource(ctx, sessionID)
 	}
+	if types.HasIMKnowledgeScope(ctx) {
+		// IM artifacts must use the same inspected, bounded and revalidated
+		// session capability as shell execution. The raw manager's generic
+		// filesystem methods do not establish an IM container identity.
+		mgr, _, err := resolveIMSandboxForExecution(
+			ctx, c.resolver, c.fallbackMgr, c.pinner, sessionTenantID, sessionID, pin.ConfigID, nil,
+		)
+		if err != nil {
+			logger.Warnf(ctx, "[ArtifactCollector] resolve authorized IM sandbox failed: %v", err)
+			return nil
+		}
+		if source, ok := mgr.(SandboxArtifactSource); ok {
+			return source
+		}
+		return nil
+	}
 	mgr, err := resolveTenantSandboxForConfig(
 		ctx, c.resolver, c.fallbackMgr, pin.TenantOr(sessionTenantID), pin.ConfigID, nil,
 	)
