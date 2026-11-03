@@ -167,6 +167,9 @@ func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint6
 			result := &im.ExecutionScope{
 				AccountID: account, ScopeID: "dm:" + msg.UserID, ScopeName: "私聊", KnowledgeBaseIDs: ids,
 				AllowGeneratedFiles: im.GetBool(config, "allow_generated_files"),
+				AllowFileDelivery:   im.GetExplicitBool(config, "allow_file_delivery"),
+				AllowSandboxShell:   im.GetExplicitBool(config, "allow_sandbox_shell"),
+				AllowSandboxSkills:  im.GetExplicitBool(config, "allow_sandbox_skills"),
 				Revision:            fmt.Sprint(channel.ID, channel.AgentID, connection.UpdatedAt),
 			}
 			var profile struct {
@@ -273,6 +276,8 @@ func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint6
 			ManageKnowledgeBaseIDs: managed, AccountID: account, ScopeID: stored.ID, ScopeName: stored.DisplayName,
 			CanManageScope: canManage, AllowKnowledgeCreation: canManage && stored.AllowKnowledgeCreation,
 			AllowPublicWeb: stored.AllowPublicWeb, AllowGeneratedFiles: im.GetBool(config, "allow_generated_files"),
+			AllowFileDelivery: im.GetExplicitBool(config, "allow_file_delivery"),
+			AllowSandboxShell: im.GetExplicitBool(config, "allow_sandbox_shell"), AllowSandboxSkills: im.GetExplicitBool(config, "allow_sandbox_skills"),
 			Revision: fmt.Sprint(channel.ID, channel.AgentID, connection.UpdatedAt, stored.ID), SenderName: senderName,
 		}
 		for _, binding := range bindings {

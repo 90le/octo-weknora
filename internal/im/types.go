@@ -126,6 +126,9 @@ func SummarizeIMChannelsForRole(channels []IMChannel, role types.TenantRole) []I
 			public[key] = values
 		}
 		public["allow_generated_files"] = GetBool(config, "allow_generated_files")
+		public["allow_file_delivery"] = GetExplicitBool(config, "allow_file_delivery")
+		public["allow_sandbox_shell"] = GetExplicitBool(config, "allow_sandbox_shell")
+		public["allow_sandbox_skills"] = GetExplicitBool(config, "allow_sandbox_skills")
 		out[i].PublicConfig = public
 	}
 	return out
@@ -205,9 +208,11 @@ func (ch *IMChannel) validateSessionMode() error {
 		if err != nil || GetString(config, "account_id") == "" || GetString(config, "bot_uid") == "" {
 			return fmt.Errorf("Octo account_id and bot_uid required")
 		}
-		if value, exists := config["allow_generated_files"]; exists {
-			if _, ok := value.(bool); !ok {
-				return fmt.Errorf("invalid Octo generated file setting")
+		for _, key := range []string{"allow_generated_files", "allow_file_delivery", "allow_sandbox_shell", "allow_sandbox_skills"} {
+			if value, exists := config[key]; exists {
+				if _, ok := value.(bool); !ok {
+					return fmt.Errorf("invalid Octo boolean setting %s", key)
+				}
 			}
 		}
 		for _, key := range []string{"allowed_dm_uids", "allowed_bot_uids", "dm_knowledge_base_ids", "management_bot_uids"} {

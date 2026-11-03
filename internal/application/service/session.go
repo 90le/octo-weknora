@@ -1037,6 +1037,10 @@ func (s *sessionService) holdSandboxTurn(
 	if err != nil {
 		return noop, err
 	}
+	// The process-wide manager is tried before the per-session resolver.
+	if types.HasIMKnowledgeScope(ctx) {
+		return releaseGate, nil
+	}
 	begin := func(mgr sandbox.Manager) (sandbox.SessionTurnHolder, error) {
 		if mgr == nil {
 			return nil, nil

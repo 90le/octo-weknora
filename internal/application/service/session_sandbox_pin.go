@@ -230,6 +230,12 @@ func resolveSandboxForExecution(
 	policy WorkspaceSandboxPolicy,
 	opts ...resolveOption,
 ) (sandbox.Manager, SandboxPin, error) {
+	// A scoped IM turn cannot safely execute installed skills yet. Do not
+	// resurrect an old pin or fall back to the Lite host after scope narrowing.
+	// This also covers attachment staging and skills manager initialization.
+	if types.HasIMKnowledgeScope(ctx) {
+		return sandbox.NewDisabledManager(), SandboxPin{}, nil
+	}
 	o := applyResolveOptions(opts)
 
 	if o.liteOnly {

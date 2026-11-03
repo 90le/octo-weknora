@@ -27,6 +27,12 @@ func GetString(creds map[string]any, key string) string {
 	return ""
 }
 
+// GetExplicitBool accepts only an explicit JSON boolean.
+func GetExplicitBool(creds map[string]any, key string) bool {
+	value, ok := creds[key].(bool)
+	return ok && value
+}
+
 // GetBool reads a boolean from JSON credentials (bool, string "true"/"1", or non-zero number).
 func GetBool(creds map[string]any, key string) bool {
 	v, ok := creds[key]

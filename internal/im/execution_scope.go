@@ -43,8 +43,11 @@ type ExecutionScope struct {
 	AllowPublicWeb bool
 	// Generated files are separately enabled by the Octo channel administrator.
 	AllowGeneratedFiles bool `json:"allow_generated_files,omitempty"`
-	// General attachment delivery requires a separate, explicit channel grant.
+	// Generic file delivery is separate from legacy Markdown delivery.
 	AllowFileDelivery bool `json:"allow_file_delivery,omitempty"`
+	// Reserved requests affect session reuse but do not yet grant execution.
+	AllowSandboxShell  bool `json:"allow_sandbox_shell,omitempty"`
+	AllowSandboxSkills bool `json:"allow_sandbox_skills,omitempty"`
 
 	KnowledgeBaseIDs []string
 	Revision         string

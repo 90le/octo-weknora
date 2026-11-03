@@ -57,3 +57,36 @@ func TestOctoGeneratedFileSettingMustBeBoolean(t *testing.T) {
 		}
 	}
 }
+
+func TestOctoSandboxRequestsAreStrictBooleansAndIndependent(t *testing.T) {
+	for _, key := range []string{"allow_file_delivery", "allow_sandbox_shell", "allow_sandbox_skills"} {
+		for _, tc := range []struct {
+			raw   string
+			valid bool
+		}{
+			{`true`, true}, {`false`, true}, {`"true"`, false}, {`1`, false}, {`null`, false},
+		} {
+			credentials := `{"account_id":"a","bot_uid":"b","` + key + `":` + tc.raw + `}`
+			ch := &IMChannel{Platform: "octo", Mode: "websocket", SessionMode: "user", Credentials: types.JSON(credentials)}
+			if (ch.validateSessionMode() == nil) != tc.valid {
+				t.Fatalf("%s=%s valid=%v", key, tc.raw, tc.valid)
+			}
+		}
+		if GetExplicitBool(map[string]any{key: "true"}, key) || GetExplicitBool(map[string]any{key: float64(1)}, key) {
+			t.Fatalf("%s accepts non-booleans", key)
+		}
+	}
+	ch := IMChannel{Platform: "octo", Credentials: types.JSON(`{"account_id":"a","bot_uid":"b","allow_generated_files":true}`)}
+	public := SummarizeIMChannelsForRole([]IMChannel{ch}, types.TenantRoleAdmin)[0].PublicConfig
+	if public["allow_file_delivery"] != false || public["allow_sandbox_shell"] != false || public["allow_sandbox_skills"] != false {
+		t.Fatal("legacy file grant enabled sandbox")
+	}
+}
+
+func TestOctoGenericDeliveryDoesNotDependOnMarkdown(t *testing.T) {
+	ch := IMChannel{Platform: "octo", Credentials: types.JSON(`{"account_id":"a","bot_uid":"b","allow_generated_files":false,"allow_file_delivery":true}`)}
+	public := SummarizeIMChannelsForRole([]IMChannel{ch}, types.TenantRoleAdmin)[0].PublicConfig
+	if public["allow_file_delivery"] != true || public["allow_generated_files"] != false {
+		t.Fatalf("delivery settings were conflated: %v", public)
+	}
+}

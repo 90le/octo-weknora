@@ -439,7 +439,9 @@ func (s *sessionService) buildAgentConfig(
 		skillConfigID string
 		tenantSkills  []*types.TenantSkillEntity
 	)
-	if s.hostDesktop {
+	if types.HasIMKnowledgeScope(ctx) {
+		// Do not enumerate host skills or a previously pinned image.
+	} else if s.hostDesktop {
 		skillConfigID, tenantSkills = hostSkillsForRun(ctx, s.tenantSkillRepo, s.hostSkillTree, sandboxTenantID)
 	} else {
 		skillConfigID, tenantSkills = skillsForRun(

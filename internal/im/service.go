@@ -1874,6 +1874,9 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 		}
 	}
 
+	// Preserve the saved selection for later revalidation; scopeAgent returns a deep copy.
+	savedAgent := customAgent
+
 	// ── Slash-command dispatch ──
 	// Commands are handled before the QA pipeline so they respond instantly.
 	customAgent, err = scopeAgent(customAgent, scope)
@@ -1918,6 +1921,9 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 			return fmt.Errorf("get session: %w", err)
 		}
 	}
+
+	// A grant carries only the selected identity; runtime sandbox execution remains disabled.
+	sessionCtx = s.withIMSandboxGrant(sessionCtx, adapter, channel, msg, channelSession, session, savedAgent, scope)
 
 	// Title an untitled IM session from its first text message, like web chats.
 	// GenerateTitleAsync self-guards on a non-empty title and persists to the DB;

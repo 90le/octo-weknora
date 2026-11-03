@@ -269,3 +269,36 @@ func TestScopedAgentPublicWebNeedsExactScopeAndAgentEnablement(t *testing.T) {
 		t.Fatalf("Agent explicit tool selection widened: %+v %v", restricted, err)
 	}
 }
+
+func TestSandboxRequestsChangeFingerprintButRemainFailClosed(t *testing.T) {
+	scope := &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r", AllowGeneratedFiles: true}
+	original := scopeFingerprint(scope)
+	agent := &types.CustomAgent{Config: types.CustomAgentConfig{SandboxConfigID: "sandbox", SkillsSelectionMode: "selected", SelectedSkills: []string{"allowed"}, AllowedTools: []string{"shell_exec"}}}
+	for _, enable := range []func(*ExecutionScope){func(s *ExecutionScope) { s.AllowSandboxShell = true }, func(s *ExecutionScope) { s.AllowSandboxSkills = true }} {
+		copyScope := *scope
+		enable(&copyScope)
+		if scopeFingerprint(&copyScope) == original {
+			t.Fatal("request omitted from scope fingerprint")
+		}
+		scoped, err := scopeAgent(agent, &copyScope)
+		if err != nil || scoped.Config.SandboxConfigID != "" || scoped.Config.SkillsSelectionMode != "none" || len(scoped.Config.SelectedSkills) != 0 {
+			t.Fatalf("unsupported execution unexpectedly enabled: %+v %v", scoped, err)
+		}
+	}
+}
+
+func TestFileDeliveryScopeFingerprintIsIndependentOfLegacyMarkdown(t *testing.T) {
+	legacy := &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r", AllowGeneratedFiles: true}
+	if legacy.AllowFileDelivery || legacy.AllowSandboxShell || legacy.AllowSandboxSkills || legacy.AllowPublicWeb {
+		t.Fatal("legacy permission widened")
+	}
+	newer := *legacy
+	newer.AllowFileDelivery = true
+	if scopeFingerprint(&newer) == scopeFingerprint(legacy) {
+		t.Fatal("generic file delivery not bound to scope")
+	}
+	newer.AllowGeneratedFiles = false
+	if !newer.AllowFileDelivery {
+		t.Fatal("generic permission depends on Markdown")
+	}
+}

@@ -38,3 +38,14 @@ func TestIMPublicWebNeedsTrustedAuthorizerAndSavedAgentSwitch(t *testing.T) {
 		t.Fatal("unconfigured scope has a public-web authorizer")
 	}
 }
+
+func TestIMScopeDisablesAgentSkillsEvenWhenRuntimeWasPreconfigured(t *testing.T) {
+	in := &AgentConfig{SkillsEnabled: true, AllowedSkills: []string{"allowed"}, SandboxConfigID: "remote", PinnedSkillNames: []string{"allowed"}}
+	out := RestrictIMAgentConfig(WithIMKnowledgeScope(context.Background(), []string{"kb"}), in)
+	if out.SkillsEnabled || len(out.AllowedSkills) > 0 || len(out.PinnedSkillNames) > 0 || out.SandboxConfigID != "" {
+		t.Fatalf("skills or sandbox remained enabled: %+v", out)
+	}
+	if !in.SkillsEnabled || in.SandboxConfigID != "remote" {
+		t.Fatal("original mutated")
+	}
+}

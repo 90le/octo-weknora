@@ -58,6 +58,8 @@ func RestrictIMAgentConfig(ctx context.Context, config *AgentConfig) *AgentConfi
 	out.MCPServices = nil
 	out.PinnedMCPServiceIDs = nil
 	out.SandboxConfigID = ""
+	out.SkillsEnabled = false
+	out.AllowedSkills = nil
 	out.TenantSkills = nil
 	out.SkillDirs = nil
 	out.PinnedSkillNames = nil
