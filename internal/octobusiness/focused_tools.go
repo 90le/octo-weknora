@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -29,6 +30,8 @@ const knowledgePreviewDescription = "Preview a knowledge change; action is requi
 	"from public RAG, not missing knowledge. Return the exact preview and proposal_id. Put " +
 	"confirmation_command and cancellation_command verbatim together as concise backup instructions; " +
 	"never shorten them because their OP-ID is required. An Octo confirmation card may also be offered; " +
+	"display expires_at_display exactly as returned, and explain that the card or latest reply contains " +
+	"the current operation status because the written preview is a snapshot. " +
 	"only the same user in the same conversation can use it. No change is executed until an authorized " +
 	"explicit confirmation. The current conversation determines the target scope; never invent or supply " +
 	"scope_id. If the user explicitly wants a different scope, explain it cannot be changed from here " +
@@ -193,6 +196,15 @@ func (t *focusedTool) Execute(ctx context.Context, args json.RawMessage) (*types
 		if json.Unmarshal([]byte(result.Output), &row) == nil {
 			if id, ok := row["id"].(string); ok && strings.HasPrefix(id, "OP-") {
 				row["proposal_id"] = id
+				if t.name == ToolKnowledgePreview {
+					if expiry, ok := row["expires_at"].(string); ok {
+						if at, parseErr := time.Parse(time.RFC3339Nano, expiry); parseErr == nil {
+							local := at.In(time.FixedZone("北京时间", 8*60*60))
+							row["expires_at"] = local.Format(time.RFC3339Nano)
+							row["expires_at_display"] = local.Format("2006-01-02 15:04:05") + "（北京时间）"
+						}
+					}
+				}
 				encoded, e := json.Marshal(row)
 				if e != nil {
 					return nil, e

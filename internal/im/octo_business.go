@@ -76,7 +76,8 @@ func (s *Service) businessContext(ctx context.Context, req *qaRequest, scope *Ex
 			expected := scopeFingerprint(scope)
 			validate := func(callCtx context.Context) error {
 				current, err := authorizeExecution(callCtx, req.adapter, req.channel, req.msg)
-				if err != nil || current == nil || !current.AllowGeneratedFiles || scopeFingerprint(current) != expected {
+				if err != nil || current == nil || !current.AllowGeneratedFiles ||
+					scopeFingerprint(current) != expected {
 					return ErrScopeDenied
 				}
 				return nil

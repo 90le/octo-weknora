@@ -315,7 +315,7 @@ func progressData(id, state string, history []string, waiting bool, elapsed time
 	case "completed":
 		title, detail, tone = "答复已发送", "本次答复已发送", "Good"
 		if waiting {
-			title, detail = "预览待确认", "预览已生成，变更尚未执行"
+			title, detail = "预览已生成", "操作状态以确认卡或最新回复为准"
 		}
 		if elapsed >= time.Second {
 			detail += fmt.Sprintf(" · 用时 %d 秒", int(elapsed.Seconds()))
