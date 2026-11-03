@@ -346,6 +346,7 @@ type imArtifactBaseline struct {
 // IMArtifactSelection marks files selected for current-turn verification.
 type IMArtifactSelection uint8
 
+// IMArtifactSelection values distinguish unselected, explicitly selected, and current-turn files.
 const (
 	IMArtifactNotSelected IMArtifactSelection = iota
 	IMArtifactExplicit
@@ -355,7 +356,8 @@ const (
 // SnapshotIM records the session's pin and output layout before the turn. A
 // named remote backend is required; host and deployment defaults are excluded.
 func (c *ArtifactCollector) SnapshotIM(
-	ctx context.Context, sessionID, configID string, sessionTenantID, configTenantID uint64, baselineWanted func(string) bool,
+	ctx context.Context, sessionID, configID string, sessionTenantID, configTenantID uint64,
+	baselineWanted func(string) bool,
 ) (*IMArtifactSnapshot, error) {
 	if c == nil || c.pinner == nil || c.resolver == nil || c.fileService == nil ||
 		strings.TrimSpace(sessionID) == "" || !hasNamedSandboxConfig(configID) ||
@@ -425,7 +427,8 @@ func (c *ArtifactCollector) SnapshotIM(
 	var count int
 	var total int64
 	for _, entry := range entries {
-		if !validIMArtifactEntry(snapshot.dir, entry) || !baselineWanted(strings.TrimPrefix(entry.Path, snapshot.dir+"/")) ||
+		if !validIMArtifactEntry(snapshot.dir, entry) ||
+			!baselineWanted(strings.TrimPrefix(entry.Path, snapshot.dir+"/")) ||
 			entry.Size <= 0 || entry.Size > maxIMArtifactFileBytes || entry.Size > maxIMArtifactTotalBytes-total {
 			continue
 		}
@@ -472,10 +475,12 @@ func validIMArtifactEntry(dir string, entry sandbox.RemoteDirEntry) bool {
 }
 
 // CollectIM persists only individually selected session outputs. Explicitly
-// selected files must also be confirmed as changed this turn. The selector receives a relative path and whether its base
+// selected files must also be confirmed as changed this turn.
+// The selector receives a relative path and whether its base
 // name is ambiguous; it must not authorize an ambiguous basename by itself.
 func (c *ArtifactCollector) CollectIM(
-	ctx context.Context, snapshot *IMArtifactSnapshot, messageID string, selected func(string, bool) IMArtifactSelection,
+	ctx context.Context, snapshot *IMArtifactSnapshot, messageID string,
+	selected func(string, bool) IMArtifactSelection,
 ) (types.MessageArtifacts, error) {
 	if c == nil || c.pinner == nil || snapshot == nil || messageID == "" || selected == nil {
 		return nil, errors.New("IM artifact snapshot unavailable")
@@ -528,7 +533,17 @@ func (c *ArtifactCollector) CollectIM(
 		return false, errors.New("cannot confirm the selected file changed in this turn")
 	}
 	validate := func(checkCtx context.Context) error { return c.ValidateIM(checkCtx, snapshot, false) }
-	artifacts, collectErr := c.collect(ctx, snapshot.sessionID, messageID, snapshot.sessionTenantID, dir, nil, approved, validate, changed)
+	artifacts, collectErr := c.collect(
+		ctx,
+		snapshot.sessionID,
+		messageID,
+		snapshot.sessionTenantID,
+		dir,
+		nil,
+		approved,
+		validate,
+		changed,
+	)
 	current, err := c.pinner.Read(ctx, snapshot.sessionID)
 	if err != nil || c.ValidateIM(ctx, snapshot, false) != nil || current.ConfigID != snapshot.configID ||
 		current.TenantOr(snapshot.sessionTenantID) != snapshot.configTenantID {

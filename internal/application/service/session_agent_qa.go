@@ -94,7 +94,17 @@ func (s *sessionService) AgentQA(
 			if err := sandbox.RequireIMBoundedOutput(); err != nil {
 				return err
 			}
-			if _, _, err := resolveSandboxForExecution(ctx, s.sandboxResolver, s.sandboxMgr, s.sandboxPinner, grant.TenantID, sessionID, agentConfig.SandboxConfigID, s.sandboxPolicy, withLiteDesktop(s.hostDesktop)); err != nil {
+			if _, _, err := resolveSandboxForExecution(
+				ctx,
+				s.sandboxResolver,
+				s.sandboxMgr,
+				s.sandboxPinner,
+				grant.TenantID,
+				sessionID,
+				agentConfig.SandboxConfigID,
+				s.sandboxPolicy,
+				withLiteDesktop(s.hostDesktop),
+			); err != nil {
 				return fmt.Errorf("Octo sandbox: %w", err)
 			}
 		}
@@ -470,15 +480,16 @@ func (s *sessionService) buildAgentConfig(
 		skillConfigID string
 		tenantSkills  []*types.TenantSkillEntity
 	)
-	if types.HasIMKnowledgeScope(ctx) {
-		// Do not enumerate host skills or a previously pinned image.
-	} else if s.hostDesktop {
-		skillConfigID, tenantSkills = hostSkillsForRun(ctx, s.tenantSkillRepo, s.hostSkillTree, sandboxTenantID)
-	} else {
-		skillConfigID, tenantSkills = skillsForRun(
-			ctx, s.sandboxPinner, s.sandboxConfigRepo, s.tenantSkillRepo,
-			sandboxTenantID, req.Session.ID, agentConfig.SandboxConfigID,
-		)
+	// IM knowledge scope must not enumerate host skills or a previously pinned image.
+	if !types.HasIMKnowledgeScope(ctx) {
+		if s.hostDesktop {
+			skillConfigID, tenantSkills = hostSkillsForRun(ctx, s.tenantSkillRepo, s.hostSkillTree, sandboxTenantID)
+		} else {
+			skillConfigID, tenantSkills = skillsForRun(
+				ctx, s.sandboxPinner, s.sandboxConfigRepo, s.tenantSkillRepo,
+				sandboxTenantID, req.Session.ID, agentConfig.SandboxConfigID,
+			)
+		}
 	}
 	agentConfig.TenantSkills = tenantSkills
 	if len(tenantSkills) > 0 {

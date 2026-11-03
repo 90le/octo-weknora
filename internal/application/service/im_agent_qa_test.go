@@ -69,6 +69,7 @@ type imQAModelService struct {
 func (m imQAModelService) GetModelByID(context.Context, string) (*types.Model, error) {
 	return &types.Model{ID: "fake", Type: types.ModelTypeKnowledgeQA}, nil
 }
+
 func (m imQAModelService) GetChatModel(context.Context, string) (chat.Chat, error) {
 	return m.model, nil
 }
@@ -84,6 +85,7 @@ type imQAModel struct {
 func (*imQAModel) Chat(context.Context, []chat.Message, *chat.ChatOptions) (*types.ChatResponse, error) {
 	return &types.ChatResponse{}, nil
 }
+
 func (m *imQAModel) ChatStream(ctx context.Context, messages []chat.Message, opts *chat.ChatOptions) (<-chan types.StreamResponse, error) {
 	for _, message := range messages {
 		if strings.Contains(message.Content, "must-not-stream-after-revoke") {
@@ -235,7 +237,7 @@ func (d *imQADocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_, _ = buf.WriteString("HTTP/1.1 101 UPGRADED\r\nContent-Type: application/vnd.docker.raw-stream\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n")
 		if payload != "" {
 			header := make([]byte, 8)
@@ -268,10 +270,12 @@ func (d *imQADocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	http.Error(w, "unexpected "+r.Method+" "+path, 404)
 }
+
 func writeIMJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(value)
 }
+
 func startIMQADocker(t *testing.T, image string) (*imQADocker, string, string) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -286,7 +290,7 @@ func startIMQADocker(t *testing.T, image string) (*imQADocker, string, string) {
 	require.NoError(t, err)
 	dir := t.TempDir()
 	for name, data := range map[string][]byte{"ca.pem": certPEM, "cert.pem": certPEM, "key.pem": keyPEM} {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, name), data, 0600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), data, 0o600))
 	}
 	daemon := &imQADocker{image: image, commands: map[string]string{}}
 	server := httptest.NewUnstartedServer(daemon)

@@ -17,12 +17,26 @@ import (
 
 // Resolve only the admitted same-tenant Docker config. A saved pin is a
 // storage binding, never a permission; mismatch and read errors fail closed.
-func resolveIMSandboxForExecution(ctx context.Context, resolver sandbox.TenantSandboxResolver, fallback sandbox.Manager, pinner *SessionSandboxPinner, tenantID uint64, sessionID, configID string, policy WorkspaceSandboxPolicy, opts ...resolveOption) (sandbox.Manager, SandboxPin, error) {
+func resolveIMSandboxForExecution(
+	ctx context.Context,
+	resolver sandbox.TenantSandboxResolver,
+	fallback sandbox.Manager,
+	pinner *SessionSandboxPinner,
+	tenantID uint64,
+	sessionID,
+	configID string,
+	policy WorkspaceSandboxPolicy,
+	opts ...resolveOption,
+) (sandbox.Manager, SandboxPin, error) {
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
 	if !ok || (!grant.AllowShell && !grant.AllowSkills) {
 		return sandbox.NewDisabledManager(), SandboxPin{}, nil
 	}
-	if applyResolveOptions(opts).liteOnly || tenantID != grant.TenantID || sessionID != grant.SessionID || strings.TrimSpace(configID) != grant.ConfigID || pinner == nil {
+	if applyResolveOptions(opts).liteOnly ||
+		tenantID != grant.TenantID ||
+		sessionID != grant.SessionID ||
+		strings.TrimSpace(configID) != grant.ConfigID ||
+		pinner == nil {
 		return nil, SandboxPin{}, types.ErrIMSandboxDenied
 	}
 	if _, err := ValidateIMSandboxPin(ctx, pinner, sessionID, true); err != nil {
@@ -63,7 +77,11 @@ func resolveIMSandboxForExecution(ctx context.Context, resolver sandbox.TenantSa
 	return &imGuardedSandbox{backend: backend, pinner: pinner, configFingerprint: baseline}, winner, nil
 }
 
-func imSandboxConfigFingerprint(ctx context.Context, pinner *SessionSandboxPinner, grant types.IMSandboxGrant) ([32]byte, error) {
+func imSandboxConfigFingerprint(
+	ctx context.Context,
+	pinner *SessionSandboxPinner,
+	grant types.IMSandboxGrant,
+) ([32]byte, error) {
 	cfg, err := repository.NewTenantSandboxConfigRepository(pinner.db).GetByID(ctx, grant.TenantID, grant.ConfigID)
 	if err != nil || cfg == nil || cfg.Config == nil {
 		return [32]byte{}, types.ErrIMSandboxDenied
@@ -75,8 +93,10 @@ func imSandboxConfigFingerprint(ctx context.Context, pinner *SessionSandboxPinne
 	return sha256.Sum256(raw), nil
 }
 
-type imSandboxConfigBaselineKey struct{}
-type imSandboxFreshTurnKey struct{}
+type (
+	imSandboxConfigBaselineKey struct{}
+	imSandboxFreshTurnKey      struct{}
+)
 
 // IsIMSandboxFreshTurn reports that the lock holder stopped the previous
 // session container before beginning this turn.
@@ -146,7 +166,16 @@ func withIMSandboxPolicy(ctx context.Context) (context.Context, error) {
 		Session, ConfigID, Agent string
 		Config, Skills           [32]byte
 		Shell, Skill             bool
-	}{grant.TenantID, grant.SessionID, grant.ConfigID, grant.AgentConfigDigest, config, skills, grant.AllowShell, grant.AllowSkills})
+	}{
+		grant.TenantID,
+		grant.SessionID,
+		grant.ConfigID,
+		grant.AgentConfigDigest,
+		config,
+		skills,
+		grant.AllowShell,
+		grant.AllowSkills,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +227,12 @@ func (s *sessionService) PrepareIMSandboxContext(ctx context.Context, allowUnpin
 // before snapshot or execution. The caller must hold a renewable, fenced turn
 // lock; a lost lease or unresolved prior daemon must quarantine the session.
 // An empty DB pin plus an existing binding is stopped but remains an error.
-func ReconcileIMSandboxBeforeTurn(ctx context.Context, pinner *SessionSandboxPinner, resolver sandbox.TenantSandboxResolver, sessionID string) error {
+func ReconcileIMSandboxBeforeTurn(
+	ctx context.Context,
+	pinner *SessionSandboxPinner,
+	resolver sandbox.TenantSandboxResolver,
+	sessionID string,
+) error {
 	grant, err := ValidateIMSandboxPin(ctx, pinner, sessionID, true)
 	if err != nil {
 		return err
@@ -235,13 +269,20 @@ func ReconcileIMSandboxBeforeTurn(ctx context.Context, pinner *SessionSandboxPin
 
 // ErrIMSandboxBaselineNotEmpty means a pin or underlying session binding
 // exists; callers must not treat its previous output as an empty baseline.
+//
+//nolint:staticcheck // Preserve existing error text.
 var ErrIMSandboxBaselineNotEmpty = errors.New("Octo sandbox: existing session binding prevents an empty baseline")
 
 // ValidateIMSandboxEmptyBaseline permits an empty pre-turn snapshot only when
 // both the DB pin and authoritative sandbox binding are definitely absent.
 // ctx must be prepared by PrepareIMSandboxContext; this function never pins,
 // creates, reads files, destroys a container, or substitutes another backend.
-func ValidateIMSandboxEmptyBaseline(ctx context.Context, pinner *SessionSandboxPinner, resolver sandbox.TenantSandboxResolver, sessionID string) error {
+func ValidateIMSandboxEmptyBaseline(
+	ctx context.Context,
+	pinner *SessionSandboxPinner,
+	resolver sandbox.TenantSandboxResolver,
+	sessionID string,
+) error {
 	grant, err := ValidateIMSandboxPin(ctx, pinner, sessionID, true)
 	if err != nil {
 		return err
@@ -286,8 +327,10 @@ func ValidateIMSandboxEmptyBaseline(ctx context.Context, pinner *SessionSandboxP
 	return err
 }
 
-type imSkillRevalidatorKey struct{}
-type imSkillRevalidator func(context.Context) error
+type (
+	imSkillRevalidatorKey struct{}
+	imSkillRevalidator    func(context.Context) error
+)
 
 func withIMSkillRevalidator(ctx context.Context, check imSkillRevalidator) context.Context {
 	return context.WithValue(ctx, imSkillRevalidatorKey{}, check)
@@ -297,7 +340,15 @@ type imSandboxBackend interface {
 	sandbox.SessionFileStore
 	EnsureIMSession(context.Context, string, bool) (string, error)
 	StopIMSession(context.Context, string, string) error
-	ExecIMShell(context.Context, string, string, string, string, time.Duration, map[string]string) (*sandbox.ExecuteResult, error)
+	ExecIMShell(
+		context.Context,
+		string,
+		string,
+		string,
+		string,
+		time.Duration,
+		map[string]string,
+	) (*sandbox.ExecuteResult, error)
 	ListIMSessionFiles(context.Context, string, string) ([]sandbox.RemoteDirEntry, error)
 }
 
@@ -363,10 +414,18 @@ func (m *imGuardedSandbox) guard(ctx context.Context, sessionID string) (context
 // Agent and Skill state; an error or a slow check cancels the command. The
 // Docker backend stops and inspects the exact container on cancellation.
 // This bounds detection latency but does not promise immediate revocation.
-const imRevalidationInterval = time.Second
-const imRevalidationTimeout = 2 * time.Second
+const (
+	imRevalidationInterval = time.Second
+	imRevalidationTimeout  = 2 * time.Second
+)
 
-func (m *imGuardedSandbox) withAuthorizationWatch(ctx context.Context, sid, id string, stopOnCancel bool, run func(context.Context) error) error {
+func (m *imGuardedSandbox) withAuthorizationWatch(
+	ctx context.Context,
+	sid,
+	id string,
+	stopOnCancel bool,
+	run func(context.Context) error,
+) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	finished := make(chan error, 1)
 	go func() {
@@ -428,7 +487,16 @@ func (m *imGuardedSandbox) withAuthorizationWatch(ctx context.Context, sid, id s
 	}
 	return err
 }
-func (m *imGuardedSandbox) execWatched(ctx context.Context, sid, id, command, workDir string, timeout time.Duration, env map[string]string) (*sandbox.ExecuteResult, error) {
+
+func (m *imGuardedSandbox) execWatched(
+	ctx context.Context,
+	sid,
+	id,
+	command,
+	workDir string,
+	timeout time.Duration,
+	env map[string]string,
+) (*sandbox.ExecuteResult, error) {
 	var result *sandbox.ExecuteResult
 	err := m.withAuthorizationWatch(ctx, sid, id, true, func(runCtx context.Context) error {
 		var err error
@@ -452,7 +520,15 @@ func (m *imGuardedSandbox) SessionFileStore() sandbox.SessionFileStore         {
 func (m *imGuardedSandbox) SessionWorkspaceLayout(context.Context, string) (sandbox.WorkspaceLayout, error) {
 	return sandbox.RemoteWorkspaceLayout(), nil
 }
-func (m *imGuardedSandbox) ExecShellCommand(ctx context.Context, sid, command, workDir string, timeout time.Duration, env map[string]string) (*sandbox.ExecuteResult, error) {
+
+func (m *imGuardedSandbox) ExecShellCommand(
+	ctx context.Context,
+	sid,
+	command,
+	workDir string,
+	timeout time.Duration,
+	env map[string]string,
+) (*sandbox.ExecuteResult, error) {
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
 	if !ok || !grant.AllowShell {
 		return nil, types.ErrIMSandboxDenied
@@ -466,7 +542,14 @@ func (m *imGuardedSandbox) ExecShellCommand(ctx context.Context, sid, command, w
 }
 
 // ExecApprovedSkill is reachable only through the package-script tool.
-func (m *imGuardedSandbox) ExecApprovedSkill(ctx context.Context, sid, command, workDir string, timeout time.Duration, env map[string]string) (*sandbox.ExecuteResult, error) {
+func (m *imGuardedSandbox) ExecApprovedSkill(
+	ctx context.Context,
+	sid,
+	command,
+	workDir string,
+	timeout time.Duration,
+	env map[string]string,
+) (*sandbox.ExecuteResult, error) {
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
 	if !ok || !grant.AllowSkills {
 		return nil, types.ErrIMSandboxDenied
@@ -487,6 +570,7 @@ func (m *imGuardedSandbox) EnsureSessionDir(ctx context.Context, sid, p string) 
 	defer done()
 	return m.backend.EnsureSessionDir(safe, sid, p)
 }
+
 func (m *imGuardedSandbox) ListSessionFiles(ctx context.Context, sid, p string) ([]sandbox.RemoteDirEntry, error) {
 	safe, id, done, err := m.guard(ctx, sid)
 	if err != nil {
@@ -504,6 +588,7 @@ func (m *imGuardedSandbox) ListSessionFiles(ctx context.Context, sid, p string) 
 	}
 	return items, nil
 }
+
 func (m *imGuardedSandbox) StatSessionFile(ctx context.Context, sid, p string) (*sandbox.RemoteStatEntry, error) {
 	if len(p) > 4096 {
 		return nil, errors.New("Octo sandbox: path is too long")
@@ -540,7 +625,13 @@ func (m *imGuardedSandbox) ReadSessionFileBounded(ctx context.Context, sid, p st
 
 const imMaxFileDeliveryBytes int64 = 20 << 20
 
-func (m *imGuardedSandbox) readSessionFileBounded(ctx context.Context, sid, p string, maxBytes int64, outputOnly bool) ([]byte, error) {
+func (m *imGuardedSandbox) readSessionFileBounded(
+	ctx context.Context,
+	sid,
+	p string,
+	maxBytes int64,
+	outputOnly bool,
+) ([]byte, error) {
 	if maxBytes <= 0 || maxBytes > imMaxFileDeliveryBytes || len(p) > 4096 || strings.ContainsAny(p, "\\\x00") {
 		return nil, errors.New("Octo sandbox: invalid bounded file read")
 	}
@@ -587,6 +678,7 @@ func (m *imGuardedSandbox) WriteSessionInputFile(ctx context.Context, sid, p str
 	defer done()
 	return m.backend.WriteSessionInputFile(safe, sid, p, data)
 }
+
 func (m *imGuardedSandbox) WriteSessionWorkspaceFile(ctx context.Context, sid, p string, data []byte) error {
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
 	if !ok || !grant.AllowShell {
@@ -599,7 +691,12 @@ func (m *imGuardedSandbox) WriteSessionWorkspaceFile(ctx context.Context, sid, p
 	defer done()
 	return m.backend.WriteSessionWorkspaceFile(safe, sid, p, data)
 }
-func (m *imGuardedSandbox) WriteSessionWorkspaceFiles(ctx context.Context, sid string, files []sandbox.SessionWorkspaceFile) error {
+
+func (m *imGuardedSandbox) WriteSessionWorkspaceFiles(
+	ctx context.Context,
+	sid string,
+	files []sandbox.SessionWorkspaceFile,
+) error {
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
 	if !ok || (!grant.AllowShell && (!grant.AllowSkills || !sandbox.IsIMSkillStaging(ctx))) {
 		return types.ErrIMSandboxDenied
@@ -611,6 +708,7 @@ func (m *imGuardedSandbox) WriteSessionWorkspaceFiles(ctx context.Context, sid s
 	defer done()
 	return m.backend.WriteSessionWorkspaceFiles(safe, sid, files)
 }
+
 func (m *imGuardedSandbox) RemoveSessionInputPath(ctx context.Context, sid, p string) error {
 	safe, _, done, err := m.guard(ctx, sid)
 	if err != nil {
@@ -620,6 +718,8 @@ func (m *imGuardedSandbox) RemoveSessionInputPath(ctx context.Context, sid, p st
 	return m.backend.RemoveSessionInputPath(safe, sid, p)
 }
 
-var _ sandbox.Manager = (*imGuardedSandbox)(nil)
-var _ sandbox.SessionCapabilityProvider = (*imGuardedSandbox)(nil)
-var _ sandbox.SessionFileStore = (*imGuardedSandbox)(nil)
+var (
+	_ sandbox.Manager                   = (*imGuardedSandbox)(nil)
+	_ sandbox.SessionCapabilityProvider = (*imGuardedSandbox)(nil)
+	_ sandbox.SessionFileStore          = (*imGuardedSandbox)(nil)
+)

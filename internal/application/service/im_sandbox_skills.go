@@ -17,7 +17,12 @@ import (
 // approvedIMSkills only returns explicitly enabled, installed versions from
 // the selected sandbox config and intersects the Agent selection by name.
 // Bundles need an immutable digest before they may be staged into a clean VM.
-func (s *sessionService) approvedIMSkills(ctx context.Context, grant types.IMSandboxGrant, mode string, selected []string) ([]*types.TenantSkillEntity, error) {
+func (s *sessionService) approvedIMSkills(
+	ctx context.Context,
+	grant types.IMSandboxGrant,
+	mode string,
+	selected []string,
+) ([]*types.TenantSkillEntity, error) {
 	if s.sandboxConfigRepo == nil || s.tenantSkillRepo == nil {
 		return nil, errors.New("Octo sandbox: Skill catalog is unavailable")
 	}
@@ -46,7 +51,10 @@ func (s *sessionService) approvedIMSkills(ctx context.Context, grant types.IMSan
 		if served == nil {
 			continue
 		}
-		if served.TenantID != grant.TenantID || served.SandboxConfigID != grant.ConfigID || !sandbox.IsValidSkillName(served.Name) || seen[served.Name] {
+		if served.TenantID != grant.TenantID ||
+			served.SandboxConfigID != grant.ConfigID ||
+			!sandbox.IsValidSkillName(served.Name) ||
+			seen[served.Name] {
 			return nil, errors.New("Octo sandbox: ambiguous Skill identity")
 		}
 		if strings.TrimSpace(served.BundleSHA256) == "" {
@@ -69,7 +77,13 @@ func imSkillFingerprint(rows []*types.TenantSkillEntity) ([32]byte, error) {
 		if row == nil {
 			return [32]byte{}, errors.New("Octo sandbox: invalid Skill")
 		}
-		values = append(values, entry{row.ID, row.Name, row.Version, row.BundleSHA256, row.InstalledSnapshotID, row.BundleRef, row.CatalogID, row.Instructions})
+		values = append(
+			values,
+			entry{
+				row.ID, row.Name, row.Version, row.BundleSHA256,
+				row.InstalledSnapshotID, row.BundleRef, row.CatalogID, row.Instructions,
+			},
+		)
 	}
 	raw, err := json.Marshal(values)
 	if err != nil {
@@ -162,7 +176,12 @@ func (s *agentService) authorizeIMSkillSource(ctx context.Context, sessionID str
 	return check(ctx)
 }
 
-func (s *agentService) authorizeIMSkill(ctx context.Context, sessionID string, config *types.AgentConfig, name string) error {
+func (s *agentService) authorizeIMSkill(
+	ctx context.Context,
+	sessionID string,
+	config *types.AgentConfig,
+	name string,
+) error {
 	if err := s.authorizeIMSkillSource(ctx, sessionID); err != nil {
 		return err
 	}
@@ -176,7 +195,12 @@ func (s *agentService) authorizeIMSkill(ctx context.Context, sessionID string, c
 	return fmt.Errorf("Octo sandbox: Skill %q is not approved for this Agent", name)
 }
 
-func (s *agentService) authorizeIMSkillResource(ctx context.Context, sessionID string, config *types.AgentConfig, name string) error {
+func (s *agentService) authorizeIMSkillResource(
+	ctx context.Context,
+	sessionID string,
+	config *types.AgentConfig,
+	name string,
+) error {
 	if config != nil {
 		for _, row := range config.TenantSkills {
 			if row != nil && row.Name == name {
@@ -211,6 +235,7 @@ func (s imStagedSkillSource) check() error {
 	}
 	return s.authorize()
 }
+
 func (s imStagedSkillSource) ListSkillFiles(name string) ([]string, error) {
 	if err := s.check(); err != nil {
 		return nil, err
@@ -221,6 +246,7 @@ func (s imStagedSkillSource) ListSkillFiles(name string) ([]string, error) {
 func (s imStagedSkillSource) GetSkillBasePath(string) (string, error) {
 	return "", errors.New("Octo Skill is staged per session")
 }
+
 func (s imStagedSkillSource) DiscoverSkills() ([]*skills.SkillMetadata, error) {
 	if err := s.check(); err != nil {
 		return nil, err
@@ -239,6 +265,7 @@ func (s imStagedSkillSource) DiscoverSkills() ([]*skills.SkillMetadata, error) {
 	}
 	return out, nil
 }
+
 func (s imStagedSkillSource) LoadSkillInstructions(name string) (*skills.Skill, error) {
 	if err := s.check(); err != nil {
 		return nil, err
@@ -252,6 +279,7 @@ func (s imStagedSkillSource) LoadSkillInstructions(name string) (*skills.Skill, 
 	cp.FilePath = ""
 	return &cp, nil
 }
+
 func (s imStagedSkillSource) LoadSkillFile(name, rel string) (*skills.SkillFile, error) {
 	if err := s.check(); err != nil {
 		return nil, err

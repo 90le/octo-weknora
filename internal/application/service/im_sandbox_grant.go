@@ -16,10 +16,22 @@ import (
 // an absent pin only before creation: the caller must validate again after
 // claiming the pin, and reject a concurrent winner naming another config.
 // For artifact collection always pass allowCreate=false.
-func ValidateIMSandboxPin(ctx context.Context, pinner *SessionSandboxPinner, sessionID string, allowCreate bool) (types.IMSandboxGrant, error) {
+func ValidateIMSandboxPin(
+	ctx context.Context,
+	pinner *SessionSandboxPinner,
+	sessionID string,
+	allowCreate bool,
+) (types.IMSandboxGrant, error) {
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
-	if !ok || !types.HasIMKnowledgeScope(ctx) || pinner == nil || pinner.db == nil || sessionID == "" || sessionID != grant.SessionID ||
-		strings.TrimSpace(grant.ConfigID) != grant.ConfigID || grant.ConfigID == types.SandboxConfigIDGlobalDefault || sandbox.IsHostSkillTarget(grant.ConfigID) {
+	if !ok ||
+		!types.HasIMKnowledgeScope(ctx) ||
+		pinner == nil ||
+		pinner.db == nil ||
+		sessionID == "" ||
+		sessionID != grant.SessionID ||
+		strings.TrimSpace(grant.ConfigID) != grant.ConfigID ||
+		grant.ConfigID == types.SandboxConfigIDGlobalDefault ||
+		sandbox.IsHostSkillTarget(grant.ConfigID) {
 		return types.IMSandboxGrant{}, types.ErrIMSandboxDenied
 	}
 	if sid, ok := types.SessionIDFromContext(ctx); !ok || sid != grant.SessionID {
@@ -40,7 +52,12 @@ func ValidateIMSandboxPin(ctx context.Context, pinner *SessionSandboxPinner, ses
 		return types.IMSandboxGrant{}, types.ErrIMSandboxDenied
 	}
 	cfg, err := repository.NewTenantSandboxConfigRepository(pinner.db).GetByID(ctx, grant.TenantID, grant.ConfigID)
-	if err != nil || cfg == nil || cfg.Config == nil || cfg.Config.SandboxType != cfg.SandboxType || !sandbox.IsNamedSandboxBackendType(cfg.SandboxType) || cfg.IsCordoned(time.Now(), types.SandboxCordonLease) {
+	if err != nil ||
+		cfg == nil ||
+		cfg.Config == nil ||
+		cfg.Config.SandboxType != cfg.SandboxType ||
+		!sandbox.IsNamedSandboxBackendType(cfg.SandboxType) ||
+		cfg.IsCordoned(time.Now(), types.SandboxCordonLease) {
 		return types.IMSandboxGrant{}, types.ErrIMSandboxDenied
 	}
 	// Read the session row strictly: unlike the legacy pin reader, a negative
@@ -66,7 +83,10 @@ func ValidateIMSandboxPin(ctx context.Context, pinner *SessionSandboxPinner, ses
 		}
 		return types.IMSandboxGrant{}, types.ErrIMSandboxDenied
 	}
-	if configID != grant.ConfigID || (row.SandboxConfigTenantID.Valid && row.SandboxConfigTenantID.Int64 != 0 && uint64(row.SandboxConfigTenantID.Int64) != grant.TenantID) {
+	if configID != grant.ConfigID ||
+		(row.SandboxConfigTenantID.Valid &&
+			row.SandboxConfigTenantID.Int64 != 0 &&
+			uint64(row.SandboxConfigTenantID.Int64) != grant.TenantID) {
 		return types.IMSandboxGrant{}, types.ErrIMSandboxDenied
 	}
 	return grant, nil

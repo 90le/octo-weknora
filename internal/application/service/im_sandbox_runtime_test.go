@@ -38,13 +38,16 @@ func (b *imTestBackend) EnsureIMSession(ctx context.Context, sid string, create 
 	return "container", nil
 }
 func (b *imTestBackend) StopIMSession(context.Context, string, string) error { return nil }
-func (b *imTestBackend) ExecIMShell(ctx context.Context, sid, id, command, dir string, timeout time.Duration, env map[string]string) (*sandbox.ExecuteResult, error) {
+func (b *imTestBackend) ExecIMShell(
+	_ context.Context, sid, id string, _, _ string, _ time.Duration, _ map[string]string,
+) (*sandbox.ExecuteResult, error) {
 	if sid != "s-1" || id != "container" {
 		return nil, errors.New("cross-session")
 	}
 	b.calls.Add(1)
 	return &sandbox.ExecuteResult{ExitCode: 0, Stdout: "backend executed"}, nil
 }
+
 func (b *imTestBackend) WriteSessionWorkspaceFiles(_ context.Context, sid string, files []sandbox.SessionWorkspaceFile) error {
 	if sid != "s-1" || len(files) == 0 {
 		return errors.New("invalid staging")
@@ -261,9 +264,13 @@ func TestIMApprovedSkillToolStagesAndExecutesOnlySelected(t *testing.T) {
 	guard := &imGuardedSandbox{backend: backend, pinner: pinner, configFingerprint: hash}
 	root := t.TempDir()
 	dir := filepath.Join(root, "alpha")
-	require.NoError(t, os.Mkdir(dir, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: alpha\ndescription: Test approved skill\n---\n# Instructions\nRun the script.\n"), 0600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "run.py"), []byte("print('ok')"), 0600))
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "SKILL.md"),
+		[]byte("---\nname: alpha\ndescription: Test approved skill\n---\n# Instructions\nRun the script.\n"),
+		0o600,
+	))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "run.py"), []byte("print('ok')"), 0o600))
 	svc := &agentService{sandboxPinner: pinner}
 	config := &types.AgentConfig{TenantSkills: []*types.TenantSkillEntity{{Name: "alpha"}}}
 	check := func() error { return svc.authorizeIMSkillSource(ctx, "s-1") }
@@ -299,7 +306,9 @@ type imBlockingBackend struct {
 	failStop  bool
 }
 
-func (b *imBlockingBackend) ExecIMShell(ctx context.Context, sid, id, command, dir string, timeout time.Duration, env map[string]string) (*sandbox.ExecuteResult, error) {
+func (b *imBlockingBackend) ExecIMShell(
+	ctx context.Context, _, _, _, _ string, _ time.Duration, _ map[string]string,
+) (*sandbox.ExecuteResult, error) {
 	close(b.started)
 	<-ctx.Done()
 	close(b.cancelled)

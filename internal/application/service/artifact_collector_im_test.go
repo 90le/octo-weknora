@@ -115,7 +115,12 @@ func TestIMCaptureFailsClosedWithoutBoundedRead(t *testing.T) {
 	source.entries["s-1"] = []sandbox.RemoteDirEntry{{
 		Path: "/workspace/output/new.txt", Name: "new.txt", Type: sandbox.RemoteEntryFile, Size: 4,
 	}}
-	artifacts, err := collector.CollectIM(ctx, snapshot, "message-1", func(string, bool) IMArtifactSelection { return IMArtifactCurrentTurn })
+	artifacts, err := collector.CollectIM(
+		ctx,
+		snapshot,
+		"message-1",
+		func(string, bool) IMArtifactSelection { return IMArtifactCurrentTurn },
+	)
 	require.Error(t, err)
 	require.Empty(t, artifacts)
 	require.Empty(t, source.readCalls, "the unbounded reader must not be used")
@@ -127,24 +132,47 @@ func TestIMCaptureSelectedVersionWithUnchangedMetadata(t *testing.T) {
 	pinner := NewSessionSandboxPinner(db)
 	_, err := pinner.Pin(ctx, "s-1", SandboxPin{ConfigID: "cfg-docker"})
 	require.NoError(t, err)
-	entry := sandbox.RemoteDirEntry{Path: "/workspace/output/report.csv", Name: "report.csv", Type: sandbox.RemoteEntryFile, Size: 3, ModTime: time.Unix(100, 0)}
-	secret := sandbox.RemoteDirEntry{Path: "/workspace/output/private.csv", Name: "private.csv", Type: sandbox.RemoteEntryFile, Size: 3, ModTime: entry.ModTime}
-	source := &fakeSandboxSource{entries: map[string][]sandbox.RemoteDirEntry{"s-1": {entry, secret}}, contents: map[string][]byte{entry.Path: []byte("old"), secret.Path: []byte("key")}}
+	entry := sandbox.RemoteDirEntry{
+		Path:    "/workspace/output/report.csv",
+		Name:    "report.csv",
+		Type:    sandbox.RemoteEntryFile,
+		Size:    3,
+		ModTime: time.Unix(100, 0),
+	}
+	secret := sandbox.RemoteDirEntry{
+		Path:    "/workspace/output/private.csv",
+		Name:    "private.csv",
+		Type:    sandbox.RemoteEntryFile,
+		Size:    3,
+		ModTime: entry.ModTime,
+	}
+	source := &fakeSandboxSource{
+		entries:  map[string][]sandbox.RemoteDirEntry{"s-1": {entry, secret}},
+		contents: map[string][]byte{entry.Path: []byte("old"), secret.Path: []byte("key")},
+	}
 	mgr := &boundedIMTestManager{artifactFallbackManager: &artifactFallbackManager{source: source}}
 	files := &fakeFileService{}
 	collector := NewArtifactCollector(source, files, &fakeStore{}, nil, ArtifactCollectorConfig{})
 	collector.pinner, collector.resolver = pinner, stubSandboxResolver{mgr: mgr}
-	snapshot, err := collector.SnapshotIM(ctx, "s-1", "cfg-docker", 7, 7, func(relative string) bool { return relative == "report.csv" })
+	snapshot, err := collector.SnapshotIM(
+		ctx,
+		"s-1",
+		"cfg-docker",
+		7,
+		7,
+		func(relative string) bool { return relative == "report.csv" },
+	)
 	require.NoError(t, err)
 	// A rewrite can preserve both byte count and mtime. Explicit selection,
 	// not those metadata fields, decides which session file may be read.
 	source.contents[entry.Path] = []byte("new")
-	artifacts, err := collector.CollectIM(ctx, snapshot, "message-1", func(relative string, _ bool) IMArtifactSelection {
-		if relative == "report.csv" {
-			return IMArtifactCurrentTurn
-		}
-		return IMArtifactNotSelected
-	})
+	artifacts, err := collector.CollectIM(
+		ctx, snapshot, "message-1", func(relative string, _ bool) IMArtifactSelection {
+			if relative == "report.csv" {
+				return IMArtifactCurrentTurn
+			}
+			return IMArtifactNotSelected
+		})
 	require.NoError(t, err)
 	require.Len(t, artifacts, 1)
 	require.Equal(t, []byte("new"), files.saved[artifacts[0].URL])

@@ -231,7 +231,17 @@ func resolveSandboxForExecution(
 	opts ...resolveOption,
 ) (sandbox.Manager, SandboxPin, error) {
 	if types.HasIMKnowledgeScope(ctx) {
-		return resolveIMSandboxForExecution(ctx, resolver, fallback, pinner, tenantID, sessionID, agentConfigID, policy, opts...)
+		return resolveIMSandboxForExecution(
+			ctx,
+			resolver,
+			fallback,
+			pinner,
+			tenantID,
+			sessionID,
+			agentConfigID,
+			policy,
+			opts...,
+		)
 	}
 	o := applyResolveOptions(opts)
 
