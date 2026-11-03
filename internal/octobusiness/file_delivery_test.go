@@ -114,6 +114,7 @@ func TestFileDeliveryDoesNotRetryAmbiguousOrConcurrentDelivery(t *testing.T) {
 func TestFileDeliveryRejectsExplicitNegativeRequests(t *testing.T) {
 	for _, text := range []string{
 		"不要发送文件", "不要把文件发出来", "不用发附件", "do not send a file", "don't export markdown", "这个文件内容是什么？",
+		"生成文件，不要发送", "生成文件，先不要发", "只在沙箱生成文件，不要发到群里", "生成文件，不要分享", "生成文件，不要给任何人", "create a file, do not send it",
 	} {
 		if explicitlyRequestsFile(text) {
 			t.Fatalf("negative request permitted file delivery: %q", text)
@@ -122,11 +123,25 @@ func TestFileDeliveryRejectsExplicitNegativeRequests(t *testing.T) {
 	for _, text := range []string{
 		"把知识生成 md 文件精简给我", "请导出 Markdown 文件", "please export a file",
 		"生成一份 PDF 给我", "请把内容做成 .zip 发送", "制作图片并发给我",
+		"请分别发送 report.txt 和 data.csv",
 	} {
 		if !explicitlyRequestsFile(text) {
 			t.Fatalf("explicit file request denied: %q", text)
 		}
 	}
+}
+
+func TestExplicitDoNotSendStopsTheLegacyTool(t *testing.T) {
+	p := testPrincipal()
+	p.AllowGeneratedFiles = true
+	p.MessageText = "生成 Markdown 文件，不要发送"
+	ctx := WithFileDeliverySink(principalContext(p), func(context.Context, *ReportArtifact) error {
+		t.Fatal("a negative request reached the sender")
+		return nil
+	}, allowMarkdownScope)
+	result, err := NewLegacyMarkdownFileTool().Execute(ctx, json.RawMessage(`{"content":"draft"}`))
+	require.NoError(t, err)
+	require.False(t, result.Success)
 }
 
 func TestFileDeliveryRechecksCompleteScope(t *testing.T) {
@@ -152,6 +167,7 @@ func TestFileDeliveryRechecksCompleteScope(t *testing.T) {
 func TestFileDeliverySupportsTextFormatsAndRejectsPathsAndBinaryLabels(t *testing.T) {
 	p := testPrincipal()
 	p.AllowFileDelivery = true
+	p.IsDirect = true
 	p.MessageText = "请发送文件"
 	var names []string
 	ctx := WithFileDeliverySink(principalContext(p), func(_ context.Context, file *ReportArtifact) error {
@@ -196,7 +212,129 @@ func TestLegacyMarkdownGrantDoesNotEnableOtherFormats(t *testing.T) {
 	allowed, err := tool.Execute(ctx, json.RawMessage(`{"name":"notes.md","content":"# notes"}`))
 	require.NoError(t, err)
 	require.True(t, allowed.Success)
-	require.Equal(t, []string{"notes.md"}, names)
+	require.Equal(t, []string{"knowledge-summary.md"}, names)
+}
+
+func TestFileDeliveryLegacyOnlyKeepsOneFixedMarkdownAttempt(t *testing.T) {
+	p := testPrincipal()
+	p.AllowGeneratedFiles = true
+	p.MessageText = "请发送 Markdown 文件"
+	var sent []string
+	ctx := WithFileDeliverySink(principalContext(p), func(_ context.Context, file *ReportArtifact) error {
+		sent = append(sent, file.Name)
+		return nil
+	}, allowMarkdownScope)
+	first, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"first.md","content":"one"}`))
+	require.NoError(t, err)
+	require.True(t, first.Success, first.Error)
+	second, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"second.md","content":"two"}`))
+	require.NoError(t, err)
+	require.False(t, second.Success)
+	require.Equal(t, []string{"knowledge-summary.md"}, sent)
+}
+
+func TestLegacyAliasStillUsesItsOwnGrantWhenGeneralIsEnabled(t *testing.T) {
+	p := testPrincipal()
+	p.AllowGeneratedFiles, p.AllowFileDelivery = true, true
+	p.MessageText = "请发送 Markdown 文件"
+	fresh := p
+	p.Validate = func(context.Context) (Principal, error) { return fresh, nil }
+	var calls int
+	ctx := WithFileDeliverySink(principalContext(p), func(ctx context.Context, file *ReportArtifact) error {
+		calls++
+		require.Equal(t, "knowledge-summary.md", file.Name)
+		fresh.AllowGeneratedFiles = false
+		return ValidateFileDeliveryAuthority(ctx)
+	}, allowMarkdownScope)
+	result, err := NewLegacyMarkdownFileTool().Execute(ctx, json.RawMessage(`{"content":"hello"}`))
+	require.NoError(t, err)
+	require.False(t, result.Success, "revoking the legacy grant must stop its own call")
+	require.Equal(t, 1, calls)
+}
+
+func TestGroupTextDeliveryNeedsAConcreteUserSelection(t *testing.T) {
+	p := testPrincipal()
+	p.AllowFileDelivery = true
+	p.MessageText = "请发送 report.txt"
+	var sent []string
+	ctx := WithFileDeliverySink(principalContext(p), func(_ context.Context, file *ReportArtifact) error {
+		sent = append(sent, file.Name)
+		return nil
+	}, allowMarkdownScope)
+	other, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"private.txt","content":"secret"}`))
+	require.NoError(t, err)
+	require.False(t, other.Success)
+	allowed, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"report.txt","content":"report"}`))
+	require.NoError(t, err)
+	require.True(t, allowed.Success, allowed.Error)
+	require.Equal(t, []string{"report.txt"}, sent)
+}
+
+func TestGeneralGroupCallCannotUseLegacyFallbackToChangeTheSelectedName(t *testing.T) {
+	p := testPrincipal()
+	p.AllowGeneratedFiles, p.AllowFileDelivery = true, true
+	p.MessageText = "请发送 report.md"
+	var sent []string
+	ctx := WithFileDeliverySink(principalContext(p), func(_ context.Context, file *ReportArtifact) error {
+		sent = append(sent, file.Name)
+		return nil
+	}, allowMarkdownScope)
+	wrong, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"private.md","content":"private"}`))
+	require.NoError(t, err)
+	require.False(t, wrong.Success)
+	correct, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"report.md","content":"report"}`))
+	require.NoError(t, err)
+	require.True(t, correct.Success, correct.Error)
+	require.Equal(t, []string{"report.md"}, sent)
+}
+
+func TestSameNameVersionsNeedRequestAndDoNotRepeatUnknown(t *testing.T) {
+	p := testPrincipal()
+	p.IsDirect, p.AllowFileDelivery = true, true
+	p.MessageText = "请发送 report.txt 的两个版本"
+	var sent []string
+	ctx := WithFileDeliverySink(principalContext(p), func(_ context.Context, file *ReportArtifact) error {
+		sent = append(sent, file.Content)
+		return nil
+	}, allowMarkdownScope)
+	tool := NewFileDeliveryTool()
+	for _, content := range []string{"version one", "version two"} {
+		args, err := json.Marshal(map[string]string{"name": "report.txt", "content": content})
+		require.NoError(t, err)
+		result, err := tool.Execute(ctx, args)
+		require.NoError(t, err)
+		require.True(t, result.Success, result.Error)
+	}
+	duplicate, err := tool.Execute(ctx, json.RawMessage(`{"name":"report.txt","content":"version one"}`))
+	require.NoError(t, err)
+	require.False(t, duplicate.Success)
+	require.Equal(t, []string{"version one", "version two"}, sent)
+
+	var attempts int
+	unknownCtx := WithFileDeliverySink(principalContext(p), func(context.Context, *ReportArtifact) error {
+		attempts++
+		return errors.New("outcome unknown")
+	}, allowMarkdownScope)
+	_, _ = tool.Execute(unknownCtx, json.RawMessage(`{"name":"report.txt","content":"version one"}`))
+	_, _ = tool.Execute(unknownCtx, json.RawMessage(`{"name":"report.txt","content":"version two"}`))
+	require.Equal(t, 1, attempts, "an unknown outcome must not trigger another version automatically")
+}
+
+func TestMentionsArtifactNameRejectsSubstringMatches(t *testing.T) {
+	for _, tc := range []struct {
+		text, name string
+		want       bool
+	}{
+		{"请发送 report.pdf 和 data.csv", "report.pdf", true},
+		{"请发送报告.pdf给我", "报告.pdf", true},
+		{"请发送 a/report.pdf 和 b/report.pdf", "a/report.pdf", true},
+		{"请发送 private-report.pdf", "report.pdf", false},
+		{"请发送私密报告.pdf", "报告.pdf", false},
+		{"请发送 report.pdf.bak", "report.pdf", false},
+		{"请发送 REPORT.pdf", "report.pdf", false},
+	} {
+		t.Run(tc.text+"/"+tc.name, func(t *testing.T) { require.Equal(t, tc.want, MentionsArtifactName(tc.text, tc.name)) })
+	}
 }
 
 func TestLegacyMarkdownCallUsesUnifiedDelivery(t *testing.T) {
@@ -213,4 +351,20 @@ func TestLegacyMarkdownCallUsesUnifiedDelivery(t *testing.T) {
 	require.True(t, result.Success)
 	require.Equal(t, "knowledge-summary.md", file.Name)
 	require.Equal(t, "# legacy", file.Content)
+}
+
+func TestGroupNaturalTextFileRequest(t *testing.T) {
+	p := testPrincipal()
+	p.AllowFileDelivery = true
+	p.MessageText = "请生成一份文件并发给我"
+	var sent []string
+	ctx := WithFileDeliverySink(principalContext(p), func(_ context.Context, f *ReportArtifact) error { sent = append(sent, f.Name); return nil }, allowMarkdownScope)
+	result, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"report.txt","content":"result"}`))
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+	require.True(t, HasDeliveredFile(ctx))
+	second, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"other.txt","content":"other"}`))
+	require.NoError(t, err)
+	require.False(t, second.Success)
+	require.Equal(t, []string{"report.txt"}, sent)
 }

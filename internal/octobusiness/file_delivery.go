@@ -3,13 +3,17 @@ package octobusiness
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"mime"
 	"path"
+	"regexp"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -19,6 +23,7 @@ type (
 	fileDeliverySinkKey       struct{}
 	fileDeliveryAuthorityKey  struct{}
 	fileDeliveryExtraCheckKey struct{}
+	legacyMarkdownCallKey     struct{}
 )
 
 type fileDeliveryAuthority struct {
@@ -26,11 +31,21 @@ type fileDeliveryAuthority struct {
 	general     bool
 }
 
+func fileDeliveryCapability(p Principal, general bool) bool {
+	if general {
+		return p.AllowFileDelivery
+	}
+	return p.AllowGeneratedFiles
+}
+
 type fileDeliverySink struct {
-	mu       sync.Mutex
-	send     ReportSink
-	validate func(context.Context) error
-	attempts map[string]bool
+	mu        sync.Mutex
+	send      ReportSink
+	validate  func(context.Context) error
+	attempts  map[string]bool
+	names     map[string]bool
+	unknown   map[string]bool
+	delivered map[string]bool
 }
 
 // WithFileDeliverySink enables bounded file delivery to the original turn.
@@ -38,7 +53,20 @@ func WithFileDeliverySink(ctx context.Context, sink ReportSink, validate func(co
 	if sink == nil || validate == nil {
 		return ctx
 	}
-	return context.WithValue(ctx, fileDeliverySinkKey{}, &fileDeliverySink{send: sink, validate: validate, attempts: map[string]bool{}})
+	return context.WithValue(ctx, fileDeliverySinkKey{}, &fileDeliverySink{
+		send: sink, validate: validate, attempts: map[string]bool{}, names: map[string]bool{}, unknown: map[string]bool{}, delivered: map[string]bool{},
+	})
+}
+
+// HasDeliveredFile reports a confirmed successful tool delivery in this turn.
+func HasDeliveredFile(ctx context.Context) bool {
+	state, ok := ctx.Value(fileDeliverySinkKey{}).(*fileDeliverySink)
+	if !ok || state == nil {
+		return false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return len(state.delivered) > 0
 }
 
 // HasFileDeliverySink reports whether the native channel admitted delivery.
@@ -54,7 +82,7 @@ func ValidateFileDeliveryAuthority(ctx context.Context) error {
 		return nil
 	}
 	current, err := currentPrincipal(ctx)
-	if err != nil || (!current.AllowFileDelivery && (expected.general || !current.AllowGeneratedFiles)) ||
+	if err != nil || !fileDeliveryCapability(current, expected.general) ||
 		reportAuthority(current) != expected.fingerprint {
 		return ErrDenied
 	}
@@ -82,7 +110,7 @@ func WithFileDeliveryExtraCheck(ctx context.Context, check func(context.Context)
 // recipient from model output.
 func WithCurrentFileDeliveryAuthority(ctx context.Context, general bool) (context.Context, error) {
 	p, err := currentPrincipal(ctx)
-	if err != nil || (!p.AllowFileDelivery && (general || !p.AllowGeneratedFiles)) || !HasFileDeliverySink(ctx) {
+	if err != nil || !fileDeliveryCapability(p, general) || !HasFileDeliverySink(ctx) {
 		return ctx, ErrDenied
 	}
 	ctx = context.WithValue(ctx, fileDeliveryAuthorityKey{}, fileDeliveryAuthority{fingerprint: reportAuthority(p), general: general})
@@ -93,11 +121,137 @@ func WithCurrentFileDeliveryAuthority(ctx context.Context, general bool) (contex
 // publication. It is deliberately conservative about negative requests.
 func WantsFileDelivery(text string) bool { return explicitlyRequestsFile(text) }
 
+// WantsExplicitFileSend is used for group delivery, where merely asking to
+// create a file must not publish it to everyone in the conversation.
+func WantsExplicitFileSend(text string) bool {
+	if !explicitlyRequestsFile(text) {
+		return false
+	}
+	text = strings.ToLower(text)
+	for _, word := range []string{"发送", "发给", "发我", "发到", "发出来", "请发", "传给", "给我", "投递", "send", "attach", "deliver"} {
+		if strings.Contains(text, word) {
+			return true
+		}
+	}
+	return false
+}
+
+// HasNamedArtifact distinguishes a user's concrete selection from a generic
+// request, so model links cannot silently add other files to that selection.
+func HasNamedArtifact(text string) bool { return namedArtifactInText.MatchString(text) }
+
+// WantsAllFiles is deliberately not interpreted as a directory-wide grant.
+func WantsAllFiles(text string) bool {
+	text = strings.ToLower(text)
+	for _, phrase := range []string{"所有文件", "全部文件", "所有附件", "全部附件", "所有产物", "全部产物", "所有输出", "全部输出", "发全部", "发所有", "all files", "every file", "everything"} {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// MatchesRequestedArtifactType narrows a generic request when it names a file
+// format. A request with no format still requires a concrete final link.
+func MatchesRequestedArtifactType(text, name string) bool {
+	text, ext := strings.ToLower(text), strings.ToLower(path.Ext(name))
+	categories := []struct {
+		words []string
+		exts  []string
+	}{
+		{[]string{"word", "docx"}, []string{".doc", ".docx"}},
+		{[]string{"excel", "xlsx", "表格"}, []string{".xls", ".xlsx", ".csv"}},
+		{[]string{"pdf"}, []string{".pdf"}},
+		{[]string{"ppt", "powerpoint", "演示文稿"}, []string{".ppt", ".pptx"}},
+		{[]string{"markdown", ".md"}, []string{".md"}},
+		{[]string{"csv"}, []string{".csv"}},
+		{[]string{"json"}, []string{".json"}},
+		{[]string{"图片", "png", "jpeg", "jpg"}, []string{".png", ".jpg", ".jpeg"}},
+	}
+	found, match := false, false
+	for _, category := range categories {
+		mentioned := false
+		for _, word := range category.words {
+			mentioned = mentioned || strings.Contains(text, word)
+		}
+		if mentioned {
+			found = true
+			for _, extension := range category.exts {
+				match = match || ext == extension
+			}
+		}
+	}
+	return !found || match
+}
+
+// MentionsArtifactName matches a concrete file name or relative path in the
+// original user text. A suffix inside a different filename is not a selection.
+// Common Chinese action words are accepted without requiring spaces.
+func MentionsArtifactName(text, name string) bool {
+	if name == "" || strings.ContainsAny(name, "\\\r\n\x00") {
+		return false
+	}
+	for offset := 0; offset <= len(text)-len(name); {
+		i := strings.Index(text[offset:], name)
+		if i < 0 {
+			return false
+		}
+		i += offset
+		before, after := text[:i], text[i+len(name):]
+		if artifactBoundary(before, true) && artifactBoundary(after, false) {
+			return true
+		}
+		offset = i + len(name)
+	}
+	return false
+}
+
+func artifactBoundary(text string, before bool) bool {
+	if text == "" {
+		return true
+	}
+	var r rune
+	if before {
+		r, _ = utf8.DecodeLastRuneInString(text)
+	} else {
+		r, _ = utf8.DecodeRuneInString(text)
+	}
+	if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune("._-/\\", r) {
+		return true
+	}
+	if before {
+		for _, word := range []string{"发送", "发给", "请发", "生成", "制作", "导出", "选择", "发", "和", "及", "与", "把", "将"} {
+			if strings.HasSuffix(text, word) {
+				return true
+			}
+		}
+	} else {
+		for _, word := range []string{"发给", "发我", "发送", "给我", "和", "与", "以及", "还有"} {
+			if strings.HasPrefix(text, word) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func requestsMultipleVersions(text string) bool {
+	text = strings.ToLower(text)
+	for _, phrase := range []string{"两个版本", "两种版本", "两版", "多个版本", "不同版本", "多版本", "两份", "two versions", "multiple versions", "both versions"} {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
 type fileDeliveryTool struct{}
 
 // legacyMarkdownFileTool accepts old saved tool calls but is registered as a
 // deferred compatibility alias, so it is not offered as a separate capability.
 type legacyMarkdownFileTool struct{}
+
+var namedArtifactInText = regexp.MustCompile(`[\p{L}\p{N}_-][\p{L}\p{N}_.-]*\.[\p{L}\p{N}]{1,16}`)
 
 func NewLegacyMarkdownFileTool() types.Tool  { return &legacyMarkdownFileTool{} }
 func (*legacyMarkdownFileTool) Name() string { return "octo_send_markdown" }
@@ -124,7 +278,7 @@ func (*legacyMarkdownFileTool) Execute(ctx context.Context, args json.RawMessage
 	if err != nil {
 		return toolResult(nil, err)
 	}
-	return (&fileDeliveryTool{}).Execute(ctx, forward)
+	return (&fileDeliveryTool{}).Execute(context.WithValue(ctx, legacyMarkdownCallKey{}, true), forward)
 }
 
 // NewFileDeliveryTool sends small text artifacts without requiring a sandbox.
@@ -172,10 +326,21 @@ func explicitlyRequestsFile(text string) bool {
 			hasRequest = hasRequest || strings.Contains(clause, word)
 		}
 		negative := false
+		// "分别", "区别" and "特别" are not prohibitions.
+		negationText := strings.NewReplacer("分别", "", "区别", "", "特别", "").Replace(clause)
 		for _, word := range []string{"不要", "不用", "不需要", "无需", "禁止", "别", "do not", "don't", "no need"} {
-			negative = negative || strings.Contains(clause, word)
+			negative = negative || strings.Contains(negationText, word)
 		}
-		if negative && (hasFile || strings.Contains(clause, "导出") || strings.Contains(clause, "export")) {
+		// Negation may refer to the file requested in an earlier clause:
+		// "生成文件，不要发送" must not authorize an outbound attachment.
+		if negative && (hasFile || strings.ContainsAny(clause, "发传给送") ||
+			strings.Contains(clause, "导出") || strings.Contains(clause, "投递") ||
+			strings.Contains(clause, "上传") || strings.Contains(clause, "分享") ||
+			strings.Contains(clause, "公开") || strings.Contains(clause, "对外") ||
+			strings.Contains(clause, "交付") || strings.Contains(clause, "send") ||
+			strings.Contains(clause, "attach") || strings.Contains(clause, "deliver") ||
+			strings.Contains(clause, "export") || strings.Contains(clause, "upload") ||
+			strings.Contains(clause, "share")) {
 			return false
 		}
 		requested = requested || (hasFile && hasRequest) ||
@@ -209,7 +374,27 @@ func (*fileDeliveryTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 		strings.ContainsRune(input.Content, 0) || strings.TrimSpace(input.Content) == "" || len(input.Content) > 1<<20 {
 		return toolResult(nil, argumentError("Use a plain file name with extension and nonempty UTF-8 content up to 1 MiB."))
 	}
-	contentType := mime.TypeByExtension(strings.ToLower(path.Ext(name)))
+	legacyCall, _ := ctx.Value(legacyMarkdownCallKey{}).(bool)
+	legacyMode := p.AllowGeneratedFiles && strings.EqualFold(path.Ext(name), ".md") &&
+		(!p.AllowFileDelivery || legacyCall || (!p.IsDirect && !MentionsArtifactName(p.MessageText, name) && !namedArtifactInText.MatchString(p.MessageText)))
+	if legacyMode {
+		// The old grant allowed one fixed-name Markdown file per message.
+		name = "knowledge-summary.md"
+	} else if !p.AllowFileDelivery {
+		return toolResult(nil, ErrDenied)
+	} else if !p.IsDirect && (!WantsExplicitFileSend(p.MessageText) || (HasNamedArtifact(p.MessageText) && !MentionsArtifactName(p.MessageText, name)) || !MatchesRequestedArtifactType(p.MessageText, name)) {
+		return toolResult(nil, argumentError("In a group, request the file to send."))
+	}
+	ext := strings.ToLower(path.Ext(name))
+	contentType := mime.TypeByExtension(ext)
+	// Windows may register CSV as an Excel binary MIME type. These formats are
+	// still bounded UTF-8 text, regardless of the host's MIME registry.
+	switch ext {
+	case ".md":
+		contentType = "text/markdown; charset=utf-8"
+	case ".csv":
+		contentType = "text/csv; charset=utf-8"
+	}
 	if contentType == "" {
 		contentType = "text/plain; charset=utf-8"
 	}
@@ -221,17 +406,25 @@ func (*fileDeliveryTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 	state := ctx.Value(fileDeliverySinkKey{}).(*fileDeliverySink)
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.attempts[name] || len(state.attempts) >= 5 {
+	hash := sha256.Sum256([]byte(input.Content))
+	attempt := name + "\x00" + hex.EncodeToString(hash[:])
+	if state.attempts[attempt] || state.unknown[name] || len(state.attempts) >= 5 ||
+		(legacyMode && len(state.attempts) != 0) || (!p.IsDirect && !HasNamedArtifact(p.MessageText) && len(state.attempts) != 0) || (state.names[name] && !requestsMultipleVersions(p.MessageText)) {
 		return toolResult(nil, errors.New("this file was already attempted or the per-message limit was reached"))
 	}
-	ctx, err = WithCurrentFileDeliveryAuthority(ctx, !strings.EqualFold(path.Ext(name), ".md"))
+	ctx, err = WithCurrentFileDeliveryAuthority(ctx, !legacyMode)
 	if err != nil {
 		return toolResult(nil, err)
 	}
-	state.attempts[name] = true
+	state.attempts[attempt] = true
+	state.names[name] = true
 	file := &ReportArtifact{Name: name, Content: input.Content, ContentType: contentType}
 	if err := state.send(ctx, file); err != nil {
+		if outcome, ok := err.(interface{ DeliveryOutcome() string }); !ok || outcome.DeliveryOutcome() != "failed" {
+			state.unknown[name] = true
+		}
 		return toolResult(nil, err)
 	}
+	state.delivered[name] = true
 	return toolResult(map[string]any{"delivered": true, "name": file.Name}, nil)
 }

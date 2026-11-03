@@ -11,7 +11,9 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
+	"unicode"
 
 	appservice "github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/octobusiness"
@@ -19,8 +21,8 @@ import (
 )
 
 type imArtifactCollector interface {
-	SnapshotIM(context.Context, string, string, uint64, uint64) (*appservice.IMArtifactSnapshot, error)
-	CollectIM(context.Context, *appservice.IMArtifactSnapshot, string) (types.MessageArtifacts, error)
+	SnapshotIM(context.Context, string, string, uint64, uint64, func(string) bool) (*appservice.IMArtifactSnapshot, error)
+	CollectIM(context.Context, *appservice.IMArtifactSnapshot, string, func(string, bool) appservice.IMArtifactSelection) (types.MessageArtifacts, error)
 	ValidateIM(context.Context, *appservice.IMArtifactSnapshot, bool) error
 }
 
@@ -51,6 +53,9 @@ func (s *Service) beginIMArtifactTurn(ctx context.Context, req *qaRequest) conte
 		!octobusiness.WantsFileDelivery(req.msg.Content) {
 		return ctx
 	}
+	if req.msg.ChatType != ChatTypeDirect && !octobusiness.WantsExplicitFileSend(req.msg.Content) {
+		return ctx
+	}
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
 	if !ok || grant.SessionID != req.session.ID || grant.TenantID != req.session.TenantID {
 		// Text delivery does not require a sandbox; do not turn a successful
@@ -68,6 +73,9 @@ func (s *Service) beginIMArtifactTurn(ctx context.Context, req *qaRequest) conte
 	}
 	t.snapshot, t.startErr = t.collector.SnapshotIM(
 		ctx, req.session.ID, grant.ConfigID, req.session.TenantID, grant.TenantID,
+		func(relative string) bool {
+			return octobusiness.MentionsArtifactName(req.msg.Content, relative) || octobusiness.MentionsArtifactName(req.msg.Content, path.Base(relative))
+		},
 	)
 	return context.WithValue(ctx, imArtifactTurnKey{}, t)
 }
@@ -81,11 +89,13 @@ func (t *imArtifactTurn) authorize(ctx context.Context) error {
 	return nil
 }
 
-// finishIMArtifactTurn delivers only files captured from this turn's bounded,
-// session-owned sandbox. It never accepts model-selected paths or recipients.
+// finishIMArtifactTurn delivers selected files verified as changed during this turn.
 func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, answer string) string {
 	t, ok := ctx.Value(imArtifactTurnKey{}).(*imArtifactTurn)
 	if !ok || t == nil || msg == nil || ctx.Err() != nil {
+		return answer
+	}
+	if octobusiness.HasDeliveredFile(ctx) {
 		return answer
 	}
 	if t.startErr != nil || t.authorize(ctx) != nil {
@@ -97,14 +107,46 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 		}
 		return t.collector.ValidateIM(checkCtx, t.snapshot, false)
 	})
+	text := t.req.msg.Content
+	if principal, ok := octobusiness.PrincipalFromContext(ctx); ok {
+		text = principal.MessageText
+	}
+	candidates := imArtifactLinkNames(answer)
+	selected := func(relative string, ambiguous bool) appservice.IMArtifactSelection {
+		name := path.Base(relative)
+		explicit := octobusiness.MentionsArtifactName(text, relative)
+		if ambiguous && !strings.Contains(relative, "/") {
+			explicit = octobusiness.MentionsArtifactName(text, "./"+relative)
+		}
+		if ambiguous && !explicit {
+			return appservice.IMArtifactNotSelected
+		}
+		if explicit || (!ambiguous && octobusiness.MentionsArtifactName(text, name)) {
+			return appservice.IMArtifactCurrentTurn
+		}
+		if ambiguous || imTemporaryArtifact(relative) || octobusiness.HasNamedArtifact(text) ||
+			!candidates[name] || !octobusiness.MatchesRequestedArtifactType(text, name) {
+			return appservice.IMArtifactNotSelected
+		}
+		return appservice.IMArtifactCurrentTurn
+	}
 	// The sandbox may not exist until the first command. CollectIM checks the
 	// unpinned case separately; the strict extra check is for actual delivery.
-	artifacts, collectErr := t.collector.CollectIM(ctx, t.snapshot, msg.ID)
+	artifacts, collectErr := t.collector.CollectIM(ctx, t.snapshot, msg.ID, selected)
 	if len(artifacts) == 0 {
 		if collectErr != nil {
 			return answer + "\n\n文件未能收集，请检查文件大小或沙箱状态后重试。"
 		}
-		return answer
+		var names []string
+		for name := range candidates {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		answer = renderDeliveredArtifactNames(answer, names)
+		if len(names) > 0 {
+			return answer + "\n\n未发送文件：未找到可确认属于本轮的目标文件。请重新生成并指定文件名，例如：" + strings.Join(names, "、") + "。"
+		}
+		return answer + "\n\n未发送文件：未找到可确认属于本轮的目标文件，请重新生成并指定文件名。"
 	}
 	callCtx, err := octobusiness.WithCurrentFileDeliveryAuthority(callCtx, true)
 	if err != nil {
@@ -156,6 +198,39 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 		answer += "\n\n部分文件未能收集，请检查文件大小或沙箱状态后重试。"
 	}
 	return answer
+}
+
+// Only an exact, path-free sandbox link can nominate a current-turn output.
+// The collector still resolves it inside the authorized session's output tree.
+func imArtifactLinkNames(answer string) map[string]bool {
+	names := map[string]bool{}
+	for _, parts := range imSandboxLink.FindAllStringSubmatch(answer, -1) {
+		name, err := url.PathUnescape(parts[2])
+		if err != nil || name == "" || name == "." || name == ".." ||
+			name != path.Base(name) || len(name) > 255 || strings.ContainsAny(name, "\\/") {
+			continue
+		}
+		unsafe := false
+		for _, r := range name {
+			unsafe = unsafe || unicode.IsControl(r)
+		}
+		if !unsafe {
+			names[name] = true
+		}
+	}
+	return names
+}
+
+func imTemporaryArtifact(relative string) bool {
+	for _, component := range strings.Split(strings.ToLower(relative), "/") {
+		if component == "tmp" || component == "temp" || component == "scratch" ||
+			component == "intermediate" || strings.HasPrefix(component, ".") ||
+			strings.HasPrefix(component, "~") || strings.HasSuffix(component, ".tmp") ||
+			strings.HasSuffix(component, ".part") {
+			return true
+		}
+	}
+	return false
 }
 
 // A sandbox: URL is meaningful in Web but not in Octo. Once the actual file

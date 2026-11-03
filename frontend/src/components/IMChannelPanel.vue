@@ -296,13 +296,13 @@
                 <div class="setting-info">
                   <label>发送生成的文件</label>
                   <p class="form-desc">允许向已授权的原会话发送智能体生成的文件；沙箱终端和技能权限需单独配置。</p>
-                  <p v-if="formData.credentials.allow_generated_files && !formData.credentials.allow_file_delivery" class="form-desc">
-                    已保留旧版 Markdown 发送权限，开启此项可使用通用文件投递。
+                  <p v-if="formData.credentials.allow_generated_files" class="form-desc">
+                    已保留旧版 Markdown 发送权限，可单独关闭。
                     <t-link theme="primary" @click="formData.credentials.allow_generated_files = false">关闭旧版权限</t-link>
                   </p>
                 </div>
                 <div class="setting-control">
-                  <t-switch v-model="formData.credentials.allow_file_delivery" size="small" @change="onFileDeliveryChange" />
+                  <t-switch v-model="formData.credentials.allow_file_delivery" size="small" />
                 </div>
               </div>
               <div class="setting-row">
@@ -979,12 +979,6 @@ function onPlatformChange(val: string | number | boolean) {
   }
   if (!channelNameTouched.value) {
     formData.value.name = defaultChannelName(String(val));
-  }
-}
-
-function onFileDeliveryChange(enabled: boolean | string | number) {
-  if (enabled === false) {
-    formData.value.credentials.allow_generated_files = false;
   }
 }
 

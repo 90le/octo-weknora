@@ -25,17 +25,31 @@ type fakeIMArtifactCollector struct {
 }
 
 func (f *fakeIMArtifactCollector) SnapshotIM(
-	context.Context, string, string, uint64, uint64,
+	context.Context, string, string, uint64, uint64, func(string) bool,
 ) (*appservice.IMArtifactSnapshot, error) {
 	f.snapshots++
 	return &appservice.IMArtifactSnapshot{}, nil
 }
 
 func (f *fakeIMArtifactCollector) CollectIM(
-	context.Context, *appservice.IMArtifactSnapshot, string,
+	_ context.Context, _ *appservice.IMArtifactSnapshot, _ string, selected func(string, bool) appservice.IMArtifactSelection,
 ) (types.MessageArtifacts, error) {
 	f.collects++
-	return f.artifacts, f.err
+	counts := map[string]int{}
+	for _, artifact := range f.artifacts {
+		counts[artifact.FileName]++
+	}
+	var result types.MessageArtifacts
+	for _, artifact := range f.artifacts {
+		relative := strings.TrimPrefix(artifact.SourcePath, "/workspace/output/")
+		if relative == "" {
+			relative = artifact.FileName
+		}
+		if selected(relative, counts[artifact.FileName] > 1) != appservice.IMArtifactNotSelected {
+			result = append(result, artifact)
+		}
+	}
+	return result, f.err
 }
 
 func (f *fakeIMArtifactCollector) ValidateIM(context.Context, *appservice.IMArtifactSnapshot, bool) error {
@@ -94,6 +108,7 @@ func TestIMArtifactTurnDeliversBoundedBinaryAndReportsPartialFailure(t *testing.
 	data := []byte{0, 1, 255, 2}
 	first := makeTestArtifact("example.pdf", data)
 	second := makeTestArtifact("example.txt", []byte("hello"))
+	private := makeTestArtifact("private.csv", []byte("private"))
 	scope := &ExecutionScope{
 		AccountID: "account", ScopeID: "scope", Revision: "r",
 		KnowledgeBaseIDs: []string{"kb"}, AllowFileDelivery: true,
@@ -102,11 +117,11 @@ func TestIMArtifactTurnDeliversBoundedBinaryAndReportsPartialFailure(t *testing.
 	agent := &types.CustomAgent{TenantID: 7}
 	agent.Config.SandboxConfigID = "cfg"
 	req := &qaRequest{
-		msg:     &IncomingMessage{UserID: "user", MessageID: "message", Content: "请生成文件并发送给我", Extra: map[string]string{}},
+		msg:     &IncomingMessage{UserID: "user", MessageID: "message", Content: "请生成文件并发送给我", ChatType: ChatTypeDirect, Extra: map[string]string{}},
 		channel: &IMChannel{TenantID: 7, Platform: "octo"}, channelID: "channel",
 		session: &types.Session{ID: "session", TenantID: 7}, agent: agent, adapter: adapter, scope: scope,
 	}
-	collector := &fakeIMArtifactCollector{artifacts: types.MessageArtifacts{first, second}}
+	collector := &fakeIMArtifactCollector{artifacts: types.MessageArtifacts{first, second, private}}
 	s := &Service{
 		artifactCollector: collector,
 		defaultFileSvc:    &memoryIMArtifactFiles{files: map[string][]byte{first.URL: data, second.URL: []byte("hello")}},
@@ -115,7 +130,7 @@ func TestIMArtifactTurnDeliversBoundedBinaryAndReportsPartialFailure(t *testing.
 	ctx = imArtifactTestGrant(ctx)
 	ctx = s.beginIMArtifactTurn(ctx, req)
 	message := &types.Message{ID: "answer"}
-	answer := s.finishIMArtifactTurn(ctx, message, "已整理：[PDF](sandbox:example.pdf)。")
+	answer := s.finishIMArtifactTurn(ctx, message, "已整理：[PDF](sandbox:example.pdf)、[文本](sandbox:example.txt)。")
 	require.Equal(t, 1, collector.snapshots)
 	require.Equal(t, 1, collector.collects)
 	require.Equal(t, []string{"example.pdf"}, adapter.sent)
@@ -126,13 +141,30 @@ func TestIMArtifactTurnDeliversBoundedBinaryAndReportsPartialFailure(t *testing.
 	require.Contains(t, answer, "文件发送状态未知，请先检查会话再重试：example.txt")
 }
 
+func TestIMGroupCreationWithoutSendDoesNotStartCapture(t *testing.T) {
+	scope := &ExecutionScope{AccountID: "a", ScopeID: "s", Revision: "r", KnowledgeBaseIDs: []string{"kb"}, AllowFileDelivery: true}
+	adapter := &artifactTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}}
+	collector := &fakeIMArtifactCollector{}
+	req := &qaRequest{
+		msg:     &IncomingMessage{UserID: "u", MessageID: "m", Content: "只生成 report.pdf，保存在沙箱", ChatType: ChatTypeGroup, Extra: map[string]string{}},
+		channel: &IMChannel{TenantID: 7, Platform: "octo"}, channelID: "channel",
+		session: &types.Session{ID: "session", TenantID: 7}, agent: &types.CustomAgent{TenantID: 7}, adapter: adapter, scope: scope,
+	}
+	s := &Service{artifactCollector: collector}
+	ctx := imArtifactTestGrant(s.businessContext(context.Background(), req, scope))
+	ctx = s.beginIMArtifactTurn(ctx, req)
+	_ = s.finishIMArtifactTurn(ctx, &types.Message{ID: "answer"}, "[报告](sandbox:report.pdf)")
+	require.Zero(t, collector.snapshots)
+	require.Empty(t, adapter.sent)
+}
+
 func TestIMArtifactTurnRechecksScopeAndContent(t *testing.T) {
 	scope := &ExecutionScope{AccountID: "a", ScopeID: "s", Revision: "r", KnowledgeBaseIDs: []string{"kb"}, AllowFileDelivery: true}
 	adapter := &artifactTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}}
 	agent := &types.CustomAgent{TenantID: 7}
 	agent.Config.SandboxConfigID = "cfg"
 	req := &qaRequest{
-		msg:     &IncomingMessage{UserID: "u", MessageID: "m", Content: "请发文件", Extra: map[string]string{}},
+		msg:     &IncomingMessage{UserID: "u", MessageID: "m", Content: "请发送 file.txt", ChatType: ChatTypeGroup, Extra: map[string]string{}},
 		channel: &IMChannel{TenantID: 7, Platform: "octo"}, channelID: "channel",
 		session: &types.Session{ID: "session", TenantID: 7}, agent: agent, adapter: adapter, scope: scope,
 	}
@@ -168,7 +200,7 @@ func TestIMFullOutputConnectsAgentCompletionToFileDelivery(t *testing.T) {
 	adapter := &artifactTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}}
 	agent := &types.CustomAgent{TenantID: 7, Config: types.CustomAgentConfig{AgentMode: types.AgentModeSmartReasoning}}
 	req := &qaRequest{
-		msg:     &IncomingMessage{UserID: "user", MessageID: "question", Content: "请生成 PDF 文件", Extra: map[string]string{}},
+		msg:     &IncomingMessage{UserID: "user", MessageID: "question", Content: "请生成 PDF 文件", ChatType: ChatTypeDirect, Extra: map[string]string{}},
 		channel: &IMChannel{TenantID: 7, Platform: "octo"}, channelID: "channel",
 		session: &types.Session{ID: "session", TenantID: 7}, agent: agent, adapter: adapter, scope: scope,
 	}
@@ -197,4 +229,86 @@ func TestIMFullOutputConnectsAgentCompletionToFileDelivery(t *testing.T) {
 	require.NotNil(t, saved)
 	require.Len(t, saved.Artifacts, 1)
 	require.True(t, saved.IsCompleted)
+}
+
+func TestIMGroupNaturalRequestUsesReferencedFiles(t *testing.T) {
+	scope := &ExecutionScope{AccountID: "a", ScopeID: "s", Revision: "r", KnowledgeBaseIDs: []string{"kb"}, AllowFileDelivery: true}
+	adapter := &artifactTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}}
+	report := makeTestArtifact("report.pdf", []byte("report"))
+	private := makeTestArtifact("private.csv", []byte("private"))
+	collector := &fakeIMArtifactCollector{artifacts: types.MessageArtifacts{report, private}}
+	req := &qaRequest{
+		msg:     &IncomingMessage{UserID: "u", MessageID: "m", Content: "请生成 PDF 文件并发送给我", ChatType: ChatTypeGroup, Extra: map[string]string{}},
+		channel: &IMChannel{TenantID: 7, Platform: "octo"}, channelID: "channel",
+		session: &types.Session{ID: "session", TenantID: 7}, agent: &types.CustomAgent{TenantID: 7}, adapter: adapter, scope: scope,
+	}
+	s := &Service{artifactCollector: collector, defaultFileSvc: &memoryIMArtifactFiles{files: map[string][]byte{report.URL: []byte("report"), private.URL: []byte("private")}}}
+	ctx := imArtifactTestGrant(s.businessContext(context.Background(), req, scope))
+	ctx = s.beginIMArtifactTurn(ctx, req)
+	answer := s.finishIMArtifactTurn(ctx, &types.Message{ID: "first"}, "[报告](sandbox:report.pdf) [明细](sandbox:private.csv)")
+	require.Equal(t, []string{"report.pdf"}, adapter.sent)
+	require.Contains(t, answer, "已发送文件")
+
+	req.msg.Content = "请发送 report.pdf"
+	ctx = imArtifactTestGrant(s.businessContext(context.Background(), req, scope))
+	ctx = s.beginIMArtifactTurn(ctx, req)
+	answer = s.finishIMArtifactTurn(ctx, &types.Message{ID: "second"}, "报告已准备。")
+	require.Equal(t, []string{"report.pdf", "report.pdf"}, adapter.sent)
+	require.Contains(t, answer, "已发送文件：report.pdf")
+}
+
+func TestIMGroupTemporaryAndAmbiguousNamesFailClosed(t *testing.T) {
+	scope := &ExecutionScope{AccountID: "a", ScopeID: "s", Revision: "r", KnowledgeBaseIDs: []string{"kb"}, AllowFileDelivery: true}
+	adapter := &artifactTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}}
+	one := makeTestArtifact("report.pdf", []byte("one"))
+	one.URL = "one"
+	one.SourcePath = "/workspace/output/a/report.pdf"
+	two := makeTestArtifact("report.pdf", []byte("two"))
+	two.URL = "two"
+	two.SourcePath = "/workspace/output/b/report.pdf"
+	temp := makeTestArtifact("draft.csv", []byte("tmp"))
+	temp.SourcePath = "/workspace/output/tmp/draft.csv"
+	collector := &fakeIMArtifactCollector{artifacts: types.MessageArtifacts{one, two, temp}}
+	req := &qaRequest{
+		msg:     &IncomingMessage{UserID: "u", MessageID: "m", Content: "请发送 report.pdf 和 draft.csv", ChatType: ChatTypeGroup, Extra: map[string]string{}},
+		channel: &IMChannel{TenantID: 7, Platform: "octo"}, channelID: "channel",
+		session: &types.Session{ID: "session", TenantID: 7}, agent: &types.CustomAgent{TenantID: 7}, adapter: adapter, scope: scope,
+	}
+	s := &Service{artifactCollector: collector, defaultFileSvc: &memoryIMArtifactFiles{files: map[string][]byte{"one": []byte("one"), "two": []byte("two"), temp.URL: []byte("tmp")}}}
+	ctx := imArtifactTestGrant(s.businessContext(context.Background(), req, scope))
+	ctx = s.beginIMArtifactTurn(ctx, req)
+	_ = s.finishIMArtifactTurn(ctx, &types.Message{ID: "first"}, "答复")
+	require.Empty(t, adapter.sent, "a basename cannot select multiple paths or an unrequested temporary path")
+
+	req.msg.Content = "请发送 a/report.pdf 和 b/report.pdf"
+	ctx = imArtifactTestGrant(s.businessContext(context.Background(), req, scope))
+	ctx = s.beginIMArtifactTurn(ctx, req)
+	_ = s.finishIMArtifactTurn(ctx, &types.Message{ID: "second"}, "答复")
+	require.Equal(t, []string{"report.pdf", "report.pdf"}, adapter.sent)
+	require.Equal(t, [][]byte{[]byte("one"), []byte("two")}, adapter.data)
+}
+
+func TestIMGroupAmbiguousRootNeedsAnExplicitRelativePath(t *testing.T) {
+	scope := &ExecutionScope{AccountID: "a", ScopeID: "s", Revision: "r", KnowledgeBaseIDs: []string{"kb"}, AllowFileDelivery: true}
+	adapter := &artifactTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}}
+	root := makeTestArtifact("report.pdf", []byte("root"))
+	root.URL, root.SourcePath = "root", "/workspace/output/report.pdf"
+	nested := makeTestArtifact("report.pdf", []byte("nested"))
+	nested.URL, nested.SourcePath = "nested", "/workspace/output/sub/report.pdf"
+	req := &qaRequest{
+		msg:     &IncomingMessage{UserID: "u", MessageID: "m", Content: "请发送 report.pdf", ChatType: ChatTypeGroup, Extra: map[string]string{}},
+		channel: &IMChannel{TenantID: 7, Platform: "octo"}, channelID: "channel",
+		session: &types.Session{ID: "session", TenantID: 7}, agent: &types.CustomAgent{TenantID: 7}, adapter: adapter, scope: scope,
+	}
+	s := &Service{artifactCollector: &fakeIMArtifactCollector{artifacts: types.MessageArtifacts{root, nested}}, defaultFileSvc: &memoryIMArtifactFiles{files: map[string][]byte{"root": []byte("root"), "nested": []byte("nested")}}}
+	ctx := imArtifactTestGrant(s.businessContext(context.Background(), req, scope))
+	ctx = s.beginIMArtifactTurn(ctx, req)
+	_ = s.finishIMArtifactTurn(ctx, &types.Message{ID: "first"}, "答复")
+	require.Empty(t, adapter.sent)
+	req.msg.Content = "请发送 ./report.pdf"
+	ctx = imArtifactTestGrant(s.businessContext(context.Background(), req, scope))
+	ctx = s.beginIMArtifactTurn(ctx, req)
+	_ = s.finishIMArtifactTurn(ctx, &types.Message{ID: "second"}, "答复")
+	require.Equal(t, []string{"report.pdf"}, adapter.sent)
+	require.Equal(t, [][]byte{[]byte("root")}, adapter.data)
 }
