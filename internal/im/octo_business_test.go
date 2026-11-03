@@ -2,12 +2,64 @@ package im
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/answerevidence"
 	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+type fileScopeTestAdapter struct {
+	*scopeTestAdapter
+	sends int
+}
+
+func (a *fileScopeTestAdapter) SendGeneratedFile(
+	ctx context.Context, _ *IncomingMessage, _ string, _ []byte, _ string,
+) error {
+	a.sends++
+	return octobusiness.ValidateMarkdownAuthority(ctx)
+}
+
+func TestBusinessMarkdownCapabilityFollowsFullCurrentScope(t *testing.T) {
+	base := &ExecutionScope{
+		AccountID: "account", ScopeID: "scope", KnowledgeBaseIDs: []string{"kb"}, Revision: "r",
+		AllowGeneratedFiles: true, AllowPublicWeb: true, CanManageScope: true,
+		ManageKnowledgeBaseIDs: []string{"kb"},
+	}
+	for _, change := range []func(*ExecutionScope){
+		func(s *ExecutionScope) { s.AllowGeneratedFiles = false },
+		func(s *ExecutionScope) { s.AllowPublicWeb = false },
+		func(s *ExecutionScope) { s.CanManageScope = false },
+		func(s *ExecutionScope) { s.Revision = "changed" },
+	} {
+		current := *base
+		adapter := &fileScopeTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: &current}}
+		msg := &IncomingMessage{UserID: "user", MessageID: "message", Content: "请发送文件", Extra: map[string]string{}}
+		req := &qaRequest{
+			msg: msg, channelID: "channel", channel: &IMChannel{TenantID: 1, Platform: "octo"}, adapter: adapter,
+		}
+		ctx := (&Service{}).businessContext(context.Background(), req, base)
+		if !octobusiness.HasMarkdownSink(ctx) {
+			t.Fatal("explicitly enabled file capability missing")
+		}
+		change(&current)
+		result, err := octobusiness.NewMarkdownFileTool().Execute(ctx, json.RawMessage(`{"content":"test"}`))
+		if err != nil || result.Success || adapter.sends != 0 {
+			t.Fatalf("file reached sender after scope change: result=%+v sends=%d err=%v", result, adapter.sends, err)
+		}
+	}
+	disabled := *base
+	disabled.AllowGeneratedFiles = false
+	adapter := &fileScopeTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: &disabled}}
+	req := &qaRequest{
+		msg: &IncomingMessage{Extra: map[string]string{}}, channel: &IMChannel{Platform: "octo"}, adapter: adapter,
+	}
+	if octobusiness.HasMarkdownSink((&Service{}).businessContext(context.Background(), req, &disabled)) {
+		t.Fatal("disabled capability exposed a file sink")
+	}
+}
 
 func TestBusinessConfirmationUsesNativeCommandNotRenamableChannelLabel(t *testing.T) {
 	command := "确认 OP-00000000-0000-0000-0000-000000000001"

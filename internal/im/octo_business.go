@@ -41,7 +41,16 @@ func (s *Service) businessContext(ctx context.Context, req *qaRequest, scope *Ex
 				}
 			}
 		}
-		p := octobusiness.Principal{CanCreateKnowledgeBase: current.AllowKnowledgeCreation, TenantID: req.channel.TenantID, AccountID: current.AccountID, ChannelID: req.channelID, ScopeID: current.ScopeID, ScopeName: current.ScopeName, GroupID: req.msg.Extra["octo_group_id"], SubareaID: req.msg.Extra["octo_subarea_id"], UserID: req.msg.UserID, UserName: current.SenderName, MessageID: req.msg.MessageID, MessageText: text, IsDirect: req.msg.ChatType == ChatTypeDirect, KnowledgeBaseIDs: current.KnowledgeBaseIDs, ManageKnowledgeBaseIDs: current.ManageKnowledgeBaseIDs, CanManageScope: current.CanManageScope, ReadIssueScopeIDs: current.ReadIssueScopeIDs, ReadIssueKnowledgeBaseIDs: current.ReadIssueKnowledgeBaseIDs}
+		p := octobusiness.Principal{
+			CanCreateKnowledgeBase: current.AllowKnowledgeCreation, AllowGeneratedFiles: current.AllowGeneratedFiles,
+			TenantID: req.channel.TenantID, AccountID: current.AccountID, ChannelID: req.channelID,
+			ScopeID: current.ScopeID, ScopeName: current.ScopeName, GroupID: req.msg.Extra["octo_group_id"],
+			SubareaID: req.msg.Extra["octo_subarea_id"], UserID: req.msg.UserID, UserName: current.SenderName,
+			MessageID: req.msg.MessageID, MessageText: text, IsDirect: req.msg.ChatType == ChatTypeDirect,
+			KnowledgeBaseIDs: current.KnowledgeBaseIDs, ManageKnowledgeBaseIDs: current.ManageKnowledgeBaseIDs,
+			CanManageScope: current.CanManageScope, ReadIssueScopeIDs: current.ReadIssueScopeIDs,
+			ReadIssueKnowledgeBaseIDs: current.ReadIssueKnowledgeBaseIDs,
+		}
 		if req.msg.FileKey != "" {
 			p.Attachments = []octobusiness.Attachment{{Name: req.msg.FileName, URL: req.msg.FileKey, Type: string(req.msg.MessageType)}}
 		}
@@ -59,9 +68,22 @@ func (s *Service) businessContext(ctx context.Context, req *qaRequest, scope *Ex
 	ctx = octobusiness.WithPrincipal(ctx, p)
 	ctx = octobusiness.WithRetrievalTrace(ctx)
 	if sender, ok := req.adapter.(generatedFileSender); ok {
-		ctx = octobusiness.WithReportSink(ctx, func(callCtx context.Context, file *octobusiness.ReportArtifact) error {
+		sink := func(callCtx context.Context, file *octobusiness.ReportArtifact) error {
 			return sender.SendGeneratedFile(callCtx, req.msg, file.Name, []byte(file.Content), file.ContentType)
-		})
+		}
+		ctx = octobusiness.WithReportSink(ctx, sink)
+		if scope.AllowGeneratedFiles {
+			expected := scopeFingerprint(scope)
+			validate := func(callCtx context.Context) error {
+				current, err := authorizeExecution(callCtx, req.adapter, req.channel, req.msg)
+				if err != nil || current == nil || !current.AllowGeneratedFiles ||
+					scopeFingerprint(current) != expected {
+					return ErrScopeDenied
+				}
+				return nil
+			}
+			ctx = octobusiness.WithMarkdownSink(ctx, sink, validate)
+		}
 	}
 	return ctx
 }

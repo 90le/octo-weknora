@@ -65,6 +65,19 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 	if got.AllowPublicWeb {
 		t.Fatal("new group unexpectedly authorized public web")
 	}
+	if got.AllowGeneratedFiles {
+		t.Fatal("generated files must default off")
+	}
+	fileConfig := `{"account_id":"account","bot_uid":"bot",` +
+		`"allowed_dm_uids":["owner"],"allow_generated_files":true}`
+	if err = db.Exec("UPDATE im_channels SET credentials=?", fileConfig).Error; err != nil {
+		t.Fatal(err)
+	}
+	fileEnabled, err := a.AuthorizeExecution(context.Background(), nil, msg)
+	if err != nil || !fileEnabled.AllowGeneratedFiles ||
+		im.ExecutionScopeFingerprint(got) == im.ExecutionScopeFingerprint(fileEnabled) {
+		t.Fatalf("generated-file grant did not change the effective scope: %+v %v", fileEnabled, err)
+	}
 	if err = db.Model(&octointegration.Scope{}).Where("id = ?", scope.ID).Update("allow_public_web", true).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -135,6 +148,18 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 	}
 	if dmScope.AllowPublicWeb {
 		t.Fatal("group public web policy leaked into private message")
+	}
+	if !dmScope.AllowGeneratedFiles {
+		t.Fatal("channel's generated-file grant missing in an authorized direct message")
+	}
+	fileConfig = `{"account_id":"account","bot_uid":"bot",` +
+		`"allowed_dm_uids":["owner"],"allow_generated_files":false}`
+	if err = db.Exec("UPDATE im_channels SET credentials=?", fileConfig).Error; err != nil {
+		t.Fatal(err)
+	}
+	fileRevoked, err := a.AuthorizeExecution(context.Background(), nil, msg)
+	if err != nil || fileRevoked.AllowGeneratedFiles {
+		t.Fatal("generated-file revocation not reflected in the current scope")
 	}
 	if err = db.Exec(`UPDATE octo_connections SET token='rotated'`).Error; err != nil {
 		t.Fatal(err)

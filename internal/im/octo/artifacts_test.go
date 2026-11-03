@@ -17,8 +17,10 @@ import (
 	"github.com/Tencent/WeKnora/internal/octobusiness"
 )
 
-const testCOSURL = "https://im-data-1255521909.cos.ap-beijing.myqcloud.com/reports/file?signature=storage-secret"
-const testCDNURL = "https://cdn.deepminer.com.cn/reports/file.html"
+const (
+	testCOSURL = "https://im-data-1255521909.cos.ap-beijing.myqcloud.com/reports/file?signature=storage-secret"
+	testCDNURL = "https://cdn.deepminer.com.cn/reports/file.html"
+)
 
 type fileRoundTripper func(*http.Request) (*http.Response, error)
 
@@ -27,9 +29,11 @@ func fileResponse(status int, body any) *http.Response {
 	data, _ := json.Marshal(body)
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(data)))}
 }
+
 func filePresignFixture(size int) map[string]any {
 	return map[string]any{"method": "PUT", "uploadUrl": testCOSURL, "downloadUrl": testCDNURL, "contentType": "application/octet-stream", "contentDisposition": "attachment; filename*=UTF-8''report%20generated.html", "maxFileSize": size, "expiresIn": 600, "expiredTime": 9999999999, "key": "reports/file"}
 }
+
 func generatedFileFixture(t *testing.T) (*Adapter, *im.IncomingMessage) {
 	t.Helper()
 	a, err := NewAdapter("bf_test", "bot")
@@ -178,6 +182,61 @@ func TestGeneratedFileRejectsChangedReportAuthorityAfterUpload(t *testing.T) {
 	})
 	if err := a.SendGeneratedFile(ctx, msg, "report.csv", []byte("data"), "text/csv"); !errors.Is(err, octobusiness.ErrDenied) {
 		t.Fatalf("report scope changed: %v", err)
+	}
+}
+
+func TestMarkdownToolUsesOriginalConversationAndStopsAfterRevocation(t *testing.T) {
+	for _, revoke := range []bool{false, true} {
+		t.Run(fmt.Sprint("revoke=", revoke), func(t *testing.T) {
+			a, msg := generatedFileFixture(t)
+			p := octobusiness.Principal{
+				TenantID: 1, AccountID: "account", ChannelID: "channel", ScopeID: "scope",
+				UserID: "user", MessageID: msg.MessageID, MessageText: "生成 Markdown 文件",
+				KnowledgeBaseIDs: []string{"one"}, AllowGeneratedFiles: true,
+			}
+			fresh := p
+			p.Validate = func(context.Context) (octobusiness.Principal, error) { return fresh, nil }
+			ctx := octobusiness.WithPrincipal(context.Background(), p)
+			ctx = octobusiness.WithMarkdownSink(ctx, func(
+				ctx context.Context, file *octobusiness.ReportArtifact,
+			) error {
+				return a.SendGeneratedFile(ctx, msg, file.Name, []byte(file.Content), file.ContentType)
+			}, func(context.Context) error { return nil })
+			var sends int
+			a.api.http.Transport = fileRoundTripper(func(r *http.Request) (*http.Response, error) {
+				switch r.Method {
+				case http.MethodGet:
+					return fileResponse(200, filePresignFixture(4)), nil
+				case http.MethodPut:
+					if revoke {
+						fresh.AllowGeneratedFiles = false
+					}
+					return fileResponse(200, nil), nil
+				case http.MethodPost:
+					var body struct {
+						Channel string `json:"channel_id"`
+						Payload struct {
+							Type int    `json:"type"`
+							Name string `json:"name"`
+						} `json:"payload"`
+					}
+					_ = json.NewDecoder(r.Body).Decode(&body)
+					if body.Channel != msg.ChatID || body.Payload.Type != 8 ||
+						body.Payload.Name != "knowledge-summary.md" {
+						t.Error("Markdown export was redirected or did not use a file message")
+					}
+					sends++
+					return fileResponse(200, map[string]string{"message_id": "2098355867442221058"}), nil
+				default:
+					t.Error("unexpected file request")
+					return fileResponse(500, nil), nil
+				}
+			})
+			result, err := octobusiness.NewMarkdownFileTool().Execute(ctx, json.RawMessage(`{"content":"data"}`))
+			if err != nil || result.Success == revoke || (revoke && sends != 0) || (!revoke && sends != 1) {
+				t.Fatalf("unexpected delivery: result=%+v sends=%d err=%v", result, sends, err)
+			}
+		})
 	}
 }
 

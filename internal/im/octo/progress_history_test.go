@@ -24,11 +24,11 @@ func TestProgressFinalIsCollapsedAndKeepsSafeObservedSteps(t *testing.T) {
 		true,
 		4*time.Second,
 	)
-	if data["traceExpanded"] != false || data["traceCollapsed"] != true || data["statusLabel"] != "预览待确认" {
+	if data["traceExpanded"] != false || data["traceCollapsed"] != true || data["statusLabel"] != "预览已生成" {
 		t.Fatalf("wrong terminal state: %#v", data)
 	}
 	raw, _ := json.Marshal(data)
-	for _, expected := range []string{"核对当前区域配置", "准备知识变更预览", "预览已生成，变更尚未执行", "用时 4 秒"} {
+	for _, expected := range []string{"核对当前区域配置", "准备知识变更预览", "操作状态以确认卡或最新回复为准", "用时 4 秒"} {
 		if !strings.Contains(string(raw), expected) {
 			t.Fatalf("missing real progress %q", expected)
 		}

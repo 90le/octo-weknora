@@ -78,6 +78,9 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	if err := octobusiness.ValidateReportAuthority(ctx); err != nil {
 		return a.fileFailure(ctx, in, "report_authority_changed", err)
 	}
+	if err := octobusiness.ValidateMarkdownAuthority(ctx); err != nil {
+		return a.fileFailure(ctx, in, "markdown_authority_changed", err)
+	}
 	if err := authorize(); err != nil {
 		return a.fileFailure(ctx, in, "scope_denied", err)
 	}
@@ -104,6 +107,9 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	// A slow presign request must not allow data to leave after access changes.
 	if err := octobusiness.ValidateReportAuthority(ctx); err != nil {
 		return a.fileFailure(ctx, in, "report_authority_changed", err)
+	}
+	if err := octobusiness.ValidateMarkdownAuthority(ctx); err != nil {
+		return a.fileFailure(ctx, in, "markdown_authority_changed", err)
 	}
 	if err = authorize(); err != nil {
 		return a.fileFailure(ctx, in, "scope_denied", err)
@@ -135,6 +141,9 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	// before disclosing its CDN reference to the original conversation.
 	if err := octobusiness.ValidateReportAuthority(ctx); err != nil {
 		return a.fileFailure(ctx, in, "report_authority_changed", err)
+	}
+	if err := octobusiness.ValidateMarkdownAuthority(ctx); err != nil {
+		return a.fileFailure(ctx, in, "markdown_authority_changed", err)
 	}
 	if err = authorize(); err != nil {
 		return a.fileFailure(ctx, in, "scope_denied", err)

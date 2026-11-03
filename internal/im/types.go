@@ -125,6 +125,7 @@ func SummarizeIMChannelsForRole(channels []IMChannel, role types.TenantRole) []I
 			}
 			public[key] = values
 		}
+		public["allow_generated_files"] = GetBool(config, "allow_generated_files")
 		out[i].PublicConfig = public
 	}
 	return out
@@ -203,6 +204,11 @@ func (ch *IMChannel) validateSessionMode() error {
 		config, err := ParseCredentials(ch.Credentials)
 		if err != nil || GetString(config, "account_id") == "" || GetString(config, "bot_uid") == "" {
 			return fmt.Errorf("Octo account_id and bot_uid required")
+		}
+		if value, exists := config["allow_generated_files"]; exists {
+			if _, ok := value.(bool); !ok {
+				return fmt.Errorf("invalid Octo generated file setting")
+			}
 		}
 		for _, key := range []string{"allowed_dm_uids", "allowed_bot_uids", "dm_knowledge_base_ids", "management_bot_uids"} {
 			if raw, exists := config[key]; exists {

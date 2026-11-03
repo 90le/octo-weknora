@@ -5,9 +5,24 @@ import (
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRegisterMarkdownToolRequiresAdmittedNativeSink(t *testing.T) {
+	kb := &types.KnowledgeBase{ID: "kb"}
+	svc := newToolSurfaceService(kb)
+	registry := tools.NewToolRegistry()
+	require.NoError(t, svc.registerTools(t.Context(), registry, toolSurfaceConfig(), nil, nil, "session"))
+	require.NotContains(t, registry.ListTools(), "octo_send_markdown")
+	ctx := octobusiness.WithMarkdownSink(t.Context(), func(context.Context, *octobusiness.ReportArtifact) error {
+		return nil
+	}, func(context.Context) error { return nil })
+	registry = tools.NewToolRegistry()
+	require.NoError(t, svc.registerTools(ctx, registry, toolSurfaceConfig(), nil, nil, "session"))
+	require.Contains(t, registry.ListTools(), "octo_send_markdown")
+}
 
 type toolSurfaceKBService struct {
 	fakeAgentKnowledgeBaseService

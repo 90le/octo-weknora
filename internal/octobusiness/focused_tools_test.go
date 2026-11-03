@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
@@ -124,6 +125,13 @@ func TestFocusedPreviewAliasesProposalAndKeepsNativeConfirmation(t *testing.T) {
 	require.Equal(t, row["id"], row["proposal_id"])
 	id := row["proposal_id"].(string)
 	require.True(t, strings.HasPrefix(id, "OP-"))
+	expiry, parseErr := time.Parse(time.RFC3339Nano, row["expires_at"].(string))
+	require.NoError(t, parseErr)
+	var stored Proposal
+	require.NoError(t, service.db.Where("id = ?", id).First(&stored).Error)
+	require.True(t, expiry.Equal(stored.ExpiresAt), "display conversion must not change the deadline")
+	require.Equal(t, expiry.In(time.FixedZone("北京时间", 8*60*60)).Format("2006-01-02 15:04:05")+"（北京时间）",
+		row["expires_at_display"])
 	require.Equal(t, []bool{true}, calls)
 	confirm := focusedToolByName(t, service, ToolKnowledgeConfirm)
 	payload, _ := json.Marshal(map[string]string{"proposal_id": id, "decision": "confirm"})
