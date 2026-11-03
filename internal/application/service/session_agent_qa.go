@@ -73,14 +73,14 @@ func (s *sessionService) AgentQA(
 		requests := types.IMSandboxRequestsFromContext(ctx)
 		grant, hasGrant := types.IMSandboxGrantFromContext(ctx)
 		if (requests.Shell || requests.Skills) && !hasGrant {
-			return errors.New("Octo sandbox: Agent must select a named remote sandbox")
+			return errors.New("octo sandbox: Agent must select a named remote sandbox")
 		}
 		if hasGrant && grant.SkillsRequested && !grant.AllowSkills {
-			return errors.New("Octo sandbox: selected Agent has no enabled Skills")
+			return errors.New("octo sandbox: selected Agent has no enabled Skills")
 		}
 		ctx, err = withIMSandboxConfigBaseline(ctx, s.sandboxPinner)
 		if err != nil {
-			return fmt.Errorf("Octo sandbox authorization: %w", err)
+			return fmt.Errorf("octo sandbox authorization: %w", err)
 		}
 		ctx, err = s.withIMSkillsCheck(ctx, agentConfig)
 		if err != nil {
@@ -88,7 +88,7 @@ func (s *sessionService) AgentQA(
 		}
 		ctx, err = withIMSandboxPolicy(ctx)
 		if err != nil {
-			return fmt.Errorf("Octo sandbox policy: %w", err)
+			return fmt.Errorf("octo sandbox policy: %w", err)
 		}
 		if hasGrant && (grant.AllowShell || grant.AllowSkills) {
 			if err := sandbox.RequireIMBoundedOutput(); err != nil {
@@ -105,7 +105,7 @@ func (s *sessionService) AgentQA(
 				s.sandboxPolicy,
 				withLiteDesktop(s.hostDesktop),
 			); err != nil {
-				return fmt.Errorf("Octo sandbox: %w", err)
+				return fmt.Errorf("octo sandbox: %w", err)
 			}
 		}
 	}

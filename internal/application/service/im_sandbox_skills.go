@@ -24,18 +24,18 @@ func (s *sessionService) approvedIMSkills(
 	selected []string,
 ) ([]*types.TenantSkillEntity, error) {
 	if s.sandboxConfigRepo == nil || s.tenantSkillRepo == nil {
-		return nil, errors.New("Octo sandbox: Skill catalog is unavailable")
+		return nil, errors.New("octo sandbox: Skill catalog is unavailable")
 	}
 	cfg, err := s.sandboxConfigRepo.GetByID(ctx, grant.TenantID, grant.ConfigID)
 	if err != nil || cfg == nil || cfg.Config == nil {
-		return nil, errors.New("Octo sandbox: selected Skill config is unavailable")
+		return nil, errors.New("octo sandbox: selected Skill config is unavailable")
 	}
 	if !sandbox.SkillImageActive(cfg.Config) {
 		return nil, nil
 	}
 	rows, err := s.tenantSkillRepo.ListSkillsByConfig(ctx, grant.TenantID, grant.ConfigID)
 	if err != nil {
-		return nil, fmt.Errorf("Octo sandbox: load approved Skills: %w", err)
+		return nil, fmt.Errorf("octo sandbox: load approved Skills: %w", err)
 	}
 	wanted := map[string]bool{}
 	for _, name := range selected {
@@ -55,10 +55,10 @@ func (s *sessionService) approvedIMSkills(
 			served.SandboxConfigID != grant.ConfigID ||
 			!sandbox.IsValidSkillName(served.Name) ||
 			seen[served.Name] {
-			return nil, errors.New("Octo sandbox: ambiguous Skill identity")
+			return nil, errors.New("octo sandbox: ambiguous Skill identity")
 		}
 		if strings.TrimSpace(served.BundleSHA256) == "" {
-			return nil, fmt.Errorf("Octo sandbox: Skill %q has no verifiable bundle digest", served.Name)
+			return nil, fmt.Errorf("octo sandbox: Skill %q has no verifiable bundle digest", served.Name)
 		}
 		seen[served.Name] = true
 		safe := *served
@@ -75,7 +75,7 @@ func imSkillFingerprint(rows []*types.TenantSkillEntity) ([32]byte, error) {
 	values := make([]entry, 0, len(rows))
 	for _, row := range rows {
 		if row == nil {
-			return [32]byte{}, errors.New("Octo sandbox: invalid Skill")
+			return [32]byte{}, errors.New("octo sandbox: invalid Skill")
 		}
 		values = append(
 			values,
@@ -98,7 +98,7 @@ func (s *sessionService) withIMSkillsCheck(ctx context.Context, cfg *types.Agent
 		return ctx, nil
 	}
 	if cfg == nil || !cfg.SkillsEnabled {
-		return nil, errors.New("Octo sandbox: Agent has no enabled Skills")
+		return nil, errors.New("octo sandbox: Agent has no enabled Skills")
 	}
 	// This immutable selection comes from the saved Agent admitted by IM,
 	// not from a request-supplied or later-mutated Agent copy.
@@ -143,7 +143,7 @@ func (s *sessionService) withIMSkillsCheck(ctx context.Context, cfg *types.Agent
 		return nil, err
 	}
 	if previous, ok := ctx.Value(imSkillFingerprintKey{}).([32]byte); ok && previous != fingerprint {
-		return nil, errors.New("Octo sandbox: Skill authorization changed")
+		return nil, errors.New("octo sandbox: Skill authorization changed")
 	}
 	ctx = context.WithValue(ctx, imSkillFingerprintKey{}, fingerprint)
 	return withIMSkillRevalidator(ctx, func(checkCtx context.Context) error {
@@ -153,7 +153,7 @@ func (s *sessionService) withIMSkillsCheck(ctx context.Context, cfg *types.Agent
 		}
 		sum, err := imSkillFingerprint(fresh)
 		if err != nil || sum != fingerprint {
-			return errors.New("Octo sandbox: Skill authorization changed")
+			return errors.New("octo sandbox: Skill authorization changed")
 		}
 		return nil
 	}), nil
@@ -171,7 +171,7 @@ func (s *agentService) authorizeIMSkillSource(ctx context.Context, sessionID str
 	}
 	check, ok := ctx.Value(imSkillRevalidatorKey{}).(imSkillRevalidator)
 	if !ok || check == nil {
-		return errors.New("Octo sandbox: Skill authorization unavailable")
+		return errors.New("octo sandbox: Skill authorization unavailable")
 	}
 	return check(ctx)
 }
@@ -192,7 +192,7 @@ func (s *agentService) authorizeIMSkill(
 			}
 		}
 	}
-	return fmt.Errorf("Octo sandbox: Skill %q is not approved for this Agent", name)
+	return fmt.Errorf("octo sandbox: Skill %q is not approved for this Agent", name)
 }
 
 func (s *agentService) authorizeIMSkillResource(
@@ -221,7 +221,7 @@ func (s *agentService) authorizeIMSkillResource(
 			}
 		}
 	}
-	return fmt.Errorf("Octo sandbox: Skill %q is not authorized", name)
+	return fmt.Errorf("octo sandbox: Skill %q is not authorized", name)
 }
 
 type imStagedSkillSource struct {
@@ -244,7 +244,7 @@ func (s imStagedSkillSource) ListSkillFiles(name string) ([]string, error) {
 }
 
 func (s imStagedSkillSource) GetSkillBasePath(string) (string, error) {
-	return "", errors.New("Octo Skill is staged per session")
+	return "", errors.New("octo Skill is staged per session")
 }
 
 func (s imStagedSkillSource) DiscoverSkills() ([]*skills.SkillMetadata, error) {

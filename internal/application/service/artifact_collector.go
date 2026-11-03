@@ -362,7 +362,7 @@ func (c *ArtifactCollector) SnapshotIM(
 	if c == nil || c.pinner == nil || c.resolver == nil || c.fileService == nil ||
 		strings.TrimSpace(sessionID) == "" || !hasNamedSandboxConfig(configID) ||
 		sessionTenantID == 0 || configTenantID == 0 {
-		return nil, errors.New("IM artifact capture unavailable")
+		return nil, errors.New("im artifact capture unavailable")
 	}
 	snapshot := &IMArtifactSnapshot{
 		sessionID: sessionID, configID: configID, sessionTenantID: sessionTenantID,
@@ -371,7 +371,7 @@ func (c *ArtifactCollector) SnapshotIM(
 	grant, err := ValidateIMSandboxPin(ctx, c.pinner, sessionID, true)
 	if err != nil || grant.ConfigID != configID || grant.TenantID != configTenantID ||
 		grant.TenantID != sessionTenantID {
-		return nil, errors.New("IM artifact grant unavailable")
+		return nil, errors.New("im artifact grant unavailable")
 	}
 	pin, err := c.pinner.Read(ctx, sessionID)
 	if err != nil {
@@ -389,12 +389,12 @@ func (c *ArtifactCollector) SnapshotIM(
 		return snapshot, nil
 	}
 	if pin.ConfigID != configID || pin.TenantOr(sessionTenantID) != configTenantID {
-		return nil, errors.New("IM sandbox pin does not match the authorized agent")
+		return nil, errors.New("im sandbox pin does not match the authorized agent")
 	}
 	snapshot.hadPin = true
 	dir, skip := c.CollectTarget(ctx, sessionID)
 	if skip {
-		return nil, errors.New("IM sandbox output directory unavailable")
+		return nil, errors.New("im sandbox output directory unavailable")
 	}
 	if dir == "" {
 		dir = skills.ArtifactOutputDir()
@@ -402,7 +402,7 @@ func (c *ArtifactCollector) SnapshotIM(
 	snapshot.dir = path.Clean(dir)
 	source := c.sessionSource(ctx, sessionID)
 	if source == nil {
-		return nil, errors.New("IM sandbox source unavailable")
+		return nil, errors.New("im sandbox source unavailable")
 	}
 	ctx = sandbox.WithSessionFileOperation(ctx)
 	entries, err := source.ListSessionFiles(ctx, sessionID, snapshot.dir)
@@ -457,12 +457,12 @@ func (c *ArtifactCollector) SnapshotIM(
 // each stage of external delivery. It never creates a sandbox.
 func (c *ArtifactCollector) ValidateIM(ctx context.Context, snapshot *IMArtifactSnapshot, allowCreate bool) error {
 	if c == nil || snapshot == nil {
-		return errors.New("IM artifact snapshot unavailable")
+		return errors.New("im artifact snapshot unavailable")
 	}
 	grant, err := ValidateIMSandboxPin(ctx, c.pinner, snapshot.sessionID, allowCreate)
 	if err != nil || grant.ConfigID != snapshot.configID || grant.TenantID != snapshot.configTenantID ||
 		grant.TenantID != snapshot.sessionTenantID {
-		return errors.New("IM artifact grant changed")
+		return errors.New("im artifact grant changed")
 	}
 	return nil
 }
@@ -483,7 +483,7 @@ func (c *ArtifactCollector) CollectIM(
 	selected func(string, bool) IMArtifactSelection,
 ) (types.MessageArtifacts, error) {
 	if c == nil || c.pinner == nil || snapshot == nil || messageID == "" || selected == nil {
-		return nil, errors.New("IM artifact snapshot unavailable")
+		return nil, errors.New("im artifact snapshot unavailable")
 	}
 	if err := c.ValidateIM(ctx, snapshot, true); err != nil {
 		return nil, err
@@ -499,18 +499,18 @@ func (c *ArtifactCollector) CollectIM(
 		return nil, err
 	}
 	if pin.ConfigID != snapshot.configID || pin.TenantOr(snapshot.sessionTenantID) != snapshot.configTenantID {
-		return nil, errors.New("IM sandbox pin changed during the turn")
+		return nil, errors.New("im sandbox pin changed during the turn")
 	}
 	dir, skip := c.CollectTarget(ctx, snapshot.sessionID)
 	if skip {
-		return nil, errors.New("IM sandbox output directory unavailable")
+		return nil, errors.New("im sandbox output directory unavailable")
 	}
 	if dir == "" {
 		dir = skills.ArtifactOutputDir()
 	}
 	dir = path.Clean(dir)
 	if snapshot.hadPin && snapshot.dir != dir {
-		return nil, errors.New("IM sandbox output directory changed during the turn")
+		return nil, errors.New("im sandbox output directory changed during the turn")
 	}
 	approved := func(entry sandbox.RemoteDirEntry, ambiguous bool) IMArtifactSelection {
 		if !validIMArtifactEntry(dir, entry) {
@@ -547,7 +547,7 @@ func (c *ArtifactCollector) CollectIM(
 	current, err := c.pinner.Read(ctx, snapshot.sessionID)
 	if err != nil || c.ValidateIM(ctx, snapshot, false) != nil || current.ConfigID != snapshot.configID ||
 		current.TenantOr(snapshot.sessionTenantID) != snapshot.configTenantID {
-		return nil, errors.New("IM sandbox pin changed while collecting artifacts")
+		return nil, errors.New("im sandbox pin changed while collecting artifacts")
 	}
 	return artifacts, collectErr
 }
@@ -615,7 +615,7 @@ func (c *ArtifactCollector) collect(
 		logger.Warnf(ctx, "[ArtifactCollector] list sandbox files failed: session=%s dir=%s err=%v",
 			sessionID, outputDir, err)
 		if filter != nil {
-			return nil, errors.New("IM artifact listing failed")
+			return nil, errors.New("im artifact listing failed")
 		}
 		return nil, nil
 	}

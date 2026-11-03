@@ -238,7 +238,7 @@ func ReconcileIMSandboxBeforeTurn(
 		return err
 	}
 	if resolver == nil {
-		return errors.New("Octo sandbox: binding resolver unavailable")
+		return errors.New("octo sandbox: binding resolver unavailable")
 	}
 	pin, err := pinner.Read(ctx, sessionID)
 	if err != nil {
@@ -250,7 +250,7 @@ func ReconcileIMSandboxBeforeTurn(
 	}
 	backend, ok := manager.(*sandbox.SessionBoundManager)
 	if !ok || backend.GetType() != sandbox.SandboxTypeDocker {
-		return errors.New("Octo sandbox: isolated Docker manager required")
+		return errors.New("octo sandbox: isolated Docker manager required")
 	}
 	_, err = backend.QuiesceIMSession(ctx, sessionID)
 	if errors.Is(err, sandbox.ErrIMSandboxNotFound) {
@@ -269,9 +269,7 @@ func ReconcileIMSandboxBeforeTurn(
 
 // ErrIMSandboxBaselineNotEmpty means a pin or underlying session binding
 // exists; callers must not treat its previous output as an empty baseline.
-//
-//nolint:staticcheck // Preserve existing error text.
-var ErrIMSandboxBaselineNotEmpty = errors.New("Octo sandbox: existing session binding prevents an empty baseline")
+var ErrIMSandboxBaselineNotEmpty = errors.New("octo sandbox: existing session binding prevents an empty baseline")
 
 // ValidateIMSandboxEmptyBaseline permits an empty pre-turn snapshot only when
 // both the DB pin and authoritative sandbox binding are definitely absent.
@@ -288,7 +286,7 @@ func ValidateIMSandboxEmptyBaseline(
 		return err
 	}
 	if resolver == nil {
-		return errors.New("Octo sandbox: binding resolver unavailable")
+		return errors.New("octo sandbox: binding resolver unavailable")
 	}
 	pin, err := pinner.Read(ctx, sessionID)
 	if err != nil {
@@ -303,7 +301,7 @@ func ValidateIMSandboxEmptyBaseline(
 	}
 	backend, ok := manager.(*sandbox.SessionBoundManager)
 	if !ok || backend.GetType() != sandbox.SandboxTypeDocker {
-		return errors.New("Octo sandbox: isolated Docker manager required")
+		return errors.New("octo sandbox: isolated Docker manager required")
 	}
 	_, err = backend.EnsureIMSession(ctx, sessionID, false)
 	if errors.Is(err, sandbox.ErrIMSandboxNotFound) {
@@ -370,7 +368,7 @@ func (m *imGuardedSandbox) revalidate(ctx context.Context, sessionID string) err
 	if grant.AllowSkills {
 		verifier, ok := ctx.Value(imSkillRevalidatorKey{}).(imSkillRevalidator)
 		if !ok || verifier == nil {
-			return errors.New("Octo sandbox: Skill authorization unavailable")
+			return errors.New("octo sandbox: Skill authorization unavailable")
 		}
 		if err := verifier(ctx); err != nil {
 			return err
@@ -458,7 +456,7 @@ func (m *imGuardedSandbox) withAuthorizationWatch(
 							err = errors.Join(err, sandbox.ErrIMStopUnconfirmed)
 						}
 					}
-					finished <- fmt.Errorf("Octo sandbox: authorization changed or could not be checked: %w", err)
+					finished <- fmt.Errorf("octo sandbox: authorization changed or could not be checked: %w", err)
 					return
 				}
 			}
@@ -513,7 +511,7 @@ func (m *imGuardedSandbox) GetType() sandbox.SandboxType  { return sandbox.Sandb
 func (m *imGuardedSandbox) GetSandbox() sandbox.Sandbox   { return nil }
 func (m *imGuardedSandbox) Cleanup(context.Context) error { return nil }
 func (m *imGuardedSandbox) Execute(context.Context, *sandbox.ExecuteConfig) (*sandbox.ExecuteResult, error) {
-	return nil, errors.New("Octo sandbox: use the guarded session execution capability")
+	return nil, errors.New("octo sandbox: use the guarded session execution capability")
 }
 func (m *imGuardedSandbox) SessionShellExecutor() sandbox.SessionShellExecutor { return m }
 func (m *imGuardedSandbox) SessionFileStore() sandbox.SessionFileStore         { return m }
@@ -591,7 +589,7 @@ func (m *imGuardedSandbox) ListSessionFiles(ctx context.Context, sid, p string) 
 
 func (m *imGuardedSandbox) StatSessionFile(ctx context.Context, sid, p string) (*sandbox.RemoteStatEntry, error) {
 	if len(p) > 4096 {
-		return nil, errors.New("Octo sandbox: path is too long")
+		return nil, errors.New("octo sandbox: path is too long")
 	}
 	safe, id, done, err := m.guard(ctx, sid)
 	if err != nil {
@@ -633,10 +631,10 @@ func (m *imGuardedSandbox) readSessionFileBounded(
 	outputOnly bool,
 ) ([]byte, error) {
 	if maxBytes <= 0 || maxBytes > imMaxFileDeliveryBytes || len(p) > 4096 || strings.ContainsAny(p, "\\\x00") {
-		return nil, errors.New("Octo sandbox: invalid bounded file read")
+		return nil, errors.New("octo sandbox: invalid bounded file read")
 	}
 	if outputOnly && (!path.IsAbs(p) || path.Clean(p) != p || !strings.HasPrefix(p, sandbox.SessionOutputRoot+"/")) {
-		return nil, errors.New("Octo sandbox: file must be under this session's output directory")
+		return nil, errors.New("octo sandbox: file must be under this session's output directory")
 	}
 	safe, id, done, err := m.guard(ctx, sid)
 	if err != nil {
@@ -653,7 +651,7 @@ func (m *imGuardedSandbox) readSessionFileBounded(
 		ReadSessionFileBounded(context.Context, string, string, int64) ([]byte, error)
 	})
 	if !ok {
-		return nil, errors.New("Octo sandbox: bounded file reading is unavailable")
+		return nil, errors.New("octo sandbox: bounded file reading is unavailable")
 	}
 	var data []byte
 	err = m.withAuthorizationWatch(safe, sid, id, true, func(runCtx context.Context) error {
@@ -665,7 +663,7 @@ func (m *imGuardedSandbox) readSessionFileBounded(
 		return nil, err
 	}
 	if int64(len(data)) > maxBytes {
-		return nil, errors.New("Octo sandbox: file exceeded bounded read limit")
+		return nil, errors.New("octo sandbox: file exceeded bounded read limit")
 	}
 	return data, nil
 }

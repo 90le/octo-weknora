@@ -311,8 +311,7 @@ func (s *agentService) CreateAgentEngine(
 		skillsManager, err := s.initializeSkillsManager(ctx, sessionID, config, toolRegistry)
 		if err != nil {
 			if types.HasIMKnowledgeScope(ctx) && config.SkillsEnabled {
-				//nolint:staticcheck // Preserve existing error text.
-				return nil, fmt.Errorf("Octo sandbox: initialize Skills: %w", err)
+				return nil, fmt.Errorf("octo sandbox: initialize Skills: %w", err)
 			}
 			logger.Warnf(ctx, "Failed to initialize skills manager: %v", err)
 		} else if skillsManager != nil {
@@ -783,8 +782,7 @@ func (s *agentService) initializeSkillsManager(
 		if types.HasIMKnowledgeScope(ctx) && config.SkillsEnabled {
 			runtime, ok := sandboxMgr.(*imGuardedSandbox)
 			if !ok {
-				//nolint:staticcheck // Preserve existing error text.
-				return nil, errors.New("Octo sandbox: guarded Skill backend unavailable")
+				return nil, errors.New("octo sandbox: guarded Skill backend unavailable")
 			}
 			if len(config.TenantSkills) > 0 {
 				authorize := func(callCtx context.Context, name string) error {
@@ -836,7 +834,7 @@ func (s *agentService) tenantSkillSource(
 		}
 		if types.HasIMKnowledgeScope(ctx) && (strings.TrimSpace(row.BundleSHA256) == "" ||
 			!archiveMatchesSHA(archive, strings.TrimSpace(row.BundleSHA256))) {
-			return nil, errors.New("Octo sandbox: Skill bundle digest mismatch")
+			return nil, errors.New("octo sandbox: Skill bundle digest mismatch")
 		}
 		return archive, nil
 	})
