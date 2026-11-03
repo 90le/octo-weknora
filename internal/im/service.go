@@ -365,8 +365,7 @@ type Service struct {
 	// redis is the optional Redis client for distributed state (dedup, rate
 	// limiting, leader election, cross-instance /stop). When nil the service
 	// falls back to local in-memory state (single-instance / Lite mode).
-	redis          *redis.Client
-	localTurnLocks imTurnLocks
+	redis *redis.Client
 
 	// instanceID uniquely identifies this service instance for leader election.
 	instanceID string
@@ -2046,30 +2045,13 @@ func (s *Service) persistIMLastRequestState(ctx context.Context, sessionID, agen
 // It is called by qaQueue workers and must not block indefinitely.
 func (s *Service) executeQARequest(req *qaRequest) {
 	defer req.cancel()
-	if req.channel != nil && req.channel.Platform == "octo" && req.scope != nil && req.session != nil && (req.scope.AllowSandboxShell || req.scope.AllowSandboxSkills) {
-		err := s.withIMSessionTurnLock(req.ctx, req.session, func(lockedCtx context.Context) error {
-			locked := *req
-			locked.ctx = lockedCtx
-			s.executeQARequestCore(&locked)
-			return nil
-		})
-		if err != nil && req.ctx.Err() == nil {
-			logger.Warnf(req.ctx, "[IM] sandbox session lock unavailable: %v", err)
-		}
-		return
-	}
-	s.executeQARequestCore(req)
-}
-
-func (s *Service) executeQARequestCore(req *qaRequest) {
-	ctx := req.ctx
 	if lifecycle, ok := req.adapter.(interface {
 		ExecutionFinished(context.Context, *IncomingMessage)
 	}); ok {
 		defer lifecycle.ExecutionFinished(req.ctx, req.msg)
 	}
-	if req.channel != nil && req.channel.Platform == "octo" && req.scope != nil &&
-		req.session != nil && (req.scope.AllowFileDelivery || req.scope.AllowSandboxShell || req.scope.AllowSandboxSkills) {
+	if req.channel != nil && req.channel.Platform == "octo" && req.scope != nil && req.session != nil &&
+		(req.scope.AllowFileDelivery || req.scope.AllowSandboxShell || req.scope.AllowSandboxSkills) {
 		entered := false
 		err := s.withIMSessionTurnLock(req.ctx, req.session, func(lockedCtx context.Context) error {
 			entered = true
