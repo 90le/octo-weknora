@@ -137,17 +137,49 @@ func (p *progressCard) Report(stage string) {
 		return
 	}
 	p.mu.Lock()
-	if len(p.history) == 0 || p.history[len(p.history)-1] != stage {
-		p.history = append(p.history, stage)
-		if len(p.history) > 6 {
-			p.history = append([]string{"earlier"}, p.history[len(p.history)-5:]...)
-		}
-	}
+	p.history = compactProgressStage(p.history, stage)
 	p.mu.Unlock()
 	select {
 	case p.updates <- struct{}{}:
 	default:
 	}
+}
+
+// Keep one entry per invocation rather than displaying its start and finish as
+// separate steps. A retry of the same failed step is retained as one entry.
+func compactProgressStage(history []string, stage string) []string {
+	if _, _, ok := progressStageText(stage); !ok {
+		return history
+	}
+	if len(history) > 0 {
+		last := history[len(history)-1]
+		if last == stage {
+			return history
+		}
+		base, outcome, _ := strings.Cut(stage, ":")
+		previousBase, previousOutcome, _ := strings.Cut(last, ":")
+		if base == previousBase && base != "earlier" {
+			switch {
+			case previousOutcome == "" && (outcome == "done" || outcome == "failed"):
+				history[len(history)-1] = stage
+				return history
+			case previousOutcome == "failed" && outcome == "":
+				history[len(history)-1] = base + ":retry"
+				return history
+			case previousOutcome == "retry" && (outcome == "done" || outcome == "failed"):
+				if outcome == "done" {
+					stage = base + ":retried"
+				}
+				history[len(history)-1] = stage
+				return history
+			}
+		}
+	}
+	history = append(history, stage)
+	if len(history) > 6 {
+		history = append([]string{"earlier"}, history[len(history)-5:]...)
+	}
+	return history
 }
 
 func (p *progressCard) progressHistory() []string {
@@ -230,6 +262,10 @@ func progressStageText(stage string) (string, string, bool) {
 		return label + "步骤已返回", "Good", true
 	case "failed":
 		return label + "步骤未成功", "Attention", true
+	case "retry":
+		return "正在重试" + label, "Accent", true
+	case "retried":
+		return label + "步骤已返回（重试后）", "Good", true
 	default:
 		return "", "", false
 	}
@@ -237,23 +273,40 @@ func progressStageText(stage string) (string, string, bool) {
 
 func progressData(id, state string, history []string, waiting bool, elapsed time.Duration) map[string]any {
 	title, detail, tone := "处理中", "已收到请求，正在处理", "Accent"
-	if len(history) > 6 {
-		history = history[len(history)-6:]
+	var compact []string
+	for _, stage := range history {
+		compact = compactProgressStage(compact, stage)
 	}
 	phases := make([]any, 0, 6)
-	for _, stage := range history {
+	for _, stage := range compact {
 		text, stepTone, ok := progressStageText(stage)
 		if !ok {
 			continue
 		}
 		detail = text
+		hint := "处理仍在进行"
+		switch {
+		case stage == "earlier":
+			hint = "仅显示最近的处理步骤"
+		case strings.HasSuffix(stage, ":retried"):
+			hint = "已自动重试，结果以最终答复为准"
+		case strings.HasSuffix(stage, ":done"):
+			hint = "调用已返回，结果以最终答复为准"
+		case strings.HasSuffix(stage, ":failed"):
+			hint = "本步骤未成功，详情以最终答复为准"
+		case strings.HasSuffix(stage, ":retry"):
+			hint = "正在自动重试"
+		}
+		if stage == "answer" && state == "completed" {
+			text, stepTone, hint = "答复已整理", "Good", "最终答复已发送"
+		}
 		phases = append(phases, map[string]any{"thought": text, "actions": []any{
-			map[string]any{"tool": "处理步骤", "detail": text, "statusGlyph": "●", "statusTone": stepTone},
+			map[string]any{"tool": "说明", "detail": hint, "statusGlyph": "●", "statusTone": stepTone},
 		}})
 	}
 	if len(phases) == 0 {
 		phases = []any{map[string]any{"thought": "已收到请求", "actions": []any{
-			map[string]any{"tool": "处理步骤", "detail": detail, "statusGlyph": "●", "statusTone": "Accent"},
+			map[string]any{"tool": "说明", "detail": "正在准备处理", "statusGlyph": "●", "statusTone": "Accent"},
 		}}}
 	}
 	switch state {
@@ -412,16 +465,30 @@ func (p *progressCard) run(ctx context.Context) {
 				dirty = false
 			}
 		case result := <-p.finish:
-			state := string(result)
-			if state != "completed" && state != "stopped" {
-				state = "error"
-			}
-			edit(state, false)
+			edit(progressResultState(result), false)
 			return
 		case <-ctx.Done():
-			edit("error", false)
+			// Finish is queued before the request's deferred cancellation. Both
+			// channels can be ready at once; prefer the actual delivery result.
+			edit(p.resultAfterCancellation(), false)
 			return
 		}
+	}
+}
+
+func progressResultState(result im.ProcessingResult) string {
+	if result == im.ProcessingCompleted || result == im.ProcessingStopped {
+		return string(result)
+	}
+	return "error"
+}
+
+func (p *progressCard) resultAfterCancellation() string {
+	select {
+	case result := <-p.finish:
+		return progressResultState(result)
+	default:
+		return "error"
 	}
 }
 

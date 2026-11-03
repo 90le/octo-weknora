@@ -136,7 +136,7 @@ func (a *Adapter) finishConfirmationCard(ctx context.Context, card confirmationC
 	// completed proposal may instead contain an execution result, so include it
 	// only when the same strict preview validation succeeds.
 	if preview, ok := confirmationPreview(&proposal); ok {
-		body = append(body, map[string]any{"type": "TextBlock", "text": preview, "wrap": true})
+		body = append(body, confirmationPreviewBlocks(preview)...)
 	}
 	cardBody := map[string]any{
 		"type": "AdaptiveCard", "version": "1.5",
