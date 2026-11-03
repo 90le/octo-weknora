@@ -191,7 +191,8 @@ func imQAFailureReply(err error) string {
 func imQAFailureReplyForContext(ctx context.Context, err error) string {
 	answer := imQAFailureReply(err)
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
-	if ok && (grant.AllowShell || grant.AllowSkills) && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+	if ok && (grant.AllowShell || grant.AllowSkills) &&
+		(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 		return answer + "\n未完成的沙箱临时文件可能丢失；已交付的文件不受影响。"
 	}
 	return answer
@@ -2727,7 +2728,11 @@ func waitForIMSandboxQuiescence(ctx context.Context) {
 		if err == nil {
 			return
 		}
-		logger.Warnf(context.WithoutCancel(ctx), "[IM] sandbox cleanup is unconfirmed; retaining session turn lock: %v", err)
+		logger.Warnf(
+			context.WithoutCancel(ctx),
+			"[IM] sandbox cleanup is unconfirmed; retaining session turn lock: %v",
+			err,
+		)
 		time.Sleep(time.Second)
 	}
 }

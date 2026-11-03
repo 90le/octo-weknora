@@ -277,7 +277,10 @@ func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint6
 			CanManageScope: canManage, AllowKnowledgeCreation: canManage && stored.AllowKnowledgeCreation,
 			AllowPublicWeb: stored.AllowPublicWeb, AllowGeneratedFiles: im.GetBool(config, "allow_generated_files"),
 			AllowFileDelivery: im.GetExplicitBool(config, "allow_file_delivery"),
-			AllowSandboxShell: im.GetExplicitBool(config, "allow_sandbox_shell"), AllowSandboxSkills: im.GetExplicitBool(config, "allow_sandbox_skills"),
+			AllowSandboxShell: im.GetExplicitBool(
+				config,
+				"allow_sandbox_shell",
+			), AllowSandboxSkills: im.GetExplicitBool(config, "allow_sandbox_skills"),
 			Revision: fmt.Sprint(channel.ID, channel.AgentID, connection.UpdatedAt, stored.ID), SenderName: senderName,
 		}
 		for _, binding := range bindings {

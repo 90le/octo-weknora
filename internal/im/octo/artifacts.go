@@ -44,7 +44,10 @@ func (e *fileFailure) Unwrap() error { return e.cause }
 // DeliveryOutcome distinguishes a known pre-send failure from an
 // unacknowledged send, where the server may already have accepted the message.
 func (e *fileFailure) DeliveryOutcome() string {
-	if e.code == "send_failed" || e.code == "send_not_acknowledged" || e.code == "delivery_uncertain" || e.code == "journal_result_unavailable" || e.code == "upload_unavailable" || strings.HasPrefix(e.code, "upload_http_") {
+	if e.code == "send_failed" || e.code == "send_not_acknowledged" || e.code == "delivery_uncertain" ||
+		e.code == "journal_result_unavailable" ||
+		e.code == "upload_unavailable" ||
+		strings.HasPrefix(e.code, "upload_http_") {
 		return "unknown"
 	}
 	return "failed"
@@ -102,7 +105,8 @@ func validGeneratedFilename(name string) bool {
 // the PUT. Supply portable Office defaults when the OS MIME database is sparse.
 func generatedFileContentType(name, supplied string) string {
 	if len(supplied) <= 512 {
-		if mediaType, params, err := mime.ParseMediaType(supplied); err == nil && mediaType != "application/octet-stream" {
+		if mediaType, params, err := mime.ParseMediaType(supplied); err == nil &&
+			mediaType != "application/octet-stream" {
 			if formatted := mime.FormatMediaType(mediaType, params); formatted != "" {
 				return formatted
 			}
@@ -147,7 +151,14 @@ func (a *Adapter) SendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	return a.sendGeneratedFile(ctx, in, name, data, contentType, func() error { _, err := a.AuthorizeExecution(ctx, nil, in); return err })
 }
 
-func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage, name string, data []byte, contentType string, authorize func() error) (resultErr error) {
+func (a *Adapter) sendGeneratedFile(
+	ctx context.Context,
+	in *im.IncomingMessage,
+	name string,
+	data []byte,
+	contentType string,
+	authorize func() error,
+) (resultErr error) {
 	if in == nil || len(data) == 0 || len(data) > maxGeneratedFileBytes || !validGeneratedFilename(name) {
 		return a.fileFailure(ctx, in, "invalid_file", nil)
 	}
@@ -173,7 +184,17 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	}
 
 	contentHash := sha256.Sum256(data)
-	identity, _ := json.Marshal([]string{strconv.FormatUint(a.tenantID, 10), a.channelID, strconv.Itoa(kind), target, in.MessageID, name, hex.EncodeToString(contentHash[:])})
+	identity, _ := json.Marshal(
+		[]string{
+			strconv.FormatUint(a.tenantID, 10),
+			a.channelID,
+			strconv.Itoa(kind),
+			target,
+			in.MessageID,
+			name,
+			hex.EncodeToString(contentHash[:]),
+		},
+	)
 	clientMessageID := uuid.NewSHA1(uuid.NameSpaceOID, identity).String()
 	fileKeyHash := sha256.Sum256(identity)
 	fileKey := hex.EncodeToString(fileKeyHash[:])
@@ -189,7 +210,12 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 		}
 		return a.fileFailure(ctx, in, "journal_unavailable", nil)
 	}
-	entry := fileDeliveryEntry{FileKey: fileKey, FileName: name, ContentHash: hex.EncodeToString(contentHash[:]), ClientMsgNo: clientMessageID}
+	entry := fileDeliveryEntry{
+		FileKey:     fileKey,
+		FileName:    name,
+		ContentHash: hex.EncodeToString(contentHash[:]),
+		ClientMsgNo: clientMessageID,
+	}
 	alreadySent, err := journal.reserve(ctx, turn, owner, entry)
 	if err != nil {
 		if errors.Is(err, errFileDeliveryUncertain) || errors.Is(err, errFileDeliveryFenced) {
@@ -223,12 +249,23 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 		}
 	}()
 
-	query := url.Values{"filename": []string{name}, "fileSize": []string{strconv.Itoa(len(data))}, "contentType": []string{generatedFileContentType(name, contentType)}}
+	query := url.Values{
+		"filename":    []string{name},
+		"fileSize":    []string{strconv.Itoa(len(data))},
+		"contentType": []string{generatedFileContentType(name, contentType)},
+	}
 	var signed filePresign
 	if err = a.api.request(ctx, http.MethodGet, "/v1/bot/upload/presigned?"+query.Encode(), nil, &signed); err != nil {
 		return a.fileFailure(ctx, in, "presign_failed", nil)
 	}
-	if signed.Method != http.MethodPut || signed.MaxFileSize != int64(len(data)) || !validFileURL(signed.UploadURL, true) || !validFileURL(signed.DownloadURL, false) || signed.ContentType == "" || len(signed.ContentType) > 512 || len(signed.ContentDisposition) > 4096 || !validSignedFileHeader(signed.ContentType) || !validSignedFileHeader(signed.ContentDisposition) {
+	if signed.Method != http.MethodPut || signed.MaxFileSize != int64(len(data)) ||
+		!validFileURL(signed.UploadURL, true) ||
+		!validFileURL(signed.DownloadURL, false) ||
+		signed.ContentType == "" ||
+		len(signed.ContentType) > 512 ||
+		len(signed.ContentDisposition) > 4096 ||
+		!validSignedFileHeader(signed.ContentType) ||
+		!validSignedFileHeader(signed.ContentDisposition) {
 		return a.fileFailure(ctx, in, "presign_invalid", nil)
 	}
 	// A slow presign request must not allow data to leave after access changes.
@@ -318,7 +355,17 @@ func (a *Adapter) sendGeneratedFile(ctx context.Context, in *im.IncomingMessage,
 	if err = authorize(); err != nil {
 		return abortBeforeSend("scope_denied", err)
 	}
-	err = a.api.post(ctx, "/v1/bot/sendMessage", map[string]any{"channel_id": target, "channel_type": kind, "client_msg_no": clientMessageID, "payload": payload}, &result)
+	err = a.api.post(
+		ctx,
+		"/v1/bot/sendMessage",
+		map[string]any{
+			"channel_id":    target,
+			"channel_type":  kind,
+			"client_msg_no": clientMessageID,
+			"payload":       payload,
+		},
+		&result,
+	)
 	if err != nil {
 		_ = finish("unknown", "", "send_failed")
 		return a.fileFailure(ctx, in, "send_failed", nil)

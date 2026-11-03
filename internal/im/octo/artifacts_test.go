@@ -36,15 +36,19 @@ func (transportTestFileJournal) start(context.Context, fileTurn, string) error {
 func (transportTestFileJournal) recovery(context.Context, fileTurn) (bool, bool, error) {
 	return true, false, nil
 }
+
 func (transportTestFileJournal) reserve(context.Context, fileTurn, string, fileDeliveryEntry) (bool, error) {
 	return false, nil
 }
+
 func (transportTestFileJournal) markUploading(context.Context, fileTurn, string, string) error {
 	return nil
 }
+
 func (transportTestFileJournal) markSending(context.Context, fileTurn, string, string) error {
 	return nil
 }
+
 func (transportTestFileJournal) finish(context.Context, fileTurn, string, string, string, string, string) error {
 	return nil
 }
@@ -91,7 +95,10 @@ func TestGeneratedFilePresignedUploadUsesOriginalTargetAndStableIdentity(t *test
 		switch {
 		case r.URL.Host == "im.deepminer.com.cn" && r.URL.Path == "/api/v1/bot/upload/presigned":
 			presigns++
-			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer bf_test" || r.URL.Query().Get("filename") != name || r.URL.Query().Get("fileSize") != fmt.Sprint(len(data)) || r.URL.Query().Get("contentType") != "text/html" {
+			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer bf_test" ||
+				r.URL.Query().Get("filename") != name ||
+				r.URL.Query().Get("fileSize") != fmt.Sprint(len(data)) ||
+				r.URL.Query().Get("contentType") != "text/html" {
 				t.Error("invalid authenticated presign request")
 			}
 			return fileResponse(200, map[string]any{"data": filePresignFixture(len(data))}), nil
@@ -192,7 +199,14 @@ func TestGeneratedFileRejectsChangedReportAuthorityAtEveryStage(t *testing.T) {
 	for _, revokeAt := range []int{1, 2, 3} {
 		t.Run(fmt.Sprint(revokeAt), func(t *testing.T) {
 			a, msg := generatedFileFixture(t)
-			p := octobusiness.Principal{TenantID: 1, AccountID: "account", ChannelID: "channel", ScopeID: "scope", UserID: "user", KnowledgeBaseIDs: []string{"one", "two"}}
+			p := octobusiness.Principal{
+				TenantID:         1,
+				AccountID:        "account",
+				ChannelID:        "channel",
+				ScopeID:          "scope",
+				UserID:           "user",
+				KnowledgeBaseIDs: []string{"one", "two"},
+			}
 			fresh := p
 			p.Validate = func(context.Context) (octobusiness.Principal, error) { return fresh, nil }
 			ctx := octobusiness.WithReportAuthority(octobusiness.WithPrincipal(context.Background(), p), p)
@@ -220,7 +234,8 @@ func TestGeneratedFileRejectsChangedReportAuthorityAtEveryStage(t *testing.T) {
 				}
 			})
 			err := a.SendGeneratedFile(ctx, msg, "report.csv", []byte("data"), "text/csv")
-			if !errors.Is(err, octobusiness.ErrDenied) || presigns != boolCount(revokeAt > 1) || uploads != boolCount(revokeAt > 2) {
+			if !errors.Is(err, octobusiness.ErrDenied) || presigns != boolCount(revokeAt > 1) ||
+				uploads != boolCount(revokeAt > 2) {
 				t.Fatalf("report scope changed: err=%v presigns=%d uploads=%d", err, presigns, uploads)
 			}
 		})
@@ -289,10 +304,20 @@ func TestFileDeliveryToolUsesOriginalConversationAndStopsAtEveryRevocation(t *te
 					return fileResponse(500, nil), nil
 				}
 			})
-			result, err := octobusiness.NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"knowledge-summary.md","content":"data"}`))
+			result, err := octobusiness.NewFileDeliveryTool().
+				Execute(ctx, json.RawMessage(`{"name":"knowledge-summary.md","content":"data"}`))
 			if err != nil || result.Success != (revokeAt == 0) || sends != boolCount(revokeAt == 0) ||
-				presigns != boolCount(revokeAt == 0 || revokeAt > 1) || uploads != boolCount(revokeAt == 0 || revokeAt > 2) {
-				t.Fatalf("unexpected delivery: result=%+v presigns=%d uploads=%d sends=%d err=%v", result, presigns, uploads, sends, err)
+				presigns != boolCount(
+					revokeAt == 0 || revokeAt > 1,
+				) || uploads != boolCount(revokeAt == 0 || revokeAt > 2) {
+				t.Fatalf(
+					"unexpected delivery: result=%+v presigns=%d uploads=%d sends=%d err=%v",
+					result,
+					presigns,
+					uploads,
+					sends,
+					err,
+				)
 			}
 		})
 	}
@@ -344,7 +369,9 @@ func TestBinaryFileDeliveryAuthorityStopsAtEveryRevocation(t *testing.T) {
 			})
 			err = a.SendGeneratedFile(ctx, msg, "报表.xlsx", []byte{'P', 'K', 0, 0xff}, "")
 			if (revokeAt == 0 && err != nil) || (revokeAt != 0 && !errors.Is(err, octobusiness.ErrDenied)) ||
-				presigns != boolCount(revokeAt == 0 || revokeAt > 1) || uploads != boolCount(revokeAt == 0 || revokeAt > 2) || sends != boolCount(revokeAt == 0) {
+				presigns != boolCount(
+					revokeAt == 0 || revokeAt > 1,
+				) || uploads != boolCount(revokeAt == 0 || revokeAt > 2) || sends != boolCount(revokeAt == 0) {
 				t.Fatalf("binary file authority: err=%v presigns=%d uploads=%d sends=%d", err, presigns, uploads, sends)
 			}
 		})
@@ -357,7 +384,14 @@ func TestGeneratedFileRejectsUnsafeMetadataBeforeNetwork(t *testing.T) {
 		t.Error("invalid artifact reached network")
 		return fileResponse(500, nil), nil
 	})
-	for _, name := range []string{"../report.html", "dir/report.html", "C:\\secret.html", "report:alternate.html", "report\n.html", "report\x00.html", "report\x01.html", "report\x7f.html", "bad\".html", " report.html", "report.html ", "report.", ".", "..", "", string([]byte{0xff, '.', 't', 'x', 't'}), strings.Repeat("名", 256) + ".html"} {
+	for _, name := range []string{
+		"../report.html", "dir/report.html", "C:\\secret.html",
+		"report:alternate.html", "report\n.html", "report\x00.html", "report\x01.html", "report\x7f.html",
+		"bad\".html", " report.html", "report.html ", "report.", ".", "..", "", string([]byte{
+			0xff, '.', 't',
+			'x', 't',
+		}), strings.Repeat("名", 256) + ".html",
+	} {
 		if err := a.SendGeneratedFile(context.Background(), msg, name, []byte("data"), "text/html"); err == nil {
 			t.Fatalf("unsafe filename accepted: %q", name)
 		}
@@ -375,7 +409,37 @@ func TestGeneratedFileRejectsUntrustedPresignsBeforeStorage(t *testing.T) {
 	cases := []struct {
 		name, field string
 		value       any
-	}{{"local HTTP", "uploadUrl", "http://127.0.0.1/private"}, {"local HTTPS", "uploadUrl", "https://127.0.0.1/private"}, {"provider lookalike", "uploadUrl", "https://bucket-123.cos.ap-beijing.myqcloud.com.evil.test/file"}, {"unknown provider", "uploadUrl", "https://other.myqcloud.com/file"}, {"userinfo", "uploadUrl", "https://user@im-data-1255521909.cos.ap-beijing.myqcloud.com/file"}, {"storage port", "uploadUrl", "https://im-data-1255521909.cos.ap-beijing.myqcloud.com:8443/file"}, {"CDN port", "downloadUrl", "https://cdn.deepminer.com.cn:8443/file"}, {"wrong CDN", "downloadUrl", "https://cdn.deepminer.com.cn.evil.test/file"}, {"wrong size", "maxFileSize", 5}, {"wrong method", "method", "POST"}, {"empty content type", "contentType", ""}, {"injected disposition", "contentDisposition", "file\r\nAuthorization: private"}, {"control in content type", "contentType", "application/\x01octet-stream"}, {"control in disposition", "contentDisposition", "attachment;\x7f"}}
+	}{{"local HTTP", "uploadUrl", "http://127.0.0.1/private"}, {
+		"local HTTPS", "uploadUrl",
+		"https://127.0.0.1/private",
+	}, {
+		"provider lookalike", "uploadUrl",
+		"https://bucket-123.cos.ap-beijing.myqcloud.com.evil.test/file",
+	}, {
+		"unknown provider", "uploadUrl",
+		"https://other.myqcloud.com/file",
+	}, {
+		"userinfo", "uploadUrl",
+		"https://user@im-data-1255521909.cos.ap-beijing.myqcloud.com/file",
+	}, {
+		"storage port", "uploadUrl",
+		"https://im-data-1255521909.cos.ap-beijing.myqcloud.com:8443/file",
+	}, {
+		"CDN port", "downloadUrl",
+		"https://cdn.deepminer.com.cn:8443/file",
+	}, {
+		"wrong CDN", "downloadUrl",
+		"https://cdn.deepminer.com.cn.evil.test/file",
+	}, {"wrong size", "maxFileSize", 5}, {
+		"wrong method",
+		"method", "POST",
+	}, {"empty content type", "contentType", ""}, {
+		"injected disposition",
+		"contentDisposition", "file\r\nAuthorization: private",
+	}, {
+		"control in content type", "contentType",
+		"application/\x01octet-stream",
+	}, {"control in disposition", "contentDisposition", "attachment;\x7f"}}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			a, msg := generatedFileFixture(t)
@@ -465,11 +529,39 @@ func TestGeneratedFileBinaryFormatsAndMIMEHints(t *testing.T) {
 		name, filename, supplied, hint, signedType string
 		data                                       []byte
 	}{
-		{"word", "合同.docx", "", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream", []byte{'P', 'K', 3, 4, 0, 255, 1}},
-		{"excel generic MIME", "报表.xlsx", "application/octet-stream", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/octet-stream", []byte{'P', 'K', 3, 4, 128, 0, 2}},
-		{"pdf invalid MIME", "报告.pdf", "bad MIME\r\nInjected: value", "application/pdf", "application/pdf", []byte{'%', 'P', 'D', 'F', 0, 254, 3}},
+		{
+			"word",
+			"合同.docx",
+			"",
+			"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			"application/octet-stream",
+			[]byte{'P', 'K', 3, 4, 0, 255, 1},
+		},
+		{
+			"excel generic MIME",
+			"报表.xlsx",
+			"application/octet-stream",
+			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+			"application/octet-stream",
+			[]byte{'P', 'K', 3, 4, 128, 0, 2},
+		},
+		{
+			"pdf invalid MIME",
+			"报告.pdf",
+			"bad MIME\r\nInjected: value",
+			"application/pdf",
+			"application/pdf",
+			[]byte{'%', 'P', 'D', 'F', 0, 254, 3},
+		},
 		{"mismatched MIME", "报告.pdf", "audio/mpeg", "audio/mpeg", "application/pdf", []byte{'%', 'P', 'D', 'F', 0, 1}},
-		{"server configured extension", "导出 🐙.octocustom", "application/x-example", "application/x-example", "application/x-example", []byte{0, 1, 2, 0xff}},
+		{
+			"server configured extension",
+			"导出 🐙.octocustom",
+			"application/x-example",
+			"application/x-example",
+			"application/x-example",
+			[]byte{0, 1, 2, 0xff},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -479,7 +571,9 @@ func TestGeneratedFileBinaryFormatsAndMIMEHints(t *testing.T) {
 				switch {
 				case r.URL.Host == "im.deepminer.com.cn" && r.URL.Path == "/api/v1/bot/upload/presigned":
 					presigns++
-					if r.URL.Query().Get("filename") != tc.filename || r.URL.Query().Get("fileSize") != fmt.Sprint(len(tc.data)) || r.URL.Query().Get("contentType") != tc.hint {
+					if r.URL.Query().Get("filename") != tc.filename ||
+						r.URL.Query().Get("fileSize") != fmt.Sprint(len(tc.data)) ||
+						r.URL.Query().Get("contentType") != tc.hint {
 						t.Errorf("unexpected presign query: %v", r.URL.Query())
 					}
 					p := filePresignFixture(len(tc.data))
@@ -504,7 +598,9 @@ func TestGeneratedFileBinaryFormatsAndMIMEHints(t *testing.T) {
 							Size int    `json:"size"`
 						} `json:"payload"`
 					}
-					if json.NewDecoder(r.Body).Decode(&body) != nil || body.Channel != msg.ChatID || body.Payload.Name != tc.filename || body.Payload.Size != len(tc.data) {
+					if json.NewDecoder(r.Body).Decode(&body) != nil || body.Channel != msg.ChatID ||
+						body.Payload.Name != tc.filename ||
+						body.Payload.Size != len(tc.data) {
 						t.Errorf("file metadata or destination changed: %+v", body)
 					}
 					return fileResponse(200, map[string]string{"message_id": "1"}), nil
@@ -513,7 +609,10 @@ func TestGeneratedFileBinaryFormatsAndMIMEHints(t *testing.T) {
 					return fileResponse(500, nil), nil
 				}
 			})
-			if err := a.SendGeneratedFile(context.Background(), msg, tc.filename, tc.data, tc.supplied); err != nil || presigns != 1 || uploads != 1 || sends != 1 {
+			if err := a.SendGeneratedFile(context.Background(), msg, tc.filename, tc.data, tc.supplied); err != nil ||
+				presigns != 1 ||
+				uploads != 1 ||
+				sends != 1 {
 				t.Fatalf("delivery failed: err=%v presigns=%d uploads=%d sends=%d", err, presigns, uploads, sends)
 			}
 		})
@@ -581,12 +680,19 @@ func TestGeneratedFileHonorsServerRejections(t *testing.T) {
 			requests := 0
 			a.api.http.Transport = fileRoundTripper(func(r *http.Request) (*http.Response, error) {
 				requests++
-				if r.Method != http.MethodGet || r.URL.Host != "im.deepminer.com.cn" || r.URL.Query().Get("filename") != tc.name {
+				if r.Method != http.MethodGet || r.URL.Host != "im.deepminer.com.cn" ||
+					r.URL.Query().Get("filename") != tc.name {
 					t.Error("server-rejected file reached storage or send")
 				}
 				return fileResponse(tc.status, map[string]any{"success": false}), nil
 			})
-			err := a.SendGeneratedFile(context.Background(), msg, tc.name, []byte{0, 1, 0xff}, "application/octet-stream")
+			err := a.SendGeneratedFile(
+				context.Background(),
+				msg,
+				tc.name,
+				[]byte{0, 1, 0xff},
+				"application/octet-stream",
+			)
 			var failure *fileFailure
 			if !errors.As(err, &failure) || failure.code != "presign_failed" || requests != 1 {
 				t.Fatalf("server rejection was not honored: err=%v requests=%d", err, requests)
@@ -659,7 +765,10 @@ func TestGeneratedFileRetryIdentityIncludesContentsAndConversation(t *testing.T)
 	if err := a.SendGeneratedFile(context.Background(), msg, "same.pdf", first, "application/pdf"); err != nil {
 		t.Fatal(err)
 	}
-	if len(ids) != 6 || ids[0] != ids[1] || ids[0] == ids[2] || ids[0] == ids[3] || ids[0] == ids[4] || ids[0] == ids[5] || names[2] != "same.pdf" || names[3] != "other.pdf" {
+	if len(ids) != 6 || ids[0] != ids[1] || ids[0] == ids[2] || ids[0] == ids[3] || ids[0] == ids[4] ||
+		ids[0] == ids[5] ||
+		names[2] != "same.pdf" ||
+		names[3] != "other.pdf" {
 		t.Fatalf("incorrect retry or multi-file identity: ids=%v names=%v", ids, names)
 	}
 }

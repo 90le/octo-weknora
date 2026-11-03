@@ -319,8 +319,25 @@ func TestIMQACancellationWaitsForSandboxStopBeforeReturn(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				base, cancel := context.WithCancel(context.Background())
 				defer cancel()
-				ctx := types.WithIMSandboxGrant(base, types.IMSandboxGrant{SessionID: "session", TenantID: 7, ConfigID: "cfg", AllowShell: true, Revalidate: func(context.Context) error { return nil }})
-				started, finishOp, stopStarted, finishStop := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+				ctx := types.WithIMSandboxGrant(
+					base,
+					types.IMSandboxGrant{
+						SessionID:  "session",
+						TenantID:   7,
+						ConfigID:   "cfg",
+						AllowShell: true,
+						Revalidate: func(context.Context) error { return nil },
+					},
+				)
+				started, finishOp, stopStarted, finishStop := make(
+					chan struct{},
+				), make(
+					chan struct{},
+				), make(
+					chan struct{},
+				), make(
+					chan struct{},
+				)
 				attempts := 0
 				result := startQAExitHandler(ctx, stream, true, func(callCtx context.Context, _ *event.EventBus) error {
 					grant, ok := types.IMSandboxGrantFromContext(callCtx)

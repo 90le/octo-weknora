@@ -23,7 +23,10 @@ func TestFileDeliveryRequiresRequestPermissionAndTrustedSink(t *testing.T) {
 		calls++
 		require.NoError(t, ValidateFileDeliveryAuthority(ctx))
 		require.Equal(t, "knowledge-summary.md", file.Name)
-		require.True(t, strings.HasPrefix(file.ContentType, "text/markdown") || strings.HasPrefix(file.ContentType, "text/plain"))
+		require.True(
+			t,
+			strings.HasPrefix(file.ContentType, "text/markdown") || strings.HasPrefix(file.ContentType, "text/plain"),
+		)
 		require.Equal(t, "# Synthetic\n", file.Content)
 		return nil
 	}, allowMarkdownScope)
@@ -69,12 +72,17 @@ func TestFileDeliveryRejectsRedirectOversizeAndChangedAuthority(t *testing.T) {
 		return ValidateFileDeliveryAuthority(ctx)
 	}, allowMarkdownScope)
 	tool := NewFileDeliveryTool()
-	for _, raw := range []string{`{"name":"knowledge-summary.md","content":"hello","recipient":"another"}`, `{"name":"knowledge-summary.md","content":""}`, `{"name":"knowledge-summary.md","content":"x"}{}`} {
+	for _, raw := range []string{
+		`{"name":"knowledge-summary.md","content":"hello","recipient":"another"}`,
+		`{"name":"knowledge-summary.md","content":""}`, `{"name":"knowledge-summary.md","content":"x"}{}`,
+	} {
 		result, err := tool.Execute(ctx, json.RawMessage(raw))
 		require.NoError(t, err)
 		require.False(t, result.Success)
 	}
-	large, err := json.Marshal(map[string]string{"name": "knowledge-summary.md", "content": strings.Repeat("x", (1<<20)+1)})
+	large, err := json.Marshal(
+		map[string]string{"name": "knowledge-summary.md", "content": strings.Repeat("x", (1<<20)+1)},
+	)
 	require.NoError(t, err)
 	result, err := tool.Execute(ctx, large)
 	require.NoError(t, err)
@@ -101,7 +109,8 @@ func TestFileDeliveryDoesNotRetryAmbiguousOrConcurrentDelivery(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			result, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"knowledge-summary.md","content":"hello"}`))
+			result, err := NewFileDeliveryTool().Execute(ctx, json.
+				RawMessage(`{"name":"knowledge-summary.md","content":"hello"}`))
 			if err != nil || result.Success {
 				t.Error("ambiguous delivery was claimed successful")
 			}
@@ -158,7 +167,8 @@ func TestFileDeliveryRechecksCompleteScope(t *testing.T) {
 		}
 		return nil
 	})
-	result, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"knowledge-summary.md","content":"data"}`))
+	result, err := NewFileDeliveryTool().Execute(ctx, json.
+		RawMessage(`{"name":"knowledge-summary.md","content":"data"}`))
 	require.NoError(t, err)
 	require.False(t, result.Success)
 	require.Equal(t, ErrDenied.Error(), result.Error)
@@ -333,7 +343,10 @@ func TestMentionsArtifactNameRejectsSubstringMatches(t *testing.T) {
 		{"请发送 report.pdf.bak", "report.pdf", false},
 		{"请发送 REPORT.pdf", "report.pdf", false},
 	} {
-		t.Run(tc.text+"/"+tc.name, func(t *testing.T) { require.Equal(t, tc.want, MentionsArtifactName(tc.text, tc.name)) })
+		t.Run(
+			tc.text+"/"+tc.name,
+			func(t *testing.T) { require.Equal(t, tc.want, MentionsArtifactName(tc.text, tc.name)) },
+		)
 	}
 }
 
@@ -358,7 +371,11 @@ func TestGroupNaturalTextFileRequest(t *testing.T) {
 	p.AllowFileDelivery = true
 	p.MessageText = "请生成一份文件并发给我"
 	var sent []string
-	ctx := WithFileDeliverySink(principalContext(p), func(_ context.Context, f *ReportArtifact) error { sent = append(sent, f.Name); return nil }, allowMarkdownScope)
+	ctx := WithFileDeliverySink(
+		principalContext(p),
+		func(_ context.Context, f *ReportArtifact) error { sent = append(sent, f.Name); return nil },
+		allowMarkdownScope,
+	)
 	result, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"report.txt","content":"result"}`))
 	require.NoError(t, err)
 	require.True(t, result.Success, result.Error)

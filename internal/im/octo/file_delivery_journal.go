@@ -96,7 +96,10 @@ func (a *Adapter) startFileDeliveryTurn(ctx context.Context, source string) (con
 
 func (j *dbFileDeliveryJournal) lockTurn(tx *gorm.DB, t fileTurn) (fileDeliveryEntry, error) {
 	var turn fileDeliveryEntry
-	err := t.query(tx.Clauses(clause.Locking{Strength: "UPDATE"})).Where("file_key = ?", fileDeliveryTurnKey).First(&turn).Error
+	err := t.query(tx.Clauses(clause.Locking{Strength: "UPDATE"})).
+		Where("file_key = ?", fileDeliveryTurnKey).
+		First(&turn).
+		Error
 	return turn, err
 }
 
@@ -105,7 +108,14 @@ func (j *dbFileDeliveryJournal) start(ctx context.Context, t fileTurn, owner str
 		return errFileJournalUnavailable
 	}
 	return j.withContext(ctx).Transaction(func(tx *gorm.DB) error {
-		turn := fileDeliveryEntry{TenantID: t.tenant, ChannelID: t.channel, SourceMessageID: t.source, FileKey: fileDeliveryTurnKey, OwnerID: owner, State: "turn"}
+		turn := fileDeliveryEntry{
+			TenantID:        t.tenant,
+			ChannelID:       t.channel,
+			SourceMessageID: t.source,
+			FileKey:         fileDeliveryTurnKey,
+			OwnerID:         owner,
+			State:           "turn",
+		}
 		insert := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&turn)
 		if insert.Error != nil {
 			return insert.Error
@@ -121,7 +131,8 @@ func (j *dbFileDeliveryJournal) start(ctx context.Context, t fileTurn, owner str
 			// A missing turn alongside file rows is an inconsistent ledger, not
 			// evidence that a prior message was never sent.
 			var files int64
-			if err := t.query(tx.Model(&fileDeliveryEntry{})).Where("file_key <> ?", fileDeliveryTurnKey).Count(&files).Error; err != nil {
+			if err := t.query(tx.Model(&fileDeliveryEntry{})).Where("file_key <> ?", fileDeliveryTurnKey).
+				Count(&files).Error; err != nil {
 				return err
 			}
 			if files != 0 {
@@ -132,13 +143,15 @@ func (j *dbFileDeliveryJournal) start(ctx context.Context, t fileTurn, owner str
 			return nil
 		}
 		var count int64
-		if err := t.query(tx.Model(&fileDeliveryEntry{})).Where("file_key <> ? AND state NOT IN ?", fileDeliveryTurnKey, []string{"preparing", "failed"}).Count(&count).Error; err != nil {
+		if err := t.query(tx.Model(&fileDeliveryEntry{})).Where("file_key <> ? AND state NOT IN ?",
+			fileDeliveryTurnKey, []string{"preparing", "failed"}).Count(&count).Error; err != nil {
 			return err
 		}
 		if count != 0 {
 			return errFileDeliveryUncertain
 		}
-		result := t.query(tx.Model(&fileDeliveryEntry{})).Where("file_key = ? AND owner_id = ?", fileDeliveryTurnKey, stored.OwnerID).
+		result := t.query(tx.Model(&fileDeliveryEntry{})).
+			Where("file_key = ? AND owner_id = ?", fileDeliveryTurnKey, stored.OwnerID).
 			Updates(map[string]any{"owner_id": owner, "updated_at": time.Now()})
 		if result.Error != nil {
 			return result.Error
@@ -155,21 +168,30 @@ func (j *dbFileDeliveryJournal) recovery(ctx context.Context, t fileTurn) (bool,
 		return false, false, errFileJournalUnavailable
 	}
 	var turns, files, unsafe int64
-	if err := t.query(j.withContext(ctx).Model(&fileDeliveryEntry{})).Where("file_key = ? AND state = ?", fileDeliveryTurnKey, "turn").Count(&turns).Error; err != nil {
+	if err := t.query(j.withContext(ctx).Model(&fileDeliveryEntry{})).Where("file_key = ? AND state = ?",
+		fileDeliveryTurnKey, "turn").Count(&turns).Error; err != nil {
 		return false, false, err
 	}
-	if err := t.query(j.withContext(ctx).Model(&fileDeliveryEntry{})).Where("file_key <> ? AND state NOT IN ?", fileDeliveryTurnKey, []string{"preparing", "failed"}).Count(&unsafe).Error; err != nil {
+	if err := t.query(j.withContext(ctx).Model(&fileDeliveryEntry{})).
+		Where("file_key <> ? AND state NOT IN ?", fileDeliveryTurnKey, []string{"preparing", "failed"}).
+		Count(&unsafe).Error; err != nil {
 		return false, false, err
 	}
 	if turns == 0 {
-		if err := t.query(j.withContext(ctx).Model(&fileDeliveryEntry{})).Where("file_key <> ?", fileDeliveryTurnKey).Count(&files).Error; err != nil {
+		if err := t.query(j.withContext(ctx).Model(&fileDeliveryEntry{})).Where("file_key <> ?",
+			fileDeliveryTurnKey).Count(&files).Error; err != nil {
 			return false, false, err
 		}
 	}
 	return turns == 1, unsafe != 0 || (turns == 0 && files != 0), nil
 }
 
-func (j *dbFileDeliveryJournal) reserve(ctx context.Context, t fileTurn, owner string, entry fileDeliveryEntry) (bool, error) {
+func (j *dbFileDeliveryJournal) reserve(
+	ctx context.Context,
+	t fileTurn,
+	owner string,
+	entry fileDeliveryEntry,
+) (bool, error) {
 	if !t.valid() || owner == "" || entry.FileKey == "" || entry.FileKey == fileDeliveryTurnKey {
 		return false, errFileJournalUnavailable
 	}
@@ -190,7 +212,9 @@ func (j *dbFileDeliveryJournal) reserve(ctx context.Context, t fileTurn, owner s
 		if lookup.RowsAffected == 1 {
 			switch existing.State {
 			case "sent":
-				if existing.PlatformMessageID == "" || existing.ClientMsgNo != entry.ClientMsgNo || existing.ContentHash != entry.ContentHash || existing.FileName != entry.FileName {
+				if existing.PlatformMessageID == "" || existing.ClientMsgNo != entry.ClientMsgNo ||
+					existing.ContentHash != entry.ContentHash ||
+					existing.FileName != entry.FileName {
 					return errFileDeliveryUncertain
 				}
 				alreadySent = true
@@ -208,7 +232,9 @@ func (j *dbFileDeliveryJournal) reserve(ctx context.Context, t fileTurn, owner s
 		}
 		// A changed payload with the same name cannot bypass an ambiguous send.
 		var ambiguous int64
-		if err := t.query(tx.Model(&fileDeliveryEntry{})).Where("file_key <> ? AND file_name = ? AND state IN ?", fileDeliveryTurnKey, entry.FileName, []string{"uploading", "sending", "unknown", "not_sent"}).Count(&ambiguous).Error; err != nil {
+		if err := t.query(tx.Model(&fileDeliveryEntry{})).
+			Where("file_key <> ? AND file_name = ? AND state IN ?", fileDeliveryTurnKey, entry.FileName,
+				[]string{"uploading", "sending", "unknown", "not_sent"}).Count(&ambiguous).Error; err != nil {
 			return err
 		}
 		if ambiguous != 0 {
@@ -219,7 +245,8 @@ func (j *dbFileDeliveryJournal) reserve(ctx context.Context, t fileTurn, owner s
 		if lookup.RowsAffected == 0 {
 			return tx.Create(&entry).Error
 		}
-		result := t.query(tx.Model(&fileDeliveryEntry{})).Where("file_key = ? AND state IN ?", entry.FileKey, []string{"failed", "preparing"}).
+		result := t.query(tx.Model(&fileDeliveryEntry{})).
+			Where("file_key = ? AND state IN ?", entry.FileKey, []string{"failed", "preparing"}).
 			Updates(map[string]any{"owner_id": owner, "state": "preparing", "error_code": "", "updated_at": time.Now()})
 		if result.Error != nil {
 			return result.Error
@@ -249,7 +276,8 @@ func (j *dbFileDeliveryJournal) transition(ctx context.Context, t fileTurn, owne
 		if turn.State != "turn" || turn.OwnerID != owner {
 			return errFileDeliveryFenced
 		}
-		result := t.query(tx.Model(&fileDeliveryEntry{})).Where("file_key = ? AND owner_id = ? AND state = ?", key, owner, from).
+		result := t.query(tx.Model(&fileDeliveryEntry{})).
+			Where("file_key = ? AND owner_id = ? AND state = ?", key, owner, from).
 			Updates(map[string]any{"state": to, "updated_at": time.Now()})
 		if result.Error != nil {
 			return result.Error
@@ -261,7 +289,11 @@ func (j *dbFileDeliveryJournal) transition(ctx context.Context, t fileTurn, owne
 	})
 }
 
-func (j *dbFileDeliveryJournal) finish(ctx context.Context, t fileTurn, owner, key, state, platformID, code string) error {
+func (j *dbFileDeliveryJournal) finish(
+	ctx context.Context,
+	t fileTurn,
+	owner, key, state, platformID, code string,
+) error {
 	previous := []string{"sending"}
 	if state == "failed" {
 		previous = []string{"preparing"}
@@ -271,8 +303,12 @@ func (j *dbFileDeliveryJournal) finish(ctx context.Context, t fileTurn, owner, k
 		return errFileJournalUnavailable
 	}
 	// For not_sent, the bytes already left for storage, so retain the sending barrier.
-	result := t.query(j.withContext(ctx).Model(&fileDeliveryEntry{})).Where("file_key = ? AND owner_id = ? AND state IN ?", key, owner, previous).
-		Updates(map[string]any{"state": state, "platform_message_id": platformID, "error_code": code, "updated_at": time.Now()})
+	result := t.query(j.withContext(ctx).Model(&fileDeliveryEntry{})).
+		Where("file_key = ? AND owner_id = ? AND state IN ?", key, owner, previous).
+		Updates(map[string]any{
+			"state": state, "platform_message_id": platformID, "error_code": code,
+			"updated_at": time.Now(),
+		})
 	if result.Error != nil {
 		return result.Error
 	}

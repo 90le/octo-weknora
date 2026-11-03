@@ -19,21 +19,89 @@ func TestIMSandboxGrantRechecksIdentitySessionAndAgent(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = sqlDB.Close() }()
 	for _, statement := range []string{
-		`CREATE TABLE im_channels (id TEXT PRIMARY KEY, tenant_id INTEGER, agent_id TEXT, platform TEXT, enabled BOOLEAN, mode TEXT, session_mode TEXT, credentials BLOB, updated_at DATETIME, deleted_at DATETIME)`,
-		`CREATE TABLE im_channel_sessions (id TEXT PRIMARY KEY, im_channel_id TEXT, tenant_id INTEGER, agent_id TEXT, platform TEXT, user_id TEXT, chat_id TEXT, session_id TEXT, status TEXT, metadata BLOB, updated_at DATETIME, deleted_at DATETIME)`,
+		`CREATE TABLE im_channels (id TEXT PRIMARY KEY, tenant_id INTEGER, agent_id TEXT, platform TE` +
+			`XT, enabled BOOLEAN, mode TEXT, session_mode TEXT, credentials BLOB, updated_at DATETIME` +
+			`, deleted_at DATETIME)`,
+		`CREATE TABLE im_channel_sessions (id TEXT PRIMARY KEY, im_channel_id TEXT, tenant_id INTEGER` +
+			`, agent_id TEXT, platform TEXT, user_id TEXT, chat_id TEXT, session_id TEXT, status TEXT` +
+			`, metadata BLOB, updated_at DATETIME, deleted_at DATETIME)`,
 		`CREATE TABLE sessions (id TEXT PRIMARY KEY, tenant_id INTEGER, deleted_at DATETIME)`,
 	} {
 		require.NoError(t, db.Exec(statement).Error)
 	}
-	scope := &ExecutionScope{AccountID: "account", ScopeID: "group", KnowledgeBaseIDs: []string{"kb"}, Revision: "r", AllowSandboxShell: true}
-	channel := &IMChannel{ID: "channel", TenantID: 7, AgentID: "agent", Platform: "octo", Enabled: true, Mode: "websocket", SessionMode: "user", Credentials: types.JSON(`{"account_id":"account","bot_uid":"bot"}`)}
+	scope := &ExecutionScope{
+		AccountID:         "account",
+		ScopeID:           "group",
+		KnowledgeBaseIDs:  []string{"kb"},
+		Revision:          "r",
+		AllowSandboxShell: true,
+	}
+	channel := &IMChannel{
+		ID:          "channel",
+		TenantID:    7,
+		AgentID:     "agent",
+		Platform:    "octo",
+		Enabled:     true,
+		Mode:        "websocket",
+		SessionMode: "user",
+		Credentials: types.JSON(`{"account_id":"account","bot_uid":"bot"}`),
+	}
 	msg := &IncomingMessage{Platform: "octo", UserID: "user", ChatID: "group"}
 	session := &types.Session{ID: "session", TenantID: 7}
-	mapping := &ChannelSession{ID: "mapping", IMChannelID: "channel", TenantID: 7, AgentID: "agent", Platform: "octo", UserID: "user", ChatID: "group", SessionID: "session", Status: "active", Metadata: sessionScopeMetadata(scope)}
-	agent := &types.CustomAgent{ID: "agent", TenantID: 7, Config: types.CustomAgentConfig{SandboxConfigID: "cfg", SkillsSelectionMode: "selected", SelectedSkills: []string{"allowed"}}}
-	require.NoError(t, db.Exec(`INSERT INTO im_channels (id,tenant_id,agent_id,platform,enabled,mode,session_mode,credentials) VALUES (?,?,?,?,?,?,?,?)`, channel.ID, channel.TenantID, channel.AgentID, channel.Platform, channel.Enabled, channel.Mode, channel.SessionMode, []byte(channel.Credentials)).Error)
+	mapping := &ChannelSession{
+		ID:          "mapping",
+		IMChannelID: "channel",
+		TenantID:    7,
+		AgentID:     "agent",
+		Platform:    "octo",
+		UserID:      "user",
+		ChatID:      "group",
+		SessionID:   "session",
+		Status:      "active",
+		Metadata:    sessionScopeMetadata(scope),
+	}
+	agent := &types.CustomAgent{
+		ID:       "agent",
+		TenantID: 7,
+		Config: types.CustomAgentConfig{
+			SandboxConfigID:     "cfg",
+			SkillsSelectionMode: "selected",
+			SelectedSkills:      []string{"allowed"},
+		},
+	}
+	require.NoError(
+		t,
+		db.Exec(
+			`INSERT INTO im_channels (id,tenant_id,agent_id,platform,enabled,mode,session_mode,creden`+
+				`tials) VALUES (?,?,?,?,?,?,?,?)`,
+			channel.ID,
+			channel.TenantID,
+			channel.AgentID,
+			channel.Platform,
+			channel.Enabled,
+			channel.Mode,
+			channel.SessionMode,
+			[]byte(channel.Credentials),
+		).Error,
+	)
 	require.NoError(t, db.Exec(`INSERT INTO sessions (id,tenant_id) VALUES (?,?)`, session.ID, session.TenantID).Error)
-	require.NoError(t, db.Exec(`INSERT INTO im_channel_sessions (id,im_channel_id,tenant_id,agent_id,platform,user_id,chat_id,session_id,status,metadata) VALUES (?,?,?,?,?,?,?,?,?,?)`, mapping.ID, mapping.IMChannelID, mapping.TenantID, mapping.AgentID, mapping.Platform, mapping.UserID, mapping.ChatID, mapping.SessionID, mapping.Status, []byte(mapping.Metadata)).Error)
+	require.NoError(
+		t,
+		db.Exec(
+			`INSERT INTO im_channel_sessions (id,im_channel_id,tenant_id,agent_id,platform,user_id,ch`+
+				`at_id,session_id,status,metadata) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			mapping.ID,
+			mapping.IMChannelID,
+			mapping.TenantID,
+			mapping.AgentID,
+			mapping.Platform,
+			mapping.UserID,
+			mapping.ChatID,
+			mapping.SessionID,
+			mapping.Status,
+			[]byte(mapping.Metadata),
+		).Error,
+	)
 	adapter := &scopeTestAdapter{scope: scope}
 	agents := &stubIMAgentService{agent: agent}
 	svc := &Service{db: db, agentService: agents}
@@ -52,7 +120,14 @@ func TestIMSandboxGrantRechecksIdentitySessionAndAgent(t *testing.T) {
 	fileScope.AllowSandboxShell = false
 	fileScope.AllowFileDelivery = true
 	adapter.scope = &fileScope
-	require.NoError(t, db.Exec("UPDATE im_channel_sessions SET metadata = ? WHERE id = ?", []byte(sessionScopeMetadata(&fileScope)), mapping.ID).Error)
+	require.NoError(
+		t,
+		db.Exec(
+			"UPDATE im_channel_sessions SET metadata = ? WHERE id = ?",
+			[]byte(sessionScopeMetadata(&fileScope)),
+			mapping.ID,
+		).Error,
+	)
 	fileCtx := svc.withIMSandboxGrant(ctx, adapter, channel, msg, mapping, session, agent, &fileScope)
 	fileGrant, ok := types.IMSandboxGrantFromContext(fileCtx)
 	require.True(t, ok)
@@ -61,7 +136,14 @@ func TestIMSandboxGrantRechecksIdentitySessionAndAgent(t *testing.T) {
 	require.Error(t, fileGrant.Revalidate(fileCtx))
 	fileScope.AllowFileDelivery = true
 	adapter.scope = scope
-	require.NoError(t, db.Exec("UPDATE im_channel_sessions SET metadata = ? WHERE id = ?", []byte(sessionScopeMetadata(scope)), mapping.ID).Error)
+	require.NoError(
+		t,
+		db.Exec(
+			"UPDATE im_channel_sessions SET metadata = ? WHERE id = ?",
+			[]byte(sessionScopeMetadata(scope)),
+			mapping.ID,
+		).Error,
+	)
 
 	adapter.err = errors.New("membership revoked")
 	require.Error(t, grant.Revalidate(ctx))
@@ -70,7 +152,10 @@ func TestIMSandboxGrantRechecksIdentitySessionAndAgent(t *testing.T) {
 	require.Error(t, grant.Revalidate(ctx))
 	scope.AllowSandboxShell = true
 	require.Error(t, grant.Revalidate(types.WithSessionID(ctx, "another")))
-	require.Error(t, grant.Revalidate(types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "other"})))
+	require.Error(
+		t,
+		grant.Revalidate(types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "other"})),
+	)
 	require.NoError(t, db.Model(&IMChannel{}).Where("id = ?", channel.ID).Update("enabled", false).Error)
 	require.Error(t, grant.Revalidate(ctx))
 	require.NoError(t, db.Model(&IMChannel{}).Where("id = ?", channel.ID).Update("enabled", true).Error)

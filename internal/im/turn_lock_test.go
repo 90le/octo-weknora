@@ -39,7 +39,10 @@ func TestIMSessionTurnLockRejectsBusyWithoutBlockingOtherSessions(t *testing.T) 
 				t.Fatal("first turn did not start")
 			}
 			other := &types.Session{ID: "two", TenantID: 7}
-			require.NoError(t, service.withIMSessionTurnLock(context.Background(), other, func(context.Context) error { return nil }))
+			require.NoError(
+				t,
+				service.withIMSessionTurnLock(context.Background(), other, func(context.Context) error { return nil }),
+			)
 			err := service.withIMSessionTurnLock(context.Background(), session, func(context.Context) error {
 				t.Error("overlapping turns entered the same session")
 				return nil
@@ -47,7 +50,14 @@ func TestIMSessionTurnLockRejectsBusyWithoutBlockingOtherSessions(t *testing.T) 
 			require.ErrorIs(t, err, redislock.ErrLockBusy)
 			close(release)
 			require.NoError(t, <-firstDone)
-			require.NoError(t, service.withIMSessionTurnLock(context.Background(), session, func(context.Context) error { return nil }))
+			require.NoError(
+				t,
+				service.withIMSessionTurnLock(
+					context.Background(),
+					session,
+					func(context.Context) error { return nil },
+				),
+			)
 			if mode == "local" {
 				service.localTurnLocks.mu.Lock()
 				remaining := len(service.localTurnLocks.entries)

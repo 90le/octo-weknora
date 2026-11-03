@@ -54,7 +54,8 @@ func WithFileDeliverySink(ctx context.Context, sink ReportSink, validate func(co
 		return ctx
 	}
 	return context.WithValue(ctx, fileDeliverySinkKey{}, &fileDeliverySink{
-		send: sink, validate: validate, attempts: map[string]bool{}, names: map[string]bool{}, unknown: map[string]bool{}, delivered: map[string]bool{},
+		send: sink, validate: validate, attempts: map[string]bool{}, names: map[string]bool{},
+		unknown: map[string]bool{}, delivered: map[string]bool{},
 	})
 }
 
@@ -113,7 +114,11 @@ func WithCurrentFileDeliveryAuthority(ctx context.Context, general bool) (contex
 	if err != nil || !fileDeliveryCapability(p, general) || !HasFileDeliverySink(ctx) {
 		return ctx, ErrDenied
 	}
-	ctx = context.WithValue(ctx, fileDeliveryAuthorityKey{}, fileDeliveryAuthority{fingerprint: reportAuthority(p), general: general})
+	ctx = context.WithValue(
+		ctx,
+		fileDeliveryAuthorityKey{},
+		fileDeliveryAuthority{fingerprint: reportAuthority(p), general: general},
+	)
 	return ctx, ValidateFileDeliveryAuthority(ctx)
 }
 
@@ -143,7 +148,10 @@ func HasNamedArtifact(text string) bool { return namedArtifactInText.MatchString
 // WantsAllFiles is deliberately not interpreted as a directory-wide grant.
 func WantsAllFiles(text string) bool {
 	text = strings.ToLower(text)
-	for _, phrase := range []string{"所有文件", "全部文件", "所有附件", "全部附件", "所有产物", "全部产物", "所有输出", "全部输出", "发全部", "发所有", "all files", "every file", "everything"} {
+	for _, phrase := range []string{
+		"所有文件", "全部文件", "所有附件", "全部附件", "所有产物", "全部产物", "所有输出", "全部输出", "发全部",
+		"发所有", "all files", "every file", "everything",
+	} {
 		if strings.Contains(text, phrase) {
 			return true
 		}
@@ -237,7 +245,10 @@ func artifactBoundary(text string, before bool) bool {
 
 func requestsMultipleVersions(text string) bool {
 	text = strings.ToLower(text)
-	for _, phrase := range []string{"两个版本", "两种版本", "两版", "多个版本", "不同版本", "多版本", "两份", "two versions", "multiple versions", "both versions"} {
+	for _, phrase := range []string{
+		"两个版本", "两种版本", "两版", "多个版本", "不同版本", "多版本", "两份", "two versions",
+		"multiple versions", "both versions",
+	} {
 		if strings.Contains(text, phrase) {
 			return true
 		}
@@ -259,9 +270,14 @@ func (*legacyMarkdownFileTool) Name() string { return "octo_send_markdown" }
 func (*legacyMarkdownFileTool) Description() string {
 	return "Compatibility alias for older Markdown tool calls."
 }
+
 func (*legacyMarkdownFileTool) Parameters() json.RawMessage {
-	return json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"content":{"type":"string"}},"required":["content"]}`)
+	return json.RawMessage(
+		`{"type":"object","additionalProperties":false,"properties":{"content":{"type":"string"}},"re` +
+			`quired":["content"]}`,
+	)
 }
+
 func (*legacyMarkdownFileTool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	var input struct {
 		Content string `json:"content"`
@@ -373,17 +389,22 @@ func (*fileDeliveryTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 		strings.ContainsAny(name, "\\\r\n\x00") || path.Ext(name) == "" || len(name) > 255 ||
 		!utf8.ValidString(name) || !utf8.ValidString(input.Content) ||
 		strings.ContainsRune(input.Content, 0) || strings.TrimSpace(input.Content) == "" || len(input.Content) > 1<<20 {
-		return toolResult(nil, argumentError("Use a plain file name with extension and nonempty UTF-8 content up to 1 MiB."))
+		return toolResult(
+			nil,
+			argumentError("Use a plain file name with extension and nonempty UTF-8 content up to 1 MiB."),
+		)
 	}
 	legacyCall, _ := ctx.Value(legacyMarkdownCallKey{}).(bool)
 	legacyMode := p.AllowGeneratedFiles && strings.EqualFold(path.Ext(name), ".md") &&
-		(!p.AllowFileDelivery || legacyCall || (!p.IsDirect && !MentionsArtifactName(p.MessageText, name) && !namedArtifactInText.MatchString(p.MessageText)))
+		(!p.AllowFileDelivery || legacyCall || (!p.IsDirect && !MentionsArtifactName(p.MessageText, name) &&
+			!namedArtifactInText.MatchString(p.MessageText)))
 	if legacyMode {
 		// The old grant allowed one fixed-name Markdown file per message.
 		name = "knowledge-summary.md"
 	} else if !p.AllowFileDelivery {
 		return toolResult(nil, ErrDenied)
-	} else if !p.IsDirect && (!WantsExplicitFileSend(p.MessageText) || (HasNamedArtifact(p.MessageText) && !MentionsArtifactName(p.MessageText, name)) || !MatchesRequestedArtifactType(p.MessageText, name)) {
+	} else if !p.IsDirect && (!WantsExplicitFileSend(p.MessageText) || (HasNamedArtifact(p.MessageText) &&
+		!MentionsArtifactName(p.MessageText, name)) || !MatchesRequestedArtifactType(p.MessageText, name)) {
 		return toolResult(nil, argumentError("In a group, request the file to send."))
 	}
 	ext := strings.ToLower(path.Ext(name))
@@ -410,7 +431,8 @@ func (*fileDeliveryTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 	hash := sha256.Sum256([]byte(input.Content))
 	attempt := name + "\x00" + hex.EncodeToString(hash[:])
 	if state.attempts[attempt] || state.unknown[name] || len(state.attempts) >= 5 ||
-		(legacyMode && len(state.attempts) != 0) || (!p.IsDirect && !HasNamedArtifact(p.MessageText) && len(state.attempts) != 0) || (state.names[name] && !requestsMultipleVersions(p.MessageText)) {
+		(legacyMode && len(state.attempts) != 0) || (!p.IsDirect && !HasNamedArtifact(p.MessageText) &&
+		len(state.attempts) != 0) || (state.names[name] && !requestsMultipleVersions(p.MessageText)) {
 		return toolResult(nil, errors.New("this file was already attempted or the per-message limit was reached"))
 	}
 	ctx, err = WithCurrentFileDeliveryAuthority(ctx, !legacyMode)

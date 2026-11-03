@@ -68,8 +68,11 @@ func journalFixture(t *testing.T) (*Adapter, *im.IncomingMessage, context.Contex
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = a.db.Create(&Inbox{TenantID: a.tenantID, ChannelID: a.channelID, MessageID: msg.MessageID,
-		Input: string(raw), Authority: encodeAuthority(&im.ExecutionScope{KnowledgeBaseIDs: []string{"kb"}}), State: "processing"}).Error; err != nil {
+	if err = a.db.Create(&Inbox{
+		TenantID: a.tenantID, ChannelID: a.channelID, MessageID: msg.MessageID,
+		Input: string(raw), Authority: encodeAuthority(&im.ExecutionScope{KnowledgeBaseIDs: []string{"kb"}}),
+		State: "processing",
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	ctx, err := a.startFileDeliveryTurn(context.Background(), msg.MessageID)
@@ -85,7 +88,8 @@ func fileRecords(t *testing.T, a *Adapter, source string) []fileDeliveryEntry {
 	t.Helper()
 	var rows []fileDeliveryEntry
 	if err := a.db.Where("tenant_id = ? AND channel_id = ? AND source_message_id = ? AND file_key <> ?",
-		a.tenantID, a.channelID, source, fileDeliveryTurnKey).Order("created_at, file_key").Find(&rows).Error; err != nil {
+		a.tenantID, a.channelID, source, fileDeliveryTurnKey).Order("created_at, file_key").Find(&rows).
+		Error; err != nil {
 		t.Fatal(err)
 	}
 	return rows
@@ -123,7 +127,9 @@ func TestFileDeliveryPersistsMultipleFilesAndDoesNotResendSameBytes(t *testing.T
 	}
 	rows := fileRecords(t, a, msg.MessageID)
 	if len(rows) != 3 || network.presigns != 3 || network.uploads != 3 || network.sends != 3 ||
-		len(network.clients) != 3 || network.clients[0] == network.clients[1] || network.clients[0] == network.clients[2] {
+		len(
+			network.clients,
+		) != 3 || network.clients[0] == network.clients[1] || network.clients[0] == network.clients[2] {
 		t.Fatalf("unexpected multi-file sends: rows=%d network=%+v", len(rows), network)
 	}
 	for _, row := range rows {
@@ -190,7 +196,12 @@ type crashFileJournal struct {
 	stage string
 }
 
-func (j crashFileJournal) reserve(ctx context.Context, turn fileTurn, owner string, entry fileDeliveryEntry) (bool, error) {
+func (j crashFileJournal) reserve(
+	ctx context.Context,
+	turn fileTurn,
+	owner string,
+	entry fileDeliveryEntry,
+) (bool, error) {
 	sent, err := j.fileDeliveryJournal.reserve(ctx, turn, owner, entry)
 	if err == nil && j.stage == "after_reserve" {
 		panic("simulated crash after reserve")
@@ -275,8 +286,10 @@ func TestFileDeliveryCrashWindowsAndRecovery(t *testing.T) {
 				if calls != 1 || network.sends != 1 {
 					t.Fatalf("safe pre-send recovery failed: calls=%d sends=%d", calls, network.sends)
 				}
-			} else if calls != 0 || network.sends != tc.posts || inboxRow(t, a, msg.MessageID).ErrorCode != "file_delivery_recovery_blocked" {
-				t.Fatalf("unsafe replay ran: calls=%d sends=%d inbox=%+v", calls, network.sends, inboxRow(t, a, msg.MessageID))
+			} else if calls != 0 || network.sends != tc.posts || inboxRow(t, a, msg.MessageID).
+				ErrorCode != "file_delivery_recovery_blocked" {
+				t.Fatalf("unsafe replay ran: calls=%d sends=%d inbox=%+v", calls, network.sends, inboxRow(t,
+					a, msg.MessageID))
 			}
 		})
 	}
@@ -288,7 +301,10 @@ func TestFileDeliveryPartialMultiFileCrashDoesNotRegenerate(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.fileJournal = crashFileJournal{fileDeliveryJournal: &dbFileDeliveryJournal{db: a.db}, stage: "before_send_marker"}
-	invokeSimulatedCrash(t, func() { _ = a.SendGeneratedFile(ctx, msg, "second.pdf", []byte("second"), "application/pdf") })
+	invokeSimulatedCrash(
+		t,
+		func() { _ = a.SendGeneratedFile(ctx, msg, "second.pdf", []byte("second"), "application/pdf") },
+	)
 	rows := fileRecords(t, a, msg.MessageID)
 	states := map[string]string{}
 	for _, row := range rows {
@@ -332,7 +348,8 @@ func TestFileDeliveryKnownFailureCanRecoverButUnknownCannot(t *testing.T) {
 			}
 			if !tc.replay {
 				beforePresigns := network.presigns
-				if err := a.SendGeneratedFile(ctx, msg, "report.pdf", []byte("new!"), "application/pdf"); err == nil || network.presigns != beforePresigns {
+				if err := a.SendGeneratedFile(ctx, msg, "report.pdf", []byte("new!"), "application/pdf"); err == nil ||
+					network.presigns != beforePresigns {
 					t.Fatal("changed bytes bypassed an ambiguous send in the same execution")
 				}
 			}
@@ -360,8 +377,17 @@ func TestFileDeliveryUploadFailureIsUnknownAndNotReplayed(t *testing.T) {
 	err := a.SendGeneratedFile(ctx, msg, "report.pdf", []byte("data"), "application/pdf")
 	var failure *fileFailure
 	rows := fileRecords(t, a, msg.MessageID)
-	if !errors.As(err, &failure) || failure.DeliveryOutcome() != "unknown" || network.uploads != 1 || network.sends != 0 || len(rows) != 1 || rows[0].State != "unknown" {
-		t.Fatalf("upload uncertainty not recorded: err=%v uploads=%d sends=%d rows=%+v", err, network.uploads, network.sends, rows)
+	if !errors.As(err, &failure) || failure.DeliveryOutcome() != "unknown" || network.uploads != 1 ||
+		network.sends != 0 ||
+		len(rows) != 1 ||
+		rows[0].State != "unknown" {
+		t.Fatalf(
+			"upload uncertainty not recorded: err=%v uploads=%d sends=%d rows=%+v",
+			err,
+			network.uploads,
+			network.sends,
+			rows,
+		)
 	}
 	restarted := restartAdapterForTest(t, a)
 	restarted.recoverInbox(context.Background(), func(context.Context, *im.IncomingMessage) error {
@@ -394,7 +420,10 @@ func TestFileDeliveryRevocationAfterUploadIsNotSentOrReplayed(t *testing.T) {
 
 func TestFileDeliveryResultWriteFailureIsUnknownAndNotReplayed(t *testing.T) {
 	a, msg, ctx, network := journalFixture(t)
-	a.fileJournal = crashFileJournal{fileDeliveryJournal: &dbFileDeliveryJournal{db: a.db}, stage: "result_write_failure"}
+	a.fileJournal = crashFileJournal{
+		fileDeliveryJournal: &dbFileDeliveryJournal{db: a.db},
+		stage:               "result_write_failure",
+	}
 	err := a.SendGeneratedFile(ctx, msg, "report.pdf", []byte("data"), "application/pdf")
 	var failure *fileFailure
 	if !errors.As(err, &failure) || failure.DeliveryOutcome() != "unknown" || network.sends != 1 {
@@ -414,14 +443,18 @@ func TestFileDeliveryResultWriteFailureIsUnknownAndNotReplayed(t *testing.T) {
 func TestFileDeliveryRecoveryBlocksLegacyUntrackedProcessing(t *testing.T) {
 	a, msg := durableAdapter(t)
 	raw, _ := json.Marshal(msg)
-	if err := a.db.Create(&Inbox{TenantID: a.tenantID, ChannelID: a.channelID, MessageID: msg.MessageID, Input: string(raw), State: "processing"}).Error; err != nil {
+	if err := a.db.Create(&Inbox{
+		TenantID: a.tenantID, ChannelID: a.channelID, MessageID: msg.MessageID,
+		Input: string(raw), State: "processing",
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	a.recoverInbox(context.Background(), func(context.Context, *im.IncomingMessage) error {
 		t.Fatal("untracked legacy processing reran")
 		return nil
 	})
-	if row := inboxRow(t, a, msg.MessageID); row.State != "failed" || row.ErrorCode != "file_delivery_history_unavailable" {
+	if row := inboxRow(t, a, msg.MessageID); row.State != "failed" ||
+		row.ErrorCode != "file_delivery_history_unavailable" {
 		t.Fatalf("legacy ambiguity was not recorded: %+v", row)
 	}
 }
@@ -457,7 +490,8 @@ func TestFileDeliveryFencesAnOlderExecution(t *testing.T) {
 	}
 	// Avoid stealing the execution again when the new request uploads.
 	a.fileJournal = nil
-	if err = a.SendGeneratedFile(newCtx, msg, "new.pdf", []byte("new"), "application/pdf"); err != nil || network.sends != 1 {
+	if err = a.SendGeneratedFile(newCtx, msg, "new.pdf", []byte("new"), "application/pdf"); err != nil ||
+		network.sends != 1 {
 		t.Fatalf("current execution could not send: err=%v sends=%d", err, network.sends)
 	}
 }
@@ -465,7 +499,10 @@ func TestFileDeliveryFencesAnOlderExecution(t *testing.T) {
 func TestFileDeliveryLegacyTextAndMissingJournalRecovery(t *testing.T) {
 	a, msg := durableAdapter(t)
 	raw, _ := json.Marshal(msg)
-	if err := a.db.Create(&Inbox{TenantID: a.tenantID, ChannelID: a.channelID, MessageID: msg.MessageID, Input: string(raw), State: "queued"}).Error; err != nil {
+	if err := a.db.Create(&Inbox{
+		TenantID: a.tenantID, ChannelID: a.channelID, MessageID: msg.MessageID,
+		Input: string(raw), State: "queued",
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := a.db.Exec("DROP TABLE octo_file_deliveries").Error; err != nil {
@@ -501,7 +538,8 @@ func TestTextOnlyTurnDoesNotCreateFileJournalAndCanRecover(t *testing.T) {
 	}
 	var stored im.IncomingMessage
 	if err := json.Unmarshal([]byte(inboxRow(t, a, msg.MessageID).Input), &stored); err != nil ||
-		stored.Extra[fileDeliveryGuardKey] != "1" || stored.Content != msg.Content || stored.Extra["octo_progress_message_id"] != "123" {
+		stored.Extra[fileDeliveryGuardKey] != "1" || stored.Content != msg.Content || stored.
+		Extra["octo_progress_message_id"] != "123" {
 		t.Fatalf("inbox input or recovery guard changed: %+v, %v", stored, err)
 	}
 	a.recoverInbox(context.Background(), func(context.Context, *im.IncomingMessage) error {
@@ -522,7 +560,10 @@ func TestScheduledReportFileUsesDurableJournal(t *testing.T) {
 	network := &journalNetwork{ack: true}
 	a.api.http.Transport = fileRoundTripper(func(r *http.Request) (*http.Response, error) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/bot/groups/group/threads/2098355867442221056" {
-			return fileResponse(200, map[string]any{"group_no": "group", "short_id": "2098355867442221056", "status": 1}), nil
+			return fileResponse(
+				200,
+				map[string]any{"group_no": "group", "short_id": "2098355867442221056", "status": 1},
+			), nil
 		}
 		return network.RoundTrip(r)
 	})

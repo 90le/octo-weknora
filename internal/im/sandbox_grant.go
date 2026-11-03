@@ -14,14 +14,30 @@ import (
 // withIMSandboxGrant binds a possible sandbox identity, never permission to
 // deliver files or execute scripts. Each consumer must revalidate and check
 // the pin immediately before every operation.
-func (s *Service) withIMSandboxGrant(ctx context.Context, adapter Adapter, channel *IMChannel, msg *IncomingMessage, mapping *ChannelSession, session *types.Session, agent *types.CustomAgent, scope *ExecutionScope) context.Context {
-	if s == nil || s.db == nil || s.agentService == nil || channel == nil || msg == nil || mapping == nil || session == nil || agent == nil || scope == nil ||
-		channel.Platform != "octo" || msg.Platform != "octo" || (!scope.AllowFileDelivery && !scope.AllowSandboxShell && !scope.AllowSandboxSkills) ||
-		agent.ID == "" || agent.ID != channel.AgentID || agent.TenantID == 0 || agent.TenantID != channel.TenantID ||
-		mapping.SessionID != session.ID || session.TenantID != channel.TenantID {
+func (s *Service) withIMSandboxGrant(
+	ctx context.Context,
+	adapter Adapter,
+	channel *IMChannel,
+	msg *IncomingMessage,
+	mapping *ChannelSession,
+	session *types.Session,
+	agent *types.CustomAgent,
+	scope *ExecutionScope,
+) context.Context {
+	if s == nil || s.db == nil || s.agentService == nil || channel == nil || msg == nil || mapping == nil ||
+		session == nil || agent == nil || scope == nil ||
+		channel.Platform != "octo" || msg.Platform != "octo" ||
+		(!scope.AllowFileDelivery && !scope.AllowSandboxShell && !scope.AllowSandboxSkills) ||
+		agent.ID == "" || agent.ID != channel.AgentID || agent.TenantID == 0 ||
+		agent.TenantID != channel.TenantID ||
+		mapping.SessionID != session.ID ||
+		session.TenantID != channel.TenantID {
 		return ctx
 	}
-	wantPrincipal := types.Principal{Type: types.PrincipalIMUser, ID: fmt.Sprintf("%d:%s:%s:%s", channel.TenantID, channel.ID, msg.Platform, msg.UserID)}
+	wantPrincipal := types.Principal{
+		Type: types.PrincipalIMUser,
+		ID:   fmt.Sprintf("%d:%s:%s:%s", channel.TenantID, channel.ID, msg.Platform, msg.UserID),
+	}
 	principal, ok := types.PrincipalFromContext(ctx)
 	if !ok || principal != wantPrincipal {
 		return ctx
@@ -51,10 +67,17 @@ func (s *Service) withIMSandboxGrant(ctx context.Context, adapter Adapter, chann
 	mappingID, sessionID := mapping.ID, session.ID
 	skillsSelected := agent.Config.SkillsSelectionMode == "all" ||
 		(agent.Config.SkillsSelectionMode == "selected" && len(agent.Config.SelectedSkills) > 0)
-	grant := types.IMSandboxGrant{SessionID: sessionID, TenantID: tenantID, ConfigID: configID, AgentConfigDigest: fmt.Sprintf("%x", agentFingerprint),
-		AllowShell: scope.AllowSandboxShell, AllowSkills: scope.AllowSandboxSkills && skillsSelected,
-		SkillsRequested: scope.AllowSandboxSkills, SkillsSelectionMode: agent.Config.SkillsSelectionMode,
-		SelectedSkillNames: append([]string(nil), agent.Config.SelectedSkills...)}
+	grant := types.IMSandboxGrant{
+		SessionID:           sessionID,
+		TenantID:            tenantID,
+		ConfigID:            configID,
+		AgentConfigDigest:   fmt.Sprintf("%x", agentFingerprint),
+		AllowShell:          scope.AllowSandboxShell,
+		AllowSkills:         scope.AllowSandboxSkills && skillsSelected,
+		SkillsRequested:     scope.AllowSandboxSkills,
+		SkillsSelectionMode: agent.Config.SkillsSelectionMode,
+		SelectedSkillNames:  append([]string(nil), agent.Config.SelectedSkills...),
+	}
 	grant.Revalidate = func(checkCtx context.Context) error {
 		if p, ok := types.PrincipalFromContext(checkCtx); !ok || p != wantPrincipal {
 			return ErrScopeDenied
@@ -66,25 +89,35 @@ func (s *Service) withIMSandboxGrant(ctx context.Context, adapter Adapter, chann
 			return ErrScopeDenied
 		}
 		var freshChannel IMChannel
-		if err := s.db.WithContext(checkCtx).Where("id = ? AND tenant_id = ? AND platform = ? AND enabled = ? AND agent_id = ? AND mode = ? AND session_mode = ?",
-			channelID, tenantID, "octo", true, agentID, "websocket", "user").First(&freshChannel).Error; err != nil {
+		if err := s.db.WithContext(checkCtx).
+			Where("id = ? AND tenant_id = ? AND platform = ? AND enabled = ? AND agent_id = ? AND mode = ? "+
+				"AND session_mode = ?", channelID, tenantID, "octo", true, agentID, "websocket", "user").
+			First(&freshChannel).Error; err != nil {
 			return ErrScopeDenied
 		}
 		current, err := authorizeExecution(checkCtx, adapter, &freshChannel, &msgCopy)
-		if err != nil || current == nil || (!current.AllowFileDelivery && !current.AllowSandboxShell && !current.AllowSandboxSkills) || scopeFingerprint(current) != admitted {
+		if err != nil || current == nil ||
+			(!current.AllowFileDelivery && !current.AllowSandboxShell && !current.AllowSandboxSkills) ||
+			scopeFingerprint(current) != admitted {
 			return ErrScopeDenied
 		}
 		var currentMapping ChannelSession
-		if err := s.db.WithContext(checkCtx).Where("id = ? AND im_channel_id = ? AND tenant_id = ? AND platform = ? AND user_id = ? AND chat_id = ? AND agent_id = ? AND session_id = ? AND status = ?",
-			mappingID, channelID, tenantID, "octo", msgCopy.UserID, msgCopy.ChatID, agentID, sessionID, "active").First(&currentMapping).Error; err != nil || !sessionScopeMatches(&currentMapping, current) {
+		if err := s.db.WithContext(checkCtx).
+			Where("id = ? AND im_channel_id = ? AND tenant_id = ? AND platform = ? AND user_id = ? AND chat_id = ? "+
+				"AND agent_id = ? AND session_id = ? AND status = ?",
+				mappingID, channelID, tenantID, "octo", msgCopy.UserID, msgCopy.ChatID, agentID, sessionID,
+				"active").First(&currentMapping).Error; err != nil ||
+			!sessionScopeMatches(&currentMapping, current) {
 			return ErrScopeDenied
 		}
 		var currentSession types.Session
-		if err := s.db.WithContext(checkCtx).Where("id = ? AND tenant_id = ?", sessionID, tenantID).First(&currentSession).Error; err != nil {
+		if err := s.db.WithContext(checkCtx).Where("id = ? AND tenant_id = ?", sessionID, tenantID).
+			First(&currentSession).Error; err != nil {
 			return ErrScopeDenied
 		}
 		currentAgent, err := s.agentService.GetAgentByID(checkCtx, agentID)
-		if err != nil || currentAgent == nil || currentAgent.ID != agentID || currentAgent.TenantID != tenantID || strings.TrimSpace(currentAgent.Config.SandboxConfigID) != configID {
+		if err != nil || currentAgent == nil || currentAgent.ID != agentID || currentAgent.TenantID != tenantID ||
+			strings.TrimSpace(currentAgent.Config.SandboxConfigID) != configID {
 			return ErrScopeDenied
 		}
 		data, err := json.Marshal(currentAgent.Config)

@@ -208,7 +208,10 @@ func (ch *IMChannel) validateSessionMode() error {
 		if err != nil || GetString(config, "account_id") == "" || GetString(config, "bot_uid") == "" {
 			return fmt.Errorf("Octo account_id and bot_uid required")
 		}
-		for _, key := range []string{"allow_generated_files", "allow_file_delivery", "allow_sandbox_shell", "allow_sandbox_skills"} {
+		for _, key := range []string{
+			"allow_generated_files", "allow_file_delivery", "allow_sandbox_shell",
+			"allow_sandbox_skills",
+		} {
 			if value, exists := config[key]; exists {
 				if _, ok := value.(bool); !ok {
 					return fmt.Errorf("invalid Octo boolean setting %s", key)

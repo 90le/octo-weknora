@@ -14,7 +14,10 @@ const sandboxUnavailableNotice = "本次沙箱不可用，终端和 Skill 未执
 
 // prepareSandboxOrContinue never broadens access: if preparation fails, the
 // original scope must still be valid before sandbox authority is masked.
-func prepareSandboxOrContinue(ctx context.Context, prepare func(context.Context) (context.Context, error)) (context.Context, bool, error) {
+func prepareSandboxOrContinue(
+	ctx context.Context,
+	prepare func(context.Context) (context.Context, error),
+) (context.Context, bool, error) {
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
 	if !ok || (!grant.AllowShell && !grant.AllowSkills) {
 		return ctx, false, nil

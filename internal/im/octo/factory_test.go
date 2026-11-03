@@ -81,37 +81,43 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 	if fileEnabled.AllowFileDelivery {
 		t.Fatal("legacy Markdown grant enabled generic delivery")
 	}
-	genericConfig := `{"account_id":"account","bot_uid":"bot","allowed_dm_uids":["owner"],"allow_generated_files":true,"allow_file_delivery":true}`
+	genericConfig := `{"account_id":"account","bot_uid":"bot","allowed_dm_uids":["owner"],"allow_gene` +
+		`rated_files":true,"allow_file_delivery":true}`
 	if err = db.Exec("UPDATE im_channels SET credentials=?", genericConfig).Error; err != nil {
 		t.Fatal(err)
 	}
 	genericScope, err := a.AuthorizeExecution(context.Background(), nil, msg)
-	if err != nil || !genericScope.AllowFileDelivery || !genericScope.AllowGeneratedFiles || im.ExecutionScopeFingerprint(genericScope) == im.ExecutionScopeFingerprint(fileEnabled) {
+	if err != nil || !genericScope.AllowFileDelivery || !genericScope.AllowGeneratedFiles ||
+		im.ExecutionScopeFingerprint(genericScope) == im.ExecutionScopeFingerprint(fileEnabled) {
 		t.Fatalf("generic grant not independent: %+v %v", genericScope, err)
 	}
 	if err = db.Exec("UPDATE im_channels SET credentials=?", fileConfig).Error; err != nil {
 		t.Fatal(err)
 	}
 	genericRevoked, err := a.AuthorizeExecution(context.Background(), nil, msg)
-	if err != nil || genericRevoked.AllowFileDelivery || !genericRevoked.AllowGeneratedFiles || im.ExecutionScopeFingerprint(genericRevoked) == im.ExecutionScopeFingerprint(genericScope) {
+	if err != nil || genericRevoked.AllowFileDelivery || !genericRevoked.AllowGeneratedFiles ||
+		im.ExecutionScopeFingerprint(genericRevoked) == im.ExecutionScopeFingerprint(genericScope) {
 		t.Fatal("generic revocation not reflected")
 	}
 	if fileEnabled.AllowSandboxShell || fileEnabled.AllowSandboxSkills || fileEnabled.AllowPublicWeb {
 		t.Fatal("legacy file grant widened sandbox or web access")
 	}
-	requested := `{"account_id":"account","bot_uid":"bot","allowed_dm_uids":["owner"],"allow_generated_files":true,"allow_sandbox_shell":true,"allow_sandbox_skills":true}`
+	requested := `{"account_id":"account","bot_uid":"bot","allowed_dm_uids":["owner"],"allow_generate` +
+		`d_files":true,"allow_sandbox_shell":true,"allow_sandbox_skills":true}`
 	if err = db.Exec("UPDATE im_channels SET credentials=?", requested).Error; err != nil {
 		t.Fatal(err)
 	}
 	requestedScope, err := a.AuthorizeExecution(context.Background(), nil, msg)
-	if err != nil || !requestedScope.AllowSandboxShell || !requestedScope.AllowSandboxSkills || im.ExecutionScopeFingerprint(requestedScope) == im.ExecutionScopeFingerprint(fileEnabled) {
+	if err != nil || !requestedScope.AllowSandboxShell || !requestedScope.AllowSandboxSkills ||
+		im.ExecutionScopeFingerprint(requestedScope) == im.ExecutionScopeFingerprint(fileEnabled) {
 		t.Fatalf("explicit requests not bound: %+v %v", requestedScope, err)
 	}
 	if err = db.Exec("UPDATE im_channels SET credentials=?", fileConfig).Error; err != nil {
 		t.Fatal(err)
 	}
 	revoked, err := a.AuthorizeExecution(context.Background(), nil, msg)
-	if err != nil || revoked.AllowSandboxShell || revoked.AllowSandboxSkills || im.ExecutionScopeFingerprint(revoked) == im.ExecutionScopeFingerprint(requestedScope) {
+	if err != nil || revoked.AllowSandboxShell || revoked.AllowSandboxSkills ||
+		im.ExecutionScopeFingerprint(revoked) == im.ExecutionScopeFingerprint(requestedScope) {
 		t.Fatal("sandbox request revocation not reflected")
 	}
 	if err = db.Model(&octointegration.Scope{}).Where("id = ?", scope.ID).Update("allow_public_web", true).Error; err != nil {
@@ -191,12 +197,14 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 	if !dmScope.AllowGeneratedFiles {
 		t.Fatal("channel's generated-file grant missing in an authorized direct message")
 	}
-	independentDM := `{"account_id":"account","bot_uid":"bot","allowed_dm_uids":["owner"],"allow_generated_files":false,"allow_file_delivery":true}`
+	independentDM := `{"account_id":"account","bot_uid":"bot","allowed_dm_uids":["owner"],"allow_gene` +
+		`rated_files":false,"allow_file_delivery":true}`
 	if err = db.Exec("UPDATE im_channels SET credentials=?", independentDM).Error; err != nil {
 		t.Fatal(err)
 	}
 	dmDelivery, err := a.AuthorizeExecution(context.Background(), nil, msg)
-	if err != nil || !dmDelivery.AllowFileDelivery || dmDelivery.AllowGeneratedFiles || dmDelivery.AllowSandboxShell || dmDelivery.AllowSandboxSkills {
+	if err != nil || !dmDelivery.AllowFileDelivery || dmDelivery.AllowGeneratedFiles || dmDelivery.AllowSandboxShell ||
+		dmDelivery.AllowSandboxSkills {
 		t.Fatalf("DM generic grant was conflated: %+v %v", dmDelivery, err)
 	}
 	fileConfig = `{"account_id":"account","bot_uid":"bot",` +

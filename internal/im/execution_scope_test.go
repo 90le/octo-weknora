@@ -273,14 +273,22 @@ func TestScopedAgentPublicWebNeedsExactScopeAndAgentEnablement(t *testing.T) {
 func TestSandboxRequestsRequireIndependentAgentSelection(t *testing.T) {
 	scope := &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r", AllowGeneratedFiles: true}
 	original := scopeFingerprint(scope)
-	agent := &types.CustomAgent{Config: types.CustomAgentConfig{SandboxConfigID: "sandbox", SkillsSelectionMode: "selected", SelectedSkills: []string{"allowed"}}}
+	agent := &types.CustomAgent{
+		Config: types.CustomAgentConfig{
+			SandboxConfigID:     "sandbox",
+			SkillsSelectionMode: "selected",
+			SelectedSkills:      []string{"allowed"},
+		},
+	}
 	for _, tc := range []struct {
 		name          string
 		shell, skills bool
 		wantMode      string
 	}{
-		{"legacy markdown", false, false, "none"}, {"shell only", true, false, "none"},
-		{"skills only", false, true, "selected"}, {"both", true, true, "selected"},
+		{"legacy markdown", false, false, "none"},
+		{"shell only", true, false, "none"},
+		{"skills only", false, true, "selected"},
+		{"both", true, true, "selected"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			next := *scope
@@ -310,7 +318,10 @@ func TestSandboxRequestsRequireIndependentAgentSelection(t *testing.T) {
 	}
 	host := *agent
 	host.Config.SandboxConfigID = "host"
-	got, err := scopeAgent(&host, &ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r", AllowSandboxShell: true})
+	got, err := scopeAgent(
+		&host,
+		&ExecutionScope{KnowledgeBaseIDs: []string{"kb"}, Revision: "r", AllowSandboxShell: true},
+	)
 	if err != nil || got.Config.SandboxConfigID != "" {
 		t.Fatal("host config admitted")
 	}

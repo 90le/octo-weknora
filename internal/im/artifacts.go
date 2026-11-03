@@ -21,8 +21,20 @@ import (
 )
 
 type imArtifactCollector interface {
-	SnapshotIM(context.Context, string, string, uint64, uint64, func(string) bool) (*appservice.IMArtifactSnapshot, error)
-	CollectIM(context.Context, *appservice.IMArtifactSnapshot, string, func(string, bool) appservice.IMArtifactSelection) (types.MessageArtifacts, error)
+	SnapshotIM(
+		context.Context,
+		string,
+		string,
+		uint64,
+		uint64,
+		func(string) bool,
+	) (*appservice.IMArtifactSnapshot, error)
+	CollectIM(
+		context.Context,
+		*appservice.IMArtifactSnapshot,
+		string,
+		func(string, bool) appservice.IMArtifactSelection,
+	) (types.MessageArtifacts, error)
 	ValidateIM(context.Context, *appservice.IMArtifactSnapshot, bool) error
 }
 
@@ -74,7 +86,8 @@ func (s *Service) beginIMArtifactTurn(ctx context.Context, req *qaRequest) conte
 	t.snapshot, t.startErr = t.collector.SnapshotIM(
 		ctx, req.session.ID, grant.ConfigID, req.session.TenantID, grant.TenantID,
 		func(relative string) bool {
-			return octobusiness.MentionsArtifactName(req.msg.Content, relative) || octobusiness.MentionsArtifactName(req.msg.Content, path.Base(relative))
+			return octobusiness.MentionsArtifactName(req.msg.Content, relative) ||
+				octobusiness.MentionsArtifactName(req.msg.Content, path.Base(relative))
 		},
 	)
 	return context.WithValue(ctx, imArtifactTurnKey{}, t)
