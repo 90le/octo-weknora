@@ -19,6 +19,7 @@ import (
 type imArtifactCollector interface {
 	SnapshotIM(context.Context, string, string, uint64, uint64) (*appservice.IMArtifactSnapshot, error)
 	CollectIM(context.Context, *appservice.IMArtifactSnapshot, string) (types.MessageArtifacts, error)
+	ValidateIM(context.Context, *appservice.IMArtifactSnapshot, bool) error
 }
 
 type imArtifactTurnKey struct{}
@@ -42,7 +43,7 @@ func (s *Service) ConfigureArtifactCollector(collector *appservice.ArtifactColle
 func (s *Service) beginIMArtifactTurn(ctx context.Context, req *qaRequest) context.Context {
 	if req == nil || req.channel == nil || req.channel.Platform != "octo" ||
 		req.scope == nil || !req.scope.AllowFileDelivery || req.session == nil ||
-		req.agent == nil || req.msg == nil || req.agent.Config.SandboxConfigID == "" ||
+		req.agent == nil || req.msg == nil ||
 		!octobusiness.WantsFileDelivery(req.msg.Content) {
 		return ctx
 	}
@@ -55,12 +56,13 @@ func (s *Service) beginIMArtifactTurn(ctx context.Context, req *qaRequest) conte
 		t.startErr = err
 		return context.WithValue(ctx, imArtifactTurnKey{}, t)
 	}
-	tenantID := req.agent.TenantID
-	if tenantID == 0 {
-		tenantID = req.session.TenantID
+	grant, ok := types.IMSandboxGrantFromContext(ctx)
+	if !ok || grant.SessionID != req.session.ID || grant.TenantID != req.session.TenantID {
+		t.startErr = errors.New("sandbox grant unavailable")
+		return context.WithValue(ctx, imArtifactTurnKey{}, t)
 	}
 	t.snapshot, t.startErr = t.collector.SnapshotIM(
-		ctx, req.session.ID, req.agent.Config.SandboxConfigID, req.session.TenantID, tenantID,
+		ctx, req.session.ID, grant.ConfigID, req.session.TenantID, grant.TenantID,
 	)
 	return context.WithValue(ctx, imArtifactTurnKey{}, t)
 }
@@ -84,11 +86,25 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 	if t.startErr != nil || t.authorize(ctx) != nil {
 		return answer + "\n\n文件发送未完成：无法安全读取本次会话的产物。"
 	}
-	callCtx, err := octobusiness.WithCurrentFileDeliveryAuthority(ctx, true)
+	callCtx := octobusiness.WithFileDeliveryExtraCheck(ctx, func(checkCtx context.Context) error {
+		if err := t.authorize(checkCtx); err != nil {
+			return err
+		}
+		return t.collector.ValidateIM(checkCtx, t.snapshot, false)
+	})
+	// The sandbox may not exist until the first command. CollectIM checks the
+	// unpinned case separately; the strict extra check is for actual delivery.
+	artifacts, collectErr := t.collector.CollectIM(ctx, t.snapshot, msg.ID)
+	if len(artifacts) == 0 {
+		if collectErr != nil {
+			return answer + "\n\n文件未能收集，请检查文件大小或沙箱状态后重试。"
+		}
+		return answer
+	}
+	callCtx, err := octobusiness.WithCurrentFileDeliveryAuthority(callCtx, true)
 	if err != nil {
 		return answer + "\n\n文件发送未完成：当前会话的授权已变化。"
 	}
-	artifacts, collectErr := t.collector.CollectIM(callCtx, t.snapshot, msg.ID)
 	if len(artifacts) > 0 {
 		msg.Artifacts = append(msg.Artifacts, artifacts...)
 	}

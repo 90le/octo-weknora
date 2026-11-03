@@ -352,6 +352,11 @@ func (c *ArtifactCollector) SnapshotIM(
 		sessionID: sessionID, configID: configID, sessionTenantID: sessionTenantID,
 		configTenantID: configTenantID, entries: map[string]sandbox.RemoteDirEntry{},
 	}
+	grant, err := ValidateIMSandboxPin(ctx, c.pinner, sessionID, true)
+	if err != nil || grant.ConfigID != configID || grant.TenantID != configTenantID ||
+		grant.TenantID != sessionTenantID {
+		return nil, errors.New("IM artifact grant unavailable")
+	}
 	pin, err := c.pinner.Read(ctx, sessionID)
 	if err != nil {
 		return nil, err
@@ -387,6 +392,20 @@ func (c *ArtifactCollector) SnapshotIM(
 	return snapshot, nil
 }
 
+// ValidateIM rechecks the live grant and session pin for every file read and
+// each stage of external delivery. It never creates a sandbox.
+func (c *ArtifactCollector) ValidateIM(ctx context.Context, snapshot *IMArtifactSnapshot, allowCreate bool) error {
+	if c == nil || snapshot == nil {
+		return errors.New("IM artifact snapshot unavailable")
+	}
+	grant, err := ValidateIMSandboxPin(ctx, c.pinner, snapshot.sessionID, allowCreate)
+	if err != nil || grant.ConfigID != snapshot.configID || grant.TenantID != snapshot.configTenantID ||
+		grant.TenantID != snapshot.sessionTenantID {
+		return errors.New("IM artifact grant changed")
+	}
+	return nil
+}
+
 func validIMArtifactEntry(dir string, entry sandbox.RemoteDirEntry) bool {
 	clean := path.Clean(entry.Path)
 	return entry.Type == sandbox.RemoteEntryFile && entry.Name != "" &&
@@ -403,12 +422,18 @@ func (c *ArtifactCollector) CollectIM(
 	if c == nil || c.pinner == nil || snapshot == nil || messageID == "" {
 		return nil, errors.New("IM artifact snapshot unavailable")
 	}
+	if err := c.ValidateIM(ctx, snapshot, true); err != nil {
+		return nil, err
+	}
 	pin, err := c.pinner.Read(ctx, snapshot.sessionID)
 	if err != nil {
 		return nil, err
 	}
 	if pin.IsZero() && !snapshot.hadPin {
 		return nil, nil
+	}
+	if err := c.ValidateIM(ctx, snapshot, false); err != nil {
+		return nil, err
 	}
 	if pin.ConfigID != snapshot.configID || pin.TenantOr(snapshot.sessionTenantID) != snapshot.configTenantID {
 		return nil, errors.New("IM sandbox pin changed during the turn")
@@ -433,7 +458,7 @@ func (c *ArtifactCollector) CollectIM(
 	}
 	artifacts, collectErr := c.collect(ctx, snapshot.sessionID, messageID, snapshot.sessionTenantID, dir, nil, changed)
 	current, err := c.pinner.Read(ctx, snapshot.sessionID)
-	if err != nil || current.ConfigID != snapshot.configID ||
+	if err != nil || c.ValidateIM(ctx, snapshot, false) != nil || current.ConfigID != snapshot.configID ||
 		current.TenantOr(snapshot.sessionTenantID) != snapshot.configTenantID {
 		return nil, errors.New("IM sandbox pin changed while collecting artifacts")
 	}

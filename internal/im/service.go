@@ -1922,7 +1922,8 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 		}
 	}
 
-	// A grant carries only the selected identity; runtime sandbox execution remains disabled.
+	sessionCtx = types.WithSessionID(sessionCtx, session.ID)
+	// A grant carries only the selected identity; execution requires independent checks.
 	sessionCtx = s.withIMSandboxGrant(sessionCtx, adapter, channel, msg, channelSession, session, savedAgent, scope)
 
 	// Title an untitled IM session from its first text message, like web chats.

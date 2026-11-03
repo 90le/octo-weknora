@@ -37,6 +37,17 @@ func (f *fakeIMArtifactCollector) CollectIM(
 	return f.artifacts, f.err
 }
 
+func (f *fakeIMArtifactCollector) ValidateIM(context.Context, *appservice.IMArtifactSnapshot, bool) error {
+	return nil
+}
+
+func imArtifactTestGrant(ctx context.Context) context.Context {
+	return types.WithIMSandboxGrant(ctx, types.IMSandboxGrant{
+		SessionID: "session", TenantID: 7, ConfigID: "cfg",
+		Revalidate: func(context.Context) error { return nil },
+	})
+}
+
 type memoryIMArtifactFiles struct {
 	*stubIMFileService
 	files map[string][]byte
@@ -100,6 +111,7 @@ func TestIMArtifactTurnDeliversBoundedBinaryAndReportsPartialFailure(t *testing.
 		defaultFileSvc:    &memoryIMArtifactFiles{files: map[string][]byte{first.URL: data, second.URL: []byte("hello")}},
 	}
 	ctx := s.businessContext(context.Background(), req, scope)
+	ctx = imArtifactTestGrant(ctx)
 	ctx = s.beginIMArtifactTurn(ctx, req)
 	message := &types.Message{ID: "answer"}
 	answer := s.finishIMArtifactTurn(ctx, message, "已整理。")
@@ -128,12 +140,14 @@ func TestIMArtifactTurnRechecksScopeAndContent(t *testing.T) {
 		files: map[string][]byte{file.URL: []byte("modified")},
 	}}
 	ctx := s.businessContext(context.Background(), req, scope)
+	ctx = imArtifactTestGrant(ctx)
 	ctx = s.beginIMArtifactTurn(ctx, req)
 	answer := s.finishIMArtifactTurn(ctx, &types.Message{ID: "answer"}, "答复")
 	require.Contains(t, answer, "文件发送失败")
 	require.Empty(t, adapter.sent, "changed bytes must never leave the workspace")
 
 	ctx = s.businessContext(context.Background(), req, scope)
+	ctx = imArtifactTestGrant(ctx)
 	ctx = s.beginIMArtifactTurn(ctx, req)
 	scope.AllowFileDelivery = false
 	answer = s.finishIMArtifactTurn(ctx, &types.Message{ID: "answer-2"}, "答复")

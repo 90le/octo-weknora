@@ -16,8 +16,9 @@ import (
 )
 
 type (
-	fileDeliverySinkKey      struct{}
-	fileDeliveryAuthorityKey struct{}
+	fileDeliverySinkKey       struct{}
+	fileDeliveryAuthorityKey  struct{}
+	fileDeliveryExtraCheckKey struct{}
 )
 
 type fileDeliveryAuthority struct {
@@ -61,7 +62,19 @@ func ValidateFileDeliveryAuthority(ctx context.Context) error {
 	if !ok || state == nil || state.validate == nil || state.validate(ctx) != nil {
 		return ErrDenied
 	}
+	if check, ok := ctx.Value(fileDeliveryExtraCheckKey{}).(func(context.Context) error); ok && check(ctx) != nil {
+		return ErrDenied
+	}
 	return nil
+}
+
+// WithFileDeliveryExtraCheck adds an operation-specific check, e.g. that a
+// captured sandbox pin still belongs to the original session and agent.
+func WithFileDeliveryExtraCheck(ctx context.Context, check func(context.Context) error) context.Context {
+	if check == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, fileDeliveryExtraCheckKey{}, check)
 }
 
 // WithCurrentFileDeliveryAuthority binds an internally-produced artifact to

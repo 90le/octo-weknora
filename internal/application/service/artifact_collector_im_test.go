@@ -9,7 +9,24 @@ import (
 	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
+
+func imArtifactTestContext(t *testing.T, db *gorm.DB) context.Context {
+	t.Helper()
+	require.NoError(t, db.AutoMigrate(&types.TenantSandboxConfigEntity{}))
+	require.NoError(t, db.Create(&types.TenantSandboxConfigEntity{
+		ID: "cfg-docker", TenantID: 7, Name: "test", SandboxType: "docker",
+		Config: &types.TenantSandboxConfig{SandboxType: "docker"},
+	}).Error)
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+	ctx = types.WithSessionID(ctx, "s-1")
+	ctx = types.WithIMKnowledgeScope(ctx, []string{"kb"})
+	return types.WithIMSandboxGrant(ctx, types.IMSandboxGrant{
+		SessionID: "s-1", TenantID: 7, ConfigID: "cfg-docker",
+		Revalidate: func(context.Context) error { return nil },
+	})
+}
 
 type boundedIMTestManager struct {
 	*artifactFallbackManager
@@ -27,8 +44,8 @@ func (m *boundedIMTestManager) ReadSessionFileBounded(
 
 func TestIMCaptureOnlyPublishesCurrentSessionChanges(t *testing.T) {
 	t.Setenv("WEKNORA_SKILL_OUTPUT_DIR", "")
-	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
 	db := newPinTestDB(t)
+	ctx := imArtifactTestContext(t, db)
 	pinner := NewSessionSandboxPinner(db)
 	_, err := pinner.Pin(ctx, "s-1", SandboxPin{ConfigID: "cfg-docker"})
 	require.NoError(t, err)
@@ -74,8 +91,9 @@ func TestIMCaptureOnlyPublishesCurrentSessionChanges(t *testing.T) {
 
 func TestIMCaptureFailsClosedWithoutBoundedRead(t *testing.T) {
 	t.Setenv("WEKNORA_SKILL_OUTPUT_DIR", "")
-	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
-	pinner := NewSessionSandboxPinner(newPinTestDB(t))
+	db := newPinTestDB(t)
+	ctx := imArtifactTestContext(t, db)
+	pinner := NewSessionSandboxPinner(db)
 	_, err := pinner.Pin(ctx, "s-1", SandboxPin{ConfigID: "cfg-docker"})
 	require.NoError(t, err)
 	source := &fakeSandboxSource{entries: map[string][]sandbox.RemoteDirEntry{}}
