@@ -318,7 +318,10 @@ func (t *ShellExecTool) Description() string {
 
 // Parameters rewrites workspace paths in the schema to match the session layout.
 func (t *ShellExecTool) Parameters() json.RawMessage {
-	if t != nil && t.installMode {
+	if t == nil {
+		return nil
+	}
+	if t.installMode {
 		return t.schema
 	}
 	schema := schemaForLayout(t.schema, t.boundLayout())
