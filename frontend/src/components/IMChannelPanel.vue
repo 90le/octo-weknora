@@ -308,7 +308,7 @@
               <div class="setting-row">
                 <div class="setting-info">
                   <label>沙箱终端</label>
-                  <p class="form-desc">允许已授权会话在智能体选用的隔离沙箱中运行命令；沙箱不连接网络，也不挂载宿主机文件。</p>
+                  <p class="form-desc">允许已授权会话在隔离沙箱中运行命令；不连接网络，不挂载宿主机文件。临时工作区仅在本次任务内保留。</p>
                 </div>
                 <div class="setting-control">
                   <t-switch v-model="formData.credentials.allow_sandbox_shell" size="small" />
