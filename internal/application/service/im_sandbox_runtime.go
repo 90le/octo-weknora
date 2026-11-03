@@ -98,6 +98,24 @@ type (
 	imSandboxFreshTurnKey      struct{}
 )
 
+// imSandboxPreparationError exposes a fixed stage for safe diagnostics while
+// preserving the original error for errors.Is/As and authorization checks.
+type imSandboxPreparationError struct {
+	stage string
+	err   error
+}
+
+func (e *imSandboxPreparationError) Error() string                   { return "im sandbox preparation failed" }
+func (e *imSandboxPreparationError) Unwrap() error                   { return e.err }
+func (e *imSandboxPreparationError) SandboxPreparationStage() string { return e.stage }
+
+func sandboxPreparationError(stage string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &imSandboxPreparationError{stage: stage, err: err}
+}
+
 // IsIMSandboxFreshTurn reports that the lock holder stopped the previous
 // session container before beginning this turn.
 func IsIMSandboxFreshTurn(ctx context.Context) bool {
@@ -114,7 +132,7 @@ func (s *sessionService) PrepareIMSandboxTurn(ctx context.Context) (context.Cont
 	}
 	grant, _ := types.IMSandboxGrantFromContext(prepared)
 	if err := ReconcileIMSandboxBeforeTurn(prepared, s.sandboxPinner, s.sandboxResolver, grant.SessionID); err != nil {
-		return nil, err
+		return nil, sandboxPreparationError("reconcile", err)
 	}
 	return context.WithValue(prepared, imSandboxFreshTurnKey{}, true), nil
 }
@@ -201,24 +219,24 @@ func (s *sessionService) PrepareIMSandboxContext(ctx context.Context, allowUnpin
 	}
 	ctx = types.WithSessionID(ctx, grant.SessionID)
 	if _, err := ValidateIMSandboxPin(ctx, s.sandboxPinner, grant.SessionID, allowUnpinned); err != nil {
-		return nil, err
+		return nil, sandboxPreparationError("pin", err)
 	}
 	ctx, err := withIMSandboxConfigBaseline(ctx, s.sandboxPinner)
 	if err != nil {
-		return nil, err
+		return nil, sandboxPreparationError("configuration", err)
 	}
 	if grant.AllowSkills {
 		ctx, err = s.withIMSkillsCheck(ctx, &types.AgentConfig{SkillsEnabled: true})
 		if err != nil {
-			return nil, err
+			return nil, sandboxPreparationError("skills", err)
 		}
 	}
 	ctx, err = withIMSandboxPolicy(ctx)
 	if err != nil {
-		return nil, err
+		return nil, sandboxPreparationError("policy", err)
 	}
 	if err = sandbox.RequireIMBoundedOutput(); err != nil {
-		return nil, err
+		return nil, sandboxPreparationError("output_limit", err)
 	}
 	return ctx, nil
 }

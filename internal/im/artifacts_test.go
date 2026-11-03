@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -22,6 +23,53 @@ type fakeIMArtifactCollector struct {
 	err       error
 	snapshots int
 	collects  int
+}
+
+type deliveredIMArtifactCollector struct{ fakeIMArtifactCollector }
+
+func (*deliveredIMArtifactCollector) DiscardDeliveredText(context.Context, string, types.MessageArtifact) error {
+	return nil
+}
+
+func (f *deliveredIMArtifactCollector) PersistDeliveredText(
+	ctx context.Context, _, _ string, _ uint64, name string, data []byte,
+	authorize func(context.Context) error,
+) (types.MessageArtifact, error) {
+	if err := authorize(ctx); err != nil {
+		return types.MessageArtifact{}, err
+	}
+	return makeTestArtifact(name, data), nil
+}
+
+func TestIMRecordsConfirmedTextWithoutSandbox(t *testing.T) {
+	scope := &ExecutionScope{
+		AccountID: "a", ScopeID: "s", Revision: "r", KnowledgeBaseIDs: []string{"kb"},
+		AllowFileDelivery: true,
+	}
+	adapter := &artifactTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}}
+	req := &qaRequest{
+		msg: &IncomingMessage{
+			UserID: "u", MessageID: "m", Content: "发送文件 report.txt", ChatType: ChatTypeDirect,
+			Extra: map[string]string{},
+		},
+		channel: &IMChannel{TenantID: 7, Platform: "octo"}, channelID: "channel", adapter: adapter,
+	}
+	s := &Service{artifactCollector: &deliveredIMArtifactCollector{}}
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+	ctx = types.WithSessionID(ctx, "session")
+	ctx = s.businessContext(ctx, req, scope)
+	result, err := octobusiness.NewFileDeliveryTool().Execute(
+		ctx, json.RawMessage(`{"name":"report.txt","content":"hello"}`),
+	)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	msg := &types.Message{ID: "answer", SessionID: "session"}
+	s.persistIMDeliveredText(ctx, msg)
+	require.Len(t, msg.Artifacts, 1)
+	require.Equal(t, "report.txt", msg.Artifacts[0].FileName)
+	wrong := &types.Message{ID: "answer", SessionID: "other"}
+	s.persistIMDeliveredText(ctx, wrong)
+	require.Empty(t, wrong.Artifacts)
 }
 
 func (f *fakeIMArtifactCollector) SnapshotIM(
@@ -156,16 +204,45 @@ func TestIMArtifactTurnDeliversBoundedBinaryAndReportsPartialFailure(t *testing.
 	ctx = imArtifactTestGrant(ctx)
 	ctx = s.beginIMArtifactTurn(ctx, req)
 	message := &types.Message{ID: "answer"}
-	answer := s.finishIMArtifactTurn(ctx, message, "已整理：[PDF](sandbox:example.pdf)、[文本](sandbox:example.txt)。")
+	answer := s.finishIMArtifactTurn(ctx, message,
+		"附件已发送。已整理：请点击下载：[下载PDF](sandbox:example.pdf)、![文本](sandbox:example.txt)。正文保留。")
 	require.Equal(t, 1, collector.snapshots)
 	require.Equal(t, 1, collector.collects)
 	require.Equal(t, []string{"example.pdf"}, adapter.sent)
 	require.Equal(t, data, adapter.data[0])
 	require.Len(t, message.Artifacts, 2)
 	require.Contains(t, answer, "已发送文件：example.pdf.zip（包含 example.pdf）")
+	require.Contains(t, answer, "请下载 ZIP 压缩包并解压后查看其中的文件。")
+	require.Contains(t, answer, "文件发送状态待确认")
+	require.Contains(t, answer, "正文保留。")
+	require.NotContains(t, answer, "请点击下载")
+	require.NotContains(t, answer, "!文本")
 	require.NotContains(t, answer, "sandbox:example.pdf")
 	require.NotContains(t, answer, "sandbox:example.txt")
 	require.Contains(t, answer, "文件发送状态未知，请先检查会话再重试：example.txt")
+}
+
+func TestRenderIMArtifactAnswer(t *testing.T) {
+	tests := []struct {
+		name, answer string
+		names        []string
+		uncertain    bool
+		want         string
+	}{
+		{"image and download", "说明。请点击下载：![下载图片](sandbox:pic.png)！", []string{"pic.png"}, false, "说明。pic.png！"},
+		{
+			"other links untouched", "![图](sandbox:other.png) [报告](sandbox:report.pdf)",
+			[]string{"report.pdf"},
+			false, "![图](sandbox:other.png) 报告",
+		},
+		{"uncertain", "文件已发送。[下载](sandbox:report.pdf) 正常回答。", nil, true, "文件发送状态待确认。report.pdf 正常回答。"},
+		{"ordinary punctuation", "注意！[报告](sandbox:report.pdf)", nil, false, "注意！报告"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, renderIMArtifactAnswer(tc.answer, tc.names, tc.uncertain))
+		})
+	}
 }
 
 func TestIMGroupCreationWithoutSendDoesNotStartCapture(t *testing.T) {

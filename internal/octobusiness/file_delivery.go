@@ -46,6 +46,60 @@ type fileDeliverySink struct {
 	names     map[string]bool
 	unknown   map[string]bool
 	delivered map[string]bool
+	files     []deliveredTextFile
+	closed    bool
+}
+
+type deliveredTextFile struct {
+	file      ReportArtifact
+	authority fileDeliveryAuthority
+	check     func(context.Context) error
+	messageID string
+	message   string
+}
+
+// DeliveredTextFiles returns copies of this turn's confirmed text deliveries.
+// It rechecks the original authority and any operation-specific check; callers
+// must retain the sink context and clear it when the turn ends.
+func DeliveredTextFiles(ctx context.Context) ([]ReportArtifact, error) {
+	state, ok := ctx.Value(fileDeliverySinkKey{}).(*fileDeliverySink)
+	if !ok || state == nil || ctx.Err() != nil {
+		return nil, ErrDenied
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.closed {
+		return nil, ErrDenied
+	}
+	files := make([]ReportArtifact, 0, len(state.files))
+	for _, item := range state.files {
+		principal, present := PrincipalFromContext(ctx)
+		if !present || principal.MessageID != item.messageID || principal.MessageText != item.message {
+			return nil, ErrDenied
+		}
+		checkCtx := context.WithValue(ctx, fileDeliveryAuthorityKey{}, item.authority)
+		if item.check != nil {
+			checkCtx = context.WithValue(checkCtx, fileDeliveryExtraCheckKey{}, item.check)
+		}
+		if ValidateFileDeliveryAuthority(checkCtx) != nil || checkCtx.Err() != nil {
+			return nil, ErrDenied
+		}
+		files = append(files, item.file)
+	}
+	return files, nil
+}
+
+// ClearDeliveredTextFiles drops retained content when the turn is finished.
+func ClearDeliveredTextFiles(ctx context.Context) {
+	state, ok := ctx.Value(fileDeliverySinkKey{}).(*fileDeliverySink)
+	if !ok || state == nil {
+		return
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	clear(state.files)
+	state.files = nil
+	state.closed = true
 }
 
 // WithFileDeliverySink enables bounded file delivery to the original turn.
@@ -430,7 +484,7 @@ func (*fileDeliveryTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 	defer state.mu.Unlock()
 	hash := sha256.Sum256([]byte(input.Content))
 	attempt := name + "\x00" + hex.EncodeToString(hash[:])
-	if state.attempts[attempt] || state.unknown[name] || len(state.attempts) >= 5 ||
+	if state.closed || state.attempts[attempt] || state.unknown[name] || len(state.attempts) >= 5 ||
 		(legacyMode && len(state.attempts) != 0) || (!p.IsDirect && !HasNamedArtifact(p.MessageText) &&
 		len(state.attempts) != 0) || (state.names[name] && !requestsMultipleVersions(p.MessageText)) {
 		return toolResult(nil, errors.New("this file was already attempted or the per-message limit was reached"))
@@ -448,6 +502,17 @@ func (*fileDeliveryTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 		}
 		return toolResult(nil, err)
 	}
+	if ctx.Err() != nil || ValidateFileDeliveryAuthority(ctx) != nil {
+		state.unknown[name] = true
+		return toolResult(nil, ErrDenied)
+	}
+	authority := ctx.Value(fileDeliveryAuthorityKey{}).(fileDeliveryAuthority)
+	check, _ := ctx.Value(fileDeliveryExtraCheckKey{}).(func(context.Context) error)
+	state.files = append(state.files, deliveredTextFile{
+		file:      ReportArtifact{Name: name, Content: input.Content, ContentType: contentType},
+		authority: authority, check: check,
+		messageID: p.MessageID, message: p.MessageText,
+	})
 	state.delivered[name] = true
 	return toolResult(map[string]any{"delivered": true, "name": file.Name}, nil)
 }

@@ -8345,7 +8345,7 @@ export default {
   },
   artifactLibrary: {
     title: '產物',
-    subtitle: '智慧代理在各個會話中生成的檔案，都會匯總在這裡',
+    subtitle: '這裡顯示可存取的網頁會話產物；Octo 等 IM 會話的檔案暫不顯示。',
     typeFilter: '按類型篩選',
     searchPlaceholder: '搜尋檔名',
     categories: {
@@ -8383,7 +8383,7 @@ export default {
     clearFilters: '清除篩選',
     empty: {
       title: '還沒有產物',
-      description: '在對話中讓智慧代理生成報告、表格或簡報，檔案會出現在這裡'
+      description: '在網頁會話中讓智慧代理生成報告、表格或簡報，已記錄的檔案會出現在這裡'
     },
     noMatches: {
       title: '沒有比對的檔案',

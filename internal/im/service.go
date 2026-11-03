@@ -30,6 +30,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
 	"github.com/Tencent/WeKnora/internal/logger"
 	mcppkg "github.com/Tencent/WeKnora/internal/mcp"
+	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/ratelimit"
 	"github.com/Tencent/WeKnora/internal/storageurl"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -2119,6 +2120,7 @@ func (s *Service) executeQARequestCore(req *qaRequest) {
 		}
 	}
 	ctx = s.businessContext(ctx, req, req.scope)
+	defer octobusiness.ClearDeliveredTextFiles(ctx)
 	if grant, ok := types.IMSandboxGrantFromContext(ctx); ok && (grant.AllowShell || grant.AllowSkills) {
 		preparer, ok := s.sessionService.(interface {
 			PrepareIMSandboxTurn(context.Context) (context.Context, error)
@@ -3212,8 +3214,10 @@ loop:
 
 	assistantMsg.Content = answer
 	assistantMsg.IsCompleted = true
+	textArtifacts := s.persistIMDeliveredText(ctx, assistantMsg)
 	if err := s.messageService.UpdateMessage(outCtx, assistantMsg); err != nil {
 		logger.Warnf(ctx, "[IM] Failed to update assistant message: %v", err)
+		s.cleanupIMDeliveredText(ctx, assistantMsg, textArtifacts)
 	}
 
 	if finalizeErr != nil && fallbackErr != nil {
@@ -3475,8 +3479,10 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	answer = appendSandboxUnavailableNotice(ctx, answer)
 	assistantMsg.Content = answer
 	assistantMsg.IsCompleted = true
+	textArtifacts := s.persistIMDeliveredText(ctx, assistantMsg)
 	if err := s.messageService.UpdateMessage(ctx, assistantMsg); err != nil {
 		logger.Warnf(ctx, "[IM] Failed to update assistant message: %v", err)
+		s.cleanupIMDeliveredText(ctx, assistantMsg, textArtifacts)
 	}
 
 	// Return raw answer — callers apply cleanIMContent with the appropriate FileService.

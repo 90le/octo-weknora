@@ -433,7 +433,7 @@ export default {
   },
   artifactLibrary: {
     title: 'Artifacts',
-    subtitle: 'Files your agents generated across all of your conversations',
+    subtitle: 'Artifacts from accessible web conversations appear here. Octo and other IM conversation files are not shown.',
     typeFilter: 'Filter by type',
     searchPlaceholder: 'Search filenames',
     categories: {
@@ -471,7 +471,7 @@ export default {
     clearFilters: 'Clear filters',
     empty: {
       title: 'No artifacts yet',
-      description: 'Ask an agent to produce a report, spreadsheet or slide deck and the files will show up here'
+      description: 'Ask an agent to produce a report, spreadsheet or slide deck in a web conversation; recorded files will appear here'
     },
     noMatches: {
       title: 'No matching files',

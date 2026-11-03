@@ -297,7 +297,7 @@
                   <label>发送生成的文件</label>
                   <p class="form-desc">允许向已授权的原会话发送智能体生成的文件；沙箱终端和技能权限需单独配置。</p>
                   <p v-if="formData.credentials.allow_generated_files" class="form-desc">
-                    已保留旧版 Markdown 发送权限，可单独关闭。
+                    此渠道仍保留旧版 Markdown 发送权限；关闭通用文件发送不会关闭该权限。
                     <t-link theme="primary" @click="formData.credentials.allow_generated_files = false">关闭旧版权限</t-link>
                   </p>
                 </div>
@@ -959,7 +959,7 @@ function onPlatformChange(val: string | number | boolean) {
     formData.value.mode = 'websocket';
     formData.value.output_mode = 'full';
     formData.value.session_mode = 'user';
-    formData.value.credentials = { account_id: '', bot_uid: '', allowed_dm_uids: [], allowed_bot_uids: [], management_bot_uids: [], dm_knowledge_base_ids: [], allow_generated_files: false, allow_file_delivery: false, allow_sandbox_shell: false, allow_sandbox_skills: false };
+    formData.value.credentials = { account_id: '', bot_uid: '', allowed_dm_uids: [], allowed_bot_uids: [], management_bot_uids: [], dm_knowledge_base_ids: [], allow_file_delivery: false, allow_sandbox_shell: false, allow_sandbox_skills: false };
   } else if (val === 'wechat') {
     editingEnabled.value = true;
     formData.value.mode = 'longpoll';

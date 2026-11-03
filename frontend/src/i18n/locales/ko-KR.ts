@@ -8521,7 +8521,7 @@ export default {
   },
   artifactLibrary: {
     title: '산출물',
-    subtitle: '모든 대화에서 에이전트가 생성한 파일을 한곳에 모아 보여줍니다',
+    subtitle: '접근 가능한 웹 대화의 산출물을 표시합니다. Octo 등 IM 대화의 파일은 표시되지 않습니다.',
     typeFilter: '유형별 필터',
     searchPlaceholder: '파일 이름 검색',
     categories: {
@@ -8559,7 +8559,7 @@ export default {
     clearFilters: '필터 지우기',
     empty: {
       title: '아직 산출물이 없습니다',
-      description: '대화에서 에이전트에게 보고서, 표, 슬라이드를 만들게 하면 파일이 여기에 표시됩니다'
+      description: '웹 대화에서 에이전트에게 보고서, 스프레드시트 또는 슬라이드를 요청하면 기록된 파일이 여기에 표시됩니다'
     },
     noMatches: {
       title: '일치하는 파일이 없습니다',

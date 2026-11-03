@@ -266,3 +266,46 @@ func TestListArtifactLibraryScopesAndGroupsVersions(t *testing.T) {
 	require.Len(t, items, 1)
 	require.Equal(t, "report.pptx", items[0].FileName)
 }
+
+func TestArtifactLibraryExcludesOctoPrivateAndGroupSessions(t *testing.T) {
+	db := newArtifactTestDB(t)
+	repo := NewMessageRepository(db)
+	ctx := context.Background()
+	created := time.Date(2026, 11, 3, 2, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name, owner, user, chat string
+	}{
+		{"private", "", "alice", "private-alice"},
+		{"group", "", "alice", "group-secret"},
+		// A matching Web owner or platform ID is not proof of access to an IM chat.
+		{"matching-owner", "alice", "alice", "group-other"},
+	} {
+		sessionID := createSession(t, db, &types.Session{TenantID: 7, UserID: tc.owner})
+		require.NoError(t, db.Create(&testIMChannelSession{
+			ID: tc.name, SessionID: sessionID, Platform: "octo", TenantID: 7,
+			UserID: tc.user, ChatID: tc.chat,
+		}).Error)
+		msg, err := repo.CreateMessage(ctx, &types.Message{
+			SessionID: sessionID, Role: "assistant",
+			Artifacts: types.MessageArtifacts{testArtifact(tc.name+".pptx", "/w/"+tc.name, created)},
+		})
+		require.NoError(t, err)
+		stored, err := repo.GetMessage(ctx, sessionID, msg.ID)
+		require.NoError(t, err)
+		require.Len(t, stored.Artifacts, 1, "IM artifacts remain recorded")
+	}
+	for _, userID := range []string{"alice", "bob", ""} {
+		items, total, err := repo.ListArtifactLibrary(ctx, &types.ArtifactLibraryQuery{
+			TenantID: 7, UserID: userID, Keyword: "group", Page: 1, PageSize: 20,
+		})
+		require.NoError(t, err)
+		require.Zero(t, total, "IM rows must stay hidden for user %q", userID)
+		require.Empty(t, items)
+		items, total, err = repo.ListArtifactLibrary(ctx, &types.ArtifactLibraryQuery{
+			TenantID: 7, UserID: userID, Page: 1, PageSize: 20,
+		})
+		require.NoError(t, err)
+		require.Zero(t, total)
+		require.Empty(t, items)
+	}
+}

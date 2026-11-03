@@ -27,6 +27,15 @@ type imTestBackend struct {
 	invalid atomic.Bool
 }
 
+func TestSandboxPreparationErrorPreservesCauseAndStage(t *testing.T) {
+	err := sandboxPreparationError("reconcile", context.DeadlineExceeded)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	var stage interface{ SandboxPreparationStage() string }
+	require.ErrorAs(t, err, &stage)
+	require.Equal(t, "reconcile", stage.SandboxPreparationStage())
+	require.NotContains(t, err.Error(), context.DeadlineExceeded.Error())
+}
+
 func (b *imTestBackend) EnsureIMSession(ctx context.Context, sid string, create bool) (string, error) {
 	if sid != "s-1" || !create {
 		return "", errors.New("bad binding")
