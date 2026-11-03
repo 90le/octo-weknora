@@ -77,6 +77,7 @@ func NewFactory(db *gorm.DB, services ...*octobusiness.Service) im.AdapterFactor
 			}
 			adapter.recoverInbox(runCtx, routedHandler)
 			go adapter.runConfirmationEvents(runCtx, routedHandler)
+			go adapter.runConfirmationCardReconciliation(runCtx)
 			go func() {
 				adapter.recoverProgressCards(runCtx)
 				ticker := time.NewTicker(5 * time.Minute)

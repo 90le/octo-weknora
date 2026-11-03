@@ -3,7 +3,9 @@ package octo
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,10 +22,13 @@ import (
 type progressCard struct {
 	adapter *Adapter
 	message *im.IncomingMessage
-	updates chan string
+	updates chan struct{}
 	finish  chan im.ProcessingResult
 	done    chan struct{}
 	once    sync.Once
+	mu      sync.Mutex
+	history []string
+	started time.Time
 }
 
 type cardTemplateRef struct {
@@ -105,7 +110,10 @@ func hasStates(states []string, required ...string) bool {
 var _ im.ProcessingProgressNotifier = (*Adapter)(nil)
 
 // StartProcessingProgress creates a capability-gated card for an admitted message.
-func (a *Adapter) StartProcessingProgress(ctx context.Context, msg *im.IncomingMessage) im.ProcessingProgress {
+func (a *Adapter) StartProcessingProgress(
+	ctx context.Context,
+	msg *im.IncomingMessage,
+) im.ProcessingProgress {
 	if a == nil || a.db == nil || msg == nil || ctx.Err() != nil {
 		return nil
 	}
@@ -117,7 +125,7 @@ func (a *Adapter) StartProcessingProgress(ctx context.Context, msg *im.IncomingM
 		return nil
 	}
 	p := &progressCard{
-		adapter: a, message: msg, updates: make(chan string, 1),
+		adapter: a, message: msg, updates: make(chan struct{}, 1), started: time.Now(),
 		finish: make(chan im.ProcessingResult, 1), done: make(chan struct{}),
 	}
 	go p.run(ctx)
@@ -125,13 +133,27 @@ func (a *Adapter) StartProcessingProgress(ctx context.Context, msg *im.IncomingM
 }
 
 func (p *progressCard) Report(stage string) {
-	switch stage {
-	case "knowledge", "source", "answer":
-		select {
-		case p.updates <- stage:
-		default:
+	if _, _, ok := progressStageText(stage); !ok {
+		return
+	}
+	p.mu.Lock()
+	if len(p.history) == 0 || p.history[len(p.history)-1] != stage {
+		p.history = append(p.history, stage)
+		if len(p.history) > 6 {
+			p.history = append([]string{"earlier"}, p.history[len(p.history)-5:]...)
 		}
 	}
+	p.mu.Unlock()
+	select {
+	case p.updates <- struct{}{}:
+	default:
+	}
+}
+
+func (p *progressCard) progressHistory() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.history...)
 }
 
 func (p *progressCard) Finish(result im.ProcessingResult) {
@@ -150,7 +172,7 @@ func (p *progressCard) authorized(ctx context.Context) bool {
 
 // Record only the platform card identifier in the existing durable inbox.
 // The original message and its authorization fingerprint remain unchanged.
-func (p *progressCard) saveProgress(ctx context.Context, id string, closed bool) error {
+func (p *progressCard) saveProgress(ctx context.Context, id string, closed bool, history ...[]string) error {
 	return p.adapter.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var row Inbox
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -166,6 +188,10 @@ func (p *progressCard) saveProgress(ctx context.Context, id string, closed bool)
 			stored.Extra = make(map[string]string)
 		}
 		stored.Extra["octo_progress_message_id"] = id
+		if len(history) > 0 && len(history[0]) > 0 {
+			encoded, _ := json.Marshal(history[0])
+			stored.Extra["octo_progress_history"] = string(encoded)
+		}
 		if closed {
 			stored.Extra["octo_progress_closed"] = "true"
 		}
@@ -174,36 +200,83 @@ func (p *progressCard) saveProgress(ctx context.Context, id string, closed bool)
 			return err
 		}
 		return tx.Model(&Inbox{}).Where("tenant_id = ? AND channel_id = ? AND message_id = ?",
-			p.adapter.tenantID, p.adapter.channelID, p.message.MessageID).UpdateColumn("input", string(raw)).Error
+			p.adapter.tenantID, p.adapter.channelID, p.message.MessageID).
+			UpdateColumn("input", string(raw)).Error
 	})
 }
 
-func progressData(id, state, stage string) map[string]any {
-	title, detail, tone := "处理中", "正在理解问题", "Accent"
-	switch stage {
-	case "knowledge":
-		detail = "正在检索已授权的知识库"
-	case "source":
-		detail = "正在查阅已授权的资料"
-	case "answer":
-		title, detail = "正在回答", "正在整理回答"
+// progressStageText returns only fixed, public descriptions. A result describes
+// one completed tool invocation, never the quality or quantity of its output.
+func progressStageText(stage string) (string, string, bool) {
+	if stage == "earlier" {
+		return "较早的处理步骤已省略", "Accent", true
+	}
+	labels := map[string]string{
+		"knowledge": "检索已授权的知识库", "documents": "查阅已授权的文档",
+		"source": "查阅已授权的资料", "configuration": "核对当前区域配置",
+		"preview": "准备知识变更预览", "confirmation": "处理知识变更确认",
+		"contacts": "查找资料负责人", "issues": "处理知识反馈", "report": "生成知识报告",
+		"answer": "整理答复",
+	}
+	base, outcome, _ := strings.Cut(stage, ":")
+	label, ok := labels[base]
+	if !ok {
+		return "", "", false
+	}
+	switch outcome {
+	case "":
+		return "正在" + label, "Accent", true
+	case "done":
+		return label + "步骤已返回", "Good", true
+	case "failed":
+		return label + "步骤未成功", "Attention", true
+	default:
+		return "", "", false
+	}
+}
+
+func progressData(id, state string, history []string, waiting bool, elapsed time.Duration) map[string]any {
+	title, detail, tone := "处理中", "已收到请求，正在处理", "Accent"
+	if len(history) > 6 {
+		history = history[len(history)-6:]
+	}
+	phases := make([]any, 0, 6)
+	for _, stage := range history {
+		text, stepTone, ok := progressStageText(stage)
+		if !ok {
+			continue
+		}
+		detail = text
+		phases = append(phases, map[string]any{"thought": text, "actions": []any{
+			map[string]any{"tool": "处理步骤", "detail": text, "statusGlyph": "●", "statusTone": stepTone},
+		}})
+	}
+	if len(phases) == 0 {
+		phases = []any{map[string]any{"thought": "已收到请求", "actions": []any{
+			map[string]any{"tool": "处理步骤", "detail": detail, "statusGlyph": "●", "statusTone": "Accent"},
+		}}}
 	}
 	switch state {
+	case "answering":
+		title = "正在回答"
 	case "completed":
-		title, detail, tone = "已完成", "处理完成", "Good"
+		title, detail, tone = "答复已发送", "本次答复已发送", "Good"
+		if waiting {
+			title, detail = "预览待确认", "预览已生成，变更尚未执行"
+		}
+		if elapsed >= time.Second {
+			detail += fmt.Sprintf(" · 用时 %d 秒", int(elapsed.Seconds()))
+		}
 	case "stopped":
 		title, detail, tone = "已停止", "本次处理已停止", "Attention"
 	case "error":
-		title, detail, tone = "已结束", "处理未能正常完成", "Attention"
+		title, detail, tone = "未完成", "处理未能正常完成", "Attention"
 	}
 	active := state == "reasoning" || state == "answering"
 	data := map[string]any{
 		"reasoningId": id, "state": state, "title": "处理进度", "statusLabel": title,
 		"statusTone": tone, "traceExpanded": active, "traceCollapsed": !active,
-		"collapsedSummary": detail,
-		"phases": []any{map[string]any{"thought": "处理本次问题", "actions": []any{
-			map[string]any{"tool": "处理", "detail": detail, "statusGlyph": "●", "statusTone": tone},
-		}}},
+		"collapsedSummary": detail, "phases": phases,
 	}
 	if active {
 		data["progressText"] = detail
@@ -212,6 +285,19 @@ func progressData(id, state, stage string) map[string]any {
 		data["errorTitle"], data["errorMessage"] = "处理未完成", "请查看最终回复或稍后重试。"
 	}
 	return data
+}
+
+func (p *progressCard) hasPendingPreview(ctx context.Context) bool {
+	if p.adapter.business == nil {
+		return false
+	}
+	var count int64
+	err := p.adapter.db.WithContext(ctx).Table("octo_knowledge_proposals").
+		Where("tenant_id = ? AND channel_id = ? AND source_message_id = ? AND user_id = ? "+
+			"AND status = ? AND expires_at > ?",
+			p.adapter.tenantID, p.adapter.channelID, p.message.MessageID, p.message.UserID, "pending", time.Now()).
+		Count(&count).Error
+	return err == nil && count > 0
 }
 
 func (p *progressCard) run(ctx context.Context) {
@@ -224,7 +310,10 @@ func (p *progressCard) run(ctx context.Context) {
 		return
 	}
 	var pending int64
-	err = p.adapter.inboxQuery(callCtx, p.message.MessageID).Where("state = ?", "processing").Count(&pending).Error
+	err = p.adapter.inboxQuery(callCtx, p.message.MessageID).
+		Where("state = ?", "processing").
+		Count(&pending).
+		Error
 	if err != nil || pending != 1 {
 		cancel()
 		return
@@ -254,7 +343,8 @@ func (p *progressCard) run(ctx context.Context) {
 		err = p.adapter.api.post(callCtx, "/v1/bot/sendMessage", map[string]any{
 			"channel_id": target, "channel_type": kind, "client_msg_no": id,
 			"payload": map[string]any{
-				"type": 17, "template_ref": ref, "state": "reasoning", "data": progressData(id, "reasoning", ""),
+				"type": 17, "template_ref": ref, "state": "reasoning",
+				"data": progressData(id, "reasoning", p.progressHistory(), false, 0),
 			},
 		}, &sent)
 		messageID = wire.ReadID(sent.ID)
@@ -272,16 +362,23 @@ func (p *progressCard) run(ctx context.Context) {
 	}
 	cancel()
 	lastSeq := time.Now().UnixMicro()
-	edit := func(state, stage string, transient bool) {
+	edit := func(state string, transient bool) {
 		outCtx, outCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer outCancel()
 		if !p.authorized(outCtx) {
 			return
 		}
+		history := p.progressHistory()
+		_ = p.saveProgress(outCtx, messageID, false, history)
+		waiting := state == "completed" && p.hasPendingPreview(outCtx)
+		elapsed := time.Duration(0)
+		if !p.started.IsZero() {
+			elapsed = time.Since(p.started)
+		}
 		lastSeq = max(lastSeq+1, time.Now().UnixMicro())
 		body := map[string]any{
 			"message_id": messageID, "channel_id": target, "channel_type": kind,
-			"template_ref": ref, "state": state, "data": progressData(id, state, stage),
+			"template_ref": ref, "state": state, "data": progressData(id, state, history, waiting, elapsed),
 			"card_seq": lastSeq,
 		}
 		if transient {
@@ -293,28 +390,25 @@ func (p *progressCard) run(ctx context.Context) {
 			// for recovery so a later delivery can replace the error state.
 			if p.adapter.inboxQuery(outCtx, p.message.MessageID).Select("state").First(&row).Error == nil &&
 				row.State != "reply_pending" {
-				_ = p.saveProgress(outCtx, messageID, true)
+				_ = p.saveProgress(outCtx, messageID, true, history)
 			}
 		}
 	}
-	stage := ""
 	dirty := false
 	ticker := time.NewTicker(800 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
-		case next := <-p.updates:
-			if next != stage {
-				stage = next
-				dirty = true
-			}
+		case <-p.updates:
+			dirty = true
 		case <-ticker.C:
 			if dirty {
 				state := "reasoning"
-				if stage == "answer" {
+				history := p.progressHistory()
+				if len(history) > 0 && history[len(history)-1] == "answer" {
 					state = "answering"
 				}
-				edit(state, stage, true)
+				edit(state, true)
 				dirty = false
 			}
 		case result := <-p.finish:
@@ -322,10 +416,10 @@ func (p *progressCard) run(ctx context.Context) {
 			if state != "completed" && state != "stopped" {
 				state = "error"
 			}
-			edit(state, stage, false)
+			edit(state, false)
 			return
 		case <-ctx.Done():
-			edit("error", stage, false)
+			edit("error", false)
 			return
 		}
 	}
@@ -384,12 +478,18 @@ func (p *progressCard) finishRecovered(ctx context.Context, deliveryState string
 	}
 	id := uuid.NewSHA1(uuid.NameSpaceOID, []byte(p.message.MessageID+":progress")).String()
 	cardID := p.message.Extra["octo_progress_message_id"]
+	var history []string
+	_ = json.Unmarshal([]byte(p.message.Extra["octo_progress_history"]), &history)
+	if len(history) > 6 {
+		history = history[len(history)-6:]
+	}
 	err := p.adapter.api.post(callCtx, "/v1/bot/message/edit", map[string]any{
 		"message_id": cardID, "channel_id": target, "channel_type": kind,
 		"template_ref": *profile.Config.ReasoningRef, "state": state,
-		"data": progressData(id, state, ""), "card_seq": time.Now().UnixMicro(),
+		"data":     progressData(id, state, history, state == "completed" && p.hasPendingPreview(callCtx), 0),
+		"card_seq": time.Now().UnixMicro(),
 	}, nil)
 	if err == nil {
-		_ = p.saveProgress(callCtx, cardID, true)
+		_ = p.saveProgress(callCtx, cardID, true, history)
 	}
 }

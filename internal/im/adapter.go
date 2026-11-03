@@ -207,6 +207,33 @@ type ProcessingProgressNotifier interface {
 
 type processingProgressContextKey struct{}
 
+// safeProgressToolStage maps only known tool identities to public, fixed
+// descriptions. Tool arguments, model thoughts and outputs never enter cards.
+func safeProgressToolStage(name string) string {
+	switch name {
+	case "search_knowledge", "knowledge_search":
+		return "knowledge"
+	case "list_documents", "read_document", "octo_knowledge_documents":
+		return "documents"
+	case "source_browse", "github_release_lookup", "wiki_search", "wiki_read_page":
+		return "source"
+	case "octo_configuration":
+		return "configuration"
+	case "octo_knowledge_preview":
+		return "preview"
+	case "octo_knowledge_confirm":
+		return "confirmation"
+	case "octo_contacts":
+		return "contacts"
+	case "octo_issues":
+		return "issues"
+	case "octo_report":
+		return "report"
+	default:
+		return ""
+	}
+}
+
 // FileDownloader is an optional interface that adapters can implement to support
 // downloading file attachments from the IM platform. It allows file/image
 // messages to be supplied to QA as attachments; when a knowledge_base_id is

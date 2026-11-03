@@ -34,6 +34,8 @@ const Platform im.Platform = "octo"
 type Adapter struct {
 	statusMu      sync.RWMutex
 	status        im.ChannelRuntimeStatus
+	cardDiagMu    sync.Mutex
+	cardDiagAt    map[string]time.Time
 	db            *gorm.DB
 	channelID     string
 	tenantID      uint64
@@ -265,12 +267,16 @@ func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *
 		a.contactEntities(ctx, in, text, payload)
 	}
 	payload["content"] = text
-	quote := map[string]any{"message_id": id, "from_uid": in.UserID, "from_name": in.UserName}
-	var original map[string]json.RawMessage
-	if json.Unmarshal([]byte(in.Extra["octo_original_payload"]), &original) == nil {
-		quote["payload"] = original
+	// A card click is not a user-authored message. Do not render an empty
+	// quoted message that attributes the bot's card to the operator.
+	if in.Extra["octo_card_event_key"] == "" {
+		quote := map[string]any{"message_id": id, "from_uid": in.UserID, "from_name": in.UserName}
+		var original map[string]json.RawMessage
+		if json.Unmarshal([]byte(in.Extra["octo_original_payload"]), &original) == nil {
+			quote["payload"] = original
+		}
+		payload["reply"] = quote
 	}
-	payload["reply"] = quote
 	// Models cannot redirect replies or inject mention-all through ReplyMessage.Extra.
 	var result struct {
 		ID json.RawMessage `json:"message_id"`

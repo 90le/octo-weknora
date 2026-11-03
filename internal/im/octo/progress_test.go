@@ -113,8 +113,11 @@ func TestProgressCardUsesFixedStagesAndScopedTarget(t *testing.T) {
 	p.Finish(im.ProcessingCompleted)
 	select {
 	case body := <-edits:
-		if string(body["state"]) != `"completed"` {
-			t.Fatalf("unexpected terminal state: %s", body["state"])
+		var data map[string]any
+		if err := json.Unmarshal(body["data"], &data); err != nil || string(body["state"]) != `"completed"` ||
+			data["traceExpanded"] != false || data["traceCollapsed"] != true ||
+			!strings.Contains(string(body["data"]), "知识库") {
+			t.Fatalf("unexpected terminal progress: state=%s data=%s err=%v", body["state"], body["data"], err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("progress completion missing")
