@@ -292,6 +292,15 @@
                 <t-tag-input v-model="formData.credentials.management_bot_uids" placeholder="默认不允许；必须同时在上方提问名单中" />
                 <p class="form-desc">仅用于明确授权的 Bot 联调。平台无法核验 Bot 管理员字段时，此名单可授权已核验的 Bot 成员维护本区已授权资产，不授予工作区权限。正式使用可留空。</p>
               </div>
+              <div class="setting-row setting-row--last">
+                <div class="setting-info">
+                  <label>生成并发送 Markdown 文件</label>
+                  <p class="form-desc">允许已授权会话在用户请求文件时生成 Markdown，发送到原会话；不开放本机文件或沙箱。</p>
+                </div>
+                <div class="setting-control">
+                  <t-switch v-model="formData.credentials.allow_generated_files" size="small" />
+                </div>
+              </div>
             </template>
             <template v-if="formData.platform === 'wecom'">
               <div class="platform-link-hint">
@@ -928,7 +937,7 @@ function onPlatformChange(val: string | number | boolean) {
     formData.value.mode = 'websocket';
     formData.value.output_mode = 'full';
     formData.value.session_mode = 'user';
-    formData.value.credentials = { account_id: '', bot_uid: '', allowed_dm_uids: [], allowed_bot_uids: [], management_bot_uids: [], dm_knowledge_base_ids: [] };
+    formData.value.credentials = { account_id: '', bot_uid: '', allowed_dm_uids: [], allowed_bot_uids: [], management_bot_uids: [], dm_knowledge_base_ids: [], allow_generated_files: false };
   } else if (val === 'wechat') {
     editingEnabled.value = true;
     formData.value.mode = 'longpoll';

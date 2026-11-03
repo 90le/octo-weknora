@@ -1366,6 +1366,10 @@ func (s *agentService) registerTools(
 		}
 	}
 
+	// This tool is admitted only by an explicit Octo channel capability.
+	if octobusiness.HasMarkdownSink(ctx) {
+		registry.RegisterTool(octobusiness.NewMarkdownFileTool())
+	}
 	logger.Infof(ctx, "Registered %d tools", len(registry.ListTools()))
 	return nil
 }

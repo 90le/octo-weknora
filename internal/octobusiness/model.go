@@ -27,6 +27,7 @@ type Attachment struct {
 // HTTP input. Validate refreshes native roles/bindings at every invocation.
 type Principal struct {
 	CanCreateKnowledgeBase                                       bool
+	AllowGeneratedFiles                                          bool
 	TenantID                                                     uint64
 	AccountID, ChannelID, ScopeID, ScopeName, GroupID, SubareaID string
 	UserID, UserName, MessageID, MessageText                     string

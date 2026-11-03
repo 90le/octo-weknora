@@ -17,6 +17,25 @@ type scopeTestAdapter struct {
 	err   error
 }
 
+func TestGeneratedFileDefaultPreservesExistingScopeSerialization(t *testing.T) {
+	scope := &ExecutionScope{AccountID: "account", ScopeID: "scope", KnowledgeBaseIDs: []string{"kb"}, Revision: "r"}
+	raw, err := json.Marshal(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"ReadIssueKnowledgeBaseIDs":null,"AccountID":"account","ScopeID":"scope",` +
+		`"ManageKnowledgeBaseIDs":null,"ReadIssueScopeIDs":null,"CanManageScope":false,` +
+		`"AllowKnowledgeCreation":false,"AllowPublicWeb":false,"KnowledgeBaseIDs":["kb"],"Revision":"r"}`
+	if string(raw) != want {
+		t.Fatalf("disabled capability changed existing session scope: %s", raw)
+	}
+	fingerprint := ExecutionScopeFingerprint(scope)
+	scope.AllowGeneratedFiles = true
+	if fingerprint == ExecutionScopeFingerprint(scope) {
+		t.Fatal("changing generated-file permission did not invalidate the session scope")
+	}
+}
+
 type syntheticScopedKB struct {
 	interfaces.KnowledgeBaseService
 	searched []string

@@ -41,6 +41,8 @@ type ExecutionScope struct {
 	// Exact-scope, default-off public web permission. Included in the scope
 	// fingerprint so revocation invalidates queued work and session reuse.
 	AllowPublicWeb bool
+	// Generated files are separately enabled by the Octo channel administrator.
+	AllowGeneratedFiles bool `json:"allow_generated_files,omitempty"`
 
 	KnowledgeBaseIDs []string
 	Revision         string

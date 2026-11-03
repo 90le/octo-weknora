@@ -164,7 +164,11 @@ func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint6
 			if db.WithContext(ctx).Table("knowledge_bases").Where("tenant_id = ? AND id IN ? AND deleted_at IS NULL", tenant, ids).Count(&count).Error != nil || count != int64(len(ids)) {
 				return nil, im.ErrScopeDenied
 			}
-			result := &im.ExecutionScope{AccountID: account, ScopeID: "dm:" + msg.UserID, ScopeName: "私聊", KnowledgeBaseIDs: ids, Revision: fmt.Sprint(channel.ID, channel.AgentID, connection.UpdatedAt)}
+			result := &im.ExecutionScope{
+				AccountID: account, ScopeID: "dm:" + msg.UserID, ScopeName: "私聊", KnowledgeBaseIDs: ids,
+				AllowGeneratedFiles: im.GetBool(config, "allow_generated_files"),
+				Revision:            fmt.Sprint(channel.ID, channel.AgentID, connection.UpdatedAt),
+			}
 			var profile struct {
 				UID  string `json:"uid"`
 				Name string `json:"name"`
@@ -265,7 +269,12 @@ func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint6
 		}
 		// Names and metadata refresh timestamps are not permission changes.
 		// KB IDs participate in the native scope fingerprint separately.
-		out := &im.ExecutionScope{ManageKnowledgeBaseIDs: managed, AccountID: account, ScopeID: stored.ID, ScopeName: stored.DisplayName, CanManageScope: canManage, AllowKnowledgeCreation: canManage && stored.AllowKnowledgeCreation, AllowPublicWeb: stored.AllowPublicWeb, Revision: fmt.Sprint(channel.ID, channel.AgentID, connection.UpdatedAt, stored.ID), SenderName: senderName}
+		out := &im.ExecutionScope{
+			ManageKnowledgeBaseIDs: managed, AccountID: account, ScopeID: stored.ID, ScopeName: stored.DisplayName,
+			CanManageScope: canManage, AllowKnowledgeCreation: canManage && stored.AllowKnowledgeCreation,
+			AllowPublicWeb: stored.AllowPublicWeb, AllowGeneratedFiles: im.GetBool(config, "allow_generated_files"),
+			Revision: fmt.Sprint(channel.ID, channel.AgentID, connection.UpdatedAt, stored.ID), SenderName: senderName,
+		}
 		for _, binding := range bindings {
 			out.KnowledgeBaseIDs = append(out.KnowledgeBaseIDs, binding.KnowledgeBaseID)
 		}
