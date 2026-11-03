@@ -11,25 +11,26 @@ import (
 )
 
 const (
-	ToolConfiguration           = "octo_configuration"
-	ToolContacts                = "octo_contacts"
-	ToolIssues                  = "octo_issues"
-	ToolKnowledgePreview        = "octo_knowledge_preview"
-	ToolKnowledgeConfirm        = "octo_knowledge_confirm"
-	ToolKnowledgeDocuments      = "octo_knowledge_documents"
-	ToolReport                  = "octo_report"
-	knowledgePreviewDescription = "Preview a knowledge change; action is required. To create a library " +
-		"use action=create_kb and name. An optional creation template needs read permission, not management " +
-		"permission; the server's preview decides current creation authorization. Do not infer denial from " +
-		"an empty manageable list. rename/save_draft may default the KB only when exactly one is manageable. " +
-		"Resolve library targets with octo_configuration; use octo_knowledge_documents list/get to find saved " +
-		"drafts and retrieve their exact title/body before publish or revision. Drafts are intentionally absent " +
-		"from public RAG, not missing knowledge. Return the exact preview and proposal_id. Put " +
-		"confirmation_command and cancellation_command verbatim together as concise backup instructions; " +
-		"never shorten them because their OP-ID is required. An Octo confirmation card may also be offered; " +
-		"only the same user in the same conversation can use it. No change is executed until an authorized " +
-		"explicit confirmation. Never publish automatically."
+	ToolConfiguration      = "octo_configuration"
+	ToolContacts           = "octo_contacts"
+	ToolIssues             = "octo_issues"
+	ToolKnowledgePreview   = "octo_knowledge_preview"
+	ToolKnowledgeConfirm   = "octo_knowledge_confirm"
+	ToolKnowledgeDocuments = "octo_knowledge_documents"
+	ToolReport             = "octo_report"
 )
+
+const knowledgePreviewDescription = "Preview a knowledge change; action is required. To create a library " +
+	"use action=create_kb and name. An optional creation template needs read permission, not management " +
+	"permission; the server's preview decides current creation authorization. Do not infer denial from " +
+	"an empty manageable list. rename/save_draft may default the KB only when exactly one is manageable. " +
+	"Resolve library targets with octo_configuration; use octo_knowledge_documents list/get to find saved " +
+	"drafts and retrieve their exact title/body before publish or revision. Drafts are intentionally absent " +
+	"from public RAG, not missing knowledge. Return the exact preview and proposal_id. Put " +
+	"confirmation_command and cancellation_command verbatim together as concise backup instructions; " +
+	"never shorten them because their OP-ID is required. An Octo confirmation card may also be offered; " +
+	"only the same user in the same conversation can use it. No change is executed until an authorized " +
+	"explicit confirmation. Never publish automatically."
 
 // NewTools exposes focused model-facing signatures while reusing the same
 // principal validation, authorization, idempotency and confirmation executor.
