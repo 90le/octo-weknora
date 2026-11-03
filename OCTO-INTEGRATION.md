@@ -22,7 +22,7 @@ Octo 原生消息 → WeKnora IM 适配器 → 身份／区域授权 → WeKnora
 
 ## 目标演进：通用会话产物与受控执行
 
-在现有 WeKnora Agent 和渠道链路上演进会话产物、独立沙箱、Skills 与原会话投递，复用知识业务授权；服务端负责身份、资源范围与发送结果。目标、旧 Markdown 兼容和工具退役条件统一见 [产品需求](OCTO-REQUIREMENTS.md) 的 R18–R20，不代表当前渠道已实现或部署。当前渠道能力见 [能力清单](internal/im/octo/CAPABILITIES.md)。
+在现有 WeKnora Agent 和渠道链路上演进会话产物、独立沙箱、Skills 与原会话投递，复用知识业务授权；服务端负责身份、资源范围与发送结果。目标、旧 Markdown 兼容和工具退役条件统一见 [产品需求](OCTO-REQUIREMENTS.md) 的 R18–R20；候选源码不代表当前生产已部署或真实客户端已验收。当前渠道能力见 [能力清单](internal/im/octo/CAPABILITIES.md)。
 
 沙箱文档依赖的候选构建定义位于 [Dockerfile](deploy/octo/sandbox-artifacts.Dockerfile) 和 [版本及摘要锁定清单](deploy/octo/sandbox-artifacts-requirements.lock)。在单独的构建目录准备 `wheels/`，使用 Python 3.12、Linux x86-64 的兼容 wheel 按清单下载并校验 SHA-256，将清单复制到构建目录，再以该 Dockerfile 执行 `docker build --network none`。多阶段构建只把安装后的库带入最终镜像；运行沙箱不因此获得联网权限。镜像、依赖和实际配置的部署状态以 [OCTO-STATUS](OCTO-STATUS.md) 与本机运维资料为准。
 
