@@ -57,7 +57,9 @@ func TestProgressHistoryIsBoundedAndMarksOmittedSteps(t *testing.T) {
 
 func TestProgressRetryCoalescesOnlyTheSameFailedInvocation(t *testing.T) {
 	p := &progressCard{updates: make(chan struct{}, 1)}
-	for _, stage := range []string{"configuration", "configuration:done", "preview", "preview:failed", "preview", "preview:done", "answer"} {
+	for _, stage := range []string{
+		"configuration", "configuration:done", "preview", "preview:failed", "preview", "preview:done", "answer",
+	} {
 		p.Report(stage)
 	}
 	history := p.progressHistory()
@@ -65,7 +67,8 @@ func TestProgressRetryCoalescesOnlyTheSameFailedInvocation(t *testing.T) {
 		t.Fatalf("retry was not summarized: %s", got)
 	}
 	raw, _ := json.Marshal(progressData("fixture", "completed", history, true, time.Second))
-	if !strings.Contains(string(raw), "重试后") || strings.Contains(string(raw), "步骤未成功") || strings.Contains(string(raw), "正在整理答复") {
+	if !strings.Contains(string(raw), "重试后") || strings.Contains(string(raw), "步骤未成功") ||
+		strings.Contains(string(raw), "正在整理答复") {
 		t.Fatalf("successful retry has a misleading display: %s", raw)
 	}
 	var multiple []string
