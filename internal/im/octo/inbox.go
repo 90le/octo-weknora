@@ -284,6 +284,7 @@ func (a *Adapter) recordReplyFailure(ctx context.Context, id, code string) {
 		"updated_at": time.Now(),
 	}).Error
 }
+
 func (a *Adapter) markExhaustedReplies(ctx context.Context) {
 	if a.db == nil {
 		return

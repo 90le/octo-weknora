@@ -2,8 +2,10 @@ package types
 
 import "context"
 
-type imKnowledgeScopeKey struct{}
-type imPublicWebAuthorizerKey struct{}
+type (
+	imKnowledgeScopeKey      struct{}
+	imPublicWebAuthorizerKey struct{}
+)
 
 // IMWebAuthorizer rechecks a native IM scope immediately before public network
 // access. It is provided by the admitted channel, not by a model or user prompt.

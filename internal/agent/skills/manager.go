@@ -39,8 +39,10 @@ const skillDirEnvVar = "WEKNORA_SKILL_DIR"
 // never injected — a skill's Python packages arrive through its venv
 // interpreter — but stays on the blacklist below, because a stored PYTHONPATH
 // could otherwise shadow exactly those packages.
-const pythonPathEnvVar = "PYTHONPATH"
-const nodePathEnvVar = "NODE_PATH"
+const (
+	pythonPathEnvVar = "PYTHONPATH"
+	nodePathEnvVar   = "NODE_PATH"
+)
 
 // InjectedSandboxEnvVars is every name skill environment preparation writes into the sandbox
 // environment. The skill-env declaration blacklist must reject these so a
