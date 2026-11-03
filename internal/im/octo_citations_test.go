@@ -29,12 +29,14 @@ func (f *octoCitationKnowledge) GetKnowledgeByID(_ context.Context, id string) (
 	}
 	return row, nil
 }
+
 func octoCitationContext() context.Context {
 	p := octobusiness.Principal{TenantID: 1, AccountID: "bot", ChannelID: "group", ScopeID: "scope", UserID: "native", KnowledgeBaseIDs: []string{"kb"}}
 	fresh := p
 	p.Validate = func(context.Context) (octobusiness.Principal, error) { return fresh, nil }
 	return octobusiness.WithPrincipal(context.Background(), p)
 }
+
 func TestOctoCitationsOnlyLinkExplicitlyUsedAuthorizedReferences(t *testing.T) {
 	commit := strings.Repeat("a", 40)
 	link := "https://github.com/test/project/blob/" + commit + "/README.md"
@@ -51,6 +53,36 @@ func TestOctoCitationsOnlyLinkExplicitlyUsedAuthorizedReferences(t *testing.T) {
 	require.Contains(t, stripIMCitationTags(answer), "README.md")
 	unchanged := service.appendOctoSources(context.Background(), `answer <kb chunk_id="chunk-used"/>`, refs)
 	require.NotContains(t, unchanged, link)
+}
+
+func TestOctoCitationsCollapseOnlyAdjacentSameAuthorizedSource(t *testing.T) {
+	knowledge := &octoCitationKnowledge{rows: map[string]*types.Knowledge{
+		"one":   {ID: "one", TenantID: 1, KnowledgeBaseID: "kb", Title: "同名文档", EnableStatus: "enabled"},
+		"two":   {ID: "two", TenantID: 1, KnowledgeBaseID: "kb", Title: "同名文档", EnableStatus: "enabled"},
+		"draft": {ID: "draft", TenantID: 1, KnowledgeBaseID: "kb", Title: "草稿", EnableStatus: "disabled"},
+	}}
+	refs := []*types.SearchResult{
+		{ID: "a", KnowledgeID: "one", KnowledgeBaseID: "kb"},
+		{ID: "b", KnowledgeID: "one", KnowledgeBaseID: "kb"},
+		{ID: "c", KnowledgeID: "two", KnowledgeBaseID: "kb"},
+		{ID: "d", KnowledgeID: "draft", KnowledgeBaseID: "kb"},
+	}
+	service := &Service{knowledgeService: knowledge}
+	tests := []struct{ name, input, body string }{
+		{"adjacent chunks", `结论。<kb chunk_id="a"/><kb chunk_id="b"/><kb chunk_id="a"/>`, "结论。（来源：同名文档）"},
+		{"separate positions", `甲。<kb chunk_id="a"/>乙。<kb chunk_id="b"/>`, "甲。（来源：同名文档）乙。（来源：同名文档）"},
+		{"spaces and tabs", "甲。<kb chunk_id=\"a\"/> \t <kb chunk_id=\"b\"/> \t<kb chunk_id=\"a\"/>乙", "甲。（来源：同名文档）乙"},
+		{"newline separates", "甲。<kb chunk_id=\"a\"/>\n<kb chunk_id=\"b\"/>", "甲。（来源：同名文档）\n（来源：同名文档）"},
+		{"different documents same title", `甲。<kb chunk_id="a"/> <kb chunk_id="c"/>`, "甲。（来源：同名文档） （来源：同名文档）"},
+		{"invalid between", `甲。<kb chunk_id="a"/> <kb chunk_id="d"/> <kb chunk_id="b"/>`, "甲。（来源：同名文档）  （来源：同名文档）"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			answer := service.appendOctoSources(octoCitationContext(), tc.input, refs)
+			require.Equal(t, tc.body+"\n\n来源：\n- 同名文档（知识库资料，未配置公开来源链接）", answer)
+			require.NotContains(t, answer, "草稿")
+		})
+	}
 }
 
 func TestOctoAgentCitationSurvivesOutboundCleanup(t *testing.T) {
@@ -183,6 +215,7 @@ func TestOctoCitedPrivateDocumentKeepsSourceTitleWithoutInventedLink(t *testing.
 	// A public link is never fabricated for a private local document.
 	require.NotContains(t, visible, "https://")
 }
+
 func TestOctoPlainSourceTitleMustBeUniqueAndExplicit(t *testing.T) {
 	knowledge := &octoCitationKnowledge{rows: map[string]*types.Knowledge{"one": {ID: "one", TenantID: 1, KnowledgeBaseID: "kb", Title: "Octo CLI README", EnableStatus: "enabled", Source: "https://example.org/guide"}}}
 	service := &Service{knowledgeService: knowledge}
@@ -195,6 +228,7 @@ func TestOctoPlainSourceTitleMustBeUniqueAndExplicit(t *testing.T) {
 	answer = service.appendOctoSources(octoCitationContext(), "安装命令。\n来源：Octo CLI README", refs)
 	require.NotContains(t, answer, "https://", "ambiguous title cannot choose a different KB")
 }
+
 func TestOctoCitationsRejectDraftsWrongKBAndChangedCommit(t *testing.T) {
 	commit := strings.Repeat("a", 40)
 	metadata, _ := json.Marshal(map[string]string{"github_url": "https://github.com/test/project/blob/" + strings.Repeat("b", 40) + "/README.md", "github_commit": commit})
@@ -233,6 +267,7 @@ func (*octoCitationSourceTool) Name() string { return "source_browse" }
 func (t *octoCitationSourceTool) Execute(context.Context, json.RawMessage) (*types.ToolResult, error) {
 	return &types.ToolResult{Success: true, Output: t.output, Data: t.data}, nil
 }
+
 func TestOctoRawSourceCitationRequiresObservedReadURL(t *testing.T) {
 	ctx := octobusiness.WithRetrievalTrace(octoCitationContext())
 	url := "https://github.com/test/code/blob/" + strings.Repeat("c", 40) + "/main.go#L3-L7"
@@ -242,6 +277,8 @@ func TestOctoRawSourceCitationRequiresObservedReadURL(t *testing.T) {
 	service := &Service{}
 	answer := service.appendOctoSources(ctx, `answer <web title="main.go" url="`+url+`"/>`, nil)
 	require.Contains(t, stripIMCitationTags(answer), url)
+	duplicate := service.appendOctoSources(ctx, `answer <web url="`+url+`"/><web url="`+url+`"/>`, nil)
+	require.Equal(t, 1, strings.Count(duplicate, url))
 	forged := service.appendOctoSources(ctx, `answer <web title="other" url="https://github.com/other/code/blob/main/a.go"/>`, nil)
 	require.NotContains(t, stripIMCitationTags(forged), "github.com")
 }
@@ -389,6 +426,7 @@ func TestOctoOfficialReleaseCitationIsAppendedWithoutModelRefAndRespectsSetting(
 	withoutCitations := service.appendOctoSources(ctx, "Web 客户端已发布 v1.2.3。", nil)
 	require.NotContains(t, withoutCitations, url)
 }
+
 func TestOctoCitationURLsDoNotExposeLocalPathsOrTokens(t *testing.T) {
 	for _, value := range []string{
 		"file:///etc/passwd", "http://public.example", "https://127.0.0.1/private",

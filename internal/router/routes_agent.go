@@ -318,6 +318,10 @@ func RegisterIMChannelRoutes(r *gin.RouterGroup, imHandler *handler.IMHandler, g
 		channels.DELETE("/:id", g.Admin(), imHandler.DeleteIMChannel)
 		channels.POST("/:id/toggle", g.Admin(), imHandler.ToggleIMChannel)
 	}
+	// A web account is required; leave these routes out of the API-key registry.
+	r.GET("/im-channels/:id/web-owner", g.Viewer(), imHandler.GetWebOwner)
+	r.PUT("/im-channels/:id/web-owner", g.Admin(), imHandler.BindWebOwner)
+	r.DELETE("/im-channels/:id/web-owner", g.Admin(), imHandler.UnbindWebOwner)
 
 	// WeChat QR code login (requires authentication) — Admin+: a successful
 	// scan binds a personal WeChat account to the tenant.

@@ -51,3 +51,20 @@ func TestListArtifactLibraryScopesToCallerAndNormalizesQuery(t *testing.T) {
 	require.Equal(t, handle, items[0].Handle)
 	require.Empty(t, items[1].Handle, "non-resource URLs never leak as handles")
 }
+
+func TestArtifactWebOwnerIDRequiresMatchingWebPrincipal(t *testing.T) {
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
+	ctx = context.WithValue(ctx, types.UserIDContextKey, "alice")
+	require.Empty(t, artifactWebOwnerID(ctx))
+	web := types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "alice"})
+	require.Equal(t, "alice", artifactWebOwnerID(web))
+	require.Empty(
+		t,
+		artifactWebOwnerID(types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: "bob"})),
+	)
+	require.Empty(
+		t,
+		artifactWebOwnerID(types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "alice"})),
+	)
+	require.Empty(t, artifactWebOwnerID(types.WithExecutionTenant(web, 8)))
+}

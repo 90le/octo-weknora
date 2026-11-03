@@ -5,6 +5,7 @@ import { ref, shallowRef, watch, onMounted, onUnmounted, nextTick, defineAsyncCo
 import { previewKnowledgeFile } from '@/api/knowledge-base/index';
 import { previewTemporaryAttachment } from '@/api/chat/temporary-attachments';
 import { downloadArtifact } from '@/api/chat';
+import { downloadChannelArtifact } from '@/api/artifacts';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github.css';
 import 'katex/dist/katex.min.css';
@@ -58,6 +59,7 @@ const props = defineProps<{
   attachmentId?: string;
   messageId?: string;
   artifactIndex?: number;
+  channelArtifact?: boolean;
   fileType: string;
   fileName: string;
   active: boolean;
@@ -385,6 +387,7 @@ async function fetchPreviewBlob(): Promise<Blob> {
     Number.isInteger(props.artifactIndex) &&
     (props.artifactIndex as number) >= 0
   ) {
+    if (props.channelArtifact) return downloadChannelArtifact({session_id: props.sessionId, message_id: props.messageId, index: props.artifactIndex} as any);
     return downloadArtifact(props.sessionId, props.messageId, props.artifactIndex as number);
   }
   throw new Error('Missing preview source');

@@ -8521,7 +8521,7 @@ export default {
   },
   artifactLibrary: {
     title: '产物',
-    subtitle: '这里显示可访问的网页会话产物；Octo 等 IM 会话的文件暂不显示。',
+    subtitle: '这里显示可访问的网页会话产物，以及已绑定 Octo 渠道的产物。',
     typeFilter: '按类型筛选',
     searchPlaceholder: '搜索文件名',
     categories: {

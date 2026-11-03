@@ -216,14 +216,14 @@ func AuthorizeMessageFile(ctx context.Context, message *types.Message, reference
 	}
 	kbAuthorized := false
 	if resource != nil && message.AgentTenantID != 0 && message.AgentTenantID != owner {
-		kbAuthorized = kbShares.resourceAccessibleViaSharedKB(ctx, message, resource, caller.TenantID, caller.Role)
+		kbAuthorized = kbShares.resourceAccessibleViaKB(ctx, message, resource, caller.TenantID, caller.Role)
 		if !kbAuthorized {
 			return FileAccess{}, ErrForbidden
 		}
 	}
 	if owner != caller.TenantID && !kbAuthorized {
 		if message.AgentTenantID == 0 {
-			kbAuthorized = kbShares.resourceAccessibleViaSharedKB(ctx, message, resource, caller.TenantID, caller.Role)
+			kbAuthorized = kbShares.resourceAccessibleViaKB(ctx, message, resource, caller.TenantID, caller.Role)
 		}
 		if !kbAuthorized {
 			if message.AgentID == "" || agents == nil {
@@ -246,11 +246,20 @@ func AuthorizeMessageFile(ctx context.Context, message *types.Message, reference
 			for _, kbID := range origins.KnowledgeBaseIDs {
 				if scope.Allows(kbID, owner) && types.AuthorizeTenantAPIKeyKnowledgeBases(ctx, kbID) == nil {
 					allowed = true
+					kbAuthorized = true
 				}
 			}
 			if !allowed {
 				return FileAccess{}, ErrForbidden
 			}
+		}
+	}
+	if !kbAuthorized && resource != nil && owner == caller.TenantID {
+		kbAuthorized = kbShares.resourceAccessibleViaKB(ctx, message, resource, caller.TenantID, caller.Role)
+	}
+	if !kbAuthorized {
+		if _, err := CheckOctoFile(ctx, catalog, owner, reference); err != nil {
+			return FileAccess{}, err
 		}
 	}
 	if resource == nil {
@@ -287,6 +296,9 @@ func ResolveMessageArtifact(ctx context.Context, message *types.Message, index i
 	}
 	if (resource != nil && resource.TenantID == caller.TenantID) ||
 		(resource == nil && secutils.ValidateStoragePathTenant(file.Path, caller.TenantID) == nil) {
+		if _, err := CheckOctoFile(ctx, catalog, caller.TenantID, artifact.URL); err != nil {
+			return FileAccess{}, err
+		}
 		file.OwnerTenantID = caller.TenantID
 		file.Filename = artifact.FileName
 		return file, nil

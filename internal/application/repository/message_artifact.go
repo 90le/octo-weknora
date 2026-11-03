@@ -258,6 +258,46 @@ func (r *messageRepository) RecordRestoredArtifactMtime(
 // source path stand alone. A later answer that references an earlier file
 // stores another row with the same URL, so versions are counted as distinct
 // URLs (the max DENSE_RANK over url, since window functions reject DISTINCT).
+// channelArtifactGrant does not grant ordinary session access. Historical
+// mappings retain their channel association after a chat is cleared.
+const channelArtifactGrant = `EXISTS (SELECT 1 FROM im_channel_sessions owner_ics
+ JOIN im_channel_web_owners o ON o.im_channel_id = owner_ics.im_channel_id
+  AND o.tenant_id = s.tenant_id AND o.deleted_at IS NULL
+ JOIN im_channels c ON c.id = o.im_channel_id AND c.tenant_id = o.tenant_id AND c.deleted_at IS NULL
+ JOIN tenant_members tm ON tm.tenant_id = o.tenant_id AND tm.user_id = o.web_user_id
+  AND tm.status = 'active' AND tm.deleted_at IS NULL
+ JOIN users u ON u.id = o.web_user_id AND u.is_active = ? AND u.deleted_at IS NULL
+ WHERE owner_ics.session_id = s.id AND owner_ics.tenant_id = s.tenant_id
+  AND owner_ics.platform = 'octo' AND o.web_user_id = ?)`
+
+func (r *messageRepository) GetChannelArtifactMessage(
+	ctx context.Context,
+	tenantID uint64,
+	userID, sessionID, messageID string,
+	position int,
+) (*types.Message, error) {
+	if tenantID == 0 || userID == "" || position < 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var count int64
+	err := r.db.WithContext(ctx).Table("message_artifacts ma").
+		Joins("JOIN messages m ON m.id = ma.message_id AND m.session_id = ma.session_id AND m.deleted_at IS NULL").
+		Joins("JOIN sessions s ON s.id = ma.session_id AND s.deleted_at IS NULL").
+		Where(
+			"s.tenant_id = ? AND ma.session_id = ? AND ma.message_id = ? AND ma.position = ? "+
+				"AND ma.deleted_at IS NULL AND "+channelArtifactGrant,
+			tenantID, sessionID, messageID, position, true, userID,
+		).
+		Count(&count).Error
+	if err != nil {
+		return nil, err
+	}
+	if count != 1 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return r.GetMessage(ctx, sessionID, messageID)
+}
+
 func (r *messageRepository) ListArtifactLibrary(
 	ctx context.Context, q *types.ArtifactLibraryQuery,
 ) ([]*types.ArtifactLibraryItem, int64, error) {
@@ -267,13 +307,21 @@ func (r *messageRepository) ListArtifactLibrary(
 	)
 	where = append(where, "s.tenant_id = ?", "s.deleted_at IS NULL", "ma.deleted_at IS NULL")
 	args = append(args, q.TenantID)
+	webScope := "(s.description IS NULL OR s.description NOT LIKE ?) AND " + webSessionPredicate
+	webArgs := []any{types.SkillMaintenanceSessionMarker + "%"}
+	webArgs = append(webArgs, webSessionPredicateArgs()...)
 	if q.UserID != "" {
-		where = append(where, "(s.user_id = ? OR s.user_id IS NULL OR s.user_id = '')")
-		args = append(args, q.UserID)
+		webScope = "(s.user_id = ? OR s.user_id IS NULL OR s.user_id = '') AND " + webScope
+		webArgs = append([]any{q.UserID}, webArgs...)
 	}
-	where = append(where, "(s.description IS NULL OR s.description NOT LIKE ?)", webSessionPredicate)
-	args = append(args, types.SkillMaintenanceSessionMarker+"%")
-	args = append(args, webSessionPredicateArgs()...)
+	if q.WebOwnerID != "" && r.db.WithContext(ctx).Migrator().HasTable("im_channel_web_owners") {
+		where = append(where, "(("+webScope+") OR "+channelArtifactGrant+")")
+		args = append(args, webArgs...)
+		args = append(args, true, q.WebOwnerID)
+	} else {
+		where = append(where, webScope)
+		args = append(args, webArgs...)
+	}
 	if kw := strings.TrimSpace(q.Keyword); kw != "" {
 		where = append(where, "LOWER(ma.file_name) LIKE LOWER(?) ESCAPE ?")
 		args = append(args, "%"+escapeLikeKeyword(kw)+"%", likeEscapeChar)
@@ -285,7 +333,7 @@ func (r *messageRepository) ListArtifactLibrary(
 
 	grouped := `SELECT ma.session_id, ma.message_id, ma.position, ma.url, ma.file_name,
 			ma.file_type, ma.file_size, ma.source_path, ma.created_at, ma.id,
-			s.title AS session_title,
+			s.title AS session_title, CASE WHEN ics.id IS NULL THEN false ELSE true END AS im_channel_artifact,
 			CASE WHEN ma.source_path = '' THEN ma.id ELSE ma.source_path END AS version_key,
 			ROW_NUMBER() OVER (
 				PARTITION BY ma.session_id, CASE WHEN ma.source_path = '' THEN ma.id ELSE ma.source_path END
@@ -296,7 +344,7 @@ func (r *messageRepository) ListArtifactLibrary(
 				ORDER BY ma.url
 			) AS url_rank
 		FROM message_artifacts ma
-		JOIN messages m ON m.id = ma.message_id AND m.deleted_at IS NULL
+		JOIN messages m ON m.id = ma.message_id AND m.session_id = ma.session_id AND m.deleted_at IS NULL
 		JOIN sessions s ON s.id = ma.session_id
 		LEFT JOIN im_channel_sessions ics ON ics.session_id = s.id
 		WHERE ` + strings.Join(where, " AND ")

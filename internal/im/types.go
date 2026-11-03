@@ -30,9 +30,12 @@ type IMChannel struct {
 	BotIdentity     string                `json:"bot_identity"      gorm:"type:varchar(255);not null;default:'';uniqueIndex:idx_im_channels_bot_identity,where:deleted_at IS NULL AND bot_identity != ''"`
 	SessionMode     string                `json:"session_mode"      gorm:"type:varchar(20);not null;default:'user'"`
 	Credentials     types.JSON            `json:"credentials"       gorm:"type:jsonb;not null;default:'{}'"`
-	CreatedAt       time.Time             `json:"created_at"`
-	UpdatedAt       time.Time             `json:"updated_at"`
-	DeletedAt       gorm.DeletedAt        `json:"deleted_at"  gorm:"index"`
+
+	OwnerIdentityGeneration string `json:"-" gorm:"->"`
+
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `json:"deleted_at"  gorm:"index"`
 }
 
 func (IMChannel) TableName() string {

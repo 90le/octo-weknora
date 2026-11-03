@@ -46,8 +46,8 @@ type KnowledgeOwnerLookup interface {
 }
 
 // MessageKBShareAuthorizer bundles the read-only lookups behind the
-// message proxy's org-shared-KB fallback. A nil ShareGuard or KBs lookup
-// disables the fallback. A live Bindings lookup is also required and can
+// message proxy's KB fallback. KBs and a live Bindings lookup are required;
+// ShareGuard is required when the KB belongs to another tenant. Bindings can
 // be supplied by the resource catalog. A nil Knowledges lookup only disables the
 // pre-denormalization KnowledgeID path.
 type MessageKBShareAuthorizer struct {
@@ -57,27 +57,24 @@ type MessageKBShareAuthorizer struct {
 	Bindings   interfaces.KBResourceLookup
 }
 
-// resourceAccessibleViaSharedKB reports whether the message's persisted
-// retrieval evidence proves the resource came from an org-shared KB the
-// caller may read. This is the fallback for replies whose agent belongs to
-// the caller's own workspace while the retrieved resources belong to the
-// workspace that shared the knowledge base (#3022).
+// resourceAccessibleViaKB reports whether persisted retrieval evidence,
+// a live resource binding and the current KB grant authorize the resource.
 //
 // Evidence required from one retrieval record: a canonical resource://
 // handle (not a prefix of a longer token) appears in the chunk text or
 // image_info, its knowledge base belongs to the resource's tenant, and
-// that KB is org-shared to the caller with at least viewer permission, and
+// the caller has at least viewer permission on that KB, and
 // an independent live resource binding confirms the file still belongs to it.
 // Smart-reasoning turns persist that evidence on AgentSteps when
 // KnowledgeReferences was never filled. Any lookup failure fails closed.
-func (a MessageKBShareAuthorizer) resourceAccessibleViaSharedKB(
+func (a MessageKBShareAuthorizer) resourceAccessibleViaKB(
 	ctx context.Context,
 	message *types.Message,
 	resource *types.StoredResource,
 	callerTenantID uint64,
 	callerTenantRole types.TenantRole,
 ) bool {
-	if a.ShareGuard == nil || a.KBs == nil || a.Bindings == nil || message == nil || resource == nil {
+	if a.KBs == nil || a.Bindings == nil || message == nil || resource == nil {
 		return false
 	}
 	handle, ok := types.ParseResourcePath(types.BuildResourcePath(resource.Handle))
@@ -94,13 +91,25 @@ func (a MessageKBShareAuthorizer) resourceAccessibleViaSharedKB(
 	if err != nil {
 		return false
 	}
-	permissions := NewKBSharePermissions(ctx, a.ShareGuard, callerTenantID, callerTenantRole)
 	for _, kb := range kbs {
 		if kb == nil || kb.TenantID != resource.TenantID {
 			continue
 		}
-		shared, err := permissions.Check(kb.ID, types.OrgRoleViewer)
-		if err == nil && shared {
+		grant, err := ResolveKB(
+			ctx,
+			KBRequest{
+				Caller: types.Caller{
+					TenantID: callerTenantID,
+					UserID:   types.CallerFromContext(ctx).UserID,
+					Role:     callerTenantRole,
+				},
+			},
+			kb,
+			types.OrgRoleViewer,
+			a.ShareGuard,
+			nil,
+		)
+		if err == nil && grant != nil {
 			bound, bindingErr := a.Bindings.IsReferencedByKnowledgeBase(
 				ctx, resource.TenantID, kb.ID, types.BuildResourcePath(handle))
 			if bindingErr == nil && bound {

@@ -1213,6 +1213,10 @@ func (s *Service) StartChannel(channel *IMChannel) error {
 func (s *Service) startChannelInternal(channel *IMChannel, factory AdapterFactory) error {
 	// Build the message handler that delegates to HandleMessage with this channel's config
 	msgHandler := func(msgCtx context.Context, msg *IncomingMessage) error {
+		if channel.Platform == "octo" {
+			msg.octoIdentity = append([]byte(nil), channel.Credentials...)
+			msg.octoIdentityGeneration = channel.OwnerIdentityGeneration
+		}
 		return s.HandleMessage(msgCtx, msg, channel.ID)
 	}
 
@@ -1686,6 +1690,7 @@ func sameChannelRuntimeConfig(cached, fresh *IMChannel) bool {
 		cached.Locale == fresh.Locale &&
 		cached.KnowledgeBaseID == fresh.KnowledgeBaseID &&
 		cached.SessionMode == fresh.SessionMode &&
+		(cached.Platform != "octo" || cached.OwnerIdentityGeneration == fresh.OwnerIdentityGeneration) &&
 		equalChannelCredentials(cached.Credentials, fresh.Credentials)
 }
 
@@ -1789,6 +1794,10 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 		return scopeErr
 	}
 	msg.executionScope = scope
+	if channel.Platform == "octo" && msg.octoIdentity == nil {
+		msg.octoIdentity = append([]byte(nil), channel.Credentials...)
+		msg.octoIdentityGeneration = channel.OwnerIdentityGeneration
+	}
 	if scope != nil && scope.SenderName != "" {
 		msg.UserName = scope.SenderName
 	}
@@ -2519,6 +2528,9 @@ func imInitialSessionTitle(msg *IncomingMessage, identityTitle func(*IncomingMes
 // QueryPaged) relies on this one-mapping-per-session property; if this ever
 // re-maps an existing session, that JOIN needs a one-row-per-session guard.
 func (s *Service) resolveUserSession(ctx context.Context, msg *IncomingMessage, tenantID uint64, agentID string, imChannelID string) (*ChannelSession, error) {
+	if msg.Platform == "octo" && msg.octoIdentity != nil {
+		return s.resolveOctoIdentitySession(ctx, msg, tenantID, agentID, imChannelID)
+	}
 	var cs ChannelSession
 	lookup := func() *gorm.DB {
 		query := s.db.WithContext(ctx).Where("platform = ? AND user_id = ? AND chat_id = ? AND tenant_id = ? AND agent_id = ? AND deleted_at IS NULL",
@@ -3580,6 +3592,11 @@ func (s *Service) CreateChannel(channel *IMChannel) error {
 	if err := s.db.Create(channel).Error; err != nil {
 		return err
 	}
+	if channel.Platform == "octo" {
+		if err := s.db.First(channel, "id = ?", channel.ID).Error; err != nil {
+			return err
+		}
+	}
 	if channel.Enabled {
 		if err := s.StartChannel(channel); err != nil {
 			logger.Warnf(context.Background(), "[IM] Created channel %s but failed to start: %v", channel.ID, err)
@@ -3641,6 +3658,11 @@ func (s *Service) UpdateChannel(channel *IMChannel) error {
 	}
 	if err := s.db.Save(channel).Error; err != nil {
 		return err
+	}
+	if channel.Platform == "octo" {
+		if err := s.db.First(channel, "id = ?", channel.ID).Error; err != nil {
+			return err
+		}
 	}
 	// Restart channel: stop old, start new if enabled
 	s.StopChannel(channel.ID)

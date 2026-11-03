@@ -1,4 +1,4 @@
-import { del, get } from '@/utils/request'
+import { del, get, getDown } from '@/utils/request'
 
 /**
  * One file in the artifact library: the latest version of a file a skill
@@ -7,6 +7,7 @@ import { del, get } from '@/utils/request'
  * re-checks session ownership server side.
  */
 export interface ArtifactLibraryItem {
+  im_channel_artifact?: boolean
   session_id: string
   session_title: string
   message_id: string
@@ -68,4 +69,8 @@ export function deleteArtifactLibraryItem(item: ArtifactLibraryItem) {
     index: String(item.index),
   })
   return del<ArtifactDeleteResult>(`/api/v1/artifacts?${query.toString()}`)
+}
+
+export function downloadChannelArtifact(item: ArtifactLibraryItem): Promise<Blob> {
+  return getDown(`/api/v1/artifacts/channels/${encodeURIComponent(item.session_id)}/messages/${encodeURIComponent(item.message_id)}/${item.index}/download`)
 }

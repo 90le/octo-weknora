@@ -433,7 +433,7 @@ export default {
   },
   artifactLibrary: {
     title: 'Artifacts',
-    subtitle: 'Artifacts from accessible web conversations appear here. Octo and other IM conversation files are not shown.',
+    subtitle: 'Artifacts from accessible web conversations and bound Octo channels appear here.',
     typeFilter: 'Filter by type',
     searchPlaceholder: 'Search filenames',
     categories: {

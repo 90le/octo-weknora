@@ -448,7 +448,7 @@ export default {
   },
   artifactLibrary: {
     title: '成果物',
-    subtitle: 'アクセス可能な Web 会話の成果物を表示します。Octo などの IM 会話のファイルは表示されません。',
+    subtitle: 'アクセス可能な Web 会話と、連携済みの Octo チャネルの成果物を表示します。',
     typeFilter: '種類で絞り込む',
     searchPlaceholder: 'ファイル名を検索',
     categories: {

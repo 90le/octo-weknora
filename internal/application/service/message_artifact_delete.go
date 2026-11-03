@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"time"
 
@@ -44,6 +45,24 @@ func (s *messageService) DeleteSessionArtifact(
 	tenantID := types.MustTenantIDFromContext(ctx)
 	if _, err := s.sessionRepo.Get(ctx, tenantID, sessionUserIDForLookup(ctx), req.SessionID); err != nil {
 		return nil, err
+	}
+	// Channel ownership grants do not include permission to destroy artifacts.
+	// Check independently of the normal legacy-session ownership rule, which
+	// otherwise matches IM sessions with an empty user_id.
+	if principal, ok := types.PrincipalFromContext(ctx); ok && principal.Type == types.PrincipalWebUser {
+		lookup, ok := s.sessionRepo.(interface {
+			HasOctoSessionMapping(context.Context, uint64, string) (bool, error)
+		})
+		if !ok {
+			return nil, fmt.Errorf("artifact origin lookup unavailable")
+		}
+		isOcto, err := lookup.HasOctoSessionMapping(ctx, tenantID, req.SessionID)
+		if err != nil {
+			return nil, fmt.Errorf("check artifact origin: %w", err)
+		}
+		if isOcto {
+			return nil, errors.ErrSessionNotFound
+		}
 	}
 
 	target, err := s.messageRepo.FindSessionArtifact(ctx, req.SessionID, req.MessageID, req.Index)

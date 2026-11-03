@@ -102,7 +102,11 @@ func (s *messageService) CreateMessage(ctx context.Context, message *types.Messa
 }
 
 // GetMessage retrieves a specific message by its ID within a session
-func (s *messageService) GetMessage(ctx context.Context, sessionID string, messageID string) (*types.Message, error) {
+func (s *messageService) GetMessage(
+	ctx context.Context,
+	sessionID string,
+	messageID string,
+) (*types.Message, error) {
 	logger.Info(ctx, "Start getting message")
 	logger.Infof(ctx, "Getting message, session ID: %s, message ID: %s", sessionID, messageID)
 
@@ -253,12 +257,20 @@ func (s *messageService) UpdateMessage(ctx context.Context, message *types.Messa
 }
 
 // UpdateMessageImages updates only the images JSONB column for a message.
-func (s *messageService) UpdateMessageImages(ctx context.Context, sessionID, messageID string, images types.MessageImages) error {
+func (s *messageService) UpdateMessageImages(
+	ctx context.Context,
+	sessionID, messageID string,
+	images types.MessageImages,
+) error {
 	return s.messageRepo.UpdateMessageImages(ctx, sessionID, messageID, images)
 }
 
 // UpdateMessageRenderedContent updates the rendered_content column for a user message.
-func (s *messageService) UpdateMessageRenderedContent(ctx context.Context, sessionID, messageID string, renderedContent string) error {
+func (s *messageService) UpdateMessageRenderedContent(
+	ctx context.Context,
+	sessionID, messageID string,
+	renderedContent string,
+) error {
 	return s.messageRepo.UpdateMessageRenderedContent(ctx, sessionID, messageID, renderedContent)
 }
 
@@ -371,7 +383,13 @@ func (s *messageService) getRetrievalConfig(ctx context.Context) *types.Retrieva
 // It creates a Knowledge entry (passage) containing both the user query and assistant answer,
 // then links the message to the Knowledge entry via the knowledge_id field.
 // The KB ID is read from the tenant's ChatHistoryConfig — if not configured, indexing is skipped.
-func (s *messageService) IndexMessageToKB(ctx context.Context, userQuery string, assistantAnswer string, messageID string, sessionID string) {
+func (s *messageService) IndexMessageToKB(
+	ctx context.Context,
+	userQuery string,
+	assistantAnswer string,
+	messageID string,
+	sessionID string,
+) {
 	// Strip thinking content (<think>...</think>) before indexing to avoid
 	// polluting the knowledge base with intermediate reasoning that would
 	// degrade retrieval quality.
@@ -393,7 +411,13 @@ func (s *messageService) IndexMessageToKB(ctx context.Context, userQuery string,
 		return
 	}
 
-	logger.Infof(ctx, "Indexing message to chat history KB %s, message ID: %s, session ID: %s", cfg.KnowledgeBaseID, messageID, sessionID)
+	logger.Infof(
+		ctx,
+		"Indexing message to chat history KB %s, message ID: %s, session ID: %s",
+		cfg.KnowledgeBaseID,
+		messageID,
+		sessionID,
+	)
 
 	// Build passage content: combine Q&A for better semantic search
 	var passages []string
@@ -413,7 +437,12 @@ func (s *messageService) IndexMessageToKB(ctx context.Context, userQuery string,
 		return
 	}
 
-	logger.Infof(ctx, "Message indexed to chat history KB: knowledge_id=%s, message_id=%s", knowledge.ID, messageID)
+	logger.Infof(
+		ctx,
+		"Message indexed to chat history KB: knowledge_id=%s, message_id=%s",
+		knowledge.ID,
+		messageID,
+	)
 }
 
 // describeChatHistorySkip reports which chat-history precondition is missing,
@@ -537,6 +566,7 @@ func (s *messageService) ListArtifactLibrary(
 	}
 	query.TenantID = types.MustTenantIDFromContext(ctx)
 	query.UserID = types.SessionOwnerIDFromContext(ctx)
+	query.WebOwnerID = artifactWebOwnerID(ctx)
 	pagination := &types.Pagination{Page: query.Page, PageSize: query.PageSize}
 	query.Page = pagination.GetPage()
 	query.PageSize = min(pagination.GetPageSize(), artifactLibraryMaxPageSize)
@@ -552,7 +582,7 @@ func (s *messageService) ListArtifactLibrary(
 		return nil, err
 	}
 	for _, item := range items {
-		if handle, ok := types.ParseResourcePath(item.URL); ok {
+		if handle, ok := types.ParseResourcePath(item.URL); ok && !item.IMChannelArtifact {
 			item.Handle = types.BuildResourcePath(handle)
 		}
 	}
@@ -586,7 +616,10 @@ func normalizeArtifactFileTypes(in []string) []string {
 
 // SearchMessages searches messages by keyword and/or vector similarity across all sessions of the current tenant.
 // Vector search is delegated to the chat history knowledge base's HybridSearch (configured via ChatHistoryConfig).
-func (s *messageService) SearchMessages(ctx context.Context, params *types.MessageSearchParams) (*types.MessageSearchResult, error) {
+func (s *messageService) SearchMessages(
+	ctx context.Context,
+	params *types.MessageSearchParams,
+) (*types.MessageSearchResult, error) {
 	logger.Infof(ctx, "Start searching messages, query: %s, mode: %s", params.Query, params.Mode)
 
 	tenantID := types.MustTenantIDFromContext(ctx)
@@ -708,7 +741,10 @@ func (s *messageService) restrictToOwnedSessions(
 
 // vectorSearchViaKB performs vector search using the chat history knowledge base's HybridSearch.
 // The KB ID is read from ChatHistoryConfig, search params from RetrievalConfig.
-func (s *messageService) vectorSearchViaKB(ctx context.Context, params *types.MessageSearchParams) ([]*types.MessageSearchResultItem, error) {
+func (s *messageService) vectorSearchViaKB(
+	ctx context.Context,
+	params *types.MessageSearchParams,
+) ([]*types.MessageSearchResultItem, error) {
 	cfg := s.getChatHistoryConfig(ctx)
 	if cfg == nil {
 		return nil, nil // Chat history KB not configured, skip vector search
@@ -783,7 +819,12 @@ func (s *messageService) vectorSearchViaKB(ctx context.Context, params *types.Me
 
 // rerankResults applies rerank model to search results if configured.
 // Returns reranked + filtered results, or original results if rerank is unavailable.
-func (s *messageService) rerankResults(ctx context.Context, rc *types.RetrievalConfig, query string, results []*types.SearchResult) []*types.SearchResult {
+func (s *messageService) rerankResults(
+	ctx context.Context,
+	rc *types.RetrievalConfig,
+	query string,
+	results []*types.SearchResult,
+) []*types.SearchResult {
 	if rc == nil || rc.RerankModelID == "" || len(results) == 0 {
 		return results
 	}
@@ -826,7 +867,14 @@ func (s *messageService) rerankResults(ctx context.Context, rc *types.RetrievalC
 		}
 	}
 
-	logger.Infof(ctx, "Rerank: %d -> %d results (threshold=%.2f, topK=%d)", len(results), len(reranked), threshold, topK)
+	logger.Infof(
+		ctx,
+		"Rerank: %d -> %d results (threshold=%.2f, topK=%d)",
+		len(results),
+		len(reranked),
+		threshold,
+		topK,
+	)
 	return reranked
 }
 
@@ -844,7 +892,10 @@ func convertKeywordResults(results []*types.MessageWithSession) []*types.Message
 }
 
 // rrfMerge merges keyword and vector search results using Reciprocal Rank Fusion (RRF)
-func rrfMerge(keywordResults []*types.MessageWithSession, vectorResults []*types.MessageSearchResultItem) []*types.MessageSearchResultItem {
+func rrfMerge(
+	keywordResults []*types.MessageWithSession,
+	vectorResults []*types.MessageSearchResultItem,
+) []*types.MessageSearchResultItem {
 	const k = 60.0
 
 	type scoredMsg struct {
@@ -903,7 +954,10 @@ func rrfMerge(keywordResults []*types.MessageWithSession, vectorResults []*types
 // fetchPartnerMessages looks at the search results and, for each request_id that
 // has only one role (Q-only or A-only), fetches the partner message from DB so
 // that groupByRequestID can produce complete Q&A pairs.
-func (s *messageService) fetchPartnerMessages(ctx context.Context, items []*types.MessageSearchResultItem) []*types.MessageSearchResultItem {
+func (s *messageService) fetchPartnerMessages(
+	ctx context.Context,
+	items []*types.MessageSearchResultItem,
+) []*types.MessageSearchResultItem {
 	// Collect request_ids and track which roles we already have
 	type roleSet struct {
 		hasUser      bool
@@ -1039,4 +1093,39 @@ func groupByRequestID(items []*types.MessageSearchResultItem) []*types.MessageSe
 
 func searchPairKey(sessionID, requestID string) string {
 	return sessionID + "\x00" + requestID
+}
+
+// artifactWebOwnerID accepts only an authenticated Web user, never an API key.
+func artifactWebOwnerID(ctx context.Context) string {
+	p, ok := ctx.Value(types.PrincipalContextKey).(types.Principal)
+	caller := types.CallerFromContext(ctx)
+	_, apiKey := types.TenantAPIKeyScopeFromContext(ctx)
+	if apiKey || !ok || p.Type != types.PrincipalWebUser || p.ID == "" || p.ID != caller.UserID ||
+		caller.TenantID == 0 ||
+		caller.TenantID != types.MustTenantIDFromContext(ctx) {
+		return ""
+	}
+	return p.ID
+}
+
+func (s *messageService) GetChannelArtifactMessage(
+	ctx context.Context,
+	sessionID, messageID string,
+	position int,
+) (*types.Message, error) {
+	userID := artifactWebOwnerID(ctx)
+	repo, ok := s.messageRepo.(interface {
+		GetChannelArtifactMessage(context.Context, uint64, string, string, string, int) (*types.Message, error)
+	})
+	if userID == "" || !ok {
+		return nil, errors.New("artifact not found")
+	}
+	return repo.GetChannelArtifactMessage(
+		ctx,
+		types.MustTenantIDFromContext(ctx),
+		userID,
+		sessionID,
+		messageID,
+		position,
+	)
 }

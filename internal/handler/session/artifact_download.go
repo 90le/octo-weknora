@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	stderrors "errors"
 	"mime"
 	"net/http"
@@ -206,6 +207,91 @@ func (h *Handler) DownloadMessageArtifact(c *gin.Context) {
 
 	if h.fileService == nil {
 		c.Error(errors.NewInternalServerError("file service unavailable"))
+		return
+	}
+	file, err := access.ResolveMessageArtifact(ctx, msg, index, h.agentShareService, h.resourceCatalog,
+		access.MessageKBShareAuthorizer{ShareGuard: h.kbShareService, KBs: h.knowledgebaseService})
+	if err != nil {
+		_ = c.Error(errors.NewNotFoundError("artifact not accessible"))
+		return
+	}
+	fileService, ctx, ok := h.resolveArtifactFileService(
+		ctx, file.OwnerTenantID, file.Path, file.StorageBackendID, "artifact download",
+	)
+	if !ok {
+		_ = c.Error(errors.NewNotFoundError("artifact storage unavailable"))
+		return
+	}
+	reader, err := fileService.GetFile(ctx, file.Path)
+	if err != nil {
+		logger.Warnf(ctx, "artifact download read failed: session=%s message=%s idx=%d err=%v",
+			sessionID, messageID, index, err)
+		_ = c.Error(errors.NewNotFoundError("artifact blob missing"))
+		return
+	}
+	if err := filetransport.Serve(c.Writer, c.Request, reader, filetransport.Options{
+		Filename: artifact.FileName, Download: true, ContentType: mimeTypeFor(artifact.FileName),
+		Disposition:  buildAttachmentHeader(artifact.FileName),
+		Size:         artifact.FileSize,
+		CacheControl: "private, no-store",
+	}); err != nil {
+		logger.Warnf(
+			ctx,
+			"artifact download stream failed: session=%s message=%s idx=%d err=%v",
+			sessionID,
+			messageID,
+			index,
+			err,
+		)
+	}
+}
+
+// DownloadChannelArtifact serves an artifact to its authenticated channel owner.
+func (h *Handler) DownloadChannelArtifact(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	sessionID := secutils.SanitizeForLog(paramSessionID(c))
+	messageID := secutils.SanitizeForLog(c.Param("message_id"))
+	indexParam := c.Param("index")
+	if sessionID == "" || messageID == "" || indexParam == "" {
+		_ = c.Error(errors.NewBadRequestError("session_id, message_id and index are required"))
+		return
+	}
+	index, err := strconv.Atoi(indexParam)
+	if err != nil || index < 0 {
+		_ = c.Error(errors.NewBadRequestError("invalid artifact index"))
+		return
+	}
+
+	// This endpoint grants access to this artifact only, not its session.
+	readerService, ok := h.messageService.(interface {
+		GetChannelArtifactMessage(context.Context, string, string, int) (*types.Message, error)
+	})
+	if !ok {
+		_ = c.Error(errors.NewNotFoundError("artifact not accessible"))
+		return
+	}
+	msg, err := readerService.GetChannelArtifactMessage(ctx, sessionID, messageID, index)
+	if err != nil || msg == nil {
+		_ = c.Error(errors.NewNotFoundError("artifact not accessible"))
+		return
+	}
+	if index >= len(msg.Artifacts) {
+		_ = c.Error(errors.NewNotFoundError("artifact index out of range"))
+		return
+	}
+	artifact := msg.Artifacts[index]
+	if artifact.Deleted() {
+		_ = c.Error(errors.NewNotFoundError("artifact deleted"))
+		return
+	}
+	if artifact.URL == "" {
+		_ = c.Error(errors.NewNotFoundError("artifact storage path missing"))
+		return
+	}
+
+	if h.fileService == nil {
+		_ = c.Error(errors.NewInternalServerError("file service unavailable"))
 		return
 	}
 	file, err := access.ResolveMessageArtifact(ctx, msg, index, h.agentShareService, h.resourceCatalog,

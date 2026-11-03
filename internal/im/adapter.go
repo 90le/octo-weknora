@@ -48,6 +48,9 @@ const (
 type IncomingMessage struct {
 	// Set only by the native service after ExecutionAuthorizer succeeds.
 	executionScope *ExecutionScope
+	// Identity of the adapter that accepted this Octo message.
+	octoIdentity           []byte
+	octoIdentityGeneration string
 	// Platform identifies which IM platform the message comes from.
 	Platform Platform
 	// MessageType is "text" (default) or "file".

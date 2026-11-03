@@ -146,6 +146,21 @@
             </div>
           </div>
         </section>
+        <section v-if="editingChannel?.platform === 'octo'" class="setting-drawer__section im-drawer__section">
+          <h4 class="setting-drawer__section-title">当前登录账户的生成文件</h4>
+          <p class="form-desc">绑定后，本账户可查看此渠道所有私聊和群聊生成的文件。绑定仅针对当前登录账户。</p>
+          <p v-if="webOwnerLoading" class="form-desc" role="status">正在读取或核验绑定状态…</p>
+          <p v-else-if="webOwnerBound !== null" class="form-desc" role="status">{{ webOwnerBound ? '当前账户已绑定' : '当前账户未绑定' }}</p>
+          <t-alert v-if="webOwnerError" theme="error" role="alert">{{ webOwnerError }} <t-button variant="text" :disabled="webOwnerLoading" @click="loadWebOwner">重新读取</t-button></t-alert>
+          <template v-if="authStore.hasRole('admin') && webOwnerBound !== null">
+            <t-button v-if="!webOwnerBound" theme="primary" :loading="webOwnerLoading" :disabled="webOwnerLoading" @click="changeWebOwner(true)">绑定当前账户</t-button>
+            <t-popconfirm v-else content="解绑后，本账户将失去通过此绑定查看该渠道生成文件的权限。确定解绑？"
+              :confirm-btn="{ content: '确认解绑', theme: 'danger' }" :cancel-btn="{ content: $t('common.cancel') }"
+              @confirm="changeWebOwner(false)">
+              <t-button theme="danger" variant="outline" :loading="webOwnerLoading" :disabled="webOwnerLoading">解绑当前账户</t-button>
+            </t-popconfirm>
+          </template>
+        </section>
       </div>
 
       <!-- Step 2: Connection -->
@@ -671,9 +686,11 @@ import { copyWithToast } from '@/utils/clipboard';
 import { normalizeOptionalString } from '@/utils/optionalString';
 import {
   listIMChannels, createIMChannel, updateIMChannel, deleteIMChannel, toggleIMChannel,
+  getIMChannelWebOwner, bindIMChannelWebOwner, unbindIMChannelWebOwner,
   getWeChatQRCode, pollWeChatQRCodeStatus, listAllIMChannels,
   type IMChannelOverview, type CustomAgent,
 } from '@/api/agent';
+import { useWebOwnerBinding } from '@/api/agent/webOwner';
 import { useChatResourcesStore } from '@/stores/chatResources';
 import type { IMChannel } from '@/api/agent';
 import { useAuthStore } from '@/stores/auth';
@@ -735,6 +752,21 @@ let channelEditVersion = 0;
 const saving = ref(false);
 const showCreateDialog = ref(false);
 const editingChannel = ref<IMChannel | null>(null);
+const { bound: webOwnerBound, loading: webOwnerLoading, error: webOwnerError,
+  reset: resetWebOwner, load: readWebOwner, change: setWebOwner } = useWebOwnerBinding({
+  get: getIMChannelWebOwner, bind: bindIMChannelWebOwner, unbind: unbindIMChannelWebOwner,
+});
+function loadWebOwner() {
+  if (showCreateDialog.value && editingChannel.value?.platform === 'octo') void readWebOwner(editingChannel.value.id);
+}
+async function changeWebOwner(desired: boolean) {
+  if (!showCreateDialog.value || !authStore.hasRole('admin') || editingChannel.value?.platform !== 'octo') return;
+  if (await setWebOwner(editingChannel.value.id, desired)) MessagePlugin.success(desired ? '当前账户绑定成功' : '当前账户已解绑');
+}
+watch(() => [showCreateDialog.value, editingChannel.value?.id, editingChannel.value?.platform, authStore.currentTenantId], () => {
+  resetWebOwner();
+  loadWebOwner();
+}, { flush: 'sync' });
 const editingEnabled = ref(true);
 const wizardStep = ref(0);
 const channelNameTouched = ref(false);
@@ -1289,6 +1321,7 @@ watch(filterAgentId, (id) => {
 });
 
 onUnmounted(() => {
+  resetWebOwner();
   if (runtimeRefreshTimer) clearInterval(runtimeRefreshTimer);
   channelEditVersion++;
   channelLoadVersion++;
