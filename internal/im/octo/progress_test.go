@@ -89,7 +89,9 @@ func TestProgressCardUsesFixedStagesAndScopedTarget(t *testing.T) {
 	}))
 	defer server.Close()
 	a.api.base = server.URL
-	p := a.StartProcessingProgress(context.Background(), msg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := a.StartProcessingProgress(ctx, msg)
 	if p == nil {
 		t.Fatal("authorized direct-message progress unavailable")
 	}
@@ -111,6 +113,8 @@ func TestProgressCardUsesFixedStagesAndScopedTarget(t *testing.T) {
 		t.Fatal("progress update missing")
 	}
 	p.Finish(im.ProcessingCompleted)
+	// The QA worker cancels its context immediately after queuing the result.
+	cancel()
 	select {
 	case body := <-edits:
 		var data map[string]any

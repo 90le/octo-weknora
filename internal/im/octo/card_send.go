@@ -157,29 +157,44 @@ func confirmationCardPayload(preview string, p *octobusiness.Proposal) map[strin
 	if label == "" {
 		label = "知识变更"
 	}
+	body := []any{
+		map[string]any{"type": "TextBlock", "text": "请核对：" + label, "weight": "Bolder", "wrap": true},
+		map[string]any{
+			"type": "TextBlock",
+			"text": "有效至：" + p.ExpiresAt.In(time.FixedZone("北京时间", 8*60*60)).
+				Format("2006-01-02 15:04:05") + "（北京时间）",
+			"wrap": true,
+		},
+	}
+	body = append(body, confirmationPreviewBlocks(preview)...)
+	body = append(body, map[string]any{
+		"type": "TextBlock", "text": "仅发起人可确认或取消，操作会再次检查权限。", "wrap": true,
+	})
 	return map[string]any{
 		"type": 17, "profile": "octo/v2", "card_version": "1.5",
 		"card": map[string]any{
 			"$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
 			"type":    "AdaptiveCard", "version": "1.5",
-			"body": []any{
-				map[string]any{"type": "TextBlock", "text": "请核对：" + label, "weight": "Bolder", "wrap": true},
-				map[string]any{
-					"type": "TextBlock",
-					"text": "有效至：" + p.ExpiresAt.In(time.FixedZone("北京时间", 8*60*60)).
-						Format("2006-01-02 15:04:05") +
-						"（北京时间）",
-					"wrap": true,
-				},
-				map[string]any{"type": "TextBlock", "text": preview, "wrap": true},
-				map[string]any{"type": "TextBlock", "text": "仅发起人可确认或取消，操作会再次检查权限。", "wrap": true},
-			},
+			"body": body,
 			"actions": []any{
 				map[string]any{"type": "Action.Submit", "id": "knowledge_confirm", "title": "确认"},
 				map[string]any{"type": "Action.Submit", "id": "knowledge_cancel", "title": "取消"},
 			},
 		},
 	}
+}
+
+// Separate TextBlocks retain line boundaries in clients that render a single
+// newline in Markdown as a space. Values have already been safely escaped.
+func confirmationPreviewBlocks(preview string) []any {
+	lines := strings.Split(preview, "\n")
+	blocks := make([]any, 0, len(lines))
+	for _, line := range lines {
+		if line != "" {
+			blocks = append(blocks, map[string]any{"type": "TextBlock", "text": line, "wrap": true, "spacing": "Small"})
+		}
+	}
+	return blocks
 }
 
 // sendConfirmationCards is auxiliary to the durable final answer. It never
