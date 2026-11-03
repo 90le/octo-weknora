@@ -70,7 +70,16 @@ func TestIMInspectRejectsUnsafeContainerAndRevokedPolicy(t *testing.T) {
 	c.HostConfig.MemorySwap = IMMaxMemoryBytes
 	c.HostConfig.NanoCPUs = int64(IMMaxCPU * 1e9)
 	c.HostConfig.PidsLimit = &pids
+	c.HostConfig.ReadonlyRootfs = true
+	c.HostConfig.Tmpfs = map[string]string{SessionWorkspaceRoot: imWorkspaceTmpfs, "/tmp": imTmpTmpfs}
+	c.HostConfig.ShmSize = 64 << 20
 	require.NoError(t, verifyIMDockerContainer(c, img, binding, key, id, policy))
+	c.HostConfig.ReadonlyRootfs = false
+	require.Error(t, verifyIMDockerContainer(c, img, binding, key, id, policy))
+	c.HostConfig.ReadonlyRootfs = true
+	c.HostConfig.Tmpfs[SessionWorkspaceRoot] = "rw,size=999999999"
+	require.Error(t, verifyIMDockerContainer(c, img, binding, key, id, policy))
+	c.HostConfig.Tmpfs[SessionWorkspaceRoot] = imWorkspaceTmpfs
 	c.HostConfig.CapAdd = []string{"CAP_CHOWN"}
 	require.Error(t, verifyIMDockerContainer(c, img, binding, key, id, policy))
 	c.HostConfig.CapAdd = nil
@@ -169,6 +178,9 @@ func TestIMDockerManagerExecutesOnlyInspectedSession(t *testing.T) {
 	require.Equal(t, "none", string(fake.created[0].HostConfig.NetworkMode))
 	require.Empty(t, fake.created[0].HostConfig.Binds)
 	require.Empty(t, fake.created[0].HostConfig.CapAdd)
+	require.True(t, fake.created[0].HostConfig.ReadonlyRootfs)
+	require.Equal(t, imWorkspaceTmpfs, fake.created[0].HostConfig.Tmpfs[SessionWorkspaceRoot])
+	require.Equal(t, imTmpTmpfs, fake.created[0].HostConfig.Tmpfs["/tmp"])
 	_, err = mgr.EnsureIMSession(ctx, "other", true)
 	require.Error(t, err)
 	allowed = false

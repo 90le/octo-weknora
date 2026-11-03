@@ -185,9 +185,17 @@ func verifyIMDockerContainer(c container.InspectResponse, img image.InspectRespo
 	}
 	h := c.HostConfig
 	if string(h.NetworkMode) != "none" || h.Privileged || string(h.PidMode) == "host" || string(h.IpcMode) == "host" || string(h.UTSMode) == "host" ||
-		len(h.Binds) != 0 || len(h.Mounts) != 0 || len(h.VolumesFrom) != 0 || len(c.Mounts) != 0 || len(h.Devices) != 0 || len(h.DeviceRequests) != 0 ||
+		len(h.Binds) != 0 || len(h.Mounts) != 0 || len(h.VolumesFrom) != 0 || len(h.Devices) != 0 || len(h.DeviceRequests) != 0 ||
 		h.PublishAllPorts || len(h.PortBindings) != 0 {
 		return deny("network, host namespace, devices or mounts")
+	}
+	if !h.ReadonlyRootfs || len(h.Tmpfs) != 2 || h.Tmpfs[SessionWorkspaceRoot] != imWorkspaceTmpfs || h.Tmpfs["/tmp"] != imTmpTmpfs || h.ShmSize != 64<<20 {
+		return deny("read-only root or bounded temporary filesystems")
+	}
+	for _, m := range c.Mounts {
+		if string(m.Type) != "tmpfs" || m.Source != "" || (m.Destination != SessionWorkspaceRoot && m.Destination != "/tmp") {
+			return deny("unexpected actual mount")
+		}
 	}
 	if c.NetworkSettings != nil {
 		for name := range c.NetworkSettings.Networks {

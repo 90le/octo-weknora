@@ -4,7 +4,7 @@ Octo 渠道的 `allow_sandbox_shell`、`allow_sandbox_skills` 和 `allow_file_de
 
 ## 镜像与部署
 
-**当前阻塞：本分支没有接入可验证的持久磁盘配额实现。** Docker 可写 overlay 可能耗尽 VM 磁盘，因此 Octo shell/Skill 在创建容器前返回 `ErrIMDiskLimitUnavailable`；只设置下列环境变量不会开启执行，不得用于生产放行。后续需实现并接线受信的 `IMSandboxDiskVerifier`，验证实际容器及持久工作区的硬配额；测试中的 verifier 只是模拟。
+**当前阻塞：停止后工作区和文件投递生命周期尚未接通。** IM 容器创建现已设置只读 rootfs、96 MiB `/workspace` 和 64 MiB `/tmp` tmpfs，并检查实际容器配置；这些代码尚未在真实 Docker 环境验证。由于成功命令后立即停止会清空 tmpfs，Octo shell/Skill 仍在创建容器前返回 `ErrIMDiskLimitUnavailable`。只设置下列环境变量不会开启执行；测试中的 verifier 只是模拟，不得用于放行。
 
 在隔离 Docker 守护进程上准备并审计干净基础镜像：不得含未授权 Skill、用户或宿主凭据、知识库数据库或 Docker socket。必须具备 `bash`、`timeout`、`python3`，且 `/workspace` 可写。镜像摘要只能固定身份，不能证明文件内容安全。Python 文档库可放在基础镜像内，不等同于授权 Skill。
 
@@ -35,4 +35,4 @@ OCTO_IM_SANDBOX_CLEAN_IMAGE_ID=sha256:<64位本地镜像ID>
 
 在已接入真实磁盘隔离验证器后，若重新授权且 Agent、沙箱配置、Skill 集和干净镜像的指纹完全恢复原值，可重新使用相同的停止容器与文件；普通的 stale 标记不触发删除。若指纹确实变化，旧容器被拒绝，不能自动覆盖、删除或启动带有旧 Skill 的容器。先由有权限的运维人员在原隔离环境保全并核验旧文件，再开启新会话使用干净容器；现阶段没有实现可证明安全的同会话无损迁移，不得靠清除 pin 或删除旧容器来恢复。
 
-只读 rootfs 加有大小限制的 `/workspace`、`/tmp` tmpfs 可限制写入；候选文档镜像已在独立 VM 做过 96 MiB/64 MiB 合成测试。tmpfs 在容器停止时会消失，不能直接替换当前持久工作区：需要先完成并核验成品持久化，再停止容器；旧会话文件必须先安全保全。该完整生命周期及真实集成尚未实现或验收。
+候选文档镜像已在独立 VM 做过 96 MiB/64 MiB 合成测试；该历史测试并非本次创建代码的验证。tmpfs 在容器停止时会消失：需要冻结并有界保存成功命令后的工作区，恢复后续命令所需文件，并在整轮完成后将选中的产物持久化再停止；取消时允许丢弃未完成工作并明确告知。旧会话文件必须先安全保全。该完整生命周期及真实集成尚未实现或验收。

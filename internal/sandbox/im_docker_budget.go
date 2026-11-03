@@ -23,6 +23,11 @@ type imDockerOutputLimitKey struct{}
 
 type imLimitedDockerEngine struct{ dockerEngineAPI }
 
+const (
+	imWorkspaceTmpfs = "rw,nosuid,nodev,size=100663296,mode=1777"
+	imTmpTmpfs       = "rw,nosuid,nodev,size=67108864,mode=1777"
+)
+
 // IM commands do not need the generic installer capabilities. Never grant
 // them back after CapDrop=ALL, even when the selected Docker config would.
 func (e *imLimitedDockerEngine) ContainerCreate(ctx context.Context, options client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
@@ -31,6 +36,11 @@ func (e *imLimitedDockerEngine) ContainerCreate(ctx context.Context, options cli
 	}
 	host := *options.HostConfig
 	host.CapAdd = nil
+	// Do not change the host configuration shared with non-IM sessions.
+	// All writable workspace data is ephemeral and subject to memory limits.
+	host.ReadonlyRootfs = true
+	host.Tmpfs = map[string]string{SessionWorkspaceRoot: imWorkspaceTmpfs, "/tmp": imTmpTmpfs}
+	host.ShmSize = 64 << 20
 	options.HostConfig = &host
 	return e.dockerEngineAPI.ContainerCreate(ctx, options)
 }
