@@ -375,7 +375,15 @@ func (c *ArtifactCollector) SnapshotIM(
 	if err != nil {
 		return nil, err
 	}
+	// Turn preparation has stopped the prior container while holding the
+	// session lock. Its bounded tmpfs is gone, so the new turn starts empty.
+	if IsIMSandboxFreshTurn(ctx) {
+		return snapshot, nil
+	}
 	if pin.IsZero() {
+		if err := ValidateIMSandboxEmptyBaseline(ctx, c.pinner, c.resolver, sessionID); err != nil {
+			return nil, err
+		}
 		return snapshot, nil
 	}
 	if pin.ConfigID != configID || pin.TenantOr(sessionTenantID) != configTenantID {
