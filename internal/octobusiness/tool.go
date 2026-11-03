@@ -16,7 +16,8 @@ type Tool struct{ service *Service }
 
 type (
 	reportSinkKey struct{}
-	ReportSink    func(context.Context, *ReportArtifact) error
+	// ReportSink delivers a generated report through the current conversation.
+	ReportSink func(context.Context, *ReportArtifact) error
 )
 
 func WithReportSink(ctx context.Context, sink ReportSink) context.Context {
