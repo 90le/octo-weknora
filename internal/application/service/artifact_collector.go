@@ -123,6 +123,9 @@ type ArtifactCollector struct {
 	// fallbackMgr is the deployment-wide SessionBoundManager. Sentinel pins
 	// ("-") resolve to it rather than a per-config manager.
 	fallbackMgr sandbox.Manager
+	// imSourceForTest is an explicit in-package test seam. It is never set by
+	// production constructors and does not replace native grant/pin checks.
+	imSourceForTest func(context.Context, string) SandboxArtifactSource
 }
 
 // NewArtifactCollector wires up an ArtifactCollector. Callers keep a single
@@ -205,6 +208,12 @@ func (c *ArtifactCollector) sessionSource(ctx context.Context, sessionID string)
 		return c.hostSessionSource(ctx, sessionID)
 	}
 	if types.HasIMKnowledgeScope(ctx) {
+		if c.imSourceForTest != nil {
+			if _, err := ValidateIMSandboxPin(ctx, c.pinner, sessionID, false); err != nil {
+				return nil
+			}
+			return c.imSourceForTest(ctx, sessionID)
+		}
 		// IM artifacts must use the same inspected, bounded and revalidated
 		// session capability as shell execution. The raw manager's generic
 		// filesystem methods do not establish an IM container identity.

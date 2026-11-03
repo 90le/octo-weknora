@@ -139,20 +139,22 @@ func (*imQAModel) GetModelName() string { return "fake" }
 func (*imQAModel) GetModelID() string   { return "fake" }
 
 type imQADocker struct {
-	mu            sync.Mutex
-	image         string
-	cfg           *container.Config
-	host          *container.HostConfig
-	running       bool
-	next          int
-	commands      map[string]string
-	marker        atomic.Int64
-	stops         atomic.Int64
-	nofollowSeen  atomic.Bool
-	blockMarker   bool
-	markerStarted chan struct{}
-	stopped       chan struct{}
-	stopOnce      sync.Once
+	mu             sync.Mutex
+	image          string
+	cfg            *container.Config
+	host           *container.HostConfig
+	running        bool
+	next           int
+	commands       map[string]string
+	marker         atomic.Int64
+	stops          atomic.Int64
+	nofollowSeen   atomic.Bool
+	listingPayload string
+	boundedListing atomic.Bool
+	blockMarker    bool
+	markerStarted  chan struct{}
+	stopped        chan struct{}
+	stopOnce       sync.Once
 }
 
 func (d *imQADocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -245,6 +247,14 @@ func (d *imQADocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		payload := ""
 		if strings.Contains(cmd, "os.scandir") || strings.Contains(cmd, "os.walk") {
 			payload = "[]"
+			if strings.Contains(cmd, "os.scandir") {
+				d.boundedListing.Store(true)
+			}
+			d.mu.Lock()
+			if d.listingPayload != "" {
+				payload = d.listingPayload
+			}
+			d.mu.Unlock()
 		}
 		if strings.Contains(cmd, "before.st_size") {
 			if strings.Contains(cmd, "os.O_NOFOLLOW") {

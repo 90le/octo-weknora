@@ -33,6 +33,10 @@ type boundedIMTestManager struct {
 	afterRead func()
 }
 
+func setIMArtifactTestSource(c *ArtifactCollector, source SandboxArtifactSource) {
+	c.imSourceForTest = func(context.Context, string) SandboxArtifactSource { return source }
+}
+
 func (m *boundedIMTestManager) ReadSessionFileBounded(
 	ctx context.Context, sessionID, path string, limit int64,
 ) ([]byte, error) {
@@ -69,6 +73,7 @@ func TestIMCaptureOnlyPublishesCurrentSessionChanges(t *testing.T) {
 	store := &fakeFileService{}
 	collector := NewArtifactCollector(source, store, &fakeStore{}, nil, ArtifactCollectorConfig{})
 	collector.pinner, collector.resolver = pinner, stubSandboxResolver{mgr: mgr}
+	setIMArtifactTestSource(collector, mgr)
 	snapshot, err := collector.SnapshotIM(ctx, "s-1", "cfg-docker", 7, 7, nil)
 	require.NoError(t, err)
 	newFile := sandbox.RemoteDirEntry{
@@ -110,6 +115,7 @@ func TestIMCaptureFailsClosedWithoutBoundedRead(t *testing.T) {
 	mgr := &artifactFallbackManager{source: source}
 	collector := NewArtifactCollector(source, &fakeFileService{}, &fakeStore{}, nil, ArtifactCollectorConfig{})
 	collector.pinner, collector.resolver = pinner, stubSandboxResolver{mgr: mgr}
+	setIMArtifactTestSource(collector, mgr)
 	snapshot, err := collector.SnapshotIM(ctx, "s-1", "cfg-docker", 7, 7, nil)
 	require.NoError(t, err)
 	source.entries["s-1"] = []sandbox.RemoteDirEntry{{
@@ -154,6 +160,7 @@ func TestIMCaptureSelectedVersionWithUnchangedMetadata(t *testing.T) {
 	files := &fakeFileService{}
 	collector := NewArtifactCollector(source, files, &fakeStore{}, nil, ArtifactCollectorConfig{})
 	collector.pinner, collector.resolver = pinner, stubSandboxResolver{mgr: mgr}
+	setIMArtifactTestSource(collector, mgr)
 	snapshot, err := collector.SnapshotIM(
 		ctx,
 		"s-1",
@@ -205,6 +212,7 @@ func TestIMCaptureSelectsOnlyTheRequestedRelativePath(t *testing.T) {
 	files := &fakeFileService{}
 	collector := NewArtifactCollector(source, files, &fakeStore{}, nil, ArtifactCollectorConfig{})
 	collector.pinner, collector.resolver = pinner, stubSandboxResolver{mgr: mgr}
+	setIMArtifactTestSource(collector, mgr)
 	snapshot, err := collector.SnapshotIM(ctx, "s-1", "cfg-docker", 7, 7, nil)
 	require.NoError(t, err)
 	source.entries["s-1"] = []sandbox.RemoteDirEntry{a, b}
@@ -254,6 +262,7 @@ func TestIMCaptureRechecksGrantAfterEachRead(t *testing.T) {
 	files := &fakeFileService{}
 	collector := NewArtifactCollector(source, files, &fakeStore{}, nil, ArtifactCollectorConfig{})
 	collector.pinner, collector.resolver = pinner, stubSandboxResolver{mgr: mgr}
+	setIMArtifactTestSource(collector, mgr)
 	snapshot, err := collector.SnapshotIM(ctx, "s-1", "cfg-docker", 7, 7, nil)
 	require.NoError(t, err)
 	source.entries["s-1"] = []sandbox.RemoteDirEntry{a, b}
@@ -311,6 +320,7 @@ func TestIMCaptureRechecksGrantBetweenWrites(t *testing.T) {
 	files := &revokingIMFileService{fakeFileService: &fakeFileService{}, revoke: func() { allowed = false }}
 	collector := NewArtifactCollector(source, files, &fakeStore{}, nil, ArtifactCollectorConfig{})
 	collector.pinner, collector.resolver = pinner, stubSandboxResolver{mgr: mgr}
+	setIMArtifactTestSource(collector, mgr)
 	snapshot, err := collector.SnapshotIM(ctx, "s-1", "cfg-docker", 7, 7, nil)
 	require.NoError(t, err)
 	source.entries["s-1"] = []sandbox.RemoteDirEntry{a, b}
@@ -345,6 +355,7 @@ func TestIMCaptureRejectsOldFileEvenWhenSelected(t *testing.T) {
 	mgr := &boundedIMTestManager{artifactFallbackManager: &artifactFallbackManager{source: source}}
 	collector := NewArtifactCollector(source, &fakeFileService{}, &fakeStore{}, nil, ArtifactCollectorConfig{})
 	collector.pinner, collector.resolver = pinner, stubSandboxResolver{mgr: mgr}
+	setIMArtifactTestSource(collector, mgr)
 	snapshot, err := collector.SnapshotIM(ctx, "s-1", "cfg-docker", 7, 7, func(string) bool { return true })
 	require.NoError(t, err)
 	artifacts, err := collector.CollectIM(
