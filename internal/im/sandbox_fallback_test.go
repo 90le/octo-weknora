@@ -22,8 +22,11 @@ func TestMissingNamedSandboxFallsBackWithoutGrant(t *testing.T) {
 		if _, ok := types.IMSandboxGrantFromContext(degraded); ok {
 			t.Fatal("fallback created a sandbox grant")
 		}
-		config := types.RestrictIMAgentConfig(degraded, &types.AgentConfig{KnowledgeBases: []string{"other"}, SandboxConfigID: "cfg", SkillsEnabled: true})
-		if len(config.KnowledgeBases) != 1 || config.KnowledgeBases[0] != "allowed-kb" || config.SandboxConfigID != "" || config.SkillsEnabled {
+		config := types.RestrictIMAgentConfig(degraded, &types.AgentConfig{
+			KnowledgeBases: []string{"other"}, SandboxConfigID: "cfg", SkillsEnabled: true,
+		})
+		if len(config.KnowledgeBases) != 1 || config.KnowledgeBases[0] != "allowed-kb" ||
+			config.SandboxConfigID != "" || config.SkillsEnabled {
 			t.Fatalf("unexpected authority after fallback: %+v", config)
 		}
 		if !strings.Contains(appendSandboxUnavailableNotice(degraded, "知识答案"), sandboxUnavailableNotice) {
