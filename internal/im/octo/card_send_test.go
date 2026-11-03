@@ -123,6 +123,19 @@ func TestConfirmationPreviewShowsDecisionFactsAndLocalDeadline(t *testing.T) {
 		!strings.Contains(string(raw), "knowledge_cancel") {
 		t.Fatal("card lost local deadline or native cancellation action")
 	}
+	body := confirmationCardPayload(preview, p)["card"].(map[string]any)["body"].([]any)
+	var name, scope bool
+	for _, element := range body {
+		text := element.(map[string]any)["text"].(string)
+		if strings.Contains(text, "\n") {
+			t.Fatal("decision facts were merged into one Markdown block")
+		}
+		name = name || text == "知识库名称：测试库"
+		scope = scope || text == "当前区域：测试区域"
+	}
+	if !name || !scope {
+		t.Fatal("decision facts are missing from separate card blocks")
+	}
 }
 
 func TestConfirmationCardRequiresDeclaredInteractionAndPayloadLimit(t *testing.T) {

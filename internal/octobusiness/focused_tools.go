@@ -30,7 +30,9 @@ const knowledgePreviewDescription = "Preview a knowledge change; action is requi
 	"confirmation_command and cancellation_command verbatim together as concise backup instructions; " +
 	"never shorten them because their OP-ID is required. An Octo confirmation card may also be offered; " +
 	"only the same user in the same conversation can use it. No change is executed until an authorized " +
-	"explicit confirmation. Never publish automatically."
+	"explicit confirmation. The current conversation determines the target scope; never invent or supply " +
+	"scope_id. If the user explicitly wants a different scope, explain it cannot be changed from here " +
+	"and do not propose a change to the current scope. Never publish automatically."
 
 // NewTools exposes focused model-facing signatures while reusing the same
 // principal validation, authorization, idempotency and confirmation executor.
@@ -72,7 +74,7 @@ func NewTools(service *Service) []types.Tool {
 			"input_clarifications_needed": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Only facts unclear in the user's own input, e.g. which product or reproduction steps. NOT the unknown answer. A clear question such as asking the price has no input ambiguity even when no price exists in the knowledge base; use [] and record the missing answer as kind=missing after verified retrieval."},
 		}),
 		makeTool(ToolKnowledgePreview, knowledgePreviewDescription,
-			[]string{"action", "knowledge_base_id", "knowledge_id", "name", "content", "scope_id"},
+			[]string{"action", "knowledge_base_id", "knowledge_id", "name", "content"},
 			[]string{"action"}, map[string]any{
 				"action": map[string]any{
 					"type": "string",
@@ -126,6 +128,10 @@ func (t *focusedTool) Execute(ctx context.Context, args json.RawMessage) (*types
 	for field := range input {
 		if _, ok := t.fields[field]; !ok {
 			detail := "Use only this focused tool's declared fields; do not supply operation, identity or fields belonging to another tool."
+			if t.name == ToolKnowledgePreview && field == "scope_id" {
+				detail = "Remove scope_id: the server uses the current verified conversation. " +
+					"If the user requested a different scope, explain that it cannot be changed from here."
+			}
 			if t.name == ToolIssues && field == "content" {
 				detail = "octo_issues uses description for verified issue facts, not content. Use octo_knowledge_preview for document content."
 			}

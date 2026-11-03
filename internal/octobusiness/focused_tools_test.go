@@ -20,6 +20,7 @@ func focusedToolByName(t *testing.T, s *Service, name string) types.Tool {
 	t.Fatalf("missing focused tool %s", name)
 	return nil
 }
+
 func TestFocusedToolSchemasSeparateIssueAndKnowledgeInputs(t *testing.T) {
 	tools := NewTools(nil)
 	require.Len(t, tools, 7)
@@ -53,6 +54,7 @@ func TestFocusedToolSchemasSeparateIssueAndKnowledgeInputs(t *testing.T) {
 		require.NotContains(t, preview.Properties, field)
 	}
 	require.Contains(t, preview.Properties, "content")
+	require.NotContains(t, preview.Properties, "scope_id", "the model must not choose the target conversation")
 	require.Equal(t, []string{"proposal_id", "decision"}, schemas[ToolKnowledgeConfirm].Required)
 	require.Contains(t, schemas[ToolReport].Properties, "format")
 	require.NotContains(t, schemas[ToolReport].Properties, "report_format")
@@ -60,6 +62,7 @@ func TestFocusedToolSchemasSeparateIssueAndKnowledgeInputs(t *testing.T) {
 	require.Contains(t, schemas[ToolKnowledgeDocuments].Properties, "knowledge_id")
 	require.NotContains(t, schemas[ToolKnowledgeDocuments].Properties, "content")
 }
+
 func TestFocusedToolsRejectUnknownArgumentsBeforeDispatch(t *testing.T) {
 	for _, tc := range []struct{ name, payload string }{
 		{ToolConfiguration, `{"operation":"configuration"}`},
@@ -78,6 +81,7 @@ func TestFocusedToolsRejectUnknownArgumentsBeforeDispatch(t *testing.T) {
 		})
 	}
 }
+
 func TestFocusedIssueClarificationsAreInputFactsAndReuseIdempotency(t *testing.T) {
 	service := testService(t)
 	tool := focusedToolByName(t, service, ToolIssues)
@@ -101,10 +105,13 @@ func TestFocusedIssueClarificationsAreInputFactsAndReuseIdempotency(t *testing.T
 	require.NoError(t, service.db.Model(&Issue{}).Count(&count).Error)
 	require.EqualValues(t, 1, count)
 }
+
 func TestFocusedPreviewAliasesProposalAndKeepsNativeConfirmation(t *testing.T) {
 	service := testService(t)
 	calls := []bool{}
-	service.Management = func(_ context.Context, _ Principal, in ManagementInput, preview bool) (map[string]any, error) {
+	service.Management = func(
+		_ context.Context, _ Principal, in ManagementInput, preview bool,
+	) (map[string]any, error) {
 		calls = append(calls, preview)
 		return map[string]any{"action": in.Action, "name": in.Name}, nil
 	}
@@ -141,6 +148,46 @@ func TestFocusedPreviewAliasesProposalAndKeepsNativeConfirmation(t *testing.T) {
 	require.True(t, again.Success)
 	require.Len(t, calls, 3, "duplicate confirmation must not execute the mutation again")
 }
+
+func TestPreviewRejectsInventedScopeAndAcceptsVerifiedConversation(t *testing.T) {
+	service := testService(t)
+	var previewCalls int
+	service.Management = func(
+		_ context.Context, _ Principal, in ManagementInput, preview bool,
+	) (map[string]any, error) {
+		require.True(t, preview, "this test never confirms or creates a knowledge base")
+		previewCalls++
+		return map[string]any{"action": in.Action, "name": in.Name}, nil
+	}
+	p := testPrincipal()
+	ctx := principalContext(p)
+	tool := focusedToolByName(t, service, ToolKnowledgePreview)
+	bad, err := tool.Execute(ctx, json.RawMessage(`{"action":"create_kb","name":"synthetic","scope_id":"invented"}`))
+	require.NoError(t, err)
+	require.False(t, bad.Success)
+	require.Equal(t, "invalid_arguments", bad.Data["error_code"])
+	require.Contains(t, bad.Error, "Remove scope_id")
+	require.Zero(t, previewCalls, "an invented scope must not trigger a preview")
+	legacy, err := NewTool(service).Execute(ctx, json.RawMessage(
+		`{"operation":"propose","action":"create_kb","name":"synthetic","scope_id":"invented"}`,
+	))
+	require.NoError(t, err)
+	require.False(t, legacy.Success)
+	require.Equal(t, "invalid_arguments", legacy.Data["error_code"])
+	require.Contains(t, legacy.Error, "does not match this verified conversation")
+	require.Zero(t, previewCalls, "legacy callers cannot redirect a preview")
+	good, err := tool.Execute(ctx, json.RawMessage(`{"action":"create_kb","name":"synthetic"}`))
+	require.NoError(t, err)
+	require.True(t, good.Success, good.Error)
+	require.Equal(t, 1, previewCalls)
+	var proposal Proposal
+	require.NoError(t, json.Unmarshal([]byte(good.Output), &proposal))
+	require.Equal(t, "pending", proposal.Status)
+	var stored Proposal
+	require.NoError(t, service.db.First(&stored, "id = ?", proposal.ID).Error)
+	require.Equal(t, p.ScopeID, stored.ScopeID)
+}
+
 func TestLegacyIssueContentAliasIsNotExposedByFocusedSchema(t *testing.T) {
 	service := testService(t)
 	result, err := NewTool(service).Execute(principalContext(testPrincipal()), json.RawMessage(`{"operation":"create_issue","kind":"suggestion","title":"改进提示","content":"用户希望按钮文案更清楚。"}`))
