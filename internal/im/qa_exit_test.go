@@ -351,7 +351,7 @@ func TestIMQACancellationWaitsForSandboxStopBeforeReturn(t *testing.T) {
 					track("container", func(context.Context) error {
 						attempts++
 						if attempts == 1 {
-							return errors.New("Docker unavailable")
+							return errors.New("docker unavailable")
 						}
 						close(stopStarted)
 						<-finishStop

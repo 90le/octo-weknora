@@ -111,7 +111,7 @@ func (a *Adapter) markGuardedProcessing(ctx context.Context, msg *im.IncomingMes
 				return result.Error
 			}
 			if result.RowsAffected != 1 {
-				return errors.New("Octo input unavailable")
+				return errors.New("octo input unavailable")
 			}
 			return nil
 		})
