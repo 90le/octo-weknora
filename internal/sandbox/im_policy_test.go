@@ -20,17 +20,39 @@ import (
 
 type imTestDiskVerifier struct{}
 
-func (imTestDiskVerifier) VerifyIMSandboxDisk(context.Context, uint64, string, string, container.InspectResponse) error {
+func (imTestDiskVerifier) VerifyIMSandboxDisk(
+	context.Context,
+	uint64,
+	string,
+	string,
+	container.InspectResponse,
+) error {
 	return nil
 }
 
 func TestIMPolicyLimitsAndIsolation(t *testing.T) {
 	imageID := "sha256:" + strings.Repeat("a", 64)
 	t.Setenv(IMTrustedImageEnv, imageID)
-	grant := types.IMSandboxGrant{SessionID: "session", TenantID: 7, ConfigID: "cfg", AllowShell: true, Revalidate: func(context.Context) error { return nil }}
+	grant := types.IMSandboxGrant{
+		SessionID:  "session",
+		TenantID:   7,
+		ConfigID:   "cfg",
+		AllowShell: true,
+		Revalidate: func(context.Context) error { return nil },
+	}
 	ctx := types.WithIMSandboxGrant(types.WithIMKnowledgeScope(context.Background(), nil), grant)
 	tenant := &types.TenantSandboxConfig{SandboxType: "docker", Docker: &types.DockerSandboxConfig{Image: "shared"}}
-	cfg := &Config{Type: SandboxTypeDocker, DockerImage: "shared", TemplateFromSnapshot: true, DockerNetworkMode: "bridge", EnvVars: map[string]string{"SECRET": "bad"}, DockerCPULimit: 5, DockerMemoryBytes: 2 << 30, DockerPidsLimit: 999, DefaultTimeout: time.Hour}
+	cfg := &Config{
+		Type:                 SandboxTypeDocker,
+		DockerImage:          "shared",
+		TemplateFromSnapshot: true,
+		DockerNetworkMode:    "bridge",
+		EnvVars:              map[string]string{"SECRET": "bad"},
+		DockerCPULimit:       5,
+		DockerMemoryBytes:    2 << 30,
+		DockerPidsLimit:      999,
+		DefaultTimeout:       time.Hour,
+	}
 	require.NoError(t, restrictIMSandboxConfig(ctx, "cfg", tenant, cfg))
 	require.Equal(t, imageID, cfg.DockerImage)
 	require.Empty(t, cfg.EnvVars)
@@ -63,9 +85,36 @@ func TestIMInspectRejectsUnsafeContainerAndRevokedPolicy(t *testing.T) {
 	pids := int64(128)
 	key := SessionSandboxKey{TenantID: 7, SessionID: "session"}
 	binding := SessionSandboxBinding{SandboxID: "container", ConfigID: "cfg"}
-	img := image.InspectResponse{ID: id, Config: &dockerimage.DockerOCIImageConfig{ImageConfig: ocispec.ImageConfig{Env: []string{"PATH=/bin"}}}}
-	labels := map[string]string{dockerManagedLabel: "true", remoteMetadataTenantID: "7", remoteMetadataSessionID: "session", remoteMetadataConfigID: "cfg", remoteMetadataProvider: string(SandboxTypeDocker), remoteMetadataBindingVersion: "1", remoteMetadataIMPolicy: policy}
-	c := container.InspectResponse{ID: "container", Image: id, Config: &container.Config{Labels: labels, Env: []string{"PATH=/bin", skillOutputEnvVar + "=" + SessionOutputRoot, sessionInputEnvVar + "=" + SessionInputRoot}}, HostConfig: &container.HostConfig{NetworkMode: "none", CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges"}}}
+	img := image.InspectResponse{
+		ID:     id,
+		Config: &dockerimage.DockerOCIImageConfig{ImageConfig: ocispec.ImageConfig{Env: []string{"PATH=/bin"}}},
+	}
+	labels := map[string]string{
+		dockerManagedLabel:           "true",
+		remoteMetadataTenantID:       "7",
+		remoteMetadataSessionID:      "session",
+		remoteMetadataConfigID:       "cfg",
+		remoteMetadataProvider:       string(SandboxTypeDocker),
+		remoteMetadataBindingVersion: "1",
+		remoteMetadataIMPolicy:       policy,
+	}
+	c := container.InspectResponse{
+		ID:    "container",
+		Image: id,
+		Config: &container.Config{
+			Labels: labels,
+			Env: []string{
+				"PATH=/bin",
+				skillOutputEnvVar + "=" + SessionOutputRoot,
+				sessionInputEnvVar + "=" + SessionInputRoot,
+			},
+		},
+		HostConfig: &container.HostConfig{
+			NetworkMode: "none",
+			CapDrop:     []string{"ALL"},
+			SecurityOpt: []string{"no-new-privileges"},
+		},
+	}
 	c.HostConfig.Memory = IMMaxMemoryBytes
 	c.HostConfig.MemorySwap = IMMaxMemoryBytes
 	c.HostConfig.NanoCPUs = int64(IMMaxCPU * 1e9)
@@ -114,7 +163,11 @@ func TestIMOutputBudgetRejectsExcess(t *testing.T) {
 	_, err = WithIMDockerOutputLimit(context.Background(), 50<<20)
 	require.NoError(t, err)
 	fake := newFakeDockerEngine()
-	_, err = (&imLimitedDockerEngine{dockerEngineAPI: fake}).ImagePull(context.Background(), "missing", client.ImagePullOptions{})
+	_, err = (&imLimitedDockerEngine{dockerEngineAPI: fake}).ImagePull(
+		context.Background(),
+		"missing",
+		client.ImagePullOptions{},
+	)
 	require.Error(t, err)
 	require.Empty(t, fake.pulled)
 	type absent struct{}
@@ -136,12 +189,39 @@ func TestIMDockerManagerExecutesOnlyInspectedSession(t *testing.T) {
 	t.Setenv(IMTrustedImageEnv, imageID)
 	fake := newFakeDockerEngine()
 	engine := &imFixtureEngine{fakeDockerEngine: fake, imageID: imageID}
-	settings, err := dockerSettingsFromConfig(&Config{Type: SandboxTypeDocker, DockerImage: imageID, DockerNetworkMode: "none", DockerCPULimit: IMMaxCPU, DockerMemoryBytes: IMMaxMemoryBytes, DockerPidsLimit: IMMaxPIDs})
+	settings, err := dockerSettingsFromConfig(
+		&Config{
+			Type:              SandboxTypeDocker,
+			DockerImage:       imageID,
+			DockerNetworkMode: "none",
+			DockerCPULimit:    IMMaxCPU,
+			DockerMemoryBytes: IMMaxMemoryBytes,
+			DockerPidsLimit:   IMMaxPIDs,
+		},
+	)
 	require.NoError(t, err)
 	settings.IdleTTL = 0
 	docker := newDockerRemoteClientWithAPI(&imLimitedDockerEngine{dockerEngineAPI: engine}, settings)
-	cfg := &Config{Type: SandboxTypeDocker, DockerImage: imageID, DockerNetworkMode: "none", DockerCPULimit: IMMaxCPU, DockerMemoryBytes: IMMaxMemoryBytes, DockerPidsLimit: IMMaxPIDs, DefaultTimeout: IMMaxCommandTime}
-	mgr, err := NewSessionBoundManager(SessionBoundManagerConfig{Config: cfg, Client: docker, Store: NewMemorySessionSandboxBindingStore(), Checker: &fakeSessionExistenceChecker{exists: true}, ConfigID: "cfg", SkipHealthProbe: true, IMDiskVerifier: imTestDiskVerifier{}})
+	cfg := &Config{
+		Type:              SandboxTypeDocker,
+		DockerImage:       imageID,
+		DockerNetworkMode: "none",
+		DockerCPULimit:    IMMaxCPU,
+		DockerMemoryBytes: IMMaxMemoryBytes,
+		DockerPidsLimit:   IMMaxPIDs,
+		DefaultTimeout:    IMMaxCommandTime,
+	}
+	mgr, err := NewSessionBoundManager(
+		SessionBoundManagerConfig{
+			Config:          cfg,
+			Client:          docker,
+			Store:           NewMemorySessionSandboxBindingStore(),
+			Checker:         &fakeSessionExistenceChecker{exists: true},
+			ConfigID:        "cfg",
+			SkipHealthProbe: true,
+			IMDiskVerifier:  imTestDiskVerifier{},
+		},
+	)
 	require.NoError(t, err)
 	mgr.lifecycle.createRequest.Metadata = map[string]string{remoteMetadataIMPolicy: policy}
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
@@ -149,15 +229,33 @@ func TestIMDockerManagerExecutesOnlyInspectedSession(t *testing.T) {
 	ctx = types.WithSessionID(ctx, "session")
 	ctx = types.WithIMSandboxPolicy(ctx, policy)
 	allowed := true
-	ctx = types.WithIMSandboxGrant(ctx, types.IMSandboxGrant{SessionID: "session", TenantID: 7, ConfigID: "cfg", AllowShell: true, Revalidate: func(context.Context) error {
-		if !allowed {
-			return types.ErrIMSandboxDenied
-		}
-		return nil
-	}})
+	ctx = types.WithIMSandboxGrant(
+		ctx,
+		types.IMSandboxGrant{
+			SessionID:  "session",
+			TenantID:   7,
+			ConfigID:   "cfg",
+			AllowShell: true,
+			Revalidate: func(context.Context) error {
+				if !allowed {
+					return types.ErrIMSandboxDenied
+				}
+				return nil
+			},
+		},
+	)
 	// Only the IM Docker wrapper may create a container for this path.
 	unrestricted := newDockerRemoteClientWithAPI(engine, settings)
-	denied, err := NewSessionBoundManager(SessionBoundManagerConfig{Config: cfg, Client: unrestricted, Store: NewMemorySessionSandboxBindingStore(), Checker: &fakeSessionExistenceChecker{exists: true}, ConfigID: "cfg", SkipHealthProbe: true})
+	denied, err := NewSessionBoundManager(
+		SessionBoundManagerConfig{
+			Config:          cfg,
+			Client:          unrestricted,
+			Store:           NewMemorySessionSandboxBindingStore(),
+			Checker:         &fakeSessionExistenceChecker{exists: true},
+			ConfigID:        "cfg",
+			SkipHealthProbe: true,
+		},
+	)
 	require.NoError(t, err)
 	_, err = denied.EnsureIMSession(ctx, "session", true)
 	require.ErrorIs(t, err, ErrIMDiskLimitUnavailable)
@@ -225,7 +323,11 @@ func TestIMDockerManagerExecutesOnlyInspectedSession(t *testing.T) {
 	require.Greater(t, len(fake.stopped), priorStops, "timeout must request another stop")
 	require.Contains(t, fake.stopped, id)
 	fake.execStreamStalls = false
-	fake.inspect[id] = func() container.InspectResponse { v := fake.inspect[id]; v.HostConfig.NetworkMode = "bridge"; return v }()
+	fake.inspect[id] = func() container.InspectResponse {
+		v := fake.inspect[id]
+		v.HostConfig.NetworkMode = "bridge"
+		return v
+	}()
 	_, err = mgr.EnsureIMSession(ctx, "session", true)
 	require.Error(t, err)
 }
@@ -235,13 +337,24 @@ type imFixtureEngine struct {
 	imageID string
 }
 
-func (f *imFixtureEngine) ImageInspect(_ context.Context, id string, _ ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+func (f *imFixtureEngine) ImageInspect(
+	_ context.Context,
+	id string,
+	_ ...client.ImageInspectOption,
+) (client.ImageInspectResult, error) {
 	if id != f.imageID {
 		return client.ImageInspectResult{}, errors.New("unknown image")
 	}
-	return client.ImageInspectResult{InspectResponse: image.InspectResponse{ID: id, Config: &dockerimage.DockerOCIImageConfig{}}}, nil
+	return client.ImageInspectResult{
+		InspectResponse: image.InspectResponse{ID: id, Config: &dockerimage.DockerOCIImageConfig{}},
+	}, nil
 }
-func (f *imFixtureEngine) ContainerStop(ctx context.Context, id string, options client.ContainerStopOptions) (client.ContainerStopResult, error) {
+
+func (f *imFixtureEngine) ContainerStop(
+	ctx context.Context,
+	id string,
+	options client.ContainerStopOptions,
+) (client.ContainerStopResult, error) {
 	result, err := f.fakeDockerEngine.ContainerStop(ctx, id, options)
 	if err == nil {
 		v := f.inspect[id]
@@ -251,12 +364,22 @@ func (f *imFixtureEngine) ContainerStop(ctx context.Context, id string, options 
 	}
 	return result, err
 }
-func (f *imFixtureEngine) ContainerCreate(ctx context.Context, options client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+
+func (f *imFixtureEngine) ContainerCreate(
+	ctx context.Context,
+	options client.ContainerCreateOptions,
+) (client.ContainerCreateResult, error) {
 	result, err := f.fakeDockerEngine.ContainerCreate(ctx, options)
 	if err != nil {
 		return result, err
 	}
-	f.inspect[result.ID] = container.InspectResponse{ID: result.ID, Image: f.imageID, Config: options.Config, HostConfig: options.HostConfig, State: &container.State{Status: "created"}}
+	f.inspect[result.ID] = container.InspectResponse{
+		ID:         result.ID,
+		Image:      f.imageID,
+		Config:     options.Config,
+		HostConfig: options.HostConfig,
+		State:      &container.State{Status: "created"},
+	}
 	return result, nil
 }
 
@@ -269,7 +392,11 @@ func TestIMDockerOutputLimitBeforeLiveCallback(t *testing.T) {
 	docker := newTestDockerClient(t, fake)
 	fake.execStdout = strings.Repeat("x", 512)
 	var delivered int
-	req := RemoteExecRequest{Command: "printf", Timeout: time.Second, OnOutput: func(_ string, b []byte) { delivered += len(b) }}
+	req := RemoteExecRequest{
+		Command:  "printf",
+		Timeout:  time.Second,
+		OnOutput: func(_ string, b []byte) { delivered += len(b) },
+	}
 	require.NoError(t, setIMOutputLimit(&req, 128))
 	_, err := docker.Exec(context.Background(), testHandle("c"), req)
 	require.Error(t, err)

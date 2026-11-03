@@ -35,7 +35,9 @@ class Entry:
  def __init__(self,name,kind): self.name=name;self.kind=kind
  def stat(self,follow_symlinks=False):
   if follow_symlinks: raise ValueError('follow requested')
-  return types.SimpleNamespace(st_mode={'dir':stat.S_IFDIR,'file':stat.S_IFREG,'link':stat.S_IFLNK}[self.kind]|0o755,st_size=3,st_mtime=0)
+  return types.SimpleNamespace(
+   st_mode={'dir':stat.S_IFDIR,'file':stat.S_IFREG,'link':stat.S_IFLNK}[self.kind]|0o755,
+   st_size=3,st_mtime=0)
 def entries(p):
  if p=='/': yield Entry('workspace','dir');return
  if p=='/workspace': yield Entry('output','dir');return
@@ -66,7 +68,9 @@ sys.argv=['listing','/workspace','/workspace/output']
 	var entries []map[string]any
 	require.NoError(t, json.Unmarshal(normal, &entries))
 	require.Len(t, entries, 2)
-	for _, tc := range []struct{ mode, want string }{{"many_dirs", "entry limit"}, {"deep", "depth limit"}, {"output", "output limit"}} {
+	for _, tc := range []struct{ mode, want string }{
+		{"many_dirs", "entry limit"}, {"deep", "depth limit"}, {"output", "output limit"},
+	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			out, err := run(tc.mode)
 			require.Error(t, err)

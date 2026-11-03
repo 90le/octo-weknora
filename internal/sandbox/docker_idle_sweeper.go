@@ -124,7 +124,8 @@ func (s *dockerIdleSweeper) sweep(ctx context.Context) (int, error) {
 			return reclaimed, ctx.Err()
 		default:
 		}
-		if summary.State != RemoteStateRunning || !metadataMatches(summary.Metadata, s.scope) || summary.Metadata[remoteMetadataIMPolicy] != "" {
+		if summary.State != RemoteStateRunning || !metadataMatches(summary.Metadata, s.scope) ||
+			summary.Metadata[remoteMetadataIMPolicy] != "" {
 			continue
 		}
 		release, ok := s.client.tryReapContainer(summary.ID)

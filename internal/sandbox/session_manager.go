@@ -353,7 +353,8 @@ func (m *SessionBoundManager) prepareSessionDirs(
 		map[string]interface{}{"directories": dirs, "user": user}, sandboxHandleMeta(handle))
 	defer func() { span.Finish(nil, nil, prepErr) }()
 	request := RemoteExecRequest{
-		Shell: true, Command: workspaceBootstrapCommand(dirs...), User: user, Timeout: sessionArtifactDirBootstrapTimeout,
+		Shell: true, Command: workspaceBootstrapCommand(dirs...), User: user,
+		Timeout: sessionArtifactDirBootstrapTimeout,
 	}
 	if types.HasIMKnowledgeScope(ctx) {
 		if err := setIMOutputLimit(&request, IMMaxOutputBytes/2); err != nil {

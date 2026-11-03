@@ -46,7 +46,12 @@ var imImageID = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 // snapshot, environment and network. Non-IM and file-only contexts are not
 // changed. An explicitly requested execution capability fails visibly if a
 // dedicated, audited base image is not configured.
-func restrictIMSandboxConfig(ctx context.Context, configID string, tenant *types.TenantSandboxConfig, effective *Config) error {
+func restrictIMSandboxConfig(
+	ctx context.Context,
+	configID string,
+	tenant *types.TenantSandboxConfig,
+	effective *Config,
+) error {
 	if !types.HasIMKnowledgeScope(ctx) {
 		return nil
 	}
@@ -54,7 +59,8 @@ func restrictIMSandboxConfig(ctx context.Context, configID string, tenant *types
 	if !ok || (!grant.AllowShell && !grant.AllowSkills) || grant.ConfigID != configID {
 		return fmt.Errorf("Octo sandbox: no execution authorization")
 	}
-	if tenant == nil || tenant.SandboxType != string(SandboxTypeDocker) || tenant.Docker == nil || effective == nil || effective.Type != SandboxTypeDocker {
+	if tenant == nil || tenant.SandboxType != string(SandboxTypeDocker) || tenant.Docker == nil || effective == nil ||
+		effective.Type != SandboxTypeDocker {
 		return fmt.Errorf("Octo sandbox: isolated Docker backend required")
 	}
 	if tenant.VolumeMount != nil {

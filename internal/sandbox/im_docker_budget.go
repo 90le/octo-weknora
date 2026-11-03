@@ -30,7 +30,10 @@ const (
 
 // IM commands do not need the generic installer capabilities. Never grant
 // them back after CapDrop=ALL, even when the selected Docker config would.
-func (e *imLimitedDockerEngine) ContainerCreate(ctx context.Context, options client.ContainerCreateOptions) (client.ContainerCreateResult, error) {
+func (e *imLimitedDockerEngine) ContainerCreate(
+	ctx context.Context,
+	options client.ContainerCreateOptions,
+) (client.ContainerCreateResult, error) {
 	if options.HostConfig == nil {
 		return client.ContainerCreateResult{}, errors.New("Octo sandbox: Docker host config unavailable")
 	}
@@ -47,11 +50,19 @@ func (e *imLimitedDockerEngine) ContainerCreate(ctx context.Context, options cli
 
 // An audited image ID must already be present on the selected daemon; IM
 // never pulls a substitute image from a registry.
-func (e *imLimitedDockerEngine) ImagePull(context.Context, string, client.ImagePullOptions) (client.ImagePullResponse, error) {
+func (e *imLimitedDockerEngine) ImagePull(
+	context.Context,
+	string,
+	client.ImagePullOptions,
+) (client.ImagePullResponse, error) {
 	return nil, errors.New("Octo sandbox: audited image is absent on the selected Docker daemon")
 }
 
-func (e *imLimitedDockerEngine) ExecAttach(ctx context.Context, id string, options client.ExecAttachOptions) (client.ExecAttachResult, error) {
+func (e *imLimitedDockerEngine) ExecAttach(
+	ctx context.Context,
+	id string,
+	options client.ExecAttachOptions,
+) (client.ExecAttachResult, error) {
 	result, err := e.dockerEngineAPI.ExecAttach(ctx, id, options)
 	if err != nil {
 		return result, err

@@ -85,10 +85,16 @@ func (m *SessionBoundManager) RequireIMDiskIsolation() error {
 // before returning the exact sandbox ID to be used for this operation.
 func (m *SessionBoundManager) EnsureIMSession(ctx context.Context, sessionID string, create bool) (string, error) {
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
-	if !ok || !types.HasIMKnowledgeScope(ctx) || (!grant.AllowShell && !grant.AllowSkills) || grant.SessionID != sessionID ||
-		m == nil || m.remoteDisabled() || m.dockerClient == nil || m.GetType() != SandboxTypeDocker || m.config == nil ||
-		m.lifecycle == nil || m.lifecycle.sandboxConfigID != grant.ConfigID || m.lifecycle.bootstrapper != nil ||
-		m.config.DockerImage != strings.TrimSpace(getIMTrustedImage()) || m.config.DockerNetworkMode != "none" || len(m.config.EnvVars) != 0 {
+	if !ok || !types.HasIMKnowledgeScope(ctx) || (!grant.AllowShell && !grant.AllowSkills) ||
+		grant.SessionID != sessionID ||
+		m == nil || m.remoteDisabled() || m.dockerClient == nil || m.GetType() != SandboxTypeDocker ||
+		m.config == nil ||
+		m.lifecycle == nil ||
+		m.lifecycle.sandboxConfigID != grant.ConfigID ||
+		m.lifecycle.bootstrapper != nil ||
+		m.config.DockerImage != strings.TrimSpace(getIMTrustedImage()) ||
+		m.config.DockerNetworkMode != "none" ||
+		len(m.config.EnvVars) != 0 {
 		return "", errors.New("Octo sandbox: isolated Docker configuration unavailable")
 	}
 	if err := m.RequireIMDiskIsolation(); err != nil {
@@ -138,22 +144,31 @@ func (m *SessionBoundManager) EnsureIMSession(ctx context.Context, sessionID str
 		}
 		// A stale marker alone must not destroy or strand the old session. The
 		// current image and full policy labels below still have to match.
-		if binding.Provider != SandboxTypeDocker || binding.ConfigID != grant.ConfigID || binding.TemplateID != m.config.DockerImage {
+		if binding.Provider != SandboxTypeDocker || binding.ConfigID != grant.ConfigID ||
+			binding.TemplateID != m.config.DockerImage {
 			return errors.New("Octo sandbox: existing binding does not match the authorized clean image")
 		}
 		img, err := m.dockerClient.api.ImageInspect(lockCtx, m.config.DockerImage)
 		if err != nil {
 			return fmt.Errorf("Octo sandbox: inspect clean image: %w", err)
 		}
-		inspected, err := m.dockerClient.api.ContainerInspect(lockCtx, binding.SandboxID, client.ContainerInspectOptions{})
+		inspected, err := m.dockerClient.api.ContainerInspect(
+			lockCtx,
+			binding.SandboxID,
+			client.ContainerInspectOptions{},
+		)
 		if err != nil {
 			return fmt.Errorf("Octo sandbox: inspect session container: %w", err)
 		}
-		if err = verifyIMDockerContainer(inspected.Container, img.InspectResponse, *binding, key, m.config.DockerImage, policy); err != nil {
+		if err = verifyIMDockerContainer(
+			inspected.Container, img.InspectResponse, *binding, key, m.config.DockerImage, policy,
+		); err != nil {
 			return err
 		}
 		if m.imDiskVerifier != nil {
-			if err = m.imDiskVerifier.VerifyIMSandboxDisk(lockCtx, key.TenantID, key.SessionID, grant.ConfigID, inspected.Container); err != nil {
+			if err = m.imDiskVerifier.VerifyIMSandboxDisk(
+				lockCtx, key.TenantID, key.SessionID, grant.ConfigID, inspected.Container,
+			); err != nil {
 				return fmt.Errorf("%w: %v", ErrIMDiskLimitUnavailable, err)
 			}
 		}
@@ -174,7 +189,13 @@ func getIMTrustedImage() string { return strings.TrimSpace(getenvIMImage()) }
 // getenvIMImage is a function so image-policy tests do not touch Docker.
 func getenvIMImage() string { return strings.TrimSpace(os.Getenv(IMTrustedImageEnv)) }
 
-func verifyIMDockerContainer(c container.InspectResponse, img image.InspectResponse, binding SessionSandboxBinding, key SessionSandboxKey, imageID, policy string) error {
+func verifyIMDockerContainer(
+	c container.InspectResponse,
+	img image.InspectResponse,
+	binding SessionSandboxBinding,
+	key SessionSandboxKey,
+	imageID, policy string,
+) error {
 	deny := func(reason string) error { return fmt.Errorf("Octo sandbox: unsafe container: %s", reason) }
 	if !imImageID.MatchString(imageID) || img.ID != imageID || img.Config == nil || len(img.Config.Volumes) != 0 ||
 		c.ID != binding.SandboxID || c.Image != imageID || c.Config == nil || c.HostConfig == nil {
@@ -183,21 +204,32 @@ func verifyIMDockerContainer(c container.InspectResponse, img image.InspectRespo
 	labels := c.Config.Labels
 	if labels[dockerManagedLabel] != "true" || labels[remoteMetadataTenantID] != strconv.FormatUint(key.TenantID, 10) ||
 		labels[remoteMetadataSessionID] != key.SessionID || labels[remoteMetadataConfigID] != binding.ConfigID ||
-		labels[remoteMetadataProvider] != string(SandboxTypeDocker) || labels[remoteMetadataBindingVersion] != strconv.Itoa(SessionSandboxBindingVersion) ||
+		labels[remoteMetadataProvider] != string(
+			SandboxTypeDocker,
+		) || labels[remoteMetadataBindingVersion] != strconv.Itoa(SessionSandboxBindingVersion) ||
 		labels[remoteMetadataIMPolicy] != policy {
 		return deny("ownership labels")
 	}
 	h := c.HostConfig
-	if string(h.NetworkMode) != "none" || h.Privileged || string(h.PidMode) == "host" || string(h.IpcMode) == "host" || string(h.UTSMode) == "host" ||
-		len(h.Binds) != 0 || len(h.Mounts) != 0 || len(h.VolumesFrom) != 0 || len(h.Devices) != 0 || len(h.DeviceRequests) != 0 ||
-		h.PublishAllPorts || len(h.PortBindings) != 0 {
+	if string(h.NetworkMode) != "none" || h.Privileged || string(h.PidMode) == "host" ||
+		string(h.IpcMode) == "host" || string(h.UTSMode) == "host" ||
+		len(h.Binds) != 0 ||
+		len(h.Mounts) != 0 ||
+		len(h.VolumesFrom) != 0 ||
+		len(h.Devices) != 0 ||
+		len(h.DeviceRequests) != 0 ||
+		h.PublishAllPorts ||
+		len(h.PortBindings) != 0 {
 		return deny("network, host namespace, devices or mounts")
 	}
-	if !h.ReadonlyRootfs || len(h.Tmpfs) != 2 || h.Tmpfs[SessionWorkspaceRoot] != imWorkspaceTmpfs || h.Tmpfs["/tmp"] != imTmpTmpfs || h.ShmSize != 64<<20 {
+	if !h.ReadonlyRootfs || len(h.Tmpfs) != 2 || h.Tmpfs[SessionWorkspaceRoot] != imWorkspaceTmpfs ||
+		h.Tmpfs["/tmp"] != imTmpTmpfs ||
+		h.ShmSize != 64<<20 {
 		return deny("read-only root or bounded temporary filesystems")
 	}
 	for _, m := range c.Mounts {
-		if string(m.Type) != "tmpfs" || m.Source != "" || (m.Destination != SessionWorkspaceRoot && m.Destination != "/tmp") {
+		if string(m.Type) != "tmpfs" || m.Source != "" ||
+			(m.Destination != SessionWorkspaceRoot && m.Destination != "/tmp") {
 			return deny("unexpected actual mount")
 		}
 	}
@@ -208,8 +240,11 @@ func verifyIMDockerContainer(c container.InspectResponse, img image.InspectRespo
 			}
 		}
 	}
-	if h.Memory <= 0 || h.Memory > IMMaxMemoryBytes || h.MemorySwap != h.Memory || h.NanoCPUs <= 0 || h.NanoCPUs > int64(IMMaxCPU*1e9) ||
-		h.PidsLimit == nil || *h.PidsLimit <= 0 || *h.PidsLimit > IMMaxPIDs {
+	if h.Memory <= 0 || h.Memory > IMMaxMemoryBytes || h.MemorySwap != h.Memory || h.NanoCPUs <= 0 ||
+		h.NanoCPUs > int64(IMMaxCPU*1e9) ||
+		h.PidsLimit == nil ||
+		*h.PidsLimit <= 0 ||
+		*h.PidsLimit > IMMaxPIDs {
 		return deny("resource limits")
 	}
 	contains := func(items []string, value string) bool {
@@ -259,7 +294,12 @@ func verifyIMDockerContainer(c container.InspectResponse, img image.InspectRespo
 
 // ExecIMShell runs only on the already-inspected container. A hard per-stream
 // output limit is set before Docker's buffer and before the live callback.
-func (m *SessionBoundManager) ExecIMShell(ctx context.Context, sessionID, sandboxID, command, workDir string, timeout time.Duration, env map[string]string) (*ExecuteResult, error) {
+func (m *SessionBoundManager) ExecIMShell(
+	ctx context.Context,
+	sessionID, sandboxID, command, workDir string,
+	timeout time.Duration,
+	env map[string]string,
+) (*ExecuteResult, error) {
 	expected, err := expectedIMSandbox(ctx, sessionID)
 	if err != nil || expected != sandboxID {
 		return nil, errors.New("Octo sandbox: binding changed")
@@ -285,7 +325,14 @@ func (m *SessionBoundManager) ExecIMShell(ctx context.Context, sessionID, sandbo
 	if timeout <= 0 || timeout > IMMaxCommandTime {
 		timeout = IMMaxCommandTime
 	}
-	request := RemoteExecRequest{Command: command, Shell: true, WorkDir: workDir, Timeout: timeout, Env: env, User: DefaultSandboxExecUser}
+	request := RemoteExecRequest{
+		Command: command,
+		Shell:   true,
+		WorkDir: workDir,
+		Timeout: timeout,
+		Env:     env,
+		User:    DefaultSandboxExecUser,
+	}
 	if err = setIMOutputLimit(&request, IMMaxOutputBytes/2); err != nil {
 		return nil, err
 	}
@@ -304,7 +351,9 @@ func (m *SessionBoundManager) ExecIMShell(ctx context.Context, sessionID, sandbo
 	// No live output may escape while a grant can be revoked mid-command.
 	// The guarded caller revalidates again before returning captured output.
 	request.OnOutput = nil
-	if err = m.prepareSessionDirs(runCtx, handle, DefaultSandboxExecUser, SessionInputRoot, SessionOutputRoot, workDir); err != nil {
+	if err = m.prepareSessionDirs(
+		runCtx, handle, DefaultSandboxExecUser, SessionInputRoot, SessionOutputRoot, workDir,
+	); err != nil {
 		return fail(err)
 	}
 	started := time.Now()
@@ -332,7 +381,12 @@ func (m *SessionBoundManager) ExecIMShell(ctx context.Context, sessionID, sandbo
 // hold the session turn lock and fence any prior lease holder.
 func (m *SessionBoundManager) QuiesceIMSession(ctx context.Context, sessionID string) (string, error) {
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
-	if !ok || !types.HasIMKnowledgeScope(ctx) || (!grant.AllowShell && !grant.AllowSkills) || grant.SessionID != sessionID || m == nil || m.dockerClient == nil || m.lifecycle == nil || m.lifecycle.sandboxConfigID != grant.ConfigID {
+	if !ok || !types.HasIMKnowledgeScope(ctx) || (!grant.AllowShell && !grant.AllowSkills) ||
+		grant.SessionID != sessionID ||
+		m == nil ||
+		m.dockerClient == nil ||
+		m.lifecycle == nil ||
+		m.lifecycle.sandboxConfigID != grant.ConfigID {
 		return "", types.ErrIMSandboxDenied
 	}
 	if err := grant.Revalidate(ctx); err != nil {
@@ -354,7 +408,11 @@ func (m *SessionBoundManager) QuiesceIMSession(ctx context.Context, sessionID st
 		if binding.Provider != SandboxTypeDocker || binding.ConfigID != grant.ConfigID {
 			return types.ErrIMSandboxDenied
 		}
-		inspected, err := m.dockerClient.api.ContainerInspect(lockCtx, binding.SandboxID, client.ContainerInspectOptions{})
+		inspected, err := m.dockerClient.api.ContainerInspect(
+			lockCtx,
+			binding.SandboxID,
+			client.ContainerInspectOptions{},
+		)
 		if err != nil {
 			return err
 		}
@@ -363,7 +421,12 @@ func (m *SessionBoundManager) QuiesceIMSession(ctx context.Context, sessionID st
 			return types.ErrIMSandboxDenied
 		}
 		labels := c.Config.Labels
-		if labels[dockerManagedLabel] != "true" || labels[remoteMetadataTenantID] != strconv.FormatUint(key.TenantID, 10) || labels[remoteMetadataSessionID] != key.SessionID || labels[remoteMetadataConfigID] != grant.ConfigID || labels[remoteMetadataProvider] != string(SandboxTypeDocker) || labels[remoteMetadataBindingVersion] != strconv.Itoa(SessionSandboxBindingVersion) {
+		if labels[dockerManagedLabel] != "true" ||
+			labels[remoteMetadataTenantID] != strconv.FormatUint(key.TenantID, 10) ||
+			labels[remoteMetadataSessionID] != key.SessionID ||
+			labels[remoteMetadataConfigID] != grant.ConfigID ||
+			labels[remoteMetadataProvider] != string(SandboxTypeDocker) ||
+			labels[remoteMetadataBindingVersion] != strconv.Itoa(SessionSandboxBindingVersion) {
 			return types.ErrIMSandboxDenied
 		}
 		if err = m.stopIMContainer(lockCtx, binding.SandboxID); err != nil {
@@ -436,7 +499,8 @@ func (m *SessionBoundManager) stopIMContainer(ctx context.Context, sandboxID str
 const imBoundedListProgram = `import json,os,stat,sys
 root=sys.argv[1]
 directory=sys.argv[2]
-if not os.path.isabs(root) or (directory!=root and not directory.startswith(root+'/')): raise ValueError('outside workspace')
+if not os.path.isabs(root) or (directory!=root and not directory.startswith(root+'/')):
+ raise ValueError('outside workspace')
 flags=os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW
 fd=os.open('/',flags)
 try:
@@ -466,7 +530,8 @@ def walk(parent,base,depth):
     try: walk(child,p,depth+1)
     finally: os.close(child)
    elif stat.S_ISREG(st.st_mode):
-    item=json.dumps({'name':entry.name,'path':p,'size':st.st_size,'mtime':st.st_mtime},ensure_ascii=True,separators=(',',':'))
+    item=json.dumps({'name':entry.name,'path':p,'size':st.st_size,'mtime':st.st_mtime},
+                    ensure_ascii=True,separators=(',',':'))
     size=len(item.encode('ascii'))+(1 if items else 0)
     if used+size>120*1024: raise ValueError('output limit')
     used+=size;items.append(item)
@@ -488,7 +553,13 @@ func (m *SessionBoundManager) ListIMSessionFiles(ctx context.Context, sessionID,
 		return nil, errors.New("Octo sandbox: directory outside workspace")
 	}
 
-	command := "python3 -c " + ShellQuote(imBoundedListProgram) + " " + ShellQuote(SessionWorkspaceRoot) + " " + ShellQuote(clean)
+	command := "python3 -c " + ShellQuote(
+		imBoundedListProgram,
+	) + " " + ShellQuote(
+		SessionWorkspaceRoot,
+	) + " " + ShellQuote(
+		clean,
+	)
 	result, err := m.ExecIMShell(ctx, sessionID, expected, command, SessionWorkspaceRoot, IMMaxListingTime, nil)
 	if err != nil {
 		return nil, err
@@ -510,7 +581,16 @@ func (m *SessionBoundManager) ListIMSessionFiles(ctx context.Context, sessionID,
 		if item.Path == "" || item.Name == "" || item.Size < 0 {
 			return nil, errors.New("Octo sandbox: invalid file entry")
 		}
-		out = append(out, RemoteDirEntry{Name: item.Name, Path: item.Path, Type: RemoteEntryFile, Size: item.Size, ModTime: time.Unix(0, int64(item.ModTime*1e9))})
+		out = append(
+			out,
+			RemoteDirEntry{
+				Name:    item.Name,
+				Path:    item.Path,
+				Type:    RemoteEntryFile,
+				Size:    item.Size,
+				ModTime: time.Unix(0, int64(item.ModTime*1e9)),
+			},
+		)
 	}
 	return out, nil
 }
