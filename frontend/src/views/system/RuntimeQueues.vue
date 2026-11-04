@@ -36,6 +36,7 @@
         <div>
           <strong>{{ runtimeText.im }}</strong>
           <p>{{ runtimeText.waiting }}: {{ runtimeNumber(runtimeSupplement?.im?.depth) }} · {{ runtimeText.active }}: {{ runtimeNumber(runtimeSupplement?.im?.active) }}</p>
+          <p>{{ runtimeText.rejected }}: {{ runtimeNumber(runtimeSupplement?.im?.rejected) }} · {{ runtimeText.timedOut }}: {{ runtimeNumber(runtimeSupplement?.im?.timed_out) }}</p>
           <small>{{ runtimeText.processScope }}</small>
           <small v-if="runtimeSupplement?.im?.failure">{{ failureLabel(runtimeSupplement.im.failure) }}</small>
         </div>

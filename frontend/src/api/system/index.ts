@@ -638,7 +638,7 @@ export interface ModelRuntimeStat {
  * server heartbeats.
  */
 export interface RuntimeSupplement {
-  im: { available: boolean; scope: string; depth: number | null; active: number | null; failure?: string; sandbox_preparation_failures?: Array<{ stage: string; reason: string; count: number }> | null }
+  im: { available: boolean; scope: string; depth: number | null; active: number | null; rejected?: number | null; timed_out?: number | null; failure?: string; sandbox_preparation_failures?: Array<{ stage: string; reason: string; count: number }> | null }
   docker: { available: boolean; scope: string; running: number | null; capacity: number | null; failure?: string }
 }
 
