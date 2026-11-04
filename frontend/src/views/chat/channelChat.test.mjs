@@ -79,6 +79,13 @@ test('accessible Octo sessions still use the restricted channel path', async () 
   await state.load('channel')
   assert.equal(state.chatMode.value, 'channel')
 })
+test('owned Octo sessions restore the writable native chat path', async () => {
+  let called = false
+  const state = setup(async () => ({ success: true, data: { id: 'channel', im_platform: 'octo', can_continue: true, last_request_state: {} } }), async () => { called = true })
+  await state.load('channel')
+  assert.equal(state.chatMode.value, 'web')
+  assert.equal(called, false)
+})
 test('new and embedded chats remain writable without a session lookup', async () => {
   let called = false
   const state = setup(async () => { called = true }, async () => { called = true })

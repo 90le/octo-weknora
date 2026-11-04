@@ -1,8 +1,10 @@
 package session
 
 import (
+	"context"
 	stderrors "errors"
 	"net/http"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/browserskill"
@@ -269,12 +271,35 @@ func (h *Handler) GetSession(c *gin.Context) {
 		return
 	}
 
+	// Admin console reads may include other users' channel sessions. Only the
+	// strict owner lookup authorizes the normal writable chat controls.
+	if session.IMPlatform == "octo" {
+		session.CanContinue = h.canContinueOctoChat(ctx, id)
+	}
+
 	// Return session data
 	logger.Infof(ctx, "Session retrieved successfully, ID: %s", id)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    session,
 	})
+}
+
+func (h *Handler) canContinueOctoChat(ctx context.Context, id string) bool {
+	owned, err := h.sessionService.GetOwnedSession(ctx, id)
+	if err != nil || owned == nil || owned.ID != id {
+		return false
+	}
+	// Legacy empty-owner rows also match the owner query. Require the active,
+	// unambiguous channel-owner grant in addition to that query.
+	reader, ok := h.messageService.(interface {
+		ReadChannelChat(context.Context, string, int, *time.Time, string) (*types.Session, []*types.Message, error)
+	})
+	if !ok {
+		return false
+	}
+	channel, _, err := reader.ReadChannelChat(ctx, id, 1, nil, "")
+	return err == nil && channel != nil && channel.ID == id
 }
 
 // GetSessionsByTenant godoc

@@ -326,7 +326,7 @@ const loadSessionAndHydrate = async (sid) => {
     let sessionRes;
     try { sessionRes = await getSession(sid); } catch { /* Try the restricted channel endpoint below. */ }
     if (sid !== session_id.value || version !== sessionLoadVersion) return;
-    if (sessionRes?.success !== false && sessionRes?.data && String(sessionRes.data.im_platform || '').toLowerCase() !== 'octo') {
+    if (sessionRes?.success !== false && sessionRes?.data && (String(sessionRes.data.im_platform || '').toLowerCase() !== 'octo' || sessionRes.data.can_continue === true)) {
         currentSession.value = sessionRes.data;
         useSettingsStoreInstance.hydrateSessionInputState(sessionRes.data.last_request_state, preserveDraft);
         chatMode.value = 'web';
