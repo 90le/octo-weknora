@@ -1,5 +1,12 @@
 # 项目进度
 
+## 2026-11-04 Octo 来源复用原聊天页面（生产）
+
+- [PR #132](https://github.com/90le/octo-weknora/pull/132) 合并提交 `1ec14ef77d44d33a9719bd049274059f03c6544c`。生产后端 `local/octo-weknora-app:native-6574a2e`（`sha256:ed145e1e59c43ea861f8c46812b7da67eb90ac5c636399b700249c1cd5ea1f16`），前端 `local/octo-weknora-ui:native-fa408cb`（`sha256:7eea1b1077866332b526db0243bb06fd404b85e10c6734c12d5033e6e9338af0`）。仓库 CI 全部通过。
+- Octo 产物来源与 Web 一样打开 `/platform/chat/:sessionID`，复用原消息渲染；上一版独立页面已删除，旧地址重定向。已绑定渠道账户可只读查看对应会话；不变更会话所有权、不开放发送或写入。附件走渠道授权接口，知识引用复核知识库权限；部分无法核验的外部引用不返回，内部工具数据不公开。
+- 定向前后端、引用权限、附件、会话切换和隔离 PostgreSQL 测试通过；真实已登录浏览器中的页面和附件体验待用户验收。匿名渠道读取接口返回 401，页面路由和健康检查返回 200，owner 绑定保持 1。
+- 切换前活动消息、解析、同步及投递均为零；切换前后活动知识条目均为 1633，数据库 `134:false`，自动迁移关闭，注册返回 403。Compose 回退文件 `/srv/octo-isolated-20261027/compose.before-octo-ops-20261104T061558Z.json`，旧预览容器 `octo-ops-preview-rollback-20261104T061558Z`；原应用及前端镜像保留。知识库文档和索引未修改。
+
 ## 2026-11-04 Octo 文件投递与对话来源修复（生产）
 
 - [PR #130](https://github.com/90le/octo-weknora/pull/130) 合并提交 `575d9ccaabe836c516db962b3ad8e04545625f04`。生产后端 `local/octo-weknora-app:fix-cc2d45a`（`sha256:9279f26aee5b869bc46e337d8ba352662e47323ca9b01708b273ff791c6bc84e`），前端 `local/octo-weknora-ui:fix-3bcf250`（`sha256:5cbc838b28507b46b368d02690d549bdf99a455ab3131bfe5edbb1aba00de5d0`）。仓库 CI 全部通过。
