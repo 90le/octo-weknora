@@ -681,6 +681,9 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 	b.WriteString(fmt.Sprintf("**Command**: `%s`\n", command))
 	b.WriteString(fmt.Sprintf("**Work Dir**: %s\n", workDir))
 	b.WriteString(fmt.Sprintf("**Exit Code**: %d\n", res.ExitCode))
+	if res.ExitCode != 0 {
+		b.WriteString("**Command Status**: failed. Do not claim this command succeeded; inspect the error and retry.\n")
+	}
 	b.WriteString(fmt.Sprintf("**Duration**: %v\n", res.Duration))
 	if res.Killed {
 		b.WriteString("**Killed**: yes (timeout or terminated)\n")
@@ -732,6 +735,7 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 		"command":                command,
 		"work_dir":               workDir,
 		"exit_code":              res.ExitCode,
+		"command_succeeded":      res.ExitCode == 0 && res.Error == "" && !res.Killed,
 		"stdout":                 stdout,
 		"stderr":                 stderr,
 		"duration_ms":            res.Duration.Milliseconds(),
