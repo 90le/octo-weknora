@@ -1,5 +1,13 @@
 # 项目进度
 
+## 2026-11-04 Octo 文件投递与对话来源修复（生产）
+
+- [PR #130](https://github.com/90le/octo-weknora/pull/130) 合并提交 `575d9ccaabe836c516db962b3ad8e04545625f04`。生产后端 `local/octo-weknora-app:fix-cc2d45a`（`sha256:9279f26aee5b869bc46e337d8ba352662e47323ca9b01708b273ff791c6bc84e`），前端 `local/octo-weknora-ui:fix-3bcf250`（`sha256:5cbc838b28507b46b368d02690d549bdf99a455ab3131bfe5edbb1aba00de5d0`）。仓库 CI 全部通过。
+- 用户反馈的 PPT 在本轮沙箱中实际生成，但原请求分类不识别 PPT，未启动文件收集投递；模型给出了失效的 sandbox 链接。现在识别 PPT／幻灯片，校验本轮产物并按原授权投递，未确认结果不会伪装成可下载链接。终端非零退出有显式命令失败提示；本轮沙箱以外的旧文件不能凭名称自动恢复。
+- Octo 产物来源改为独立聊天式只读页面，定位相应消息；它展示已保存的用户和助手文本，非完整 Octo 历史，也不是允许编辑的 Web 普通会话。渠道绑定权限仍由现有后端校验。
+- 定向 IM／Octo／投递测试、Shell 定向测试、前端检查和完整仓库 CI 通过。单独隔离 Go 镜像的完整工具包测试有一项因缺少 Python `ensurepip` 失败；CI 的完整测试已通过。真实 Octo 客户端的 PPT 接收及页面体验等待用户验收。
+- 切换前活动消息、解析、同步及投递均为零；切换前后活动知识条目均为 1633，数据库 `134:false`、自动迁移关闭、注册返回 403；健康及绑定只读回查通过。Compose 回退文件 `/srv/octo-isolated-20261027/compose.before-octo-ops-20261104T053059Z.json`，旧预览容器 `octo-ops-preview-rollback-20261104T053059Z`；原应用及前端镜像保留。知识库文档和索引未改动。
+
 ## 2026-11-04 产物管理与运行状态（生产）
 
 - [PR #128](https://github.com/90le/octo-weknora/pull/128) 合并提交 `ee01f20d9e44ff0fdc7ebd21a9eb0519b12634e0`；生产后端 `local/octo-weknora-app:ops-5d82aa8`（`sha256:ee20a8057ab918b03a9c14b5f764cf2842267445775997ee865bfe912913f2e8`），前端 `local/octo-weknora-ui:ops-5d82aa8`（`sha256:8c47c5bc1071fd9baf684d5519f875b24f577c1e4523743957cdb6cf2baad7f0`）。CI、定向测试与隔离 PostgreSQL 权限检查通过。
