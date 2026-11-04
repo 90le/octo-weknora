@@ -63,6 +63,11 @@ func TestIMRecordsConfirmedTextWithoutSandbox(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.True(t, result.Success)
+	confirmed := renderConfirmedTextDelivery(ctx, "文件已发送：report.txt")
+	require.NotContains(t, confirmed, "其他文件")
+	mixed := renderConfirmedTextDelivery(ctx, "文件已发送：report.txt 和 [下载](sandbox:missing.pptx)")
+	require.Contains(t, mixed, "其他文件是否已生成或发送")
+	require.NotContains(t, mixed, "sandbox:")
 	msg := &types.Message{ID: "answer", SessionID: "session"}
 	s.persistIMDeliveredText(ctx, msg)
 	require.Len(t, msg.Artifacts, 1)
@@ -519,4 +524,82 @@ func TestIMGroupAmbiguousRootNeedsAnExplicitRelativePath(t *testing.T) {
 	_ = s.finishIMArtifactTurn(ctx, &types.Message{ID: "second"}, "答复")
 	require.Equal(t, []string{"report.pdf"}, adapter.sent)
 	require.Equal(t, [][]byte{[]byte("root")}, adapter.data)
+}
+
+func TestIMPPTRequestCollectsAndDeliversRealOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name, request, answer string
+		chat                  ChatType
+	}{
+		{"direct-link", "请生成一个PPT", "已生成 [下载PPT](sandbox:mofang_pro_intro.pptx)", ChatTypeDirect},
+		{"direct-name", "请生成一个PPT", "已生成 mofang_pro_intro.pptx。", ChatTypeDirect},
+		{"group-link", "生成PPT给我", "已生成 [下载PPT](sandbox:mofang_pro_intro.pptx)", ChatTypeGroup},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scope := &ExecutionScope{
+				AccountID: "a", ScopeID: "s", Revision: "r", KnowledgeBaseIDs: []string{"kb"}, AllowFileDelivery: true,
+			}
+			adapter := &artifactTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}}
+			file := makeTestArtifact("mofang_pro_intro.pptx", []byte("real presentation"))
+			collector := &fakeIMArtifactCollector{artifacts: types.MessageArtifacts{file}}
+			req := &qaRequest{
+				msg:     &IncomingMessage{UserID: "u", MessageID: "m", Content: tc.request, ChatType: tc.chat},
+				channel: &IMChannel{TenantID: 7, Platform: "octo"}, channelID: "channel",
+				session: &types.Session{ID: "session", TenantID: 7}, agent: &types.CustomAgent{TenantID: 7},
+				adapter: adapter, scope: scope,
+			}
+			s := &Service{artifactCollector: collector,
+				defaultFileSvc: &memoryIMArtifactFiles{files: map[string][]byte{file.URL: []byte("real presentation")}}}
+			ctx := s.beginIMArtifactTurn(imArtifactTestGrant(s.businessContext(context.Background(), req, scope)), req)
+			instruction, _ := ctx.Value(executionContextKey{}).(string)
+			require.Contains(t, instruction, "/workspace/output/")
+			result := s.finishIMArtifactTurn(ctx, &types.Message{ID: "answer"}, tc.answer)
+			require.Equal(t, 1, collector.snapshots)
+			require.Equal(t, []string{file.FileName}, adapter.sent)
+			require.Contains(t, result, "已发送文件：mofang_pro_intro.pptx")
+			require.NotContains(t, result, "sandbox:")
+		})
+	}
+}
+
+func TestIMUnconfirmedFileClaimsAndLinks(t *testing.T) {
+	s := &Service{}
+	req := &qaRequest{channel: &IMChannel{Platform: "octo"}, msg: &IncomingMessage{Content: "请生成PPT"}}
+	ctx := s.beginIMArtifactTurn(context.Background(), req)
+	answer := s.finishIMArtifactTurn(ctx, &types.Message{},
+		"已生成并发送文件：[下载](sandbox:mofang_pro_intro.pptx)，备用 sandbox:missing.pptx")
+	require.NotContains(t, answer, "sandbox:")
+	require.NotContains(t, answer, "已生成")
+	require.Contains(t, answer, "文件未确认生成或发送")
+}
+
+func TestIMPPTGroupAdmissionKeepsSendAndPermissionBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		text    string
+		allowed bool
+		want    int
+	}{
+		{"生成PPT给我", true, 1},
+		{"生成PPT，不要发送", true, 0},
+		{"生成幻灯片", true, 0},
+		{"生成PPT给我", false, 0},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			scope := &ExecutionScope{
+				AccountID: "a", ScopeID: "s", Revision: "r", KnowledgeBaseIDs: []string{"kb"},
+				AllowFileDelivery: tc.allowed,
+			}
+			adapter := &artifactTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}}
+			collector := &fakeIMArtifactCollector{}
+			req := &qaRequest{
+				msg:     &IncomingMessage{UserID: "u", MessageID: "m", Content: tc.text, ChatType: ChatTypeGroup},
+				channel: &IMChannel{TenantID: 7, Platform: "octo"}, channelID: "channel",
+				session: &types.Session{ID: "session", TenantID: 7}, agent: &types.CustomAgent{TenantID: 7},
+				adapter: adapter, scope: scope,
+			}
+			s := &Service{artifactCollector: collector}
+			_ = s.beginIMArtifactTurn(imArtifactTestGrant(s.businessContext(context.Background(), req, scope)), req)
+			require.Equal(t, tc.want, collector.snapshots)
+		})
+	}
 }

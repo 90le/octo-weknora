@@ -256,18 +256,6 @@
       </div>
     </t-drawer>
 
-    <t-drawer
-      v-model:visible="conversationVisible"
-      placement="right"
-      size="min(760px, 92vw)"
-      attach="body"
-      :header="$t('artifactLibrary.openSourceConversation')"
-      :footer="false"
-      :close-on-overlay-click="true"
-      :close-on-esc-keydown="true"
-    >
-      <ChannelConversationReadOnly v-if="conversationVisible && conversationItem" :key="itemKey(conversationItem)" :item="conversationItem" />
-    </t-drawer>
   </div>
 </template>
 
@@ -294,7 +282,6 @@ import EmptyState from '@/components/EmptyState.vue'
 import ResourceIcon from '@/components/icons/ResourceIcon.vue'
 import DocumentPreview from '@/components/document-preview.vue'
 import ArtifactFileIcon from '@/views/chat/components/ArtifactFileIcon.vue'
-import ChannelConversationReadOnly from './ChannelConversationReadOnly.vue'
 
 const PAGE_SIZE = 30
 const SEARCH_DEBOUNCE_MS = 300
@@ -327,8 +314,6 @@ const downloading = reactive<Record<string, boolean>>({})
 const deleting = reactive<Record<string, boolean>>({})
 const previewItem = ref<ArtifactLibraryItem | null>(null)
 const previewVisible = ref(false)
-const conversationItem = ref<ArtifactLibraryItem | null>(null)
-const conversationVisible = ref(false)
 const previewActions = ref<HTMLElement | null>(null)
 const scrollRoot = ref<HTMLElement | null>(null)
 const sentinel = ref<HTMLElement | null>(null)
@@ -463,13 +448,11 @@ function openPreview(item: ArtifactLibraryItem) {
 
 function openChannelConversation(item: ArtifactLibraryItem) {
   if (!item.im_channel_artifact) return
-  conversationItem.value = item
-  conversationVisible.value = true
+  previewVisible.value = false
+  void router.push({ name: 'channelArtifactConversation', params: {
+    sessionId: item.session_id, messageId: item.message_id, index: String(item.index),
+  } })
 }
-
-watch(conversationVisible, visible => {
-  if (!visible) conversationItem.value = null
-})
 
 function openSession(item: ArtifactLibraryItem) {
   previewVisible.value = false
@@ -547,7 +530,6 @@ async function performDelete(item: ArtifactLibraryItem) {
     selected.value.delete(key)
     if (!items.value.length && total.value > 0) reload()
     if (previewItem.value && itemKey(previewItem.value) === key) previewVisible.value = false
-    if (conversationItem.value && itemKey(conversationItem.value) === key) conversationVisible.value = false
     MessagePlugin.success(t('artifactLibrary.deleted'))
   } catch (err) {
     console.error('[ArtifactLibrary] delete failed:', err)
@@ -605,7 +587,6 @@ async function performBatchDelete(snapshot: ArtifactLibraryItem[]) {
       items.value = items.value.filter(row => itemKey(row) !== key)
       total.value = Math.max(0, total.value - 1)
       if (previewItem.value && itemKey(previewItem.value) === key) previewVisible.value = false
-      if (conversationItem.value && itemKey(conversationItem.value) === key) conversationVisible.value = false
     }
     batchDone.value++
   })

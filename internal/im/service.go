@@ -3124,6 +3124,11 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 		bufMu.Unlock()
 
 		octoHoldUnverifiedIntermediate(ctx, useAgent, &parts)
+		// File claims and sandbox links cannot be verified until collection and
+		// channel delivery finish. Keep interim tool progress, hold answer text.
+		if requested, _ := ctx.Value(imFileRequestKey{}).(bool); requested {
+			parts.LiveAnswer, parts.Answer, parts.AgentInner = "", "", ""
+		}
 		displaySource := FormatIMIntermediateFromParts(parts, agentRunning)
 		if displaySource == "" {
 			return
@@ -3184,8 +3189,10 @@ loop:
 	answer = sanitizeOctoGitHubLineLinks(outCtx, answer)
 	if finalErr == nil && !wasFallback && qaCtx.Err() == nil {
 		answer = s.finishIMArtifactTurn(ctx, assistantMsg, answer)
-		parts.Answer = answer
+	} else if guarded, _ := ctx.Value(imOctoArtifactGuardKey{}).(bool); guarded {
+		answer = imUnconfirmedArtifactAnswer(answer)
 	}
+	parts.Answer = answer
 	finalDisplay := s.formatIMStreamFinal(outCtx, parts, []*types.SearchResult(assistantMsg.KnowledgeReferences),
 		tenant)
 	if noVisibleContent || finalDisplay == "" {
@@ -3493,6 +3500,8 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	answer = sanitizeOctoGitHubLineLinks(ctx, answer)
 	if qaError == nil && !wasFallback {
 		answer = s.finishIMArtifactTurn(ctx, assistantMsg, answer)
+	} else if guarded, _ := ctx.Value(imOctoArtifactGuardKey{}).(bool); guarded {
+		answer = imUnconfirmedArtifactAnswer(answer)
 	}
 
 	// Update assistant message with the full answer (including citation tags for web rendering).

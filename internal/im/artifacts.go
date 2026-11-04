@@ -41,6 +41,8 @@ type imArtifactCollector interface {
 }
 
 type imArtifactTurnKey struct{}
+type imOctoArtifactGuardKey struct{}
+type imFileRequestKey struct{}
 
 type imDeliveredTextCollector interface {
 	PersistDeliveredText(
@@ -126,7 +128,12 @@ func (s *Service) cleanupIMDeliveredText(ctx context.Context, msg *types.Message
 }
 
 var (
-	imSandboxLink        = regexp.MustCompile(`!?\[([^\]\r\n]+)\]\(sandbox:([^\s)]+)\)`)
+	imSandboxLink        = regexp.MustCompile(`(?i)!?\[([^\]\r\n]+)\]\(sandbox:([^\r\n)]+)\)`)
+	imBareSandboxLink    = regexp.MustCompile(`(?i)sandbox:[^\s<>()]+`)
+	imAnswerFileName     = regexp.MustCompile(`[\p{L}\p{N}_-][\p{L}\p{N}_.-]*\.[\p{L}\p{N}]{1,16}`)
+	imPPTRequest         = regexp.MustCompile(`(?i)\bppt\b|幻灯片`)
+	imCompoundClaim      = regexp.MustCompile(`(?:已经|已)(?:成功)?(?:生成|制作|完成)(?:并|后)?(?:已|成功)?(?:发送|投递)(?:了)?(?:文件|附件)?`)
+	imGenerationClaim    = regexp.MustCompile(`(?:(?:已经|已)(?:成功)?(?:生成|制作|完成|做好)|(?:生成|制作)(?:成功|完成)|成功(?:生成|制作))`)
 	imDownloadBeforeLink = regexp.MustCompile(`(?:请)?点击(?:下方|这里|此处|以下)?(?:链接)?下载[：: ]*$`)
 	imDeliveryClaim      = regexp.MustCompile(`(?:文件|附件)(?:(?:已经|已)(?:成功)?(?:发送|投递)(?:成功|完成)?|` +
 		`(?:发送|投递)(?:成功|完成)|成功(?:发送|投递))|(?:(?:已经|已)(?:成功)?|成功)(?:发送|投递)(?:了)?(?:文件|附件)`)
@@ -149,13 +156,23 @@ func (s *Service) ConfigureArtifactCollector(collector *appservice.ArtifactColle
 }
 
 func (s *Service) beginIMArtifactTurn(ctx context.Context, req *qaRequest) context.Context {
-	if req == nil || req.channel == nil || req.channel.Platform != "octo" ||
-		req.scope == nil || !req.scope.AllowFileDelivery || req.session == nil ||
-		req.agent == nil || req.msg == nil ||
-		!octobusiness.WantsFileDelivery(req.msg.Content) {
+	if req == nil || req.channel == nil || req.channel.Platform != "octo" {
 		return ctx
 	}
-	if req.msg.ChatType != ChatTypeDirect && !octobusiness.WantsExplicitFileSend(req.msg.Content) {
+	ctx = context.WithValue(ctx, imOctoArtifactGuardKey{}, true)
+	if req.msg == nil {
+		return ctx
+	}
+	// The shared request classifier recognizes pptx but not the common “PPT”
+	// and “幻灯片” names. Normalize only for request admission.
+	requestText := imPPTRequest.ReplaceAllString(req.msg.Content, "pptx")
+	ctx = context.WithValue(ctx, imFileRequestKey{}, octobusiness.WantsFileDelivery(requestText))
+	if req.scope == nil || !req.scope.AllowFileDelivery || req.session == nil ||
+		req.agent == nil || req.msg == nil ||
+		!octobusiness.WantsFileDelivery(requestText) {
+		return ctx
+	}
+	if req.msg.ChatType != ChatTypeDirect && !octobusiness.WantsExplicitFileSend(requestText) {
 		return ctx
 	}
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
@@ -164,6 +181,13 @@ func (s *Service) beginIMArtifactTurn(ctx context.Context, req *qaRequest) conte
 		// text export into a misleading sandbox error when no grant exists.
 		return ctx
 	}
+	// Tell the model how the existing channel collector works; it cannot send a
+	// binary through the text-only delivery tool or a sandbox URL.
+	instruction := "文件请求：使用已授权的工具实际生成文件，完成文件放在 /workspace/output/；" +
+		"在最终答复中列出准确文件名。系统将在本轮按授权收集并投递，sandbox: 链接不是 Octo 下载地址。" +
+		"不得把计划、命令或未确认的投递说成成功；如生成失败请说明实际工具结果。"
+	prior, _ := ctx.Value(executionContextKey{}).(string)
+	ctx = context.WithValue(ctx, executionContextKey{}, strings.TrimSpace(prior+"\n\n"+instruction))
 	t := &imArtifactTurn{collector: s.artifactCollector, req: req, fingerprint: scopeFingerprint(req.scope)}
 	if t.collector == nil {
 		t.startErr = errors.New("artifact collection unavailable")
@@ -195,17 +219,29 @@ func (t *imArtifactTurn) authorize(ctx context.Context) error {
 // finishIMArtifactTurn delivers selected files verified as changed during this turn.
 func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, answer string) string {
 	t, ok := ctx.Value(imArtifactTurnKey{}).(*imArtifactTurn)
-	if !ok || t == nil || msg == nil || ctx.Err() != nil {
-		if ctx.Err() == nil && octobusiness.HasDeliveredFile(ctx) {
-			return renderIMArtifactAnswer(answer, nil, false)
+	if ctx.Err() != nil {
+		return answer
+	}
+	if !ok || t == nil || msg == nil {
+		if guarded, _ := ctx.Value(imOctoArtifactGuardKey{}).(bool); !guarded {
+			return answer
+		}
+		if octobusiness.HasDeliveredFile(ctx) {
+			return renderConfirmedTextDelivery(ctx, answer)
+		}
+		requested, _ := ctx.Value(imFileRequestKey{}).(bool)
+		if imSandboxLink.MatchString(answer) || imBareSandboxLink.MatchString(answer) ||
+			(requested && (imDeliveryClaim.MatchString(answer) || imGenerationClaim.MatchString(answer))) {
+			return imUnconfirmedArtifactAnswer(answer) + "\n\n文件未确认生成或发送，请检查工具执行结果后重试。"
 		}
 		return answer
 	}
 	if octobusiness.HasDeliveredFile(ctx) {
-		return renderIMArtifactAnswer(answer, nil, false)
+		// Do not repeat an already attempted delivery.
+		return renderConfirmedTextDelivery(ctx, answer)
 	}
 	if t.startErr != nil || t.authorize(ctx) != nil {
-		return renderIMArtifactAnswer(answer, nil, true) + "\n\n文件发送未完成：无法安全读取本次会话的产物。"
+		return imUnconfirmedArtifactAnswer(answer) + "\n\n文件发送未完成：无法安全读取本次会话的产物。"
 	}
 	callCtx := octobusiness.WithFileDeliveryExtraCheck(ctx, func(checkCtx context.Context) error {
 		if err := t.authorize(checkCtx); err != nil {
@@ -242,7 +278,8 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 			return appservice.IMArtifactCurrentTurn
 		}
 		if ambiguous || imTemporaryArtifact(relative) || octobusiness.HasNamedArtifact(text) ||
-			!candidates[name] || !octobusiness.MatchesRequestedArtifactType(text, name) {
+			(!candidates[name] && !octobusiness.MentionsArtifactName(answer, name)) ||
+			!octobusiness.MatchesRequestedArtifactType(text, name) {
 			return appservice.IMArtifactNotSelected
 		}
 		return appservice.IMArtifactCurrentTurn
@@ -252,19 +289,21 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 	artifacts, collectErr := t.collector.CollectIM(ctx, t.snapshot, msg.ID, selected)
 	if len(artifacts) == 0 {
 		if collectErr != nil {
-			return renderIMArtifactAnswer(answer, nil, true) + "\n\n文件未能收集，请检查文件大小或沙箱状态后重试。"
+			return imUnconfirmedArtifactAnswer(answer) + "\n\n文件未能收集，请检查文件大小或沙箱状态后重试。"
 		}
 		var names []string
 		for name := range candidates {
 			names = append(names, name)
 		}
 		sort.Strings(names)
-		answer = renderIMArtifactAnswer(answer, nil, true)
+		answer = imUnconfirmedArtifactAnswer(answer)
 		if len(names) > 0 {
 			return answer + "\n\n未发送文件：未找到可确认属于本轮的目标文件。请重新生成并指定文件名，例如：" + strings.Join(names, "、") + "。"
 		}
 		return answer + "\n\n未发送文件：未找到可确认属于本轮的目标文件，请重新生成并指定文件名。"
 	}
+	answer = imCompoundClaim.ReplaceAllString(answer, "文件已收集，发送状态待确认")
+	answer = imDeliveryClaim.ReplaceAllString(answer, "文件发送状态待确认")
 	callCtx, err := octobusiness.WithCurrentFileDeliveryAuthority(callCtx, true)
 	if err != nil {
 		return renderIMArtifactAnswer(answer, nil, true) + "\n\n文件发送未完成：当前会话的授权已变化。"
@@ -342,7 +381,27 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 	if collectErr != nil {
 		answer += "\n\n部分文件未能收集，请检查文件大小或沙箱状态后重试。"
 	}
-	return answer
+	return renderIMArtifactAnswer(answer, nil, false)
+}
+
+// One successful text delivery cannot confirm other file names in the answer.
+func renderConfirmedTextDelivery(ctx context.Context, answer string) string {
+	files, err := octobusiness.DeliveredTextFiles(ctx)
+	remaining := answer
+	for _, file := range files {
+		remaining = strings.ReplaceAll(remaining, file.Name, "")
+	}
+	other := imSandboxLink.MatchString(remaining) || imBareSandboxLink.MatchString(remaining) ||
+		imAnswerFileName.MatchString(remaining)
+	if err != nil || other {
+		return imUnconfirmedArtifactAnswer(answer) + "\n\n其他文件是否已生成或发送，请以实际投递结果为准。"
+	}
+	return renderIMArtifactAnswer(answer, nil, false)
+}
+
+func imUnconfirmedArtifactAnswer(answer string) string {
+	answer = imCompoundClaim.ReplaceAllString(answer, "生成和发送状态未确认")
+	return renderIMArtifactAnswer(imGenerationClaim.ReplaceAllString(answer, "生成状态未确认"), nil, true)
 }
 
 // Only an exact, path-free sandbox link can nominate a current-turn output.
@@ -350,7 +409,7 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 func imArtifactLinkNames(answer string) map[string]bool {
 	names := map[string]bool{}
 	for _, parts := range imSandboxLink.FindAllStringSubmatch(answer, -1) {
-		name, err := url.PathUnescape(parts[2])
+		name, err := url.PathUnescape(strings.TrimSpace(parts[2]))
 		if err != nil || name == "" || name == "." || name == ".." ||
 			name != path.Base(name) || len(name) > 255 || strings.ContainsAny(name, "\\/") {
 			continue
@@ -396,7 +455,7 @@ func renderIMArtifactAnswer(answer string, names []string, uncertain bool) strin
 	var result strings.Builder
 	last := 0
 	for _, indexes := range imSandboxLink.FindAllStringSubmatchIndex(answer, -1) {
-		name, err := url.PathUnescape(answer[indexes[4]:indexes[5]])
+		name, err := url.PathUnescape(strings.TrimSpace(answer[indexes[4]:indexes[5]]))
 		if err != nil || (names != nil && !allowed[name]) {
 			continue
 		}
@@ -411,6 +470,9 @@ func renderIMArtifactAnswer(answer string, names []string, uncertain bool) strin
 		last = indexes[1]
 	}
 	result.WriteString(answer[last:])
+	if names == nil {
+		return imBareSandboxLink.ReplaceAllString(result.String(), "文件地址不可用")
+	}
 	return result.String()
 }
 

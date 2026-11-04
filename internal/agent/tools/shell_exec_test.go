@@ -397,6 +397,8 @@ func TestShellExecDoesNotCaptureWhenCommandFails(t *testing.T) {
 
 	require.NoError(t, err)
 	require.True(t, result.Success, "non-zero exit is still a successful tool call")
+	require.Equal(t, false, result.Data["command_succeeded"])
+	require.Contains(t, result.Output, "Command Status**: failed")
 	require.Zero(t, recorder.calls)
 }
 

@@ -170,6 +170,12 @@ const router = createRouter({
           },
         },
         {
+          path: "artifacts/channels/:sessionId/messages/:messageId/:index/conversation",
+          name: "channelArtifactConversation",
+          component: () => import("../views/artifacts/ChannelConversationReadOnly.vue"),
+          meta: { requiresInit: true, requiresAuth: true, requiredCapability: 'settings.sandbox' }
+        },
+        {
           path: "artifacts",
           name: "artifactLibrary",
           component: () => import("../views/artifacts/ArtifactLibrary.vue"),
