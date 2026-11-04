@@ -18,7 +18,7 @@ func (r *messageRepository) ArtifactUsage(ctx context.Context, q *types.Artifact
 	}
 	scope := webScope
 	if q.WebOwnerID != "" && r.db.WithContext(ctx).Migrator().HasTable("im_channel_web_owners") {
-		scope = "((" + webScope + ") OR " + channelArtifactGrant + ")"
+		scope = "((" + webScope + ") OR " + joinedChannelArtifactGrant + ")"
 		args = append(args, true, q.WebOwnerID)
 	}
 	query := `SELECT COUNT(*) AS file_count,

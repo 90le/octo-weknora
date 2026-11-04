@@ -118,14 +118,30 @@ type ArtifactLibraryQuery struct {
 	Keyword string
 	// FileTypes restricts results to these extensions (".pdf", ".pptx", ...).
 	FileTypes []string
-	Page      int
-	PageSize  int
+	// Source is empty (all), "web", or "channel"; channel IDs are exact.
+	Source               string
+	ChannelID            string
+	IncludeSourceOptions bool
+	SourceOptions        []ArtifactSourceOption
+	Page                 int
+	PageSize             int
+}
+
+// ArtifactSourceOption describes a source available to the current caller.
+type ArtifactSourceOption struct {
+	Source    string `json:"source"`
+	ChannelID string `json:"channel_id,omitempty"`
+	Platform  string `json:"platform,omitempty"`
+	Name      string `json:"name,omitempty"`
 }
 
 // ArtifactLibraryItem is the latest version of one file in one session.
 // Versions are the artifacts that share a session and sandbox source path:
 // regenerating report.pptx three times is one item with VersionCount 3.
 type ArtifactLibraryItem struct {
+	Source            string    `json:"source" gorm:"column:source"`
+	ChannelID         string    `json:"channel_id,omitempty" gorm:"column:channel_id"`
+	ChannelPlatform   string    `json:"channel_platform,omitempty" gorm:"column:channel_platform"`
 	IMChannelArtifact bool      `json:"im_channel_artifact" gorm:"column:im_channel_artifact"`
 	SessionID         string    `json:"session_id"    gorm:"column:session_id"`
 	SessionTitle      string    `json:"session_title" gorm:"column:session_title"`

@@ -122,6 +122,7 @@ func RegisterSessionRoutes(
 		artifacts.GET("", handler.ListArtifactLibrary)
 		artifacts.GET("/usage", handler.GetArtifactUsage)
 		artifacts.GET("/channels/:id/messages/:message_id/:index/download", handler.DownloadChannelArtifact)
+		artifacts.GET("/channels/:id/messages/:message_id/:index/conversation", handler.ReadChannelConversation)
 		artifacts.DELETE("/channels/:id/messages/:message_id/:index", handler.DeleteChannelArtifact)
 		// The artifact to delete is addressed by query parameters rather than a
 		// path: the library row already carries session_id/message_id/index, and

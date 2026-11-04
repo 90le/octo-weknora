@@ -17,6 +17,8 @@ import (
 // @Produce      json
 // @Param        keyword     query  string  false  "按文件名过滤"
 // @Param        file_types  query  string  false  "逗号分隔的扩展名，如 .pdf,.pptx"
+// @Param        source      query  string  false  "来源：web 或 channel；省略为全部"
+// @Param        channel_id  query  string  false  "按已绑定渠道 ID 精确筛选，需 source=channel"
 // @Param        page        query  int     false  "页码"
 // @Param        page_size   query  int     false  "每页数量（最大 100）"
 // @Success      200  {object}  map[string]interface{}
@@ -39,12 +41,19 @@ func (h *Handler) ListArtifactLibrary(c *gin.Context) {
 		fileTypes = strings.Split(raw, ",")
 	}
 
-	result, err := h.messageService.ListArtifactLibrary(ctx, &types.ArtifactLibraryQuery{
+	source, channelID := c.Query("source"), c.Query("channel_id")
+	if (source != "" && source != "web" && source != "channel") || (channelID != "" && source != "channel") {
+		_ = c.Error(errors.NewBadRequestError("invalid source or channel_id"))
+		return
+	}
+	query := &types.ArtifactLibraryQuery{
 		Keyword:   c.Query("keyword"),
 		FileTypes: fileTypes,
 		Page:      pagination.Page,
 		PageSize:  pagination.PageSize,
-	})
+		Source:    source, ChannelID: channelID, IncludeSourceOptions: true,
+	}
+	result, err := h.messageService.ListArtifactLibrary(ctx, query)
 	if err != nil {
 		logger.Errorf(ctx, "list artifact library failed: %v", err)
 		_ = c.Error(errors.NewInternalServerError(err.Error()))
@@ -52,10 +61,13 @@ func (h *Handler) ListArtifactLibrary(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"success":   true,
-		"data":      result.Data,
-		"total":     result.Total,
-		"page":      result.Page,
-		"page_size": result.PageSize,
+		"success":        true,
+		"data":           result.Data,
+		"total":          result.Total,
+		"page":           result.Page,
+		"page_size":      result.PageSize,
+		"source_options": query.SourceOptions,
+		"source":         query.Source,
+		"channel_id":     query.ChannelID,
 	})
 }
