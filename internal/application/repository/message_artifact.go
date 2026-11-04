@@ -270,6 +270,12 @@ const channelArtifactGrant = `EXISTS (SELECT 1 FROM im_channel_sessions owner_ic
  WHERE owner_ics.session_id = s.id AND owner_ics.tenant_id = s.tenant_id
   AND owner_ics.platform = 'octo' AND o.web_user_id = ?)`
 
+// joinedChannelArtifactGrant authorizes the specific mapping joined by a query.
+var joinedChannelArtifactGrant = strings.Replace(
+	channelArtifactGrant, "owner_ics.session_id = s.id",
+	"owner_ics.id = ics.id AND owner_ics.session_id = s.id", 1,
+)
+
 func (r *messageRepository) GetChannelArtifactMessage(
 	ctx context.Context,
 	tenantID uint64,
@@ -314,13 +320,51 @@ func (r *messageRepository) ListArtifactLibrary(
 		webScope = "(s.user_id = ? OR s.user_id IS NULL OR s.user_id = '') AND " + webScope
 		webArgs = append([]any{q.UserID}, webArgs...)
 	}
-	if q.WebOwnerID != "" && r.db.WithContext(ctx).Migrator().HasTable("im_channel_web_owners") {
-		where = append(where, "(("+webScope+") OR "+channelArtifactGrant+")")
+	channelEnabled := q.WebOwnerID != "" && r.db.WithContext(ctx).Migrator().HasTable("im_channel_web_owners")
+	if q.IncludeSourceOptions {
+		q.SourceOptions = []types.ArtifactSourceOption{{Source: "web"}}
+		if channelEnabled {
+			var channels []types.ArtifactSourceOption
+			err := r.db.WithContext(ctx).Raw(`SELECT DISTINCT 'channel' AS source, c.id AS channel_id,
+				c.platform, c.name FROM im_channels c
+				JOIN im_channel_web_owners o ON o.im_channel_id = c.id
+					AND o.tenant_id = c.tenant_id AND o.deleted_at IS NULL
+				JOIN tenant_members tm ON tm.tenant_id = o.tenant_id AND tm.user_id = o.web_user_id
+					AND tm.status = 'active' AND tm.deleted_at IS NULL
+				JOIN users u ON u.id = o.web_user_id AND u.is_active = ? AND u.deleted_at IS NULL
+				WHERE c.tenant_id = ? AND c.platform = 'octo' AND c.deleted_at IS NULL AND o.web_user_id = ?
+				ORDER BY c.name, c.id`, true, q.TenantID, q.WebOwnerID).Scan(&channels).Error
+			if err != nil {
+				return nil, 0, err
+			}
+			q.SourceOptions = append(q.SourceOptions, channels...)
+		}
+	}
+	// Tie the grant to the joined mapping, so another channel's mapping cannot
+	// be exposed by an authorized mapping for the same session.
+	if channelEnabled {
+		where = append(where, "(("+webScope+") OR "+joinedChannelArtifactGrant+")")
 		args = append(args, webArgs...)
 		args = append(args, true, q.WebOwnerID)
 	} else {
 		where = append(where, webScope)
 		args = append(args, webArgs...)
+	}
+	switch q.Source {
+	case "":
+	case "web":
+		where = append(where, "ics.id IS NULL")
+	case "channel":
+		where = append(where, "ics.id IS NOT NULL")
+		if q.ChannelID != "" {
+			where = append(where, "ics.im_channel_id = ?")
+			args = append(args, q.ChannelID)
+		}
+	default:
+		where = append(where, "1 = 0")
+	}
+	if q.ChannelID != "" && q.Source != "channel" {
+		where = append(where, "1 = 0")
 	}
 	if kw := strings.TrimSpace(q.Keyword); kw != "" {
 		where = append(where, "LOWER(ma.file_name) LIKE LOWER(?) ESCAPE ?")
@@ -334,6 +378,8 @@ func (r *messageRepository) ListArtifactLibrary(
 	grouped := `SELECT ma.session_id, ma.message_id, ma.position, ma.url, ma.file_name,
 			ma.file_type, ma.file_size, ma.source_path, ma.created_at, ma.id,
 			s.title AS session_title, CASE WHEN ics.id IS NULL THEN false ELSE true END AS im_channel_artifact,
+			CASE WHEN ics.id IS NULL THEN 'web' ELSE 'channel' END AS source,
+			COALESCE(ics.im_channel_id, '') AS channel_id, COALESCE(ics.platform, '') AS channel_platform,
 			CASE WHEN ma.source_path = '' THEN ma.id ELSE ma.source_path END AS version_key,
 			ROW_NUMBER() OVER (
 				PARTITION BY ma.session_id, CASE WHEN ma.source_path = '' THEN ma.id ELSE ma.source_path END

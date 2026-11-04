@@ -288,9 +288,9 @@ func (a *asynqTaskInspector) QueueStats(
 		info, err := a.inspector.GetQueueInfo(queue)
 		if err != nil {
 			if !isAsynqQueueNotFound(err) {
-				logger.Warnf(ctx, "[TaskInspector] queue info queue=%s: %v", queue, err)
+				return nil, true, err
 			}
-			// Zeroed row: queue not created yet (or transient error).
+			// A queue that has not been created is verified empty.
 			stats = append(stats, stat)
 			continue
 		}

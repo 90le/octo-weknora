@@ -291,3 +291,19 @@ func equalStrings(left, right []string) bool {
 	}
 	return true
 }
+
+func TestQueueStatsReportsConnectionFailure(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr(), MaxRetries: -1, DialTimeout: 100 * time.Millisecond})
+	inspector := &asynqTaskInspector{inspector: asynq.NewInspectorFromRedisClient(client), redis: client}
+	server.Close()
+	defer func() {
+		if err := client.Close(); err != nil {
+			t.Errorf("close redis client: %v", err)
+		}
+	}()
+	stats, supported, err := inspector.QueueStats(context.Background())
+	if err == nil || !supported || stats != nil {
+		t.Fatalf("expected unavailable stats, got supported=%v err=%v rows=%v", supported, err, stats)
+	}
+}

@@ -10,6 +10,13 @@
       </div>
     </div>
 
+    <div class="usage-summary" role="status">
+      <span>{{ $t('artifactLibrary.usageLabel') }}</span>
+      <strong>{{ usage ? formatArtifactSize(usage.logical_bytes) : $t('artifactLibrary.usageUnknown') }}</strong>
+      <span v-if="usage">{{ $t('artifactLibrary.usageCount', { count: usage.file_count }) }}</span>
+      <span class="usage-note">{{ $t('artifactLibrary.usageNote') }}</span>
+    </div>
+
     <div class="toolbar">
       <div class="category-tabs" role="tablist" :aria-label="$t('artifactLibrary.typeFilter')">
         <button
@@ -18,12 +25,23 @@
           type="button"
           role="tab"
           :aria-selected="category === c"
+          :disabled="batchRunning"
           @click="setCategory(c)"
         >
           {{ $t(`artifactLibrary.categories.${c}`) }}
         </button>
       </div>
+      <label class="channel-filter">
+        <span>{{ $t('artifactLibrary.channelFilter') }}</span>
+        <select v-model="sourceFilter" :disabled="batchRunning || channelsUnavailable" :aria-label="$t('artifactLibrary.channelFilter')">
+          <option value="">{{ $t('artifactLibrary.allChannels') }}</option>
+          <option v-if="sourceOptions.some(option => option.source === 'channel')" value="channel">{{ $t('artifactLibrary.allChannelFiles') }}</option>
+          <option v-for="option in sourceOptions" :key="sourceOptionKey(option)" :value="sourceOptionKey(option)">{{ option.name || option.platform || $t('artifactLibrary.webSource') }}</option>
+        </select>
+        <span v-if="channelsUnavailable" role="status">{{ $t('artifactLibrary.channelsUnavailable') }}</span>
+      </label>
       <t-input
+        :disabled="batchRunning"
         v-model="keyword"
         class="search-input"
         :placeholder="$t('artifactLibrary.searchPlaceholder')"
@@ -34,6 +52,17 @@
       </t-input>
     </div>
 
+    <div class="batch-bar" v-if="items.length || batchRunning || batchResult">
+      <label><input type="checkbox" :checked="allLoadedSelected" :disabled="batchRunning || !items.length" @change="toggleAllLoaded" /> {{ $t('artifactLibrary.selectLoaded') }}</label>
+      <span>{{ $t('artifactLibrary.selectedCount', { count: selected.size }) }}</span>
+      <t-button theme="danger" variant="outline" size="small" :disabled="batchRunning || anyDeleting || !selected.size" @click="confirmBatchDelete">{{ $t('artifactLibrary.deleteSelected') }}</t-button>
+      <t-button v-if="batchRunning" size="small" variant="outline" @click="cancelBatch = true" :disabled="cancelBatch">{{ $t('artifactLibrary.stopDeleting') }}</t-button>
+      <span v-if="batchRunning" role="status">{{ $t('artifactLibrary.batchProgress', { done: batchDone, total: batchTotal }) }}</span>
+    </div>
+    <div v-if="batchResult" class="batch-result" role="status">
+      {{ $t('artifactLibrary.batchResult', batchResult) }}
+      <ul v-if="batchFailures.length"><li v-for="failure in batchFailures" :key="failure.key">{{ failure.name }}</li></ul>
+    </div>
     <div ref="scrollRoot" class="library-main">
       <div v-if="loading && !items.length" class="artifact-rows">
         <div v-for="n in 6" :key="'skel-' + n" class="artifact-row is-skeleton">
@@ -73,10 +102,11 @@
           <ul class="artifact-rows">
             <li
               v-for="item in section.items"
-              :key="`${item.message_id}:${item.index}`"
+              :key="itemKey(item)"
               class="artifact-row"
               @click="openPreview(item)"
             >
+              <input type="checkbox" :checked="selected.has(itemKey(item))" :disabled="batchRunning || isDeleting(item)" :aria-label="$t('artifactLibrary.selectFile', { name: item.file_name })" @click.stop @change="toggleSelected(item)" />
               <button type="button" class="artifact-open" :title="$t('artifactLibrary.preview')">
                 <ArtifactFileIcon :file-name="item.file_name" />
                 <span class="artifact-body">
@@ -104,6 +134,10 @@
                 <t-icon name="chat" size="14px" />
                 <span>{{ item.session_title || $t('artifactLibrary.untitledSession') }}</span>
               </button>
+              <button v-if="item.im_channel_artifact" type="button" class="session-link session-link--channel" :title="$t('artifactLibrary.openSourceConversation')" @click.stop="openChannelConversation(item)">
+                <t-icon name="chat" size="14px" />
+                <span>{{ $t('artifactLibrary.openSourceConversation') }}</span>
+              </button>
               <t-button
                 class="row-action"
                 variant="text"
@@ -117,7 +151,6 @@
                 <template #icon><t-icon name="download" size="16px" /></template>
               </t-button>
               <t-button
-                v-if="!item.im_channel_artifact"
                 class="row-action row-action--danger"
                 variant="text"
                 shape="square"
@@ -125,6 +158,7 @@
                 :title="$t('artifactLibrary.delete')"
                 :aria-label="$t('artifactLibrary.delete')"
                 :loading="isDeleting(item)"
+                :disabled="batchRunning"
                 @click.stop="handleDelete(item)"
               >
                 <template #icon><t-icon name="delete" size="16px" /></template>
@@ -162,6 +196,10 @@
               <t-icon name="chat" size="12px" />
               <span>{{ previewItem.session_title || $t('artifactLibrary.untitledSession') }}</span>
             </button>
+            <button v-else type="button" class="session-link session-link--inline" @click="openChannelConversation(previewItem)">
+              <t-icon name="chat" size="12px" />
+              <span>{{ $t('artifactLibrary.openSourceConversation') }}</span>
+            </button>
           </div>
           <div ref="previewActions" class="preview-actions" />
           <t-button
@@ -177,7 +215,6 @@
             <template #icon><t-icon name="download" size="16px" /></template>
           </t-button>
           <t-button
-            v-if="!previewItem.im_channel_artifact"
             class="row-action row-action--danger"
             variant="text"
             shape="square"
@@ -185,6 +222,7 @@
             :title="$t('artifactLibrary.delete')"
             :aria-label="$t('artifactLibrary.delete')"
             :loading="isDeleting(previewItem)"
+            :disabled="batchRunning"
             @click="handleDelete(previewItem)"
           >
             <template #icon><t-icon name="delete" size="16px" /></template>
@@ -217,6 +255,19 @@
         />
       </div>
     </t-drawer>
+
+    <t-drawer
+      v-model:visible="conversationVisible"
+      placement="right"
+      size="min(760px, 92vw)"
+      attach="body"
+      :header="$t('artifactLibrary.openSourceConversation')"
+      :footer="false"
+      :close-on-overlay-click="true"
+      :close-on-esc-keydown="true"
+    >
+      <ChannelConversationReadOnly v-if="conversationVisible && conversationItem" :key="itemKey(conversationItem)" :item="conversationItem" />
+    </t-drawer>
   </div>
 </template>
 
@@ -226,7 +277,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { downloadArtifact } from '@/api/chat'
-import { deleteArtifactLibraryItem, downloadChannelArtifact, listArtifactLibrary, type ArtifactLibraryItem } from '@/api/artifacts'
+import { deleteArtifactLibraryItem, deleteChannelArtifact, downloadChannelArtifact, getArtifactUsage, listArtifactLibrary, type ArtifactSourceOption, type ArtifactLibraryItem, type ArtifactUsageResponse } from '@/api/artifacts'
 import {
   ARTIFACT_CATEGORIES,
   artifactCategoryExtensions,
@@ -234,6 +285,8 @@ import {
   parseArtifactCategory,
   type ArtifactCategory,
 } from '@/utils/artifactLibrary'
+import { parseArtifactUsage } from './artifactUsage'
+import { deleteSequentially } from './artifactBatch'
 import { formatArtifactDateTime, formatArtifactSize } from '@/utils/sessionArtifacts'
 import { resolveFilePreviewExt } from '@/utils/filePreview'
 import { useConfirmDelete } from '@/components/settings/useConfirmDelete'
@@ -241,6 +294,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import ResourceIcon from '@/components/icons/ResourceIcon.vue'
 import DocumentPreview from '@/components/document-preview.vue'
 import ArtifactFileIcon from '@/views/chat/components/ArtifactFileIcon.vue'
+import ChannelConversationReadOnly from './ChannelConversationReadOnly.vue'
 
 const PAGE_SIZE = 30
 const SEARCH_DEBOUNCE_MS = 300
@@ -252,8 +306,20 @@ const confirmDelete = useConfirmDelete()
 
 const category = ref<ArtifactCategory>(parseArtifactCategory(route.query.type))
 const keyword = ref(typeof route.query.q === 'string' ? route.query.q : '')
+const sourceFilter = ref('')
+const sourceOptions = ref<ArtifactSourceOption[]>([])
+const channelsUnavailable = ref(true)
+const selected = ref(new Map<string, ArtifactLibraryItem>())
+const batchRunning = ref(false)
+const cancelBatch = ref(false)
+const batchDone = ref(0)
+const batchTotal = ref(0)
+const batchResult = ref<{ success: number; failed: number; remaining: number } | null>(null)
+const batchFailures = ref<{ key: string; name: string }[]>([])
 const items = ref<ArtifactLibraryItem[]>([])
 const total = ref(0)
+const usage = ref<ArtifactUsageResponse['data'] | null>(null)
+let usageTicket = 0
 const page = ref(0)
 const loading = ref(false)
 const loadError = ref(false)
@@ -261,17 +327,33 @@ const downloading = reactive<Record<string, boolean>>({})
 const deleting = reactive<Record<string, boolean>>({})
 const previewItem = ref<ArtifactLibraryItem | null>(null)
 const previewVisible = ref(false)
+const conversationItem = ref<ArtifactLibraryItem | null>(null)
+const conversationVisible = ref(false)
 const previewActions = ref<HTMLElement | null>(null)
 const scrollRoot = ref<HTMLElement | null>(null)
 const sentinel = ref<HTMLElement | null>(null)
 
+const anyDeleting = computed(() => Object.values(deleting).some(Boolean))
 const sections = computed(() => groupArtifactsByDate(items.value))
 const hasMore = computed(() => items.value.length < total.value)
-const isFiltered = computed(() => category.value !== 'all' || keyword.value.trim() !== '')
+const isFiltered = computed(() => category.value !== 'all' || keyword.value.trim() !== '' || !!sourceFilter.value)
+const allLoadedSelected = computed(() => items.value.length > 0 && items.value.every(item => selected.value.has(itemKey(item))))
 const previewFileType = computed(() => {
   const item = previewItem.value
   return item ? resolveFilePreviewExt(item.file_name, item.file_type) : ''
 })
+
+async function refreshUsage() {
+  const mine = ++usageTicket
+  usage.value = null
+  try {
+    const res = await getArtifactUsage()
+    if (mine !== usageTicket) return
+    usage.value = parseArtifactUsage(res)
+  } catch (err) {
+    if (mine === usageTicket) console.error('[ArtifactLibrary] usage failed:', err)
+  }
+}
 
 // Every fetch takes a ticket; a response whose ticket is stale (the filters
 // changed while it was in flight) is dropped.
@@ -284,11 +366,21 @@ async function fetchPage(nextPage: number) {
   try {
     const res = await listArtifactLibrary({
       keyword: keyword.value,
+      source: sourceFilter.value === 'web' ? 'web' : sourceFilter.value ? 'channel' : undefined,
+      channelId: sourceFilter.value.startsWith('channel:') ? sourceFilter.value.slice(8) : undefined,
       fileTypes: artifactCategoryExtensions(category.value),
       page: nextPage,
       pageSize: PAGE_SIZE,
     })
     if (mine !== ticket) return
+    if (res?.success !== true) throw new Error('Artifact list failed')
+    const expectedSource = sourceFilter.value === 'web' ? 'web' : sourceFilter.value ? 'channel' : ''
+    const expectedChannel = sourceFilter.value.startsWith('channel:') ? sourceFilter.value.slice(8) : ''
+    if (expectedSource && (res.source !== expectedSource || (expectedChannel && res.channel_id !== expectedChannel))) throw new Error('Artifact filter not acknowledged')
+    if (Array.isArray(res.source_options)) {
+      sourceOptions.value = res.source_options.filter(option => option.source === 'web' || (option.source === 'channel' && !!option.channel_id))
+      channelsUnavailable.value = false
+    }
     const rows = Array.isArray(res?.data) ? res.data : []
     // Deleting a row shifts every later row one page-offset earlier, so an
     // appended page can overlap what is already shown. Drop the repeats rather
@@ -319,7 +411,7 @@ function reload() {
 }
 
 function loadMore() {
-  if (loading.value || !hasMore.value) return
+  if (batchRunning.value || loading.value || !hasMore.value) return
   // Page from how many rows are actually shown, not from the last page number:
   // after a delete those differ, and paging by number would skip a row.
   void fetchPage(Math.floor(items.value.length / PAGE_SIZE) + 1)
@@ -343,10 +435,13 @@ function setCategory(next: ArtifactCategory) {
 function clearFilters() {
   category.value = 'all'
   keyword.value = ''
+  sourceFilter.value = ''
 }
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 watch(keyword, () => {
+  selected.value.clear()
+  batchResult.value = null
   if (searchTimer) clearTimeout(searchTimer)
   searchTimer = setTimeout(() => {
     searchTimer = null
@@ -354,7 +449,9 @@ watch(keyword, () => {
     reload()
   }, SEARCH_DEBOUNCE_MS)
 })
-watch(category, () => {
+watch([category, sourceFilter], () => {
+  selected.value.clear()
+  batchResult.value = null
   syncQuery()
   reload()
 })
@@ -364,13 +461,23 @@ function openPreview(item: ArtifactLibraryItem) {
   previewVisible.value = true
 }
 
+function openChannelConversation(item: ArtifactLibraryItem) {
+  if (!item.im_channel_artifact) return
+  conversationItem.value = item
+  conversationVisible.value = true
+}
+
+watch(conversationVisible, visible => {
+  if (!visible) conversationItem.value = null
+})
+
 function openSession(item: ArtifactLibraryItem) {
   previewVisible.value = false
   void router.push(`/platform/chat/${item.session_id}`)
 }
 
 function itemKey(item: ArtifactLibraryItem) {
-  return `${item.message_id}:${item.index}`
+  return JSON.stringify([!!item.im_channel_artifact, item.session_id, item.message_id, item.index])
 }
 
 function isDownloading(item: ArtifactLibraryItem) {
@@ -407,11 +514,13 @@ function isDeleting(item: ArtifactLibraryItem) {
 // says how many versions go with it. The bytes are reclaimed server side, which
 // is why this asks at all.
 function handleDelete(item: ArtifactLibraryItem) {
-  if (isDeleting(item)) return
+  if (batchRunning.value || isDeleting(item)) return
   confirmDelete({
     title: t('artifactLibrary.deleteTitle'),
     body:
-      item.version_count > 1
+      item.im_channel_artifact
+        ? t('artifactLibrary.deleteChannelConfirm', { name: item.file_name, count: item.version_count })
+        : item.version_count > 1
         ? t('artifactLibrary.deleteConfirmVersions', { name: item.file_name, count: item.version_count })
         : t('artifactLibrary.deleteConfirm', { name: item.file_name }),
     onConfirm: () => performDelete(item),
@@ -420,10 +529,14 @@ function handleDelete(item: ArtifactLibraryItem) {
 
 async function performDelete(item: ArtifactLibraryItem) {
   const key = itemKey(item)
-  if (deleting[key]) return
+  if (batchRunning.value || deleting[key]) return
   deleting[key] = true
   try {
-    await deleteArtifactLibraryItem(item)
+    const result = item.im_channel_artifact ? await deleteChannelArtifact(item) : await deleteArtifactLibraryItem(item)
+    if (!result?.success) throw new Error('Artifact deletion was not confirmed')
+    void refreshUsage()
+    // A concurrent list response can still contain the deleted row.
+    if (loading.value) { ticket++; loading.value = false }
     // Splice the row out instead of reloading: this is an infinite list, and a
     // reload would throw away everything the user has scrolled past.
     const at = items.value.findIndex((row) => itemKey(row) === key)
@@ -431,7 +544,10 @@ async function performDelete(item: ArtifactLibraryItem) {
       items.value.splice(at, 1)
       total.value = Math.max(0, total.value - 1)
     }
+    selected.value.delete(key)
+    if (!items.value.length && total.value > 0) reload()
     if (previewItem.value && itemKey(previewItem.value) === key) previewVisible.value = false
+    if (conversationItem.value && itemKey(conversationItem.value) === key) conversationVisible.value = false
     MessagePlugin.success(t('artifactLibrary.deleted'))
   } catch (err) {
     console.error('[ArtifactLibrary] delete failed:', err)
@@ -439,6 +555,70 @@ async function performDelete(item: ArtifactLibraryItem) {
   } finally {
     deleting[key] = false
   }
+}
+
+function toggleSelected(item: ArtifactLibraryItem) {
+  const key = itemKey(item)
+  if (selected.value.has(key)) selected.value.delete(key)
+  else selected.value.set(key, item)
+}
+
+function toggleAllLoaded() {
+  if (allLoadedSelected.value) items.value.forEach(item => selected.value.delete(itemKey(item)))
+  else items.value.forEach(item => selected.value.set(itemKey(item), item))
+}
+
+function confirmBatchDelete() {
+  if (batchRunning.value || anyDeleting.value || !selected.value.size) return
+  const snapshot = [...selected.value.values()]
+  confirmDelete({
+    title: t('artifactLibrary.batchDeleteTitle'),
+    body: t('artifactLibrary.batchDeleteConfirm', { count: snapshot.length }),
+    onConfirm: () => { void performBatchDelete(snapshot) },
+  })
+}
+
+async function performBatchDelete(snapshot: ArtifactLibraryItem[]) {
+  if (batchRunning.value) return
+  if (searchTimer) { clearTimeout(searchTimer); searchTimer = null }
+  batchRunning.value = true
+  cancelBatch.value = false
+  batchDone.value = 0
+  batchTotal.value = snapshot.length
+  batchResult.value = null
+  batchFailures.value = []
+  // Discard any in-flight list request before rows start moving.
+  ticket++
+  loading.value = false
+  let success = 0
+  const { remaining } = await deleteSequentially(snapshot, () => cancelBatch.value, async (item) => {
+    const result = item.im_channel_artifact ? await deleteChannelArtifact(item) : await deleteArtifactLibraryItem(item)
+    if (!result?.success) throw new Error('Artifact deletion was not confirmed')
+  }, (item, error) => {
+    const key = itemKey(item)
+    if (error) {
+      console.error('[ArtifactLibrary] batch delete failed:', error)
+      batchFailures.value.push({ key, name: item.file_name })
+    } else {
+      success++
+      selected.value.delete(key)
+      items.value = items.value.filter(row => itemKey(row) !== key)
+      total.value = Math.max(0, total.value - 1)
+      if (previewItem.value && itemKey(previewItem.value) === key) previewVisible.value = false
+      if (conversationItem.value && itemKey(conversationItem.value) === key) conversationVisible.value = false
+    }
+    batchDone.value++
+  })
+  batchResult.value = { success, failed: batchFailures.value.length, remaining }
+  batchRunning.value = false
+  if (success) {
+    void refreshUsage()
+    reload()
+  }
+}
+
+function sourceOptionKey(option: ArtifactSourceOption) {
+  return option.source === 'web' ? 'web' : `channel:${option.channel_id}`
 }
 
 // Load the next page as the footer scrolls into view; the footer button
@@ -460,12 +640,15 @@ onMounted(() => {
     if (sentinel.value) observer.observe(sentinel.value)
   }
   void fetchPage(1)
+  void refreshUsage()
 })
 
 onBeforeUnmount(() => {
+  cancelBatch.value = true
   observer?.disconnect()
   if (searchTimer) clearTimeout(searchTimer)
   ticket++
+  usageTicket++
 })
 </script>
 
@@ -508,6 +691,19 @@ onBeforeUnmount(() => {
   line-height: 20px;
 }
 
+.usage-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 10px 0 14px;
+  color: var(--td-text-color-secondary);
+  font-size: var(--app-text-base);
+
+  strong { color: var(--td-text-color-primary); }
+  .usage-note { flex-basis: 100%; }
+}
+
 .toolbar {
   flex-shrink: 0;
   display: flex;
@@ -530,6 +726,12 @@ onBeforeUnmount(() => {
   max-width: 100%;
   :deep(.t-input) { border-radius: var(--app-radius-sm); }
 }
+
+ .channel-filter, .batch-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: var(--app-text-sm); }
+.channel-filter select { max-width: 200px; padding: 5px; color: var(--td-text-color-primary); background: var(--td-bg-color-container); border: 1px solid var(--td-component-stroke); border-radius: var(--app-radius-sm); }
+.batch-bar { padding: 10px 0; }
+.batch-result { padding: 8px; color: var(--td-text-color-secondary); }
+.batch-result ul { margin: 4px 0; }
 
 .library-main {
   flex: 1;
@@ -730,7 +932,7 @@ onBeforeUnmount(() => {
     width: 100%;
   }
 
-  .session-link:not(.session-link--inline) {
+  .session-link:not(.session-link--inline):not(.session-link--channel) {
     display: none;
   }
 }
