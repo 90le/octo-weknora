@@ -43,8 +43,8 @@ test('artifact count is a top-right overlay instead of t-badge', () => {
 test('artifact toolbar opens the sandbox panel artifacts tab', () => {
   assert.match(botMessage, /sandboxPanel.open\('artifacts'/)
   assert.match(agentStream, /sandboxPanel.open\('artifacts'/)
-  assert.match(botMessage, /v-if="hasArtifacts && embeddedMode"/)
-  assert.match(agentStream, /v-if="hasArtifacts && embeddedMode/)
+  assert.match(botMessage, /v-if="hasArtifacts && \(embeddedMode \|\| readOnly\)"/)
+  assert.match(agentStream, /v-if="hasArtifacts && \(embeddedMode \|\| readOnly\)/)
 })
 
 test('artifact toolbar uses a folder icon and replaces it while collecting', () => {
@@ -88,7 +88,7 @@ test('follow-up suggestions wait until the answer is fully rendered', () => {
   )
   assert.match(
     chatView,
-    /<FollowUpSuggestions v-if="session\.answerFullyRendered && !session\.steerForked && !session\.suggestionsDismissed"/,
+    /<FollowUpSuggestions v-if="chatMode === 'web' && session\.answerFullyRendered && !session\.steerForked && !session\.suggestionsDismissed"/,
   )
   assert.match(botMessage, /emit\('render-complete-change', ready\)/)
   assert.match(agentStream, /emit\('render-complete-change', ready\)/)
