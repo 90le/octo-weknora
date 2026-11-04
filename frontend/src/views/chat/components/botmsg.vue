@@ -18,7 +18,7 @@
                 <RagPipelineProgress :session="session" :embedded-mode="embeddedMode" />
                 <AgentStreamDisplay v-if="session.isAgentMode" :session="session" :session-id="sessionId"
                     :user-query="userQuery" :rag-mode="true" :follow-up-loading="followUpLoading"
-                    :embedded-mode="embeddedMode" :read-only="readOnly"
+                    :embedded-mode="embeddedMode" :read-only="readOnly" :channel-artifact="channelArtifact"
                     :can-fork="canFork"
                     :can-rewind="canRewind"
                     @fork="emit('fork', $event)"
@@ -35,7 +35,7 @@
                 <docInfo v-if="session.knowledge_references?.length" :session="session"></docInfo>
                 <AgentStreamDisplay :session="session" :session-id="sessionId" :user-query="userQuery"
                     v-if="session.isAgentMode" :follow-up-loading="followUpLoading"
-                    :embedded-mode="embeddedMode" :read-only="readOnly"
+                    :embedded-mode="embeddedMode" :read-only="readOnly" :channel-artifact="channelArtifact"
                     :can-fork="canFork"
                     :can-rewind="canRewind"
                     @fork="emit('fork', $event)"
@@ -133,13 +133,13 @@
                 :on-leave="scheduleCitationClose" />
         </Teleport>
         <ChatArtifactsDrawer
-            v-if="hasArtifacts && (embeddedMode || readOnly)"
+            v-if="hasArtifacts && (embeddedMode || readOnly || channelArtifact)"
             v-model:visible="showArtifactDrawer"
             :session-id="sessionId"
             :message-id="messageIdForArtifacts"
             :artifacts="liveArtifacts"
             :preview-index="artifactPreviewIndex"
-            :channel-artifact="readOnly"
+            :channel-artifact="channelArtifact || readOnly"
         />
     </div>
 </template>
@@ -213,6 +213,7 @@ let reviewImg = ref(false)
 let isImgLoading = ref(false);
 const props = defineProps({
     readOnly: { type: Boolean, default: false },
+    channelArtifact: { type: Boolean, default: false },
     // 必填项
     content: {
         type: String,
@@ -314,7 +315,7 @@ const messageIdForArtifacts = computed(() => {
 const artifactPreviewIndex = ref(null);
 function openArtifactDrawer(previewIndex = null) {
     if (!hasArtifacts.value) return;
-    if (sandboxPanel && !props.embeddedMode && !props.readOnly) {
+    if (sandboxPanel && !props.embeddedMode && !props.readOnly && !props.channelArtifact) {
         if (previewIndex == null) {
             sandboxPanel.toggleArtifacts(messageIdForArtifacts.value);
         } else {
@@ -332,7 +333,7 @@ function openArtifactDrawer(previewIndex = null) {
 const artifactRefContext = computed(() => {
     const messageId = messageIdForArtifacts.value;
     if (!props.sessionId || !messageId) return null;
-    return { sessionId: props.sessionId, messageId, channelArtifact: props.readOnly };
+    return { sessionId: props.sessionId, messageId, channelArtifact: props.channelArtifact || props.readOnly };
 });
 
 // Shared replies must authorize files through the persisted message, just as

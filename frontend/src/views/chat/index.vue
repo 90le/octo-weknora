@@ -130,6 +130,7 @@
                                 <botmsg :content="session.content" :session="session" :session-id="session_id"
                                     :user-query="getUserQuery(index)" @scroll-bottom="scrollToBottom"
                                     :isFirstEnter="isFirstEnter" :embeddedMode="embeddedMode" :read-only="chatMode !== 'web'"
+                                    :channel-artifact="isChannelArtifactMessage(chatMode, currentSession?.im_platform, session.channel)"
                                     :follow-up-loading="Boolean(session.suggestionLoading && !session.suggestionSet?.questions?.length)"
                                     :can-fork="chatMode === 'web' && !embeddedMode && forkAffordanceOf(session.id).canFork"
                                     :can-rewind="chatMode === 'web' && canRewindMessage(session.id)"
@@ -204,6 +205,7 @@ import botmsg from './components/botmsg.vue';
 import usermsg from './components/usermsg.vue';
 import { getMessageList, getSession, forkSession, rewindSession } from "@/api/chat/index";
 import { getChannelArtifactChat } from "@/api/artifacts";
+import { isChannelArtifactMessage } from './channelArtifactMode';
 import { resolveForkAffordance } from './forkPoint';
 import { rewindSkipMessage } from './rewindNotice';
 import { rewindPrefillText, rewindBlockedByOutgoingWork, canReplaceRewindTranscript, shouldApplyRewindLocally, rewindHistoryHasMore, keepMessagesThroughRewindPoint, rewindableMessageIds, rewindHttpConflictCode, rewindConflictI18nKey } from './rewindView';
@@ -326,7 +328,7 @@ const loadSessionAndHydrate = async (sid) => {
     let sessionRes;
     try { sessionRes = await getSession(sid); } catch { /* Try the restricted channel endpoint below. */ }
     if (sid !== session_id.value || version !== sessionLoadVersion) return;
-    if (sessionRes?.success !== false && sessionRes?.data && String(sessionRes.data.im_platform || '').toLowerCase() !== 'octo') {
+    if (sessionRes?.success !== false && sessionRes?.data && (String(sessionRes.data.im_platform || '').toLowerCase() !== 'octo' || sessionRes.data.can_continue === true)) {
         currentSession.value = sessionRes.data;
         useSettingsStoreInstance.hydrateSessionInputState(sessionRes.data.last_request_state, preserveDraft);
         chatMode.value = 'web';
