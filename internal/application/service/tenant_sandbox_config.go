@@ -1049,6 +1049,29 @@ func templateStatusRank(status string) int {
 	}
 }
 
+// RuntimeDockerCount returns only the running count for one tenant's Docker
+// config. Provider metadata filtering keeps other tenants and configs out.
+func (s *TenantSandboxConfigService) RuntimeDockerCount(ctx context.Context, tenantID uint64, id string) (int, error) {
+	entity, err := s.repo.GetByID(ctx, tenantID, id)
+	if err != nil {
+		return 0, err
+	}
+	if entity == nil || entity.Config == nil || entity.Config.SandboxType != string(sandbox.SandboxTypeDocker) {
+		return 0, sandbox.NewRemoteError(sandbox.SandboxTypeDocker, "List", sandbox.RemoteErrorKindUnsupported, "", nil)
+	}
+	summaries, err := s.listSandboxes(ctx, entity.Config, tenantID, id)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, item := range summaries {
+		if item.State == sandbox.RemoteStateRunning {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // Inventory answers what changing or deleting this config would disturb.
 //
 // An unreachable provider is reported through Unverifiable rather than as an

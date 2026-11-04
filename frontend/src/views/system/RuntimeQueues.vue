@@ -31,6 +31,42 @@
       </div>
     </header>
 
+    <section class="rq-supplement" :aria-label="runtimeText.title">
+      <div class="rq-supplement-grid">
+        <div>
+          <strong>{{ runtimeText.im }}</strong>
+          <p>{{ runtimeText.waiting }}: {{ runtimeNumber(runtimeSupplement?.im?.depth) }} · {{ runtimeText.active }}: {{ runtimeNumber(runtimeSupplement?.im?.active) }}</p>
+          <small>{{ runtimeText.processScope }}</small>
+          <small v-if="runtimeSupplement?.im?.failure">{{ failureLabel(runtimeSupplement.im.failure) }}</small>
+        </div>
+        <div>
+          <strong>{{ runtimeText.sandbox }}</strong>
+          <p>{{ runtimeText.occupancy }}: {{ runtimeNumber(runtimeSupplement?.docker?.running) }} / {{ runtimeNumber(runtimeSupplement?.docker?.capacity) }}</p>
+          <label v-if="sandboxConfigs.length > 1" class="rq-sandbox-select">
+            <span>{{ runtimeText.config }}</span>
+            <select v-model="selectedSandbox" @change="selectSandbox" :aria-label="runtimeText.config">
+              <option value="">{{ runtimeText.selectConfig }}</option>
+              <option v-for="config in sandboxConfigs" :key="config.id" :value="config.id">{{ config.name }}</option>
+            </select>
+          </label>
+          <small v-else-if="sandboxConfigs.length === 1">{{ runtimeText.config }}: {{ sandboxConfigs[0].name }}</small>
+          <small v-else-if="!configLoadFailed">{{ runtimeText.noConfig }}</small>
+          <small>{{ runtimeText.configScope }}</small>
+          <small v-if="configLoadFailed">{{ runtimeText.configUnavailable }}</small>
+          <small v-else-if="runtimeSupplement?.docker?.failure">{{ failureLabel(runtimeSupplement.docker.failure) }}</small>
+        </div>
+      </div>
+      <div class="rq-preparation">
+        <strong>{{ runtimeText.preparationTitle }}</strong>
+        <small>{{ runtimeText.preparationScope }}</small>
+        <p v-if="preparationFailures === null">{{ runtimeText.unknown }}</p>
+        <p v-else-if="preparationFailures.length === 0">{{ runtimeText.noFailures }}</p>
+        <ul v-else>
+          <li v-for="(item, index) in preparationFailures" :key="index">{{ preparationStage(item.stage) }} · {{ preparationReason(item.reason) }}: {{ item.count }}</li>
+        </ul>
+      </div>
+    </section>
+
     <div v-if="loading && !loadedOnce" class="rq-loading" aria-live="polite">
       <div class="rq-loading-metrics">
         <t-skeleton
@@ -512,9 +548,13 @@ import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import { mergeRuntimeTaskPage } from './runtimeTaskPagination'
+import { runtimeStatusMessages } from './runtimeStatusMessages'
+import { useAuthStore } from '@/stores/auth'
 import {
   getRuntimeTasks,
   getRuntimeQueues,
+  listSandboxConfigs,
+  type RuntimeSupplement,
   mutateRuntimeTask,
   purgeArchivedRuntimeTasks,
   type ModelRuntimeStat,
@@ -526,6 +566,59 @@ import {
 } from '@/api/system'
 
 const { t, te, locale } = useI18n()
+
+const authStore = useAuthStore()
+const runtimeText = computed(() => locale.value.startsWith('zh') ? runtimeStatusMessages.zh : runtimeStatusMessages.en)
+const runtimeSupplement = ref<RuntimeSupplement | null>(null)
+const sandboxConfigs = ref<Array<{ id: string; name: string }>>([])
+const selectedSandbox = ref('')
+const configLoadFailed = ref(false)
+let configRequestID = 0
+let runtimeRequestID = 0
+
+function runtimeNumber(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? String(value) : runtimeText.value.unknown
+}
+
+function failureLabel(code: string): string {
+  const labels: Record<string, string> = runtimeText.value.failures
+  return Object.hasOwn(labels, code) ? labels[code] : runtimeText.value.failures.unavailable
+}
+
+const preparationFailures = computed(() => {
+  const records = runtimeSupplement.value?.im?.sandbox_preparation_failures
+  if (!Array.isArray(records)) return null
+  return records.filter(item => item && Number.isSafeInteger(item.count) && item.count > 0)
+})
+
+function preparationStage(stage: string): string {
+  const labels: Record<string, string> = runtimeText.value.stages
+  return Object.hasOwn(labels, stage) ? labels[stage] : labels.unknown
+}
+
+function preparationReason(reason: string): string {
+  const labels: Record<string, string> = runtimeText.value.preparationReasons
+  return Object.hasOwn(labels, reason) ? labels[reason] : labels.unknown
+}
+
+async function loadSandboxConfigs() {
+  const requestID = ++configRequestID
+  selectedSandbox.value = ''
+  sandboxConfigs.value = []
+  runtimeSupplement.value = null
+  configLoadFailed.value = false
+  try {
+    const response = await listSandboxConfigs()
+    if (requestID !== configRequestID) return
+    sandboxConfigs.value = (response.data || []).filter(item => item.sandbox_type === 'docker').map(item => ({ id: item.id, name: item.name }))
+    if (sandboxConfigs.value.length === 1 && authStore.effectiveTenantId) {
+      selectedSandbox.value = sandboxConfigs.value[0].id
+      selectSandbox()
+    }
+  } catch {
+    if (requestID === configRequestID) configLoadFailed.value = true
+  }
+}
 
 const POLL_INTERVAL_MS = 5000
 
@@ -898,9 +991,14 @@ async function purgeArchivedTasks() {
 }
 
 async function load(showSpinner: boolean) {
+  const requestID = ++runtimeRequestID
   if (showSpinner) loading.value = true
   try {
-    const resp = await getRuntimeQueues()
+    const tenantId = authStore.effectiveTenantId
+    const selection = tenantId && selectedSandbox.value ? { tenant_id: tenantId, sandbox_config_id: selectedSandbox.value } : undefined
+    const resp = await getRuntimeQueues(selection)
+    if (requestID !== runtimeRequestID) return
+    runtimeSupplement.value = resp.octo_runtime ?? null
     available.value = resp.available
     pools.value = resp.pools || []
     queues.value = resp.queues || []
@@ -913,11 +1011,18 @@ async function load(showSpinner: boolean) {
       .toLocaleTimeString(locale.value, { hour12: false })
     error.value = ''
     loadedOnce.value = true
-  } catch (err: any) {
-    error.value = err?.message || t('system.globalSettings.runtime.errors.generic')
+  } catch {
+    if (requestID !== runtimeRequestID) return
+    runtimeSupplement.value = null
+    error.value = t('system.globalSettings.runtime.errors.generic')
   } finally {
-    if (showSpinner) loading.value = false
+    if (requestID === runtimeRequestID) loading.value = false
   }
+}
+
+function selectSandbox() {
+  runtimeSupplement.value = null
+  reload()
 }
 
 function reload() {
@@ -960,7 +1065,14 @@ watch(tasksHasMore, async () => {
   attachTasksScrollObserver()
 })
 
+watch(() => authStore.effectiveTenantId, () => {
+  ++runtimeRequestID
+  void loadSandboxConfigs()
+  void load(true)
+})
+
 onMounted(() => {
+  void loadSandboxConfigs()
   load(true)
   startPolling()
 })
@@ -972,6 +1084,15 @@ onUnmounted(() => {
 </script>
 
 <style lang="less" scoped>
+.rq-supplement { margin: 16px 0; padding: 16px; border: 1px solid var(--td-component-border); border-radius: 8px; }
+.rq-supplement-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.rq-supplement p { margin: 8px 0; }
+.rq-preparation { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--td-component-border); }
+.rq-preparation ul { margin: 8px 0 0; padding-left: 20px; }
+.rq-supplement small { display: block; margin-top: 6px; color: var(--td-text-color-secondary); }
+.rq-sandbox-select { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rq-sandbox-select select { max-width: 100%; padding: 4px 8px; border: 1px solid var(--td-component-border); border-radius: 4px; background: var(--td-bg-color-container); color: var(--td-text-color-primary); }
+
 .runtime-queues {
   color: var(--td-text-color-primary);
 }

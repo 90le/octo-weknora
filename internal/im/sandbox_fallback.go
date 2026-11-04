@@ -5,10 +5,57 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync/atomic"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+// The dimensions are fixed: no request or error strings become metric labels.
+var (
+	sandboxPreparationStages = [...]string{
+		"unknown", "pin", "configuration", "skills", "policy", "output_limit", "reconcile",
+	}
+	sandboxPreparationReasons = [...]string{"unavailable", "timeout", "denied"}
+	sandboxPreparationCounts  [7][3]atomic.Uint64
+)
+
+// SandboxPreparationFailureCount holds a fixed-label process-lifetime degradation count.
+type SandboxPreparationFailureCount struct {
+	Stage  string `json:"stage"`
+	Reason string `json:"reason"`
+	Count  uint64 `json:"count"`
+}
+
+func recordSandboxPreparationFailure(stage, reason string) {
+	stageIndex, reasonIndex := 0, 0
+	for i, label := range sandboxPreparationStages {
+		if label == stage {
+			stageIndex = i
+			break
+		}
+	}
+	for i, label := range sandboxPreparationReasons {
+		if label == reason {
+			reasonIndex = i
+			break
+		}
+	}
+	sandboxPreparationCounts[stageIndex][reasonIndex].Add(1)
+}
+
+// RuntimeSandboxPreparationFailures returns only nonzero process-lifetime counts.
+func RuntimeSandboxPreparationFailures() []SandboxPreparationFailureCount {
+	result := make([]SandboxPreparationFailureCount, 0)
+	for i, stage := range sandboxPreparationStages {
+		for j, reason := range sandboxPreparationReasons {
+			if count := sandboxPreparationCounts[i][j].Load(); count > 0 {
+				result = append(result, SandboxPreparationFailureCount{Stage: stage, Reason: reason, Count: count})
+			}
+		}
+	}
+	return result
+}
 
 type sandboxUnavailableKey struct{}
 
@@ -20,9 +67,10 @@ func sandboxPreparationDiagnostic(err error) (string, string) {
 	stage, reason := "unknown", "unavailable"
 	var carrier interface{ SandboxPreparationStage() string }
 	if errors.As(err, &carrier) {
-		switch carrier.SandboxPreparationStage() {
+		candidate := carrier.SandboxPreparationStage()
+		switch candidate {
 		case "pin", "configuration", "skills", "policy", "output_limit", "reconcile":
-			stage = carrier.SandboxPreparationStage()
+			stage = candidate
 		}
 	}
 	var network net.Error
@@ -81,6 +129,7 @@ func prepareSandboxOrContinue(
 		return nil, false, err
 	}
 	stage, reason := sandboxPreparationDiagnostic(err)
+	recordSandboxPreparationFailure(stage, reason)
 	logger.Warnf(ctx, "[IM] sandbox preparation failed: stage=%s reason=%s", stage, reason)
 	disabled := types.WithoutIMSandboxExecution(ctx)
 	return context.WithValue(disabled, sandboxUnavailableKey{}, true), false, nil

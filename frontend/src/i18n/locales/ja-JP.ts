@@ -447,6 +447,11 @@ export default {
     reconnectShort: '再接続を待機中'
   },
   artifactLibrary: {
+    usageLabel: '閲覧可能な成果物バージョンの記録サイズ',
+    usageUnknown: '不明',
+    usageCount: '{count} 件のバージョン記録',
+    usageNote: '記録サイズの合計です。共有や重複ファイルは重複計上されることがあり、物理ディスク使用量とは異なります。',
+    deleteChannelConfirm: '「{name}」の WeKnora の成果物記録（{count} バージョン）を削除し、安全に回収できるファイルの削除を試みます。Octo で送信済みの添付ファイルと共有ファイルは保持されます。',
     title: '成果物',
     subtitle: 'アクセス可能な Web 会話と、連携済みの Octo チャネルの成果物を表示します。',
     typeFilter: '種類で絞り込む',

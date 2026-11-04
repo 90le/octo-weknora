@@ -10,6 +10,13 @@
       </div>
     </div>
 
+    <div class="usage-summary" role="status">
+      <span>{{ $t('artifactLibrary.usageLabel') }}</span>
+      <strong>{{ usage ? formatArtifactSize(usage.logical_bytes) : $t('artifactLibrary.usageUnknown') }}</strong>
+      <span v-if="usage">{{ $t('artifactLibrary.usageCount', { count: usage.file_count }) }}</span>
+      <span class="usage-note">{{ $t('artifactLibrary.usageNote') }}</span>
+    </div>
+
     <div class="toolbar">
       <div class="category-tabs" role="tablist" :aria-label="$t('artifactLibrary.typeFilter')">
         <button
@@ -117,7 +124,6 @@
                 <template #icon><t-icon name="download" size="16px" /></template>
               </t-button>
               <t-button
-                v-if="!item.im_channel_artifact"
                 class="row-action row-action--danger"
                 variant="text"
                 shape="square"
@@ -177,7 +183,6 @@
             <template #icon><t-icon name="download" size="16px" /></template>
           </t-button>
           <t-button
-            v-if="!previewItem.im_channel_artifact"
             class="row-action row-action--danger"
             variant="text"
             shape="square"
@@ -226,7 +231,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { downloadArtifact } from '@/api/chat'
-import { deleteArtifactLibraryItem, downloadChannelArtifact, listArtifactLibrary, type ArtifactLibraryItem } from '@/api/artifacts'
+import { deleteArtifactLibraryItem, deleteChannelArtifact, downloadChannelArtifact, getArtifactUsage, listArtifactLibrary, type ArtifactLibraryItem, type ArtifactUsageResponse } from '@/api/artifacts'
 import {
   ARTIFACT_CATEGORIES,
   artifactCategoryExtensions,
@@ -234,6 +239,7 @@ import {
   parseArtifactCategory,
   type ArtifactCategory,
 } from '@/utils/artifactLibrary'
+import { parseArtifactUsage } from './artifactUsage'
 import { formatArtifactDateTime, formatArtifactSize } from '@/utils/sessionArtifacts'
 import { resolveFilePreviewExt } from '@/utils/filePreview'
 import { useConfirmDelete } from '@/components/settings/useConfirmDelete'
@@ -254,6 +260,8 @@ const category = ref<ArtifactCategory>(parseArtifactCategory(route.query.type))
 const keyword = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const items = ref<ArtifactLibraryItem[]>([])
 const total = ref(0)
+const usage = ref<ArtifactUsageResponse['data'] | null>(null)
+let usageTicket = 0
 const page = ref(0)
 const loading = ref(false)
 const loadError = ref(false)
@@ -272,6 +280,18 @@ const previewFileType = computed(() => {
   const item = previewItem.value
   return item ? resolveFilePreviewExt(item.file_name, item.file_type) : ''
 })
+
+async function refreshUsage() {
+  const mine = ++usageTicket
+  usage.value = null
+  try {
+    const res = await getArtifactUsage()
+    if (mine !== usageTicket) return
+    usage.value = parseArtifactUsage(res)
+  } catch (err) {
+    if (mine === usageTicket) console.error('[ArtifactLibrary] usage failed:', err)
+  }
+}
 
 // Every fetch takes a ticket; a response whose ticket is stale (the filters
 // changed while it was in flight) is dropped.
@@ -411,7 +431,9 @@ function handleDelete(item: ArtifactLibraryItem) {
   confirmDelete({
     title: t('artifactLibrary.deleteTitle'),
     body:
-      item.version_count > 1
+      item.im_channel_artifact
+        ? t('artifactLibrary.deleteChannelConfirm', { name: item.file_name, count: item.version_count })
+        : item.version_count > 1
         ? t('artifactLibrary.deleteConfirmVersions', { name: item.file_name, count: item.version_count })
         : t('artifactLibrary.deleteConfirm', { name: item.file_name }),
     onConfirm: () => performDelete(item),
@@ -423,7 +445,9 @@ async function performDelete(item: ArtifactLibraryItem) {
   if (deleting[key]) return
   deleting[key] = true
   try {
-    await deleteArtifactLibraryItem(item)
+    const result = item.im_channel_artifact ? await deleteChannelArtifact(item) : await deleteArtifactLibraryItem(item)
+    if (!result?.success) throw new Error('Artifact deletion was not confirmed')
+    void refreshUsage()
     // Splice the row out instead of reloading: this is an infinite list, and a
     // reload would throw away everything the user has scrolled past.
     const at = items.value.findIndex((row) => itemKey(row) === key)
@@ -460,12 +484,14 @@ onMounted(() => {
     if (sentinel.value) observer.observe(sentinel.value)
   }
   void fetchPage(1)
+  void refreshUsage()
 })
 
 onBeforeUnmount(() => {
   observer?.disconnect()
   if (searchTimer) clearTimeout(searchTimer)
   ticket++
+  usageTicket++
 })
 </script>
 
@@ -506,6 +532,19 @@ onBeforeUnmount(() => {
   color: var(--td-text-color-secondary);
   font-size: var(--app-text-base);
   line-height: 20px;
+}
+
+.usage-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 10px 0 14px;
+  color: var(--td-text-color-secondary);
+  font-size: var(--app-text-base);
+
+  strong { color: var(--td-text-color-primary); }
+  .usage-note { flex-basis: 100%; }
 }
 
 .toolbar {

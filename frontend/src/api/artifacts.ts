@@ -74,3 +74,18 @@ export function deleteArtifactLibraryItem(item: ArtifactLibraryItem) {
 export function downloadChannelArtifact(item: ArtifactLibraryItem): Promise<Blob> {
   return getDown(`/api/v1/artifacts/channels/${encodeURIComponent(item.session_id)}/messages/${encodeURIComponent(item.message_id)}/${item.index}/download`)
 }
+
+// Full, unfiltered aggregate supplied by the artifact usage endpoint.
+export interface ArtifactUsageResponse {
+  success: boolean
+  data: { file_count: number; logical_bytes: number; scope: 'accessible_artifact_versions' }
+}
+
+export function getArtifactUsage() {
+  return get<ArtifactUsageResponse>('/api/v1/artifacts/usage')
+}
+
+// Channel deletion requires a distinct server-side authorization check.
+export function deleteChannelArtifact(item: ArtifactLibraryItem) {
+  return del<ArtifactDeleteResult>(`/api/v1/artifacts/channels/${encodeURIComponent(item.session_id)}/messages/${encodeURIComponent(item.message_id)}/${item.index}?all_versions=true`)
+}

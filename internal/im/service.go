@@ -907,6 +907,14 @@ func resolveIMConfig(appCfg *config.Config) (workers, maxQueue, maxPerUser, glob
 	return
 }
 
+// RuntimeQueueSnapshot reports this process only; it contains no request identities.
+func (s *Service) RuntimeQueueSnapshot() (QueueMetrics, int, int, bool) {
+	if s == nil || s.qaQueue == nil {
+		return QueueMetrics{}, 0, 0, false
+	}
+	return s.qaQueue.Metrics(), s.qaQueue.workers, s.qaQueue.maxSize, true
+}
+
 // NewService creates a new IM service.
 // redisClient may be nil — in that case the service falls back to local
 // in-memory state (Lite / single-instance mode).

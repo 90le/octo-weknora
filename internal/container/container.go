@@ -1844,8 +1844,10 @@ func registerWebSearchProviders(registry *infra_web_search.Registry) {
 // its own subpackage to keep this file focused on wiring.
 func registerIMService(
 	imService *imPkg.Service, cleaner interfaces.ResourceCleaner, db *gorm.DB,
-	business *octobusiness.Service, queue interfaces.TaskEnqueuer, artifacts *service.ArtifactCollector,
+	business *octobusiness.Service, queue interfaces.TaskEnqueuer,
+	artifacts *service.ArtifactCollector, systemHandler *handler.SystemHandler,
 ) {
+	systemHandler.SetIMRuntime(imService)
 	imService.ConfigureArtifactCollector(artifacts)
 	imService.RegisterAdapterFactory("wecom", wecom.NewFactory())
 	imService.RegisterAdapterFactory("feishu", feishu.NewFactory(feishu.RegionFeishu))

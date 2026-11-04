@@ -432,6 +432,11 @@ export default {
     reconnectShort: 'Waiting to reconnect'
   },
   artifactLibrary: {
+    usageLabel: 'Recorded size of accessible artifact versions',
+    usageUnknown: 'Unknown',
+    usageCount: '{count} version records',
+    usageNote: 'Sum of recorded sizes; shared or duplicate files may be counted more than once. Not physical disk usage.',
+    deleteChannelConfirm: 'Delete the WeKnora artifact records for “{name}” ({count} versions) and attempt to clean up files that can be safely reclaimed. Attachments already sent in Octo and shared files are retained.',
     title: 'Artifacts',
     subtitle: 'Artifacts from accessible web conversations and bound Octo channels appear here.',
     typeFilter: 'Filter by type',

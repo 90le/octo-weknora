@@ -324,6 +324,9 @@ func RegisterSystemAdminRoutes(
 		// Runtime operations: live asynq queue depths, safe task projections,
 		// and state-checked task actions for the SystemAdmin dashboard. Lite
 		// mode returns available=false.
+		g.apiKeyRoute(adminRoutes, http.MethodGet, "/runtime/status",
+			apiKeyPlatform(types.APIKeyCapabilitySystemRuntimeRead, types.APIKeyCapabilitySystemRuntimeManage),
+			handler.GetRuntimeStatus)
 		g.apiKeyRoute(adminRoutes, http.MethodGet, "/runtime/queues",
 			apiKeyPlatform(types.APIKeyCapabilitySystemRuntimeRead, types.APIKeyCapabilitySystemRuntimeManage),
 			handler.GetRuntimeQueues)

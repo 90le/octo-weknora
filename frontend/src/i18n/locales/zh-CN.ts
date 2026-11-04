@@ -8520,6 +8520,11 @@ export default {
     }
   },
   artifactLibrary: {
+    usageLabel: '可见产物版本的记录大小',
+    usageUnknown: '未知',
+    usageCount: '{count} 个版本记录',
+    usageNote: '按记录大小合计，共享或重复文件可能重复计算，不等于物理磁盘占用。',
+    deleteChannelConfirm: '将删除「{name}」的 WeKnora 产物记录（共 {count} 个版本），并尝试清理可安全回收的文件。Octo 已发送的附件和共享文件会保留。',
     title: '产物',
     subtitle: '这里显示可访问的网页会话产物，以及已绑定 Octo 渠道的产物。',
     typeFilter: '按类型筛选',

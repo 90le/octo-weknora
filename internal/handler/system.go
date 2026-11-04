@@ -21,6 +21,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/database"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
+	"github.com/Tencent/WeKnora/internal/im"
 	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
 	"github.com/Tencent/WeKnora/internal/logger"
 	modellimiter "github.com/Tencent/WeKnora/internal/models/limiter"
@@ -65,6 +66,7 @@ type SystemHandler struct {
 	// unit tests, in which case only the legacy config is consulted.
 	storageBackendRepo interfaces.StorageBackendRepository
 	sandboxConfigSvc   sandboxConfigService
+	imRuntime          *im.Service
 	// startup snapshot for GET /system/capabilities; bound in router.NewRouter.
 	deploymentCapabilities DeploymentCapabilitiesData
 }
@@ -100,6 +102,9 @@ func NewSystemHandler(cfg *config.Config,
 		sandboxConfigSvc:   sandboxConfigSvc,
 	}
 }
+
+// SetIMRuntime connects the process-local IM queue after service startup wiring.
+func (h *SystemHandler) SetIMRuntime(s *im.Service) { h.imRuntime = s }
 
 type platformAPIKeyCreateRequest struct {
 	Name         string   `json:"name"`
@@ -1829,6 +1834,8 @@ type RuntimeWorkerPool struct {
 }
 
 type RuntimeQueuesResponse struct {
+	OctoRuntime           runtimeSupplement          `json:"octo_runtime"`
+	QueueFailure          string                     `json:"queue_failure,omitempty"`
 	Available             bool                       `json:"available"`
 	UpstreamConcurrency   int                        `json:"upstream_concurrency"`
 	ParseConcurrency      int                        `json:"parse_concurrency"` // compatibility alias for upstream_concurrency
@@ -1898,6 +1905,11 @@ func sameQueueWeights(left, right map[string]int) bool {
 // @Success      200  {object}  RuntimeQueuesResponse
 // @Router       /system/admin/runtime/queues [get]
 func (h *SystemHandler) GetRuntimeQueues(c *gin.Context) {
+	supplement, ok := h.runtimeSupplement(c)
+	if !ok {
+		return
+	}
+	c.Header("Cache-Control", "no-store")
 	ctx := logger.CloneContext(c.Request.Context())
 	var allocation types.WorkerPoolConcurrency
 	if h.systemSettingSvc != nil {
@@ -1913,6 +1925,7 @@ func (h *SystemHandler) GetRuntimeQueues(c *gin.Context) {
 		queueCounts[definition.Pool]++
 	}
 	resp := RuntimeQueuesResponse{
+		OctoRuntime:         supplement,
 		UpstreamConcurrency: allocation.UpstreamTotal(),
 		ParseConcurrency:    allocation.UpstreamTotal(),
 		WikiConcurrency:     allocation.Wiki,
@@ -1930,15 +1943,20 @@ func (h *SystemHandler) GetRuntimeQueues(c *gin.Context) {
 	if h.taskInspector != nil {
 		stats, supported, err := h.taskInspector.QueueStats(ctx)
 		if err != nil {
-			logger.Errorf(ctx, "get queue stats failed: %v", err)
+			logger.Errorf(ctx, "get queue stats failed: %s", runtimeFailure(err))
 		}
-		resp.Available = supported
-		if stats != nil {
+		resp.Available = supported && err == nil
+		if err != nil {
+			resp.QueueFailure = runtimeFailure(err)
+		} else if !supported {
+			resp.QueueFailure = "unsupported"
+		}
+		if stats != nil && err == nil {
 			resp.Queues = stats
 		}
 		serverStats, _, serverErr := h.taskInspector.WorkerServerStats(ctx)
 		if serverErr != nil {
-			logger.Errorf(ctx, "get worker server stats failed: %v", serverErr)
+			logger.Errorf(ctx, "get worker server stats failed: %s", runtimeFailure(serverErr))
 		} else {
 			aggregateRuntimeWorkerPools(resp.Pools, serverStats)
 		}
@@ -1950,7 +1968,7 @@ func (h *SystemHandler) GetRuntimeQueues(c *gin.Context) {
 	}
 	modelStats, modelSupported, modelErr := modellimiter.RuntimeStats(ctx)
 	if modelErr != nil {
-		logger.Errorf(ctx, "get model concurrency stats failed: %v", modelErr)
+		logger.Errorf(ctx, "get model concurrency stats failed: %s", runtimeFailure(modelErr))
 	}
 	resp.ModelLimiterAvailable = modelSupported
 	resp.Models = modelStats

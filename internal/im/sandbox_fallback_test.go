@@ -174,3 +174,47 @@ func TestSandboxPreparationSuccessPreservesGrant(t *testing.T) {
 		t.Fatal("successful preparation changed authority or added a notice")
 	}
 }
+
+func TestSandboxPreparationFailureCountsOnlyActualDegradation(t *testing.T) {
+	count := func(stage, reason string) uint64 {
+		for _, item := range RuntimeSandboxPreparationFailures() {
+			if item.Stage == stage && item.Reason == reason {
+				return item.Count
+			}
+		}
+		return 0
+	}
+	before := count("skills", "timeout")
+	ctx := types.WithIMSandboxGrant(context.Background(), types.IMSandboxGrant{
+		SessionID: "s", TenantID: 7, ConfigID: "cfg", AllowSkills: true,
+		Revalidate: func(context.Context) error { return nil },
+	})
+	_, active, err := prepareSandboxOrContinue(ctx, func(context.Context) (context.Context, error) {
+		return nil, &testSandboxPreparationError{stage: "skills", err: context.DeadlineExceeded}
+	})
+	if err != nil || active || count("skills", "timeout") != before+1 {
+		t.Fatalf("degradation not counted: active=%v err=%v", active, err)
+	}
+	ctx = types.WithIMSandboxGrant(context.Background(), types.IMSandboxGrant{
+		SessionID: "s", TenantID: 7, ConfigID: "cfg", AllowSkills: true,
+		Revalidate: func(context.Context) error { return errors.New("revoked") },
+	})
+	_, _, err = prepareSandboxOrContinue(ctx, func(context.Context) (context.Context, error) {
+		return nil, &testSandboxPreparationError{stage: "skills", err: context.DeadlineExceeded}
+	})
+	if err == nil {
+		t.Fatal("expected revoked request to fail")
+	}
+	if count("skills", "timeout") != before+1 {
+		t.Fatal("revoked request counted as degradation")
+	}
+}
+
+func TestSandboxPreparationFailureLabelsAreBounded(t *testing.T) {
+	recordSandboxPreparationFailure("/secret/user", "token")
+	for _, item := range RuntimeSandboxPreparationFailures() {
+		if strings.Contains(item.Stage, "secret") || strings.Contains(item.Reason, "token") {
+			t.Fatalf("unsafe label: %+v", item)
+		}
+	}
+}

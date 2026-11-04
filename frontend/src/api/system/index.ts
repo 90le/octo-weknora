@@ -637,7 +637,13 @@ export interface ModelRuntimeStat {
  * concurrency and live cluster capacity/active workers aggregated from asynq
  * server heartbeats.
  */
+export interface RuntimeSupplement {
+  im: { available: boolean; scope: string; depth: number | null; active: number | null; failure?: string; sandbox_preparation_failures?: Array<{ stage: string; reason: string; count: number }> | null }
+  docker: { available: boolean; scope: string; running: number | null; capacity: number | null; failure?: string }
+}
+
 export interface RuntimeQueuesResponse {
+  octo_runtime?: RuntimeSupplement
   available: boolean
   upstream_concurrency: number
   parse_concurrency: number
@@ -696,8 +702,8 @@ export interface RuntimeTasksResponse {
  * Returns the object directly — no {data: ...} wrapping (see
  * utils/request.ts interceptor).
  */
-export async function getRuntimeQueues(): Promise<RuntimeQueuesResponse> {
-  const response = await get('/api/v1/system/admin/runtime/queues')
+export async function getRuntimeQueues(selection?: { tenant_id: string | number; sandbox_config_id: string }): Promise<RuntimeQueuesResponse> {
+  const response = await get('/api/v1/system/admin/runtime/queues', { params: selection })
   return response as unknown as RuntimeQueuesResponse
 }
 
