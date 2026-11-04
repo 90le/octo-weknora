@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// ReadChannelChat returns a channel-bound user's read-only conversation.
 func (h *Handler) ReadChannelChat(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-store")
 	c.Header("X-Content-Type-Options", "nosniff")
