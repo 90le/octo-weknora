@@ -7382,6 +7382,7 @@ export default {
     copy: '복사',
     addToKnowledgeBase: '지식베이스에 추가',
     artifactDrawer: {
+      sessionTitle: '대화 산출물',
       buttonTitle: '이 응답에서 생성된 파일 보기',
       title: '생성된 파일',
       empty: '이번 회차에서 다운로드 가능한 파일이 없습니다.',

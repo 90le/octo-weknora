@@ -7206,6 +7206,7 @@ export default {
     copy: '複製',
     addToKnowledgeBase: '新增到知識庫',
     artifactDrawer: {
+      sessionTitle: '會話產物',
       buttonTitle: '查看本次生成的檔案',
       title: '生成的檔案',
       empty: '本次未生成可下載的檔案',

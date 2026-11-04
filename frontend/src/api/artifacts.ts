@@ -81,7 +81,7 @@ export function deleteArtifactLibraryItem(item: ArtifactLibraryItem) {
   return del<ArtifactDeleteResult>(`/api/v1/artifacts?${query.toString()}`)
 }
 
-export function downloadChannelArtifact(item: ArtifactLibraryItem): Promise<Blob> {
+export function downloadChannelArtifact(item: Pick<ArtifactLibraryItem, 'session_id' | 'message_id' | 'index'>): Promise<Blob> {
   return getDown(`/api/v1/artifacts/channels/${encodeURIComponent(item.session_id)}/messages/${encodeURIComponent(item.message_id)}/${item.index}/download`)
 }
 
@@ -102,3 +102,11 @@ export function deleteChannelArtifact(item: ArtifactLibraryItem) {
 
 // Supplied by the list endpoint, scoped to the current user and tenant.
 export interface ArtifactSourceOption { source: 'web' | 'channel'; channel_id?: string; platform?: string; name?: string }
+
+// The server authorizes the caller's bound channel account on every page.
+export function getChannelArtifactChat(sessionId: string, limit = 20, beforeTime = '', beforeId = '') {
+  return get<{ success: boolean; data: { session: any; messages: any[] } }>(
+    `/api/v1/artifacts/channels/${encodeURIComponent(sessionId)}/chat`,
+    { params: { limit, ...(beforeTime ? { before_time: beforeTime, before_id: beforeId } : {}) } },
+  )
+}

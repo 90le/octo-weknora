@@ -48,6 +48,7 @@ export interface ArtifactRefMeta {
 export interface ArtifactRefContext {
   sessionId: string;
   messageId: string;
+  channelArtifact?: boolean;
 }
 
 export interface ArtifactRefLabels {
@@ -244,7 +245,7 @@ const artifactBlobState: ArtifactBlobState = (() => {
 })();
 
 function blobCacheKey(ctx: ArtifactRefContext, index: number): string {
-  return `${ctx.sessionId}\u0000${ctx.messageId}\u0000${index}`;
+  return `${ctx.channelArtifact ? 'channel' : 'web'}\u0000${ctx.sessionId}\u0000${ctx.messageId}\u0000${index}`;
 }
 
 // 与 chatMarkdownRenderer 的流式图片骨架同一个类名，样式复用。
@@ -362,8 +363,9 @@ async function loadArtifactBlobURL(ctx: ArtifactRefContext, index: number): Prom
       try {
         // Imported lazily so parsing/rendering stays free of the axios
         // transport — those parts run in plain Node during unit tests.
-        const { downloadArtifact } = await import('@/api/chat');
-        const blob = await downloadArtifact(ctx.sessionId, ctx.messageId, index);
+        const blob = ctx.channelArtifact
+          ? await (await import('@/api/artifacts')).downloadChannelArtifact({ session_id: ctx.sessionId, message_id: ctx.messageId, index })
+          : await (await import('@/api/chat')).downloadArtifact(ctx.sessionId, ctx.messageId, index);
         const blobURL = URL.createObjectURL(blob);
         artifactBlobState.blobByKey.set(key, blobURL);
         return blobURL;

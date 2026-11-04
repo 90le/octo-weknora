@@ -191,3 +191,18 @@ test('completion retries preserve the embed authentication plane', async t => {
   assert.deepEqual(h.requests[1].headers, { Authorization: 'Embed embed-token' })
   assert.match(h.img.src, /^blob:/)
 })
+
+test('history conversion keeps channel answer references and artifacts in their original positions', async () => {
+  const messagesList = vue.reactive<any[]>([])
+  const handler = useChatStreamHandler({
+    messagesList, loading: vue.ref(false), isReplying: vue.ref(false),
+    currentAssistantMessageId: vue.ref(''), fullContent: vue.ref(''),
+    isAgentStreamSession: () => false, scrollToBottom() {},
+  })
+  const artifacts = [{ file_name: 'report.pdf', file_type: '.pdf' }]
+  const references = [{ knowledge_id: 'kb-1', chunk_id: 'chunk-1' }]
+  await handler.handleMsgList([{ id: 'a1', role: 'assistant', content: '**answer**', is_completed: true, artifacts, knowledge_references: references } as any], false)
+  assert.equal(messagesList[0].content, '**answer**')
+  assert.deepEqual(messagesList[0].artifacts, artifacts)
+  assert.deepEqual(messagesList[0].knowledge_references, references)
+})

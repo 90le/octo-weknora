@@ -8,8 +8,8 @@
         '--references-panel-width': `${referencesPanelWidth}px`,
     }">
         <div v-if="!embeddedMode" class="chat-topbar">
-            <ChatHeader :session="currentSession" />
-            <div v-if="!sandboxPanel.visible.value" class="sandbox-header-toggle">
+            <ChatHeader :session="currentSession" :read-only="chatMode !== 'web'" />
+            <div v-if="chatMode === 'web' && !sandboxPanel.visible.value" class="sandbox-header-toggle">
                 <t-tooltip placement="bottom">
                     <template #content>{{ t('chatHeader.toggleSandboxPanel') }}</template>
                     <button type="button" class="sandbox-header-toggle__btn"
@@ -48,8 +48,9 @@
                                     :row-col="[{ width: '70%', height: '16px' }, { width: '90%', height: '16px' }]" />
                             </div>
                         </div>
+                        <p v-if="chatMode === 'error'" role="alert">{{ t('common.failed') }}</p>
                         <!-- 推荐问题卡片 - 仅在新会话（无消息）时展示 -->
-                        <div v-if="!embeddedMode && messagesList.length === 0 && !loading"
+                        <div v-if="chatMode === 'web' && !embeddedMode && messagesList.length === 0 && !loading"
                             class="suggested-questions-container"
                             :class="{ 'has-questions': suggestedQuestions.length > 0 || suggestedQuestionsLoading }">
                             <!-- 骨架屏占位 -->
@@ -114,9 +115,9 @@
                                     :session-id="session_id"
                                     :message-id="session.id"
                                     :created-at="session.created_at"
-                                    :can-fork="!embeddedMode && forkAffordanceOf(session.id).canFork"
-                                    :can-rewind="canRewindMessage(session.id)"
-                                    :steer-failed="Boolean(session._steerFailed)"
+                                    :can-fork="chatMode === 'web' && !embeddedMode && forkAffordanceOf(session.id).canFork"
+                                    :can-rewind="chatMode === 'web' && canRewindMessage(session.id)"
+                                    :steer-failed="chatMode === 'web' && Boolean(session._steerFailed)"
                                     @retry-steer="handleRetrySteer(session.steer_id)"
                                     @remove-steer="handleRemoveSteer(session.steer_id)"
                                     @fork="handleFork"
@@ -128,15 +129,15 @@
                                 :data-message-id="session.id || undefined">
                                 <botmsg :content="session.content" :session="session" :session-id="session_id"
                                     :user-query="getUserQuery(index)" @scroll-bottom="scrollToBottom"
-                                    :isFirstEnter="isFirstEnter" :embeddedMode="embeddedMode"
+                                    :isFirstEnter="isFirstEnter" :embeddedMode="embeddedMode" :read-only="chatMode !== 'web'"
                                     :follow-up-loading="Boolean(session.suggestionLoading && !session.suggestionSet?.questions?.length)"
-                                    :can-fork="!embeddedMode && forkAffordanceOf(session.id).canFork"
-                                    :can-rewind="canRewindMessage(session.id)"
+                                    :can-fork="chatMode === 'web' && !embeddedMode && forkAffordanceOf(session.id).canFork"
+                                    :can-rewind="chatMode === 'web' && canRewindMessage(session.id)"
                                     @fork="handleFork"
                                     @rewind="handleRewind"
                                     @render-complete-change="(ready) => handleAnswerRenderComplete(session, ready)">
                                 </botmsg>
-                                <FollowUpSuggestions v-if="session.answerFullyRendered && !session.steerForked && !session.suggestionsDismissed"
+                                <FollowUpSuggestions v-if="chatMode === 'web' && session.answerFullyRendered && !session.steerForked && !session.suggestionsDismissed"
                                     :suggestion-set="session.suggestionSet"
                                     :loading="session.suggestionLoading"
                                     :allow-regenerate="session.suggestionSet?.allow_regenerate"
@@ -153,7 +154,7 @@
                     </div>
                 </div>
             </div>
-            <div ref="composerElement" class="chat_composer">
+            <div v-if="chatMode === 'web'" ref="composerElement" class="chat_composer">
                 <div class="input-container" :class="{ 'is-embedded': embeddedMode }">
                     <transition name="scroll-btn-fade">
                         <div v-show="userHasScrolledUp" class="scroll-to-bottom-btn" @click="onClickScrollToBottom">
@@ -174,7 +175,7 @@
                 </div>
             </div>
             <div v-if="!embeddedMode" class="chat_overlays">
-                <BrowserTaskPreview v-if="session_id" :key="session_id" :session-id="session_id" />
+                <BrowserTaskPreview v-if="chatMode === 'web' && session_id" :key="session_id" :session-id="session_id" />
                 <ChatQuestionMinimap :scroll-container="scrollContainer" :messages="messagesList"
                     @jump="jumpToQuestion" />
             </div>
@@ -185,7 +186,7 @@
         @update:visible="(val) => val ? null : uiStore.closeKBEditor()" @success="handleKBEditorSuccess" />
     <ChatReferencesDrawer />
     <ChatAttachmentPreviewDrawer />
-    <SandboxSidePanel v-if="!embeddedMode" :session-id="session_id"
+    <SandboxSidePanel v-if="chatMode === 'web' && !embeddedMode" :session-id="session_id"
         :agent-id="useSettingsStoreInstance.selectedAgentId"
         :agent-source-tenant-id="useSettingsStoreInstance.selectedAgentSourceTenantId"
         :shifted="referencesDrawerVisible"
@@ -202,6 +203,7 @@ import InputField from '../../components/Input-field.vue';
 import botmsg from './components/botmsg.vue';
 import usermsg from './components/usermsg.vue';
 import { getMessageList, getSession, forkSession, rewindSession } from "@/api/chat/index";
+import { getChannelArtifactChat } from "@/api/artifacts";
 import { resolveForkAffordance } from './forkPoint';
 import { rewindSkipMessage } from './rewindNotice';
 import { rewindPrefillText, rewindBlockedByOutgoingWork, canReplaceRewindTranscript, shouldApplyRewindLocally, rewindHistoryHasMore, keepMessagesThroughRewindPoint, rewindableMessageIds, rewindHttpConflictCode, rewindConflictI18nKey } from './rewindView';
@@ -305,28 +307,53 @@ const route = useRoute();
 const router = useRouter();
 const session_id = ref(props.session_id || route.params.chatid);
 const currentSession = ref(null);
+// Pending and failed sessions are locked until their access mode is known.
+const chatMode = ref(props.embeddedMode || !session_id.value ? 'web' : 'loading');
+let initialSessionLoad;
+let sessionLoadVersion = 0;
 
 // 拉 session 详情，并按其 last_request_state 把输入栏状态恢复到当时的发起态。
 // 嵌入式（embeddedMode）由宿主页面注入 agent/KB，所以跳过整套恢复逻辑，
 // 避免污染宿主的 settings store。
 const loadSessionAndHydrate = async (sid) => {
-    if (!sid || props.embeddedMode) return;
-    // Capture before awaiting: onMounted sends and clears firstQuery while this
-    // request is in flight. A new session must retain the createChat draft.
+    if (!sid || props.embeddedMode) {
+        chatMode.value = 'web';
+        return;
+    }
     const preserveDraft = Boolean(firstQuery.value);
+    const version = ++sessionLoadVersion;
+    chatMode.value = 'loading';
+    let sessionRes;
+    try { sessionRes = await getSession(sid); } catch { /* Try the restricted channel endpoint below. */ }
+    if (sid !== session_id.value || version !== sessionLoadVersion) return;
+    if (sessionRes?.success !== false && sessionRes?.data && String(sessionRes.data.im_platform || '').toLowerCase() !== 'octo') {
+        currentSession.value = sessionRes.data;
+        useSettingsStoreInstance.hydrateSessionInputState(sessionRes.data.last_request_state, preserveDraft);
+        chatMode.value = 'web';
+        return;
+    }
     try {
-        const sessionRes = await getSession(sid);
-        if (sessionRes?.data && sid === session_id.value) {
-            currentSession.value = sessionRes.data;
-            const lastState = sessionRes.data.last_request_state;
-            useSettingsStoreInstance.hydrateSessionInputState(lastState, preserveDraft);
-        }
+        const response = await getChannelArtifactChat(sid);
+        if (sid !== session_id.value || version !== sessionLoadVersion) return;
+        if (!response?.success || !response.data?.session || !Array.isArray(response.data.messages)) throw new Error('Invalid channel chat response');
+        currentSession.value = response.data.session;
+        chatMode.value = 'channel';
+        const batch = response.data.messages;
+        hasMoreHistory.value = batch.length >= limit.value;
+        created_at.value = batch[0]?.created_at || '';
+        channelBeforeId.value = batch[0]?.id || '';
+        await handleMsgList(batch, false);
     } catch (error) {
-        console.error('Failed to load session data:', error);
+        if (sid !== session_id.value || version !== sessionLoadVersion) return;
+        console.error('Failed to load channel conversation:', error);
+        chatMode.value = 'error';
+    } finally {
+        if (sid === session_id.value && version === sessionLoadVersion) historyLoading.value = false;
     }
 };
 const inputFieldRef = ref();
 const created_at = ref('');
+const channelBeforeId = ref('');
 const limit = ref(20);
 const messagesList = reactive([]);
 
@@ -654,6 +681,7 @@ const cancelSuggestedQuestionsFetch = () => {
 };
 
 const fetchSuggestedQuestionsIfNeeded = async () => {
+    if (chatMode.value !== 'web') return;
     if (props.embeddedMode) return;
     // 初始历史尚未拉完时不能判断是否有消息，避免有历史的会话误请求推荐问法
     if (historyLoading.value || messagesList.length > 0) {
@@ -710,7 +738,7 @@ const handleAnswerRenderComplete = (message, ready) => {
 const loadFollowUpSuggestions = async (message, ensure = false, regenerate = false) => {
     const messageId = resolveAssistantMessageId(message);
     const targetSessionId = session_id.value;
-    if (!messageId || !targetSessionId || message.suggestionsDismissed) return;
+    if (chatMode.value !== 'web' || !messageId || !targetSessionId || message.suggestionsDismissed) return;
     message.suggestionLoading = true;
     try {
         let response = ensure
@@ -814,6 +842,7 @@ watch([() => route.params], async (newvalue) => {
         historyLoadingMore.value = false;
         hasMoreHistory.value = true;
         created_at.value = '';
+        channelBeforeId.value = '';
         loading.value = false;
         isReplying.value = false;
         currentAssistantMessageId.value = '';
@@ -823,7 +852,9 @@ watch([() => route.params], async (newvalue) => {
         // 并应用自己的 last_request_state（在 loadSessionAndHydrate 内部完成）。
         useSettingsStoreInstance.restoreDefaultsIfSnapshotted();
 
-        await loadSessionAndHydrate(session_id.value);
+        const targetId = session_id.value;
+        await loadSessionAndHydrate(targetId);
+        if (targetId !== session_id.value || chatMode.value !== 'web') return;
         let data = {
             session_id: session_id.value,
             created_at: '',
@@ -866,6 +897,7 @@ const onChatScrollTop = () => {
         let data = {
             session_id: session_id.value,
             created_at: created_at.value,
+            before_id: channelBeforeId.value,
             limit: limit.value
         }
         getmsgList(data, true, scrollHeight);
@@ -891,7 +923,12 @@ const handleScroll = () => {
     debouncedScrollTop();
 };
 
-const fetchMessageList = (data) => getMessageList(data);
+const fetchMessageList = async (data) => {
+    if (chatMode.value !== 'channel') return getMessageList(data);
+    const response = await getChannelArtifactChat(data.session_id, data.limit, data.created_at, data.before_id);
+    if (!response?.success || !Array.isArray(response.data?.messages)) throw new Error('Invalid channel chat response');
+    return { data: response.data.messages };
+};
 
 // The server is the source of truth for what is still queued. `onlyWhenLive`
 // guards the hand-off window: a follow-up run publishes itself a moment before
@@ -940,6 +977,7 @@ const {
     scrollContainer,
     debug: import.meta.env.DEV,
     onAfterMsgList: async () => {
+        if (chatMode.value !== 'web') return;
         activitySessionId.value = String(session_id.value);
         for (const message of messagesList) {
             if (message.role === 'assistant' && message.is_completed && message.suggestionSet === undefined) {
@@ -1025,12 +1063,13 @@ const showGlobalTypingIndicator = computed(() =>
 );
 
 const getmsgList = (data, isScrollType = false, scrollHeight) => {
+    const version = sessionLoadVersion;
     if (isScrollType) {
         if (historyLoadingMore.value || !hasMoreHistory.value) return;
         historyLoadingMore.value = true;
     }
     return fetchMessageList(data).then(async (res) => {
-        if (data?.session_id && String(data.session_id) !== String(session_id.value || '')) {
+        if (version !== sessionLoadVersion || (data?.session_id && String(data.session_id) !== String(session_id.value || ''))) {
             return
         }
         const batch = res?.data;
@@ -1044,7 +1083,7 @@ const getmsgList = (data, isScrollType = false, scrollHeight) => {
             cancelSuggestedQuestionsFetch();
         }
         const nextCursor = batch[0].created_at;
-        if (isScrollType && created_at.value && nextCursor === created_at.value) {
+        if (isScrollType && created_at.value && nextCursor === created_at.value && (chatMode.value !== 'channel' || batch[0].id === channelBeforeId.value)) {
             hasMoreHistory.value = false;
             return;
         }
@@ -1052,13 +1091,16 @@ const getmsgList = (data, isScrollType = false, scrollHeight) => {
             hasMoreHistory.value = false;
         }
         created_at.value = nextCursor;
+        if (chatMode.value === 'channel') channelBeforeId.value = batch[0].id || '';
         await handleMsgList(batch, isScrollType, scrollHeight);
     }).catch((err) => {
+        if (version !== sessionLoadVersion) return;
         console.error('Failed to load messages:', err);
-        if (isScrollType) {
+        if (isScrollType && chatMode.value !== 'channel') {
             hasMoreHistory.value = false;
         }
     }).finally(() => {
+        if (version !== sessionLoadVersion) return;
         historyLoading.value = false;
         historyLoadingMore.value = false;
         if (!isScrollType && messagesList.length === 0) {
@@ -1374,6 +1416,7 @@ const attachSteerFollowUp = async (completedAssistantId) => {
 };
 
 const sendMsg = async (value, modelId = '', mentionedItems = [], imageFiles = [], attachmentFiles = [], options = {}) => {
+    if (chatMode.value !== 'web') return;
     if (composerLocked.value) return
     const reasoningEffort = props.embeddedMode ? undefined : (useSettingsStoreInstance.reasoningEffortOverride || undefined);
     stopStream();
@@ -1648,6 +1691,7 @@ onChunk((data) => {
 });
 
 const handleSessionMutation = (event) => {
+    if (chatMode.value !== 'web') return;
     const detail = event.detail;
     if (detail?.sessionId !== session_id.value) return;
 
@@ -1682,13 +1726,16 @@ onBeforeMount(async () => {
     }
 
     // 必须在 Input-field onMounted 之前完成：按 session.last_request_state 恢复输入栏
-    await loadSessionAndHydrate(session_id.value);
+    initialSessionLoad = loadSessionAndHydrate(session_id.value);
 });
 
 onMounted(async () => {
     window.addEventListener(SESSION_MUTATION_EVENT, handleSessionMutation);
     messagesList.splice(0);
     steerQueue.value = [];
+    const initialId = session_id.value;
+    await initialSessionLoad;
+    if (initialId !== session_id.value || chatMode.value !== 'web') return;
 
     // 初始化状态：加载历史消息时不应显示loading
     loading.value = false;
@@ -1719,6 +1766,7 @@ onMounted(async () => {
     }
 })
 const clearData = () => {
+    sessionLoadVersion++;
     if (!props.embeddedMode) sessionActivity.detach(activitySessionId.value);
     activitySessionId.value = '';
     stopStream();
@@ -1730,6 +1778,7 @@ const clearData = () => {
     isImRecovering.value = false;
 }
 onUnmounted(() => {
+    sessionLoadVersion++;
     if (!props.embeddedMode) sessionActivity.detach(activitySessionId.value);
     activitySessionId.value = '';
     window.removeEventListener(SESSION_MUTATION_EVENT, handleSessionMutation);

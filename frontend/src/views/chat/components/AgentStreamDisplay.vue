@@ -113,7 +113,7 @@
 
               <!-- MCP tool human approval (issue #1173) -->
               <div v-else-if="event.type === 'tool_approval_required'" class="tool-event">
-                <ToolApprovalCard :pending-id="event.pending_id" :service-name="event.service_name || ''"
+                <ToolApprovalCard v-if="!readOnly" :pending-id="event.pending_id" :service-name="event.service_name || ''"
                   :mcp-tool-name="event.mcp_tool_name || ''" :description="event.description"
                   :args-json="event.args_json" :timeout-seconds="event.timeout_seconds"
                   :requested-at="event.requested_at" :resolved="event.resolved" :approved="event.approved"
@@ -122,7 +122,7 @@
 
               <!-- MCP OAuth in-conversation authorization prompt -->
               <div v-else-if="event.type === 'mcp_oauth_required'" class="tool-event">
-                <McpOAuthCard :pending-id="event.pending_id" :service-id="event.service_id || ''"
+                <McpOAuthCard v-if="!readOnly" :pending-id="event.pending_id" :service-id="event.service_id || ''"
                   :service-name="event.service_name || ''" :mcp-tool-name="event.mcp_tool_name || ''"
                   :timeout-seconds="event.timeout_seconds" :requested-at="event.requested_at"
                   :resolved="event.resolved" :authorized="event.authorized"
@@ -338,7 +338,7 @@
 
             <!-- MCP tool human approval -->
             <div v-else-if="event.type === 'tool_approval_required'" class="tool-event">
-              <ToolApprovalCard :pending-id="event.pending_id" :service-name="event.service_name || ''"
+              <ToolApprovalCard v-if="!readOnly" :pending-id="event.pending_id" :service-name="event.service_name || ''"
                 :mcp-tool-name="event.mcp_tool_name || ''" :description="event.description" :args-json="event.args_json"
                 :timeout-seconds="event.timeout_seconds" :requested-at="event.requested_at" :resolved="event.resolved"
                 :approved="event.approved" :resolve-reason="event.resolve_reason" v-bind="embedAuthProps" />
@@ -346,7 +346,7 @@
 
             <!-- MCP OAuth in-conversation authorization prompt -->
             <div v-else-if="event.type === 'mcp_oauth_required'" class="tool-event">
-              <McpOAuthCard :pending-id="event.pending_id" :service-id="event.service_id || ''"
+              <McpOAuthCard v-if="!readOnly" :pending-id="event.pending_id" :service-id="event.service_id || ''"
                 :service-name="event.service_name || ''" :mcp-tool-name="event.mcp_tool_name || ''"
                 :timeout-seconds="event.timeout_seconds" :requested-at="event.requested_at" :resolved="event.resolved"
                 :authorized="event.authorized" :resolve-reason="event.resolve_reason" :timed-out="event.timed_out"
@@ -413,7 +413,7 @@
                   :title="$t('agent.copy')">
                   <t-icon name="copy" />
                 </t-button>
-                <t-button size="small" variant="outline" shape="round" @click.stop="handleAddToKnowledge(event)"
+                <t-button v-if="!readOnly" size="small" variant="outline" shape="round" @click.stop="handleAddToKnowledge(event)"
                   :title="$t('agent.addToKnowledgeBase')">
                   <t-icon name="bookmark-add" />
                 </t-button>
@@ -421,12 +421,12 @@
                      assistant message recorded any generated files. Agent
                      mode is the primary path for skills, so this is where
                      the button is most likely to appear. -->
-                <span v-if="hasArtifacts || artifactsCollecting" class="answer-toolbar__artifact"
+                <span v-if="hasArtifacts || (!readOnly && artifactsCollecting)" class="answer-toolbar__artifact"
                   :class="{ 'is-collecting': artifactButtonCollecting, 'is-arrived': artifactArrived }"
                   @animationend="onArtifactArriveEnd">
                   <t-button size="small" variant="outline" shape="round"
                     :disabled="artifactButtonCollecting"
-                    :title="hasArtifacts ? $t('agent.artifactDrawer.buttonTitle') : $t('agent.artifactDrawer.collecting')"
+                    :title="readOnly ? $t('agent.artifactDrawer.sessionTitle') : hasArtifacts ? $t('agent.artifactDrawer.buttonTitle') : $t('agent.artifactDrawer.collecting')"
                     @click.stop="openArtifactDrawer()">
                     <t-icon v-if="artifactButtonCollecting" name="loading" class="answer-toolbar__artifact-spinner" />
                     <t-icon v-else name="folder" />
@@ -622,12 +622,13 @@
     </template>
   </t-drawer>
   <ChatArtifactsDrawer
-    v-if="hasArtifacts && embeddedMode && sessionIdForArtifacts && messageIdForArtifacts"
+    v-if="hasArtifacts && (embeddedMode || readOnly) && sessionIdForArtifacts && messageIdForArtifacts"
     v-model:visible="showArtifactDrawer"
     :session-id="sessionIdForArtifacts"
     :message-id="messageIdForArtifacts"
     :artifacts="liveArtifacts"
     :preview-index="artifactPreviewIndex"
+    :channel-artifact="readOnly"
   />
 </template>
 
@@ -989,6 +990,7 @@ interface SessionData {
 
 const props = defineProps<{
   session: SessionData;
+  readOnly?: boolean;
   sessionId?: string;
   userQuery?: string;
   embeddedMode?: boolean;
@@ -1092,7 +1094,7 @@ const messageIdForArtifacts = computed(() =>
 const artifactPreviewIndex = ref<number | null>(null);
 function openArtifactDrawer(previewIndex: number | null = null) {
   if (!hasArtifacts.value) return;
-  if (sandboxPanel && !props.embeddedMode) {
+  if (sandboxPanel && !props.embeddedMode && !props.readOnly) {
     if (previewIndex == null) {
       sandboxPanel.toggleArtifacts(messageIdForArtifacts.value);
     } else {
@@ -1111,7 +1113,7 @@ const artifactRefContext = computed(() => {
   const sessionId = sessionIdForArtifacts.value;
   const messageId = messageIdForArtifacts.value;
   if (!sessionId || !messageId) return null;
-  return { sessionId, messageId };
+  return { sessionId, messageId, channelArtifact: props.readOnly };
 });
 
 const artifactRefLabels = computed(() => ({

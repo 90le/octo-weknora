@@ -14,10 +14,10 @@ func TestChannelArtifactGrantAndRevocation(t *testing.T) {
 	for _, sql := range []string{
 		`CREATE TABLE im_channel_web_owners (tenant_id integer, im_channel_id text,
 			web_user_id text, deleted_at datetime)`,
-		`CREATE TABLE im_channels (id text, tenant_id integer, deleted_at datetime)`,
+		`CREATE TABLE im_channels (id text, tenant_id integer, platform text, deleted_at datetime)`,
 		`CREATE TABLE tenant_members (tenant_id integer, user_id text, status text, deleted_at datetime)`,
 		`CREATE TABLE users (id text, is_active boolean, deleted_at datetime)`,
-		`INSERT INTO im_channels VALUES ('channel', 7, NULL), ('other', 7, NULL)`,
+		`INSERT INTO im_channels VALUES ('channel', 7, 'octo', NULL), ('other', 7, 'octo', NULL)`,
 		`INSERT INTO users VALUES ('alice', 1, NULL), ('bob', 1, NULL)`,
 		`INSERT INTO tenant_members VALUES (7, 'alice', 'active', NULL), (7, 'bob', 'active', NULL)`,
 		`INSERT INTO im_channel_web_owners VALUES (7, 'channel', 'alice', NULL)`,

@@ -449,9 +449,7 @@ function openPreview(item: ArtifactLibraryItem) {
 function openChannelConversation(item: ArtifactLibraryItem) {
   if (!item.im_channel_artifact) return
   previewVisible.value = false
-  void router.push({ name: 'channelArtifactConversation', params: {
-    sessionId: item.session_id, messageId: item.message_id, index: String(item.index),
-  } })
+  void router.push(`/platform/chat/${encodeURIComponent(item.session_id)}`)
 }
 
 function openSession(item: ArtifactLibraryItem) {

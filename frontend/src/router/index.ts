@@ -171,9 +171,8 @@ const router = createRouter({
         },
         {
           path: "artifacts/channels/:sessionId/messages/:messageId/:index/conversation",
-          name: "channelArtifactConversation",
-          component: () => import("../views/artifacts/ChannelConversationReadOnly.vue"),
-          meta: { requiresInit: true, requiresAuth: true, requiredCapability: 'settings.sandbox' }
+          redirect: (to) => ({ name: 'chat', params: { chatid: to.params.sessionId } }),
+          meta: { requiresInit: true, requiresAuth: true }
         },
         {
           path: "artifacts",

@@ -1405,6 +1405,7 @@ export default {
     copy: 'コピー',
     addToKnowledgeBase: 'ナレッジベースに追加',
     artifactDrawer: {
+      sessionTitle: '会話の成果物',
       buttonTitle: 'この回答で生成されたファイルを表示',
       title: '生成されたファイル',
       empty: '今回のやり取りでダウンロード可能なファイルは生成されませんでした。',

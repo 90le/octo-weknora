@@ -18,7 +18,7 @@
                 <RagPipelineProgress :session="session" :embedded-mode="embeddedMode" />
                 <AgentStreamDisplay v-if="session.isAgentMode" :session="session" :session-id="sessionId"
                     :user-query="userQuery" :rag-mode="true" :follow-up-loading="followUpLoading"
-                    :embedded-mode="embeddedMode"
+                    :embedded-mode="embeddedMode" :read-only="readOnly"
                     :can-fork="canFork"
                     :can-rewind="canRewind"
                     @fork="emit('fork', $event)"
@@ -35,7 +35,7 @@
                 <docInfo v-if="session.knowledge_references?.length" :session="session"></docInfo>
                 <AgentStreamDisplay :session="session" :session-id="sessionId" :user-query="userQuery"
                     v-if="session.isAgentMode" :follow-up-loading="followUpLoading"
-                    :embedded-mode="embeddedMode"
+                    :embedded-mode="embeddedMode" :read-only="readOnly"
                     :can-fork="canFork"
                     :can-rewind="canRewind"
                     @fork="emit('fork', $event)"
@@ -83,7 +83,7 @@
                     :title="$t('agent.copy')">
                     <t-icon name="copy" />
                 </t-button>
-                <t-button size="small" variant="outline" shape="round" @click.stop="handleAddToKnowledge"
+                <t-button v-if="!readOnly" size="small" variant="outline" shape="round" @click.stop="handleAddToKnowledge"
                     :title="$t('agent.addToKnowledgeBase')">
                     <t-icon name="bookmark-add" />
                 </t-button>
@@ -91,12 +91,12 @@
                      assistant message actually recorded any generated files.
                      Emptiness is the default: the button stays hidden for
                      conversational messages that never touched a skill. -->
-                <span v-if="hasArtifacts || artifactsCollecting" class="answer-toolbar__artifact"
+                <span v-if="hasArtifacts || (!readOnly && artifactsCollecting)" class="answer-toolbar__artifact"
                     :class="{ 'is-collecting': artifactButtonCollecting, 'is-arrived': artifactArrived }"
                     @animationend="onArtifactArriveEnd">
                     <t-button size="small" variant="outline" shape="round"
                         :disabled="artifactButtonCollecting"
-                        :title="hasArtifacts ? $t('agent.artifactDrawer.buttonTitle') : $t('agent.artifactDrawer.collecting')"
+                        :title="readOnly ? $t('agent.artifactDrawer.sessionTitle') : hasArtifacts ? $t('agent.artifactDrawer.buttonTitle') : $t('agent.artifactDrawer.collecting')"
                         @click.stop="openArtifactDrawer()">
                         <t-icon v-if="artifactButtonCollecting" name="loading" class="answer-toolbar__artifact-spinner" />
                         <t-icon v-else name="folder" />
@@ -133,12 +133,13 @@
                 :on-leave="scheduleCitationClose" />
         </Teleport>
         <ChatArtifactsDrawer
-            v-if="hasArtifacts && embeddedMode"
+            v-if="hasArtifacts && (embeddedMode || readOnly)"
             v-model:visible="showArtifactDrawer"
             :session-id="sessionId"
             :message-id="messageIdForArtifacts"
             :artifacts="liveArtifacts"
             :preview-index="artifactPreviewIndex"
+            :channel-artifact="readOnly"
         />
     </div>
 </template>
@@ -211,6 +212,7 @@ let reviewUrl = ref('')
 let reviewImg = ref(false)
 let isImgLoading = ref(false);
 const props = defineProps({
+    readOnly: { type: Boolean, default: false },
     // 必填项
     content: {
         type: String,
@@ -312,7 +314,7 @@ const messageIdForArtifacts = computed(() => {
 const artifactPreviewIndex = ref(null);
 function openArtifactDrawer(previewIndex = null) {
     if (!hasArtifacts.value) return;
-    if (sandboxPanel && !props.embeddedMode) {
+    if (sandboxPanel && !props.embeddedMode && !props.readOnly) {
         if (previewIndex == null) {
             sandboxPanel.toggleArtifacts(messageIdForArtifacts.value);
         } else {
@@ -330,7 +332,7 @@ function openArtifactDrawer(previewIndex = null) {
 const artifactRefContext = computed(() => {
     const messageId = messageIdForArtifacts.value;
     if (!props.sessionId || !messageId) return null;
-    return { sessionId: props.sessionId, messageId };
+    return { sessionId: props.sessionId, messageId, channelArtifact: props.readOnly };
 });
 
 // Shared replies must authorize files through the persisted message, just as

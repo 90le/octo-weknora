@@ -1,9 +1,0 @@
-// Component-scoped messages avoid concurrent edits to the shared locale files.
-export const channelConversationMessages = {
-  'zh-CN': { title: '渠道对话记录', scope: '只读：仅显示 WeKnora 保存的本次渠道会话中用户和助手的文本，不是 Octo 完整聊天记录。', error: '无法读取记录，访问权限可能已变化。', loading: '正在读取…', user: '用户', assistant: '助手', previous: '上一页', next: '下一页', page: '第 {page} 页' },
-  'zh-TW': { title: '渠道對話記錄', scope: '唯讀：僅顯示 WeKnora 保存的本次渠道會話中使用者和助理的文字，並非 Octo 完整聊天記錄。', error: '無法讀取記錄，存取權限可能已變更。', loading: '讀取中…', user: '使用者', assistant: '助理', previous: '上一頁', next: '下一頁', page: '第 {page} 頁' },
-  'en-US': { title: 'Channel conversation', scope: 'Read-only: only user and assistant text saved by WeKnora for this channel session is shown. This is not the complete Octo chat history.', error: 'Unable to read the conversation. Access may have changed.', loading: 'Loading…', user: 'User', assistant: 'Assistant', previous: 'Previous', next: 'Next', page: 'Page {page}' },
-  'ja-JP': { title: 'チャネルの会話', scope: '読み取り専用：WeKnora に保存されたこのチャネル会話のユーザーとアシスタントのテキストのみを表示します。Octo の完全な履歴ではありません。', error: '会話を読み込めません。アクセス権が変更された可能性があります。', loading: '読み込み中…', user: 'ユーザー', assistant: 'アシスタント', previous: '前へ', next: '次へ', page: '{page} ページ' },
-  'ko-KR': { title: '채널 대화', scope: '읽기 전용: WeKnora에 저장된 이 채널 세션의 사용자 및 어시스턴트 텍스트만 표시합니다. 전체 Octo 대화 기록은 아닙니다.', error: '대화를 불러올 수 없습니다. 접근 권한이 변경되었을 수 있습니다.', loading: '불러오는 중…', user: '사용자', assistant: '어시스턴트', previous: '이전', next: '다음', page: '{page} 페이지' },
-  'ru-RU': { title: 'Диалог канала', scope: 'Только чтение: показан только текст пользователя и ассистента, сохранённый WeKnora для этой сессии канала. Это не полная история чата Octo.', error: 'Не удалось загрузить диалог. Права доступа могли измениться.', loading: 'Загрузка…', user: 'Пользователь', assistant: 'Ассистент', previous: 'Назад', next: 'Далее', page: 'Страница {page}' },
-}
