@@ -40,9 +40,11 @@ type imArtifactCollector interface {
 	ValidateIM(context.Context, *appservice.IMArtifactSnapshot, bool) error
 }
 
-type imArtifactTurnKey struct{}
-type imOctoArtifactGuardKey struct{}
-type imFileRequestKey struct{}
+type (
+	imArtifactTurnKey      struct{}
+	imOctoArtifactGuardKey struct{}
+	imFileRequestKey       struct{}
+)
 
 type imDeliveredTextCollector interface {
 	PersistDeliveredText(

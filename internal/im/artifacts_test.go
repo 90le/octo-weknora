@@ -548,8 +548,10 @@ func TestIMPPTRequestCollectsAndDeliversRealOutput(t *testing.T) {
 				session: &types.Session{ID: "session", TenantID: 7}, agent: &types.CustomAgent{TenantID: 7},
 				adapter: adapter, scope: scope,
 			}
-			s := &Service{artifactCollector: collector,
-				defaultFileSvc: &memoryIMArtifactFiles{files: map[string][]byte{file.URL: []byte("real presentation")}}}
+			s := &Service{
+				artifactCollector: collector,
+				defaultFileSvc:    &memoryIMArtifactFiles{files: map[string][]byte{file.URL: []byte("real presentation")}},
+			}
 			ctx := s.beginIMArtifactTurn(imArtifactTestGrant(s.businessContext(context.Background(), req, scope)), req)
 			instruction, _ := ctx.Value(executionContextKey{}).(string)
 			require.Contains(t, instruction, "/workspace/output/")
