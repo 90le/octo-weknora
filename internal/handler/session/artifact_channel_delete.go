@@ -48,7 +48,7 @@ func (h *Handler) DeleteChannelArtifact(c *gin.Context) {
 		return
 	}
 	expiry, err := claims.GetExpirationTime()
-	if err != nil || expiry == nil || !expiry.Time.After(time.Now()) {
+	if err != nil || expiry == nil || !expiry.After(time.Now()) {
 		_ = c.Error(errors.NewNotFoundError("artifact not accessible"))
 		return
 	}

@@ -1084,14 +1084,14 @@ onUnmounted(() => {
 </script>
 
 <style lang="less" scoped>
-.rq-supplement { margin: 16px 0; padding: 16px; border: 1px solid var(--td-component-border); border-radius: 8px; }
+.rq-supplement { margin: 16px 0; padding: 16px; border: 1px solid var(--td-component-border); border-radius: var(--app-radius-md); }
 .rq-supplement-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
 .rq-supplement p { margin: 8px 0; }
 .rq-preparation { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--td-component-border); }
 .rq-preparation ul { margin: 8px 0 0; padding-left: 20px; }
 .rq-supplement small { display: block; margin-top: 6px; color: var(--td-text-color-secondary); }
 .rq-sandbox-select { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rq-sandbox-select select { max-width: 100%; padding: 4px 8px; border: 1px solid var(--td-component-border); border-radius: 4px; background: var(--td-bg-color-container); color: var(--td-text-color-primary); }
+.rq-sandbox-select select { max-width: 100%; padding: 4px 8px; border: 1px solid var(--td-component-border); border-radius: var(--app-radius-xs); background: var(--td-bg-color-container); color: var(--td-text-color-primary); }
 
 .runtime-queues {
   color: var(--td-text-color-primary);
