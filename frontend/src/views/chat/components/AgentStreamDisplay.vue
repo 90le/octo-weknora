@@ -622,13 +622,13 @@
     </template>
   </t-drawer>
   <ChatArtifactsDrawer
-    v-if="hasArtifacts && (embeddedMode || readOnly) && sessionIdForArtifacts && messageIdForArtifacts"
+    v-if="hasArtifacts && (embeddedMode || readOnly || channelArtifact) && sessionIdForArtifacts && messageIdForArtifacts"
     v-model:visible="showArtifactDrawer"
     :session-id="sessionIdForArtifacts"
     :message-id="messageIdForArtifacts"
     :artifacts="liveArtifacts"
     :preview-index="artifactPreviewIndex"
-    :channel-artifact="readOnly"
+    :channel-artifact="channelArtifact || readOnly"
   />
 </template>
 
@@ -991,6 +991,7 @@ interface SessionData {
 const props = defineProps<{
   session: SessionData;
   readOnly?: boolean;
+  channelArtifact?: boolean;
   sessionId?: string;
   userQuery?: string;
   embeddedMode?: boolean;
@@ -1094,7 +1095,7 @@ const messageIdForArtifacts = computed(() =>
 const artifactPreviewIndex = ref<number | null>(null);
 function openArtifactDrawer(previewIndex: number | null = null) {
   if (!hasArtifacts.value) return;
-  if (sandboxPanel && !props.embeddedMode && !props.readOnly) {
+  if (sandboxPanel && !props.embeddedMode && !props.readOnly && !props.channelArtifact) {
     if (previewIndex == null) {
       sandboxPanel.toggleArtifacts(messageIdForArtifacts.value);
     } else {
@@ -1113,7 +1114,7 @@ const artifactRefContext = computed(() => {
   const sessionId = sessionIdForArtifacts.value;
   const messageId = messageIdForArtifacts.value;
   if (!sessionId || !messageId) return null;
-  return { sessionId, messageId, channelArtifact: props.readOnly };
+  return { sessionId, messageId, channelArtifact: props.channelArtifact || props.readOnly };
 });
 
 const artifactRefLabels = computed(() => ({

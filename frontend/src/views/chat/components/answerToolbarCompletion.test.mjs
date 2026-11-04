@@ -43,8 +43,12 @@ test('artifact count is a top-right overlay instead of t-badge', () => {
 test('artifact toolbar opens the sandbox panel artifacts tab', () => {
   assert.match(botMessage, /sandboxPanel.open\('artifacts'/)
   assert.match(agentStream, /sandboxPanel.open\('artifacts'/)
-  assert.match(botMessage, /v-if="hasArtifacts && \(embeddedMode \|\| readOnly\)"/)
-  assert.match(agentStream, /v-if="hasArtifacts && \(embeddedMode \|\| readOnly\)/)
+  assert.match(botMessage, /v-if="hasArtifacts && \(embeddedMode \|\| readOnly \|\| channelArtifact\)"/)
+  assert.match(agentStream, /v-if="hasArtifacts && \(embeddedMode \|\| readOnly \|\| channelArtifact\)/)
+  for (const component of [botMessage, agentStream]) {
+    assert.match(component, /:channel-artifact="channelArtifact \|\| readOnly"/)
+    assert.match(component, /!props\.readOnly && !props\.channelArtifact/)
+  }
 })
 
 test('artifact toolbar uses a folder icon and replaces it while collecting', () => {
