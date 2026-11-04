@@ -84,7 +84,7 @@
                 <div class="artifact-drawer-header-icon">
                     <t-icon name="folder" />
                 </div>
-                <div class="artifact-drawer-header-title">{{ $t('agent.artifactDrawer.title') }}</div>
+                <div class="artifact-drawer-header-title">{{ $t(channelArtifact ? 'agent.artifactDrawer.sessionTitle' : 'agent.artifactDrawer.title') }}</div>
             </div>
         </template>
         <div v-if="previewItem" class="artifact-preview-body">
@@ -93,6 +93,7 @@
                 :session-id="sessionId"
                 :message-id="messageId"
                 :artifact-index="previewItem.index"
+                :channel-artifact="channelArtifact"
                 :file-type="previewFileType"
                 :file-name="previewItem.file_name"
                 :active="internalVisible"
@@ -179,6 +180,7 @@ import { computed, onMounted, onUnmounted, ref, watch, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { downloadArtifact, listMessageArtifacts, type ArtifactMeta } from '@/api/chat'
+import { downloadChannelArtifact } from '@/api/artifacts'
 import { getFileIcon } from '@/utils/files'
 import { resolveFilePreviewExt } from '@/utils/filePreview'
 import DocumentPreview from '@/components/document-preview.vue'
@@ -190,6 +192,7 @@ const PREVIEW_MIN_WIDTH = 520
 
 const props = defineProps<{
     visible: boolean
+    channelArtifact?: boolean
     sessionId: string
     messageId: string
     artifacts?: ArtifactMeta[]
@@ -405,7 +408,9 @@ async function handleDownload(item: ArtifactMeta) {
     }
     downloading[item.index] = true
     try {
-        const blob = await downloadArtifact(props.sessionId, props.messageId, item.index)
+        const blob = await (props.channelArtifact
+            ? downloadChannelArtifact({ session_id: props.sessionId, message_id: props.messageId, index: item.index })
+            : downloadArtifact(props.sessionId, props.messageId, item.index))
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url

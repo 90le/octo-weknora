@@ -1405,6 +1405,7 @@ export default {
     copy: 'Copy',
     addToKnowledgeBase: 'Add to Knowledge Base',
     artifactDrawer: {
+      sessionTitle: 'Conversation artifacts',
       buttonTitle: 'View files generated in this reply',
       title: 'Generated files',
       empty: 'No downloadable files were generated this turn.',

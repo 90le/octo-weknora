@@ -291,7 +291,9 @@ func (r *messageRepository) GetChannelArtifactMessage(
 		Joins("JOIN sessions s ON s.id = ma.session_id AND s.deleted_at IS NULL").
 		Where(
 			"s.tenant_id = ? AND ma.session_id = ? AND ma.message_id = ? AND ma.position = ? "+
-				"AND ma.deleted_at IS NULL AND "+channelArtifactGrant,
+				"AND ma.deleted_at IS NULL AND "+channelArtifactGrant+" AND "+unambiguousChannelSession+
+				" AND EXISTS (SELECT 1 FROM im_channel_sessions x JOIN im_channels c ON c.id = x.im_channel_id "+
+				"AND c.tenant_id = x.tenant_id WHERE x.session_id = s.id AND c.platform = 'octo')",
 			tenantID, sessionID, messageID, position, true, userID,
 		).
 		Count(&count).Error

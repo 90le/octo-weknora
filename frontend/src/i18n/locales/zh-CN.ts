@@ -7382,6 +7382,7 @@ export default {
     copy: '复制',
     addToKnowledgeBase: '添加到知识库',
     artifactDrawer: {
+      sessionTitle: '会话产物',
       buttonTitle: '查看本次生成的文件',
       title: '生成的文件',
       empty: '本次未生成可下载的文件',

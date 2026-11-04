@@ -387,7 +387,7 @@ async function fetchPreviewBlob(): Promise<Blob> {
     Number.isInteger(props.artifactIndex) &&
     (props.artifactIndex as number) >= 0
   ) {
-    if (props.channelArtifact) return downloadChannelArtifact({session_id: props.sessionId, message_id: props.messageId, index: props.artifactIndex} as any);
+    if (props.channelArtifact) return downloadChannelArtifact({session_id: props.sessionId, message_id: props.messageId, index: props.artifactIndex as number});
     return downloadArtifact(props.sessionId, props.messageId, props.artifactIndex as number);
   }
   throw new Error('Missing preview source');

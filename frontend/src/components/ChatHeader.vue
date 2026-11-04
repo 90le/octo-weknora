@@ -31,7 +31,7 @@
       class="chat-header__workspace"
     >{{ workspaceLabel }}</span>
     <t-popup
-      v-if="!titleEditing"
+      v-if="!titleEditing && !readOnly"
       v-model:visible="menuVisible"
       :overlay-class-name="menuOverlayClass"
       trigger="click"
@@ -124,6 +124,7 @@ type MenuMode = 'menu' | 'delete'
 
 const props = defineProps<{
   session: ChatHeaderSession | null
+  readOnly?: boolean
 }>()
 
 const { t } = useI18n()
@@ -178,7 +179,7 @@ async function copyText(text: string): Promise<void> {
 }
 
 function startTitleEdit(): void {
-  if (!props.session || busyAction.value) return
+  if (props.readOnly || !props.session || busyAction.value) return
   menuVisible.value = false
   titleDraft.value = props.session.title || ''
   titleEditing.value = true

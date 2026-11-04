@@ -121,6 +121,7 @@ func RegisterSessionRoutes(
 	{
 		artifacts.GET("", handler.ListArtifactLibrary)
 		artifacts.GET("/usage", handler.GetArtifactUsage)
+		artifacts.GET("/channels/:id/chat", handler.ReadChannelChat)
 		artifacts.GET("/channels/:id/messages/:message_id/:index/download", handler.DownloadChannelArtifact)
 		artifacts.GET("/channels/:id/messages/:message_id/:index/conversation", handler.ReadChannelConversation)
 		artifacts.DELETE("/channels/:id/messages/:message_id/:index", handler.DeleteChannelArtifact)

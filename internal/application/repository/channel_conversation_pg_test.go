@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
@@ -75,6 +76,37 @@ func TestPostgresChannelConversation(t *testing.T) {
 	require.NoError(t, tx.Exec(string(migration)).Error)
 	require.NoError(t, tx.Exec(`INSERT INTO im_channel_web_owners(id,tenant_id,im_channel_id,web_user_id) `+
 		`VALUES ('owner',7,'channel','alice')`).Error)
+	for _, statement := range []string{
+		`ALTER TABLE sessions ADD COLUMN title TEXT, ADD COLUMN created_at TIMESTAMPTZ, ` +
+			`ADD COLUMN updated_at TIMESTAMPTZ`,
+		`ALTER TABLE messages ADD COLUMN request_id TEXT, ADD COLUMN is_completed BOOLEAN, ` +
+			`ADD COLUMN is_fallback BOOLEAN, ADD COLUMN channel TEXT, ADD COLUMN updated_at TIMESTAMPTZ, ` +
+			`ADD COLUMN knowledge_references JSON`,
+		`ALTER TABLE message_artifacts ADD COLUMN url TEXT, ADD COLUMN file_name TEXT, ADD COLUMN file_type TEXT, ` +
+			`ADD COLUMN file_size BIGINT, ADD COLUMN created_at TIMESTAMPTZ`,
+		`UPDATE sessions SET title = 'chat', created_at = now(), updated_at = now()`,
+		`UPDATE messages SET knowledge_references = '[]'::json, is_completed = true, is_fallback = false, ` +
+			`request_id = '', channel = 'im', updated_at = now()`,
+		`UPDATE message_artifacts SET url = '', file_name = 'report', file_type = '.txt', ` +
+			`file_size = 1, created_at = now()`,
+	} {
+		require.NoError(t, tx.Exec(statement).Error)
+	}
+	chat := NewMessageRepository(tx).(interface {
+		ReadChannelChat(
+			context.Context, uint64, string, string, int, *time.Time, string,
+		) (*types.Session, []*types.Message, error)
+	})
+	_, latest, err := chat.ReadChannelChat(context.Background(), 7, "alice", "session", 2, nil, "")
+	require.NoError(t, err)
+	require.Len(t, latest, 2)
+	cursorTime, cursorID := latest[0].CreatedAt, latest[0].ID
+	_, previous, err := chat.ReadChannelChat(context.Background(), 7, "alice", "session", 2, &cursorTime, cursorID)
+	require.NoError(t, err)
+	require.Len(t, previous, 2)
+	require.NotEqual(t, cursorID, previous[len(previous)-1].ID)
+	_, _, err = chat.ReadChannelChat(context.Background(), 7, "bob", "session", 2, nil, "")
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
 	repo := NewMessageRepository(tx).(interface {
 		ReadChannelConversation(
 			context.Context, uint64, string, string, string, int, int,
