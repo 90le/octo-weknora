@@ -24,7 +24,9 @@ type continueMessageStub struct {
 	bound bool
 }
 
-func (s continueMessageStub) ReadChannelChat(_ context.Context, id string, _ int, _ *time.Time, _ string) (*types.Session, []*types.Message, error) {
+func (s continueMessageStub) ReadChannelChat(
+	_ context.Context, id string, _ int, _ *time.Time, _ string,
+) (*types.Session, []*types.Message, error) {
 	if !s.bound {
 		return nil, nil, errors.New("not bound")
 	}
@@ -34,6 +36,7 @@ func (s continueMessageStub) ReadChannelChat(_ context.Context, id string, _ int
 func (s continueSessionStub) GetSession(_ context.Context, id string) (*types.Session, error) {
 	return &types.Session{ID: id, IMPlatform: "octo"}, nil
 }
+
 func (s continueSessionStub) GetOwnedSession(_ context.Context, id string) (*types.Session, error) {
 	if !s.owned {
 		return nil, errors.New("not owner")
@@ -44,7 +47,10 @@ func (s continueSessionStub) GetOwnedSession(_ context.Context, id string) (*typ
 func TestChannelContinueRequiresOwnedSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct{ owned, bound bool }{{false, false}, {false, true}, {true, false}, {true, true}} {
-		h := &Handler{sessionService: continueSessionStub{owned: tc.owned}, messageService: continueMessageStub{bound: tc.bound}}
+		h := &Handler{
+			sessionService: continueSessionStub{owned: tc.owned},
+			messageService: continueMessageStub{bound: tc.bound},
+		}
 		r := gin.New()
 		r.GET("/sessions/:id", h.GetSession)
 		w := httptest.NewRecorder()
