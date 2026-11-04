@@ -1,5 +1,13 @@
 # 项目进度
 
+## 2026-11-04 产物管理与运行状态（生产）
+
+- [PR #128](https://github.com/90le/octo-weknora/pull/128) 合并提交 `ee01f20d9e44ff0fdc7ebd21a9eb0519b12634e0`；生产后端 `local/octo-weknora-app:ops-5d82aa8`（`sha256:ee20a8057ab918b03a9c14b5f764cf2842267445775997ee865bfe912913f2e8`），前端 `local/octo-weknora-ui:ops-5d82aa8`（`sha256:8c47c5bc1071fd9baf684d5519f875b24f577c1e4523743957cdb6cf2baad7f0`）。CI、定向测试与隔离 PostgreSQL 权限检查通过。
+- 产物页支持 Web 和已绑定 Octo 渠道筛选、已加载条目的批量删除、单项安全删除、可见产物逻辑大小统计；统计不是物理磁盘占用。共享引用受到保护，已投递的 Octo 附件不随产物库删除。只有绑定账户可以查看对应渠道的私聊和群聊产物。
+- Octo 原生外部消息直达链接缺少可验证契约；定位打开 Web 中已保存的用户／助手文本只读视图，定位到产物消息，不代表完整 Octo 聊天记录。每页重验绑定；会话存在多个渠道映射时拒绝展示。
+- 管理员队列页展示 IM 排队、沙箱运行数量及固定类别的准备失败次数；容量不可可靠获得时显示未知，计数在应用重启后重置。真实页面和 Octo 客户端的新增功能验收尚待用户操作。
+- 切换前活动消息、解析、同步及投递均为零；切换前后活动知识条目均为 1633，数据库 `134:false`，自动迁移关闭，注册返回 403；绑定账户和应用健康已回读。Compose 回退文件 `/srv/octo-isolated-20261027/compose.before-octo-ops-20261104T040329Z.json`，旧预览容器 `octo-ops-preview-rollback-20261104T040329Z`；旧应用及前端镜像保留。未修改知识库文档或索引。
+
 ## 2026-11-04 Octo 渠道产物库（已上线，用户验收待回报）
 
 - [PR #126](https://github.com/90le/octo-weknora/pull/126) 合并提交 `5780f6a13c44cfce31c5314784d56a4b3650209b`；生产后端 `local/octo-weknora-app:binding-v4`（`sha256:a67bb0be4d388ef3c8acaa74c0accb2ed01faf544acca8a3fa224869de5ed5f9`），前端 `local/octo-weknora-ui:binding-candidate-20261103`（`sha256:78c53fa2a329d1af2f8e15429f1dc0031414df72a7d51111141fd935dfb8676d`）。全部 CI 通过。
