@@ -58,3 +58,52 @@ export const syncScopeName = (id: string) => post(`${root}/scopes/${encodeURICom
 export const inspectMemberRole = (scope: string, uid: string) => get(`${root}/scopes/${encodeURIComponent(scope)}/members/${encodeURIComponent(uid)}/role`) as unknown as Promise<Envelope<{ uid: string; kind: string; role: string; can_manage_group: boolean; reason: string }>>
 export interface OctoChannelEvent {message_id:string;state:string;attempts:number;error_code:string;created_at:string;updated_at:string}
 export const channelEvents=(id:string)=>get(`/api/v1/im-channels/${encodeURIComponent(id)}/events`) as unknown as Promise<Envelope<OctoChannelEvent[]>>
+
+export interface OctoPage<T> { items: T[]; total: number }
+export interface OctoGroupEntry { group_id: string; display_name: string; bot_count: number; subarea_count: number; pending: number }
+export interface OctoBotEntry { account_id: string; name: string; connected: boolean; verified: boolean; group_count: number }
+export interface OctoAreaEntry { subarea_id: string; display_name: string }
+export interface OctoComparison { bot: OctoBotEntry; scope: OctoScope | null; query_count: number; manage_count: number }
+export interface OctoScopeConfiguration {
+  query_ids: string[]
+  manage_ids: string[]
+  inherit_parent: boolean
+  allow_knowledge_creation: boolean
+  aggregate_child_issues: boolean
+  allow_public_web: boolean
+}
+export interface OctoConfigurationSnapshot {
+  scope: OctoScope
+  query_ids: string[]
+  manage_ids: string[]
+  parent_query_ids: string[]
+  child_areas: OctoAreaEntry[]
+  revision: string
+}
+export interface OctoAccessState { query_mode: 'none' | 'inherited' | 'direct'; can_manage: boolean }
+export interface OctoConfigurationPreview {
+  token: string
+  impacts: Array<{ scope_id: string; display_name: string; subarea_id: string; changes: Array<{
+    knowledge_base_id: string; before: OctoAccessState; after: OctoAccessState
+  }> }>
+}
+type DirectoryQuery = { q?: string; account_id?: string; group_id?: string; subarea_id?: string; filter?: string; limit?: number; offset?: number }
+function directory<T>(path: string, query: DirectoryQuery) {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, String(value))
+  return get(`${root}/directory/${path}?${params}`) as unknown as Promise<Envelope<OctoPage<T>>>
+}
+export const directoryGroups = (q: DirectoryQuery) => directory<OctoGroupEntry>('groups', q)
+export const directoryBots = (q: DirectoryQuery) => directory<OctoBotEntry>('bots', q)
+export const directoryAreas = (q: DirectoryQuery) => directory<OctoAreaEntry>('areas', q)
+export const directoryComparison = (q: DirectoryQuery) => directory<OctoComparison>('comparison', q)
+const configPath = (id: string) => `${root}/scopes/${encodeURIComponent(id)}/configuration`
+export const readOctoConfiguration = (id: string) => get(configPath(id)) as unknown as Promise<Envelope<OctoConfigurationSnapshot>>
+export const previewOctoConfiguration = (id: string, revision: string, configuration: OctoScopeConfiguration) =>
+  post(`${configPath(id)}/preview`, { revision, configuration }) as unknown as Promise<Envelope<OctoConfigurationPreview>>
+export const saveOctoConfiguration = (id: string, revision: string, token: string, configuration: OctoScopeConfiguration) =>
+  put(configPath(id), { revision, token, configuration }) as unknown as Promise<Envelope<OctoConfigurationPreview>>
+export const removeOctoScope = (id: string, revision: string) =>
+  del(`${root}/scopes/${encodeURIComponent(id)}?revision=${encodeURIComponent(revision)}`)
+export const previewOctoAttachment = (target: { account_id: string; group_id: string; subarea_id: string }) =>
+  post(`${root}/scopes/attach-preview`, target) as unknown as Promise<Envelope<OctoAreaEntry>>

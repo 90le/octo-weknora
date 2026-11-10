@@ -119,7 +119,7 @@ func (s *Store) Create(ctx context.Context, scope Scope) (*Scope, error) {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if scope.SubareaID != "" {
 			var parent Scope
-			if err := tx.Where("tenant_id = ? AND account_id = ? AND group_id = ? AND subarea_id = ''", scope.TenantID, scope.AccountID, scope.GroupID).First(&parent).Error; err != nil {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id = ? AND account_id = ? AND group_id = ? AND subarea_id = ''", scope.TenantID, scope.AccountID, scope.GroupID).First(&parent).Error; err != nil {
 				return err
 			}
 		}
@@ -167,7 +167,7 @@ func (s *Store) Update(ctx context.Context, tenant uint64, id, name string, inhe
 func (s *Store) UpdateSettings(ctx context.Context, tenant uint64, id string, settings ScopeSettings) (*Scope, error) {
 	var updated *Scope
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		scope, err := NewStore(tx).Get(ctx, tenant, id)
+		scope, _, err := lockScopeFamily(tx, tenant, id)
 		if err != nil {
 			return err
 		}
@@ -204,7 +204,7 @@ func (s *Store) UpdateSettings(ctx context.Context, tenant uint64, id string, se
 // authorization. The database query additionally disallows cross-tenant assets.
 func (s *Store) SetBinding(ctx context.Context, tenant uint64, scopeID, kbID string, enabled bool, management ...bool) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := NewStore(tx).Get(ctx, tenant, scopeID); err != nil {
+		if _, _, err := lockScopeFamily(tx, tenant, scopeID); err != nil {
 			return err
 		}
 		if !enabled {
@@ -308,7 +308,7 @@ func (s *Store) ManagedKnowledgeBases(ctx context.Context, tenant uint64, scopeI
 // RevokeKnowledgeManagement leaves the ordinary read binding unchanged.
 func (s *Store) RevokeKnowledgeManagement(ctx context.Context, tenant uint64, scopeID, kbID string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if _, err := NewStore(tx).Get(ctx, tenant, scopeID); err != nil {
+		if _, _, err := lockScopeFamily(tx, tenant, scopeID); err != nil {
 			return err
 		}
 		if err := tx.Where("tenant_id = ? AND scope_id = ? AND knowledge_base_id = ?", tenant, scopeID, kbID).Delete(&KnowledgeManagementGrant{}).Error; err != nil {

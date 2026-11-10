@@ -3,7 +3,7 @@
     <template #navigation>
       <nav class="operations-navigation" aria-label="渠道管理">
         <router-link :to="{name:'knowledgeChannels'}" :aria-current="!isGroups?'page':undefined">Bot 与私聊</router-link>
-        <router-link :to="{name:'octoGroups'}" :aria-current="isGroups?'page':undefined">Octo 群与子区</router-link>
+        <router-link :to="{name:'octoGroups'}" :aria-current="isGroups?'page':undefined">Octo 群与 Bot</router-link>
       </nav>
     </template>
     <OctoScopePanel v-if="isGroups" :key="workspaceKey" />

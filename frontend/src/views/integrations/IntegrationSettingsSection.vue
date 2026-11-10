@@ -2,7 +2,7 @@
   <div class="integrations-settings">
     <div class="integrations-settings__body" :class="{ 'integrations-settings__body--landing': isLandingSection }">
       <t-tabs v-if="tab === 'octo'" v-model="octoTab">
-        <t-tab-panel value="scopes" label="群与知识库"><OctoScopePanel /></t-tab-panel>
+        <t-tab-panel value="scopes" label="群与 Bot"><OctoScopePanel /></t-tab-panel>
         <t-tab-panel value="business" label="问题与联系人"><OctoBusinessPanel /></t-tab-panel>
       </t-tabs>
       <div v-if="tab === 'im'" class="section">

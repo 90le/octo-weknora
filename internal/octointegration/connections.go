@@ -148,19 +148,43 @@ func (s *Store) SyncName(ctx context.Context, tenant uint64, id string, p *platf
 	return s.Get(ctx, tenant, id)
 }
 
-func (s *Store) CreateVerified(ctx context.Context, scope Scope, p *platformClient) (*Scope, error) {
+// verifyAttachment performs read-only platform and local checks. Create repeats
+// these checks and relies on the locked parent and unique tuple at commit time.
+func (s *Store) verifyAttachment(ctx context.Context, scope Scope, p *platformClient) (Scope, *Connection, error) {
 	if scope.TenantID == 0 || !validID(scope.AccountID) {
-		return nil, ErrInvalid
+		return scope, nil, ErrInvalid
+	}
+	db := s.db.WithContext(ctx)
+	var existing int64
+	if err := db.Model(&Scope{}).Where("tenant_id = ? AND account_id = ? AND group_id = ? AND subarea_id = ?", scope.TenantID, scope.AccountID, scope.GroupID, scope.SubareaID).Count(&existing).Error; err != nil {
+		return scope, nil, err
+	}
+	if existing != 0 {
+		return scope, nil, gorm.ErrDuplicatedKey
+	}
+	if scope.SubareaID != "" {
+		var parent Scope
+		if err := db.Where("tenant_id = ? AND account_id = ? AND group_id = ? AND subarea_id = ''", scope.TenantID, scope.AccountID, scope.GroupID).First(&parent).Error; err != nil {
+			return scope, nil, err
+		}
 	}
 	c, token, err := s.connection(ctx, scope.TenantID, scope.AccountID)
 	if err != nil {
-		return nil, err
+		return scope, nil, err
 	}
 	metadata, err := p.scope(ctx, token, scope)
 	if err != nil {
-		return nil, err
+		return scope, nil, err
 	}
 	scope.DisplayName = metadata.Name
+	return scope, c, validateScope(scope)
+}
+
+func (s *Store) CreateVerified(ctx context.Context, scope Scope, p *platformClient) (*Scope, error) {
+	scope, c, err := s.verifyAttachment(ctx, scope, p)
+	if err != nil {
+		return nil, err
+	}
 	var result *Scope
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current Connection
