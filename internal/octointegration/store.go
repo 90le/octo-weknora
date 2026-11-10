@@ -119,7 +119,9 @@ func (s *Store) Create(ctx context.Context, scope Scope) (*Scope, error) {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if scope.SubareaID != "" {
 			var parent Scope
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id = ? AND account_id = ? AND group_id = ? AND subarea_id = ''", scope.TenantID, scope.AccountID, scope.GroupID).First(&parent).Error; err != nil {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("tenant_id = ? AND account_id = ? AND group_id = ?", scope.TenantID, scope.AccountID, scope.GroupID).
+				Where("subarea_id = ''").First(&parent).Error; err != nil {
 				return err
 			}
 		}

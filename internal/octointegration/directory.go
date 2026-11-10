@@ -7,11 +7,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// Page contains a bounded result set and the full filtered count.
 type Page[T any] struct {
 	Items []T   `json:"items"`
 	Total int64 `json:"total"`
 }
 
+// GroupEntry summarizes the configured scopes of one native group.
 type GroupEntry struct {
 	GroupID      string `json:"group_id"`
 	DisplayName  string `json:"display_name"`
@@ -20,6 +22,7 @@ type GroupEntry struct {
 	Pending      int    `json:"pending"`
 }
 
+// BotEntry describes a saved connection without exposing credentials.
 type BotEntry struct {
 	AccountID string `json:"account_id"`
 	Name      string `json:"name"`
@@ -28,11 +31,13 @@ type BotEntry struct {
 	Groups    int    `json:"group_count"`
 }
 
+// AreaEntry names a native subarea within a group.
 type AreaEntry struct {
 	SubareaID   string `json:"subarea_id"`
 	DisplayName string `json:"display_name"`
 }
 
+// ComparisonEntry describes one Bot's effective access in the selected region.
 type ComparisonEntry struct {
 	Bot         BotEntry `json:"bot"`
 	Scope       *Scope   `json:"scope"`
@@ -94,23 +99,28 @@ func (s *Store) bots(ctx context.Context, tenant uint64, p directoryQuery) (Page
 	// calls Octo or loads the credential to render a directory page.
 	name := "json_extract(c.verified_identity, '$.name')"
 	verified := "NULLIF(json_extract(c.verified_identity, '$.bot_uid'), '') IS NOT NULL"
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		name = "(c.verified_identity ->> 'name')"
 		verified = "NULLIF(c.verified_identity ->> 'bot_uid', '') IS NOT NULL"
 	}
-	base := db.Table("(SELECT account_id FROM octo_connections WHERE tenant_id = ? UNION SELECT account_id FROM octo_scopes WHERE tenant_id = ?) AS b", tenant, tenant).
+	base := db.Table("(SELECT account_id FROM octo_connections WHERE tenant_id = ? "+
+		"UNION SELECT account_id FROM octo_scopes WHERE tenant_id = ?) AS b", tenant, tenant).
 		Joins("LEFT JOIN octo_connections AS c ON c.tenant_id = ? AND c.account_id = b.account_id", tenant).
-		Select("b.account_id, COALESCE(NULLIF("+name+", ''), b.account_id) AS name, c.account_id IS NOT NULL AS connected, "+
-			verified+" AS verified, (SELECT COUNT(*) FROM octo_scopes AS s WHERE s.tenant_id = ? AND s.account_id = b.account_id AND s.subarea_id = '') AS groups", tenant)
+		Select("b.account_id, COALESCE(NULLIF("+name+", ''), b.account_id) AS name, "+
+			"c.account_id IS NOT NULL AS connected, "+verified+" AS verified, "+
+			"(SELECT COUNT(*) FROM octo_scopes AS s WHERE s.tenant_id = ? "+
+			"AND s.account_id = b.account_id AND s.subarea_id = '') AS groups", tenant)
 	if p.q != "" {
 		search := literalSearch(p.q)
-		base = base.Where("(LOWER(b.account_id) LIKE ? ESCAPE '!' OR LOWER("+name+") LIKE ? ESCAPE '!')", search, search)
+		base = base.Where("(LOWER(b.account_id) LIKE ? ESCAPE '!' OR LOWER("+name+") LIKE ? ESCAPE '!')",
+			search, search)
 	}
-	if p.filter == "verified" {
+	switch p.filter {
+	case "verified":
 		base = base.Where(verified)
-	} else if p.filter == "pending" {
+	case "pending":
 		base = base.Where("NOT (" + verified + ")")
-	} else if p.filter == "connected" {
+	case "connected":
 		base = base.Where("c.account_id IS NOT NULL")
 	}
 	return pageQuery[BotEntry](db, base, p, "name, account_id")
@@ -124,9 +134,11 @@ func (s *Store) areas(ctx context.Context, tenant uint64, p directoryQuery) (Pag
 	}
 	if p.q != "" {
 		search := literalSearch(p.q)
-		base = base.Where("(LOWER(display_name) LIKE ? ESCAPE '!' OR LOWER(subarea_id) LIKE ? ESCAPE '!')", search, search)
+		base = base.Where("(LOWER(display_name) LIKE ? ESCAPE '!' OR LOWER(subarea_id) LIKE ? ESCAPE '!')",
+			search, search)
 	}
-	base = base.Select("subarea_id, COALESCE(MIN(CASE WHEN sync_status = 'verified' THEN display_name END), MIN(display_name)) AS display_name").Group("subarea_id")
+	base = base.Select("subarea_id, COALESCE(MIN(CASE WHEN sync_status = 'verified' THEN display_name END), " +
+		"MIN(display_name)) AS display_name").Group("subarea_id")
 	return pageQuery[AreaEntry](db, base, p, "display_name, subarea_id")
 }
 
@@ -154,7 +166,8 @@ func (s *Store) compare(ctx context.Context, tenant uint64, p directoryQuery) (P
 		}
 	} else {
 		var children []Scope
-		if err := db.Where("tenant_id = ? AND group_id = ? AND subarea_id = ? AND account_id IN ?", tenant, p.group, p.subarea, accounts).Find(&children).Error; err != nil {
+		if err := db.Where("tenant_id = ? AND group_id = ? AND subarea_id = ?", tenant, p.group, p.subarea).
+			Where("account_id IN ?", accounts).Find(&children).Error; err != nil {
 			return result, err
 		}
 		for i := range children {
@@ -164,7 +177,8 @@ func (s *Store) compare(ctx context.Context, tenant uint64, p directoryQuery) (P
 		}
 	}
 	var connections []Connection
-	if err := db.Select("account_id, verified_identity").Where("tenant_id = ? AND account_id IN ?", tenant, accounts).Find(&connections).Error; err != nil {
+	if err := db.Select("account_id, verified_identity").
+		Where("tenant_id = ? AND account_id IN ?", tenant, accounts).Find(&connections).Error; err != nil {
 		return result, err
 	}
 	bots := map[string]BotEntry{}

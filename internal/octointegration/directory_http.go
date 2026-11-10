@@ -12,8 +12,11 @@ import (
 func parseDirectoryQuery(c *gin.Context) (directoryQuery, error) {
 	limit, limitErr := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset, offsetErr := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	p := directoryQuery{limit: limit, offset: offset, q: strings.TrimSpace(c.Query("q")),
-		account: c.Query("account_id"), group: c.Query("group_id"), subarea: c.Query("subarea_id"), filter: c.Query("filter")}
+	p := directoryQuery{
+		limit: limit, offset: offset, q: strings.TrimSpace(c.Query("q")),
+		account: c.Query("account_id"), group: c.Query("group_id"),
+		subarea: c.Query("subarea_id"), filter: c.Query("filter"),
+	}
 	if limitErr != nil || offsetErr != nil || limit < 1 || limit > 100 || offset < 0 || len(p.q) > 256 {
 		return p, ErrInvalid
 	}
@@ -30,6 +33,7 @@ func parseDirectoryQuery(c *gin.Context) (directoryQuery, error) {
 	return p, nil
 }
 
+// DirectoryGroups lists matching groups in the authenticated workspace.
 func (h *Handler) DirectoryGroups(c *gin.Context) {
 	p, err := parseDirectoryQuery(c)
 	if err != nil {
@@ -40,6 +44,7 @@ func (h *Handler) DirectoryGroups(c *gin.Context) {
 	respond(c, http.StatusOK, page, err)
 }
 
+// DirectoryBots lists saved Bot connections and configured scope accounts.
 func (h *Handler) DirectoryBots(c *gin.Context) {
 	p, err := parseDirectoryQuery(c)
 	if err != nil {
@@ -50,6 +55,7 @@ func (h *Handler) DirectoryBots(c *gin.Context) {
 	respond(c, http.StatusOK, page, err)
 }
 
+// DirectoryAreas lists configured subareas of a native group.
 func (h *Handler) DirectoryAreas(c *gin.Context) {
 	p, err := parseDirectoryQuery(c)
 	if err != nil || p.group == "" {
@@ -60,6 +66,7 @@ func (h *Handler) DirectoryAreas(c *gin.Context) {
 	respond(c, http.StatusOK, page, err)
 }
 
+// DirectoryComparison compares effective permissions in the chosen region.
 func (h *Handler) DirectoryComparison(c *gin.Context) {
 	p, err := parseDirectoryQuery(c)
 	if err != nil || p.group == "" {
@@ -70,13 +77,17 @@ func (h *Handler) DirectoryComparison(c *gin.Context) {
 	respond(c, http.StatusOK, page, err)
 }
 
+// Configuration reads one region's configuration and its revision.
 func (h *Handler) Configuration(c *gin.Context) {
 	snapshot, err := h.store.configuration(c.Request.Context(), tenant(c), c.Param("scope_id"))
 	respond(c, http.StatusOK, snapshot, err)
 }
 
+// PreviewConfiguration returns the effects without changing data.
 func (h *Handler) PreviewConfiguration(c *gin.Context) { h.changeConfiguration(c, false) }
-func (h *Handler) SaveConfiguration(c *gin.Context)    { h.changeConfiguration(c, true) }
+
+// SaveConfiguration commits a still-current reviewed configuration.
+func (h *Handler) SaveConfiguration(c *gin.Context) { h.changeConfiguration(c, true) }
 
 func (h *Handler) changeConfiguration(c *gin.Context, save bool) {
 	var req struct {
@@ -89,17 +100,20 @@ func (h *Handler) changeConfiguration(c *gin.Context, save bool) {
 		respond(c, 0, nil, ErrInvalid)
 		return
 	}
-	preview, err := h.store.changeConfiguration(c.Request.Context(), types.CallerFromContext(c.Request.Context()), tenant(c),
+	ctx := c.Request.Context()
+	preview, err := h.store.changeConfiguration(ctx, types.CallerFromContext(ctx), tenant(c),
 		c.Param("scope_id"), req.Revision, req.Token, req.Configuration, save)
 	respond(c, http.StatusOK, preview, err)
 }
 
+// RemoveScope removes only the reviewed region and its local grants.
 func (h *Handler) RemoveScope(c *gin.Context) {
 	revision := c.Query("revision")
 	if len(revision) != 64 {
 		respond(c, 0, nil, ErrInvalid)
 		return
 	}
-	err := h.store.removeScope(c.Request.Context(), types.CallerFromContext(c.Request.Context()), tenant(c), c.Param("scope_id"), revision)
+	ctx := c.Request.Context()
+	err := h.store.removeScope(ctx, types.CallerFromContext(ctx), tenant(c), c.Param("scope_id"), revision)
 	respond(c, http.StatusOK, gin.H{"removed": true}, err)
 }

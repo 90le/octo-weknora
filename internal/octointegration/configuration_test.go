@@ -20,7 +20,9 @@ func adminCaller(tenant uint64) types.Caller {
 func configurationFor(s ConfigurationSnapshot) ScopeConfiguration {
 	return ScopeConfiguration{
 		ScopeACL: s.ScopeACL, InheritParent: &s.Scope.InheritParent,
-		AllowKnowledgeCreation: s.Scope.AllowKnowledgeCreation, AggregateChildIssues: s.Scope.AggregateChildIssues, AllowPublicWeb: s.Scope.AllowPublicWeb,
+		AllowKnowledgeCreation: s.Scope.AllowKnowledgeCreation,
+		AggregateChildIssues:   s.Scope.AggregateChildIssues,
+		AllowPublicWeb:         s.Scope.AllowPublicWeb,
 	}
 }
 
@@ -43,8 +45,13 @@ func managementStore(t *testing.T) *Store {
 	t.Cleanup(func() { require.NoError(t, db.Exec("DROP SCHEMA "+schema+" CASCADE").Error) })
 	require.NoError(t, db.Exec("SET search_path TO "+schema).Error)
 	require.NoError(t, db.AutoMigrate(&types.AuditLog{}))
-	require.NoError(t, db.Exec("CREATE TABLE knowledge_bases (id VARCHAR(36) PRIMARY KEY, tenant_id BIGINT NOT NULL, deleted_at TIMESTAMP)").Error)
-	for _, file := range []string{"000119_octo_scopes", "000120_octo_connections", "000125_octo_knowledge_grants", "000127_octo_verified_identity", "000130_octo_scope_public_web"} {
+	require.NoError(t, db.Exec(`CREATE TABLE knowledge_bases (
+		id VARCHAR(36) PRIMARY KEY, tenant_id BIGINT NOT NULL, deleted_at TIMESTAMP
+	)`).Error)
+	for _, file := range []string{
+		"000119_octo_scopes", "000120_octo_connections", "000125_octo_knowledge_grants",
+		"000127_octo_verified_identity", "000130_octo_scope_public_web",
+	} {
 		sql, err := os.ReadFile("../../migrations/versioned/" + file + ".up.sql")
 		require.NoError(t, err)
 		require.NoError(t, db.Exec(string(sql)).Error)
@@ -110,7 +117,7 @@ func TestConfigurationRejectsStaleAndTamperedPreviewAndForeignKB(t *testing.T) {
 	tampered := cfg
 	tampered.ManageIDs = []string{"kb-a"}
 	_, err = s.changeConfiguration(ctx, adminCaller(1), 1, child.ID, before.Revision, p.Token, tampered, true)
-	require.ErrorIs(t, err, ErrStalePreview)
+	require.ErrorIs(t, err, errStalePreview)
 	tampered.QueryIDs = []string{"kb-b"}
 	_, err = s.changeConfiguration(ctx, adminCaller(1), 1, child.ID, before.Revision, "", tampered, false)
 	require.ErrorIs(t, err, access.ErrNotFound)
@@ -119,7 +126,7 @@ func TestConfigurationRejectsStaleAndTamperedPreviewAndForeignKB(t *testing.T) {
 
 	require.NoError(t, s.SetBinding(ctx, 1, main.ID, "kb-a", true))
 	_, err = s.changeConfiguration(ctx, adminCaller(1), 1, child.ID, before.Revision, p.Token, cfg, true)
-	require.ErrorIs(t, err, ErrStalePreview)
+	require.ErrorIs(t, err, errStalePreview)
 	fresh, err := s.configuration(ctx, 1, child.ID)
 	require.NoError(t, err)
 	require.False(t, fresh.Scope.InheritParent)
@@ -133,24 +140,27 @@ func TestScopeRemovalKeepsOtherBotAndKBAndBlocksDependencies(t *testing.T) {
 	other := createScope(t, s, 1, "bot-b", "group", "", false)
 	require.NoError(t, s.SetBinding(ctx, 1, child.ID, "kb-a", true, true))
 	require.NoError(t, s.SetBinding(ctx, 1, other.ID, "kb-a", true))
-	require.NoError(t, s.db.Exec("CREATE TABLE octo_report_schedules (tenant_id BIGINT, scope_id TEXT, enabled BOOLEAN)").Error)
+	require.NoError(t, s.db.Exec(`CREATE TABLE octo_report_schedules (
+		tenant_id BIGINT, scope_id TEXT, enabled BOOLEAN
+	)`).Error)
 	require.NoError(t, s.db.Exec("INSERT INTO octo_report_schedules VALUES (1, ?, TRUE)", child.ID).Error)
 
 	parentConfig, err := s.configuration(ctx, 1, main.ID)
 	require.NoError(t, err)
 	require.Len(t, parentConfig.ChildAreas, 1)
-	require.ErrorIs(t, s.removeScope(ctx, adminCaller(1), 1, main.ID, parentConfig.Revision), ErrScopeChildren)
+	require.ErrorIs(t, s.removeScope(ctx, adminCaller(1), 1, main.ID, parentConfig.Revision), errScopeChildren)
 	childConfig, err := s.configuration(ctx, 1, child.ID)
 	require.NoError(t, err)
-	require.ErrorIs(t, s.removeScope(ctx, adminCaller(1), 1, child.ID, childConfig.Revision), ErrScopeSchedule)
+	require.ErrorIs(t, s.removeScope(ctx, adminCaller(1), 1, child.ID, childConfig.Revision), errScopeSchedule)
 	require.NoError(t, s.db.Exec("UPDATE octo_report_schedules SET enabled = FALSE").Error)
 	require.NoError(t, s.removeScope(ctx, adminCaller(1), 1, child.ID, childConfig.Revision))
 	_, err = s.Get(ctx, 1, child.ID)
 	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
 	var removedGrants int64
-	require.NoError(t, s.db.Model(&KnowledgeManagementGrant{}).Where("scope_id = ?", child.ID).Count(&removedGrants).Error)
+	require.NoError(t, s.db.Model(&KnowledgeManagementGrant{}).
+		Where("scope_id = ?", child.ID).Count(&removedGrants).Error)
 	require.Zero(t, removedGrants)
-	require.ErrorIs(t, s.removeScope(ctx, adminCaller(1), 1, main.ID, parentConfig.Revision), ErrStalePreview)
+	require.ErrorIs(t, s.removeScope(ctx, adminCaller(1), 1, main.ID, parentConfig.Revision), errStalePreview)
 	got, err := s.Effective(ctx, 1, other.ID)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
@@ -165,7 +175,8 @@ func TestDirectoryPaginatesGroupsAndComparesTheSameSubarea(t *testing.T) {
 	createScope(t, s, 1, "bot-a", "g-2", "", false)
 	createScope(t, s, 2, "bot-c", "g-1", "", false)
 	require.NoError(t, s.SetBinding(ctx, 1, a.ID, "kb-a", true, true))
-	require.NoError(t, s.db.Exec("INSERT INTO octo_connections (tenant_id, account_id, token, verified_identity, updated_at) VALUES (1, ?, ?, ?, CURRENT_TIMESTAMP)",
+	require.NoError(t, s.db.Exec(`INSERT INTO octo_connections
+		(tenant_id, account_id, token, verified_identity, updated_at) VALUES (1, ?, ?, ?, CURRENT_TIMESTAMP)`,
 		"bot-a", "unused", `{"bot_uid":"octo-a","name":"小丘"}`).Error)
 
 	groups, err := s.groups(ctx, 1, directoryQuery{limit: 1})

@@ -281,10 +281,10 @@ onBeforeUnmount(() => { ++request; ++areaRequest; ++deepLinkRequest; clearTimeou
 .mode button[aria-pressed='true'] { color: var(--td-brand-color); border-color: var(--td-brand-color); font-weight: 600; }
 .toolbar { margin: 12px 0; }
 .toolbar :deep(.t-input__wrap) { flex: 1 1 210px; max-width: 540px; }
-select { max-width: min(100%, 280px); min-height: 32px; font: inherit; color: inherit; padding: 4px 8px; border: 1px solid var(--td-component-border); border-radius: 6px; background: var(--td-bg-color-container); }
-.area-picker { background: var(--td-bg-color-secondarycontainer); border-radius: 8px; padding: 12px 14px; }
+select { max-width: min(100%, 280px); min-height: 32px; font: inherit; color: inherit; padding: 4px 8px; border: 1px solid var(--td-component-border); border-radius: var(--app-radius-sm); background: var(--td-bg-color-container); }
+.area-picker { background: var(--td-bg-color-secondarycontainer); border-radius: var(--app-radius-md); padding: 12px 14px; }
 .section-title { margin: 16px 0 8px; }
-.table-wrap { border: 1px solid var(--td-component-border); border-radius: 8px; overflow-x: auto; }
+.table-wrap { border: 1px solid var(--td-component-border); border-radius: var(--app-radius-md); overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
 th,td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--td-component-border); overflow-wrap: anywhere; }
 th { font-weight: 500; background: var(--td-bg-color-secondarycontainer); }

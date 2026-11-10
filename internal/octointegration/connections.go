@@ -156,7 +156,9 @@ func (s *Store) verifyAttachment(ctx context.Context, scope Scope, p *platformCl
 	}
 	db := s.db.WithContext(ctx)
 	var existing int64
-	if err := db.Model(&Scope{}).Where("tenant_id = ? AND account_id = ? AND group_id = ? AND subarea_id = ?", scope.TenantID, scope.AccountID, scope.GroupID, scope.SubareaID).Count(&existing).Error; err != nil {
+	key := db.Model(&Scope{}).Where("tenant_id = ? AND account_id = ? AND group_id = ?",
+		scope.TenantID, scope.AccountID, scope.GroupID)
+	if err := key.Where("subarea_id = ?", scope.SubareaID).Count(&existing).Error; err != nil {
 		return scope, nil, err
 	}
 	if existing != 0 {
@@ -164,7 +166,8 @@ func (s *Store) verifyAttachment(ctx context.Context, scope Scope, p *platformCl
 	}
 	if scope.SubareaID != "" {
 		var parent Scope
-		if err := db.Where("tenant_id = ? AND account_id = ? AND group_id = ? AND subarea_id = ''", scope.TenantID, scope.AccountID, scope.GroupID).First(&parent).Error; err != nil {
+		if err := db.Where("tenant_id = ? AND account_id = ? AND group_id = ?",
+			scope.TenantID, scope.AccountID, scope.GroupID).Where("subarea_id = ''").First(&parent).Error; err != nil {
 			return scope, nil, err
 		}
 	}
@@ -180,6 +183,7 @@ func (s *Store) verifyAttachment(ctx context.Context, scope Scope, p *platformCl
 	return scope, c, validateScope(scope)
 }
 
+// CreateVerified attaches a platform-verified region with an empty ACL.
 func (s *Store) CreateVerified(ctx context.Context, scope Scope, p *platformClient) (*Scope, error) {
 	scope, c, err := s.verifyAttachment(ctx, scope, p)
 	if err != nil {

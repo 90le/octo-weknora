@@ -34,12 +34,18 @@ func respond(c *gin.Context, status int, data interface{}, err error) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "Octo verification failed; the last verified metadata has been retained"})
 		case errors.Is(err, ErrInvalid):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid scope configuration"})
-		case errors.Is(err, ErrStalePreview):
-			c.JSON(http.StatusConflict, gin.H{"error": "Octo configuration changed; reload and preview again", "code": "octo_stale_preview"})
-		case errors.Is(err, ErrScopeChildren):
-			c.JSON(http.StatusConflict, gin.H{"error": "remove this Bot's subareas first", "code": "octo_scope_children"})
-		case errors.Is(err, ErrScopeSchedule):
-			c.JSON(http.StatusConflict, gin.H{"error": "disable active scheduled reports first", "code": "octo_scope_schedule"})
+		case errors.Is(err, errStalePreview):
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "Octo configuration changed; reload and preview again", "code": "octo_stale_preview",
+			})
+		case errors.Is(err, errScopeChildren):
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "remove this Bot's subareas first", "code": "octo_scope_children",
+			})
+		case errors.Is(err, errScopeSchedule):
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "disable active scheduled reports first", "code": "octo_scope_schedule",
+			})
 		case errors.Is(err, access.ErrForbidden):
 			c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
 		case errors.Is(err, gorm.ErrRecordNotFound), errors.Is(err, access.ErrNotFound):
@@ -90,6 +96,7 @@ func (h *Handler) Create(c *gin.Context) {
 	respond(c, http.StatusCreated, row, err)
 }
 
+// PreviewAttachment checks the selected Bot and area without creating a scope.
 func (h *Handler) PreviewAttachment(c *gin.Context) {
 	var req struct {
 		AccountID string `json:"account_id"`
@@ -100,7 +107,9 @@ func (h *Handler) PreviewAttachment(c *gin.Context) {
 		respond(c, 0, nil, ErrInvalid)
 		return
 	}
-	scope, _, err := h.store.verifyAttachment(c.Request.Context(), Scope{TenantID: tenant(c), AccountID: req.AccountID, GroupID: req.GroupID, SubareaID: req.SubareaID}, h.platform)
+	scope, _, err := h.store.verifyAttachment(c.Request.Context(), Scope{
+		TenantID: tenant(c), AccountID: req.AccountID, GroupID: req.GroupID, SubareaID: req.SubareaID,
+	}, h.platform)
 	respond(c, http.StatusOK, AreaEntry{SubareaID: scope.SubareaID, DisplayName: scope.DisplayName}, err)
 }
 

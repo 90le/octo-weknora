@@ -15,16 +15,18 @@ import (
 )
 
 var (
-	ErrStalePreview  = errors.New("Octo configuration changed after it was read")
-	ErrScopeChildren = errors.New("Octo main group still has connected subareas")
-	ErrScopeSchedule = errors.New("Octo scope still has active scheduled reports")
+	errStalePreview  = errors.New("octo configuration changed after it was read")
+	errScopeChildren = errors.New("octo main group still has connected subareas")
+	errScopeSchedule = errors.New("octo scope still has active scheduled reports")
 )
 
+// ScopeACL holds a region's direct query bindings and independent maintenance grants.
 type ScopeACL struct {
 	QueryIDs  []string `json:"query_ids"`
 	ManageIDs []string `json:"manage_ids"`
 }
 
+// ScopeConfiguration is a complete configuration submitted for review.
 type ScopeConfiguration struct {
 	ScopeACL
 	InheritParent          *bool `json:"inherit_parent"`
@@ -38,12 +40,14 @@ type accessState struct {
 	Manage    bool   `json:"can_manage"`
 }
 
+// KnowledgeImpact compares one library's effective permissions.
 type KnowledgeImpact struct {
 	KnowledgeBaseID string      `json:"knowledge_base_id"`
 	Before          accessState `json:"before"`
 	After           accessState `json:"after"`
 }
 
+// ScopeImpact lists the changes for one exact Bot and region.
 type ScopeImpact struct {
 	ScopeID     string            `json:"scope_id"`
 	DisplayName string            `json:"display_name"`
@@ -51,6 +55,7 @@ type ScopeImpact struct {
 	Changes     []KnowledgeImpact `json:"changes"`
 }
 
+// ConfigurationSnapshot contains the local settings and their concurrency revision.
 type ConfigurationSnapshot struct {
 	Scope *Scope `json:"scope"`
 	ScopeACL
@@ -59,6 +64,7 @@ type ConfigurationSnapshot struct {
 	Revision       string      `json:"revision"`
 }
 
+// ConfigurationPreview binds the requested change to the reviewed revision.
 type ConfigurationPreview struct {
 	Token   string        `json:"token"`
 	Impacts []ScopeImpact `json:"impacts"`
@@ -85,8 +91,10 @@ func loadScopeACL(db *gorm.DB, tenant uint64, ids []string) (map[string]ScopeACL
 		for _, table := range []string{"octo_scope_bindings", "octo_scope_knowledge_grants"} {
 			var rows []struct{ ScopeID, KnowledgeBaseID string }
 			if err := db.Table(table+" AS a").Select("a.scope_id, a.knowledge_base_id").
-				Joins("JOIN knowledge_bases AS k ON k.id = a.knowledge_base_id AND k.tenant_id = a.tenant_id AND k.deleted_at IS NULL").
-				Where("a.tenant_id = ? AND a.scope_id IN ?", tenant, batch).Order("a.scope_id, a.knowledge_base_id").Scan(&rows).Error; err != nil {
+				Joins("JOIN knowledge_bases AS k ON k.id = a.knowledge_base_id "+
+					"AND k.tenant_id = a.tenant_id AND k.deleted_at IS NULL").
+				Where("a.tenant_id = ? AND a.scope_id IN ?", tenant, batch).
+				Order("a.scope_id, a.knowledge_base_id").Scan(&rows).Error; err != nil {
 				return nil, err
 			}
 			for _, row := range rows {
@@ -113,14 +121,16 @@ func lockScopeFamily(tx *gorm.DB, tenant uint64, id string) (*Scope, *Scope, err
 	}
 	var parent Scope
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("tenant_id = ? AND account_id = ? AND group_id = ? AND subarea_id = ''", tenant, scope.AccountID, scope.GroupID).
+		Where("tenant_id = ? AND account_id = ? AND group_id = ?", tenant, scope.AccountID, scope.GroupID).
+		Where("subarea_id = ''").
 		First(&parent).Error; err != nil {
 		return nil, nil, err
 	}
 	if parent.ID == id {
 		return &parent, nil, nil
 	}
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tenant_id = ? AND id = ?", tenant, id).First(scope).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("tenant_id = ? AND id = ?", tenant, id).First(scope).Error; err != nil {
 		return nil, nil, err
 	}
 	return scope, &parent, nil
@@ -137,12 +147,16 @@ func readFamily(tx *gorm.DB, tenant uint64, id string) (*familySnapshot, error) 
 	if err != nil {
 		return nil, err
 	}
-	f := &familySnapshot{ConfigurationSnapshot: ConfigurationSnapshot{Scope: scope, ParentQueryIDs: []string{}, ChildAreas: []AreaEntry{}}, children: []Scope{}}
+	f := &familySnapshot{
+		ConfigurationSnapshot: ConfigurationSnapshot{Scope: scope, ParentQueryIDs: []string{}, ChildAreas: []AreaEntry{}},
+		children:              []Scope{},
+	}
 	ids := []string{id}
 	if parent != nil {
 		ids = append(ids, parent.ID)
 	} else {
-		if err := tx.Where("tenant_id = ? AND account_id = ? AND group_id = ? AND subarea_id <> ''", tenant, scope.AccountID, scope.GroupID).
+		if err := tx.Where("tenant_id = ? AND account_id = ? AND group_id = ?", tenant, scope.AccountID, scope.GroupID).
+			Where("subarea_id <> ''").
 			Order("subarea_id, id").Find(&f.children).Error; err != nil {
 			return nil, err
 		}
@@ -203,7 +217,9 @@ func effectiveState(kb string, acl ScopeACL, parent []string) accessState {
 }
 
 func impact(scope *Scope, before, after ScopeACL, parentBefore, parentAfter []string) ScopeImpact {
-	r := ScopeImpact{ScopeID: scope.ID, SubareaID: scope.SubareaID, DisplayName: scope.DisplayName, Changes: []KnowledgeImpact{}}
+	r := ScopeImpact{
+		ScopeID: scope.ID, SubareaID: scope.SubareaID, DisplayName: scope.DisplayName, Changes: []KnowledgeImpact{},
+	}
 	ids := unionIDs(unionIDs(before.QueryIDs, before.ManageIDs), unionIDs(after.QueryIDs, after.ManageIDs))
 	ids = unionIDs(ids, unionIDs(parentBefore, parentAfter))
 	for _, id := range ids {
@@ -223,7 +239,8 @@ func authorizeACL(tx *gorm.DB, caller types.Caller, tenant uint64, ids []string,
 	}
 	for batch := range slices.Chunk(ids, 300) {
 		var kbs []types.KnowledgeBase
-		q := tx.Select("id, tenant_id").Where("tenant_id = ? AND id IN ? AND deleted_at IS NULL", tenant, batch).Order("id")
+		q := tx.Select("id, tenant_id").
+			Where("tenant_id = ? AND id IN ? AND deleted_at IS NULL", tenant, batch).Order("id")
 		if write {
 			q = q.Clauses(clause.Locking{Strength: "UPDATE"})
 		}
@@ -234,7 +251,8 @@ func authorizeACL(tx *gorm.DB, caller types.Caller, tenant uint64, ids []string,
 			return access.ErrNotFound
 		}
 		for i := range kbs {
-			if _, err := access.ResolveKB(tx.Statement.Context, access.KBRequest{Caller: caller}, &kbs[i], types.OrgRoleEditor, nil, nil); err != nil {
+			if _, err := access.ResolveKB(tx.Statement.Context, access.KBRequest{Caller: caller},
+				&kbs[i], types.OrgRoleEditor, nil, nil); err != nil {
 				return err
 			}
 		}
@@ -242,14 +260,16 @@ func authorizeACL(tx *gorm.DB, caller types.Caller, tenant uint64, ids []string,
 	return nil
 }
 
-func (s *Store) changeConfiguration(ctx context.Context, caller types.Caller, tenant uint64, id, revision, token string, cfg ScopeConfiguration, save bool) (out ConfigurationPreview, err error) {
+func (s *Store) changeConfiguration(
+	ctx context.Context, caller types.Caller, tenant uint64, id, revision, token string, cfg ScopeConfiguration, save bool,
+) (out ConfigurationPreview, err error) {
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		f, err := readFamily(tx, tenant, id)
 		if err != nil {
 			return err
 		}
 		if revision != f.Revision {
-			return ErrStalePreview
+			return errStalePreview
 		}
 		cfg, err = normalizeConfiguration(cfg, f.Scope)
 		if err != nil {
@@ -257,7 +277,7 @@ func (s *Store) changeConfiguration(ctx context.Context, caller types.Caller, te
 		}
 		out = ConfigurationPreview{Token: fingerprint([]any{revision, cfg}), Impacts: []ScopeImpact{}}
 		if save && token != out.Token {
-			return ErrStalePreview
+			return errStalePreview
 		}
 		kbs := unionIDs(unionIDs(f.QueryIDs, f.ManageIDs), unionIDs(cfg.QueryIDs, cfg.ManageIDs))
 		if f.Scope.InheritParent || *cfg.InheritParent {
@@ -274,7 +294,7 @@ func (s *Store) changeConfiguration(ctx context.Context, caller types.Caller, te
 				return err
 			}
 			if fresh.Revision != revision {
-				return ErrStalePreview
+				return errStalePreview
 			}
 		}
 		var beforeParent, afterParent []string
@@ -306,7 +326,8 @@ func (s *Store) changeConfiguration(ctx context.Context, caller types.Caller, te
 			}
 			for _, kb := range old {
 				if !slices.Contains(next, kb) {
-					if err := tx.Exec("DELETE FROM "+table+" WHERE tenant_id = ? AND scope_id = ? AND knowledge_base_id = ?", tenant, id, kb).Error; err != nil {
+					if err := tx.Exec("DELETE FROM "+table+" WHERE tenant_id = ? AND scope_id = ? AND knowledge_base_id = ?",
+						tenant, id, kb).Error; err != nil {
 						return err
 					}
 				}
@@ -324,15 +345,20 @@ func (s *Store) changeConfiguration(ctx context.Context, caller types.Caller, te
 				}
 			}
 		}
-		settings := map[string]any{"inherit_parent": *cfg.InheritParent, "allow_knowledge_creation": cfg.AllowKnowledgeCreation,
-			"aggregate_child_issues": cfg.AggregateChildIssues, "allow_public_web": cfg.AllowPublicWeb}
+		settings := map[string]any{
+			"inherit_parent":           *cfg.InheritParent,
+			"allow_knowledge_creation": cfg.AllowKnowledgeCreation,
+			"aggregate_child_issues":   cfg.AggregateChildIssues,
+			"allow_public_web":         cfg.AllowPublicWeb,
+		}
 		if err := tx.Model(&Scope{}).Where("tenant_id = ? AND id = ?", tenant, id).Updates(settings).Error; err != nil {
 			return err
 		}
 		return audit(tx, ctx, tenant, id, "octo.scope.configured", map[string]any{
 			"before": f.ScopeACL, "after": cfg, "prior_inherit_parent": f.Scope.InheritParent,
-			"prior_allow_knowledge_creation": f.Scope.AllowKnowledgeCreation, "prior_aggregate_child_issues": f.Scope.AggregateChildIssues,
-			"prior_allow_public_web": f.Scope.AllowPublicWeb,
+			"prior_allow_knowledge_creation": f.Scope.AllowKnowledgeCreation,
+			"prior_aggregate_child_issues":   f.Scope.AggregateChildIssues,
+			"prior_allow_public_web":         f.Scope.AllowPublicWeb,
 		})
 	})
 	return
@@ -345,22 +371,24 @@ func (s *Store) removeScope(ctx context.Context, caller types.Caller, tenant uin
 			return err
 		}
 		if revision != f.Revision {
-			return ErrStalePreview
+			return errStalePreview
 		}
 		if len(f.children) > 0 {
-			return ErrScopeChildren
+			return errScopeChildren
 		}
 		var activeReports int64
-		if err := tx.Table("octo_report_schedules").Where("tenant_id = ? AND scope_id = ? AND enabled = ?", tenant, id, true).Count(&activeReports).Error; err != nil {
+		if err := tx.Table("octo_report_schedules").Where("tenant_id = ? AND scope_id = ? AND enabled = ?", tenant, id, true).
+			Count(&activeReports).Error; err != nil {
 			return err
 		}
 		if activeReports > 0 {
-			return ErrScopeSchedule
+			return errScopeSchedule
 		}
 		if err := authorizeACL(tx, caller, tenant, unionIDs(f.QueryIDs, f.ManageIDs), true); err != nil {
 			return err
 		}
-		if err := tx.Where("tenant_id = ? AND scope_id = ?", tenant, id).Delete(&KnowledgeManagementGrant{}).Error; err != nil {
+		if err := tx.Where("tenant_id = ? AND scope_id = ?", tenant, id).
+			Delete(&KnowledgeManagementGrant{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("tenant_id = ? AND scope_id = ?", tenant, id).Delete(&Binding{}).Error; err != nil {
@@ -370,7 +398,8 @@ func (s *Store) removeScope(ctx context.Context, caller types.Caller, tenant uin
 			return err
 		}
 		return audit(tx, ctx, tenant, id, "octo.scope.removed", map[string]any{
-			"account_id": f.Scope.AccountID, "group_id": f.Scope.GroupID, "subarea_id": f.Scope.SubareaID, "prior_configuration": f.ScopeACL,
+			"account_id": f.Scope.AccountID, "group_id": f.Scope.GroupID,
+			"subarea_id": f.Scope.SubareaID, "prior_configuration": f.ScopeACL,
 		})
 	})
 }

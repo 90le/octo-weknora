@@ -261,10 +261,10 @@ async function checkRole() {
 .editor-heading,.section-heading { justify-content: space-between; margin: 0 0 14px; }
 .editor-heading h2,.section-heading h3 { margin: 0; }
 .editor-heading p,.inherit-box p,.section-heading span,.muted,small,.diagnostics p { color: var(--td-text-color-secondary); }
-.inherit-box { padding: 12px 14px; background: var(--td-brand-color-light); border-radius: 8px; margin: 16px 0; }
+.inherit-box { padding: 12px 14px; background: var(--td-brand-color-light); border-radius: var(--app-radius-md); margin: 16px 0; }
 .inherit-box p { margin: 4px 0 0; }
 .section-heading { margin-top: 20px; }
-.table-wrap { overflow-x: auto; border: 1px solid var(--td-component-border); border-radius: 8px; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--td-component-border); border-radius: var(--app-radius-md); }
 table { width: 100%; border-collapse: collapse; }
 th,td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--td-component-border); overflow-wrap: anywhere; }
 th { background: var(--td-bg-color-secondarycontainer); font-weight: 500; }
