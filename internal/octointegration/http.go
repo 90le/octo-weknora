@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/Tencent/WeKnora/internal/application/access"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -33,7 +34,21 @@ func respond(c *gin.Context, status int, data interface{}, err error) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "Octo verification failed; the last verified metadata has been retained"})
 		case errors.Is(err, ErrInvalid):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid scope configuration"})
-		case errors.Is(err, gorm.ErrRecordNotFound):
+		case errors.Is(err, errStalePreview):
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "Octo configuration changed; reload and preview again", "code": "octo_stale_preview",
+			})
+		case errors.Is(err, errScopeChildren):
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "remove this Bot's subareas first", "code": "octo_scope_children",
+			})
+		case errors.Is(err, errScopeSchedule):
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "disable active scheduled reports first", "code": "octo_scope_schedule",
+			})
+		case errors.Is(err, access.ErrForbidden):
+			c.JSON(http.StatusForbidden, gin.H{"error": "permission denied"})
+		case errors.Is(err, gorm.ErrRecordNotFound), errors.Is(err, access.ErrNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "scope, connection or knowledge base not found in this workspace"})
 		case errors.Is(err, gorm.ErrDuplicatedKey):
 			c.JSON(http.StatusConflict, gin.H{"error": "scope already exists"})
@@ -79,6 +94,23 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	row, err := h.store.CreateVerified(c.Request.Context(), Scope{TenantID: tenant(c), AccountID: req.AccountID, GroupID: req.GroupID, SubareaID: req.SubareaID, InheritParent: req.InheritParent}, h.platform)
 	respond(c, http.StatusCreated, row, err)
+}
+
+// PreviewAttachment checks the selected Bot and area without creating a scope.
+func (h *Handler) PreviewAttachment(c *gin.Context) {
+	var req struct {
+		AccountID string `json:"account_id"`
+		GroupID   string `json:"group_id"`
+		SubareaID string `json:"subarea_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respond(c, 0, nil, ErrInvalid)
+		return
+	}
+	scope, _, err := h.store.verifyAttachment(c.Request.Context(), Scope{
+		TenantID: tenant(c), AccountID: req.AccountID, GroupID: req.GroupID, SubareaID: req.SubareaID,
+	}, h.platform)
+	respond(c, http.StatusOK, AreaEntry{SubareaID: scope.SubareaID, DisplayName: scope.DisplayName}, err)
 }
 
 func (h *Handler) Connections(c *gin.Context) {

@@ -36,6 +36,19 @@ func TestOctoRejectsNonAdminEvenWithLegacyRBACDisabled(t *testing.T) {
 			if w.Code != http.StatusForbidden {
 				t.Fatalf("effective scopes status = %d", w.Code)
 			}
+			for _, endpoint := range []struct{ method, path string }{
+				{http.MethodGet, "/api/v1/octo/directory/groups"},
+				{http.MethodPost, "/api/v1/octo/scopes/attach-preview"},
+				{http.MethodPost, "/api/v1/octo/scopes/test/configuration/preview"},
+				{http.MethodPut, "/api/v1/octo/scopes/test/configuration"},
+				{http.MethodDelete, "/api/v1/octo/scopes/test"},
+			} {
+				w = httptest.NewRecorder()
+				r.ServeHTTP(w, httptest.NewRequest(endpoint.method, endpoint.path, nil))
+				if w.Code != http.StatusForbidden {
+					t.Fatalf("%s %s status = %d", endpoint.method, endpoint.path, w.Code)
+				}
+			}
 			if *g.cfg.Tenant.EnableRBAC {
 				t.Fatal("registration mutated global RBAC config")
 			}
