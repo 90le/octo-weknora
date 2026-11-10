@@ -120,7 +120,8 @@ func (s *Store) Create(ctx context.Context, scope Scope) (*Scope, error) {
 		if scope.SubareaID != "" {
 			var parent Scope
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-				Where("tenant_id = ? AND account_id = ? AND group_id = ?", scope.TenantID, scope.AccountID, scope.GroupID).
+				Where("tenant_id = ? AND account_id = ?", scope.TenantID, scope.AccountID).
+				Where("group_id = ?", scope.GroupID).
 				Where("subarea_id = ''").First(&parent).Error; err != nil {
 				return err
 			}

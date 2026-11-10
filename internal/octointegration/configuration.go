@@ -148,8 +148,10 @@ func readFamily(tx *gorm.DB, tenant uint64, id string) (*familySnapshot, error) 
 		return nil, err
 	}
 	f := &familySnapshot{
-		ConfigurationSnapshot: ConfigurationSnapshot{Scope: scope, ParentQueryIDs: []string{}, ChildAreas: []AreaEntry{}},
-		children:              []Scope{},
+		ConfigurationSnapshot: ConfigurationSnapshot{
+			Scope: scope, ParentQueryIDs: []string{}, ChildAreas: []AreaEntry{},
+		},
+		children: []Scope{},
 	}
 	ids := []string{id}
 	if parent != nil {
@@ -261,7 +263,8 @@ func authorizeACL(tx *gorm.DB, caller types.Caller, tenant uint64, ids []string,
 }
 
 func (s *Store) changeConfiguration(
-	ctx context.Context, caller types.Caller, tenant uint64, id, revision, token string, cfg ScopeConfiguration, save bool,
+	ctx context.Context, caller types.Caller, tenant uint64, id, revision, token string,
+	cfg ScopeConfiguration, save bool,
 ) (out ConfigurationPreview, err error) {
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		f, err := readFamily(tx, tenant, id)
@@ -326,8 +329,8 @@ func (s *Store) changeConfiguration(
 			}
 			for _, kb := range old {
 				if !slices.Contains(next, kb) {
-					if err := tx.Exec("DELETE FROM "+table+" WHERE tenant_id = ? AND scope_id = ? AND knowledge_base_id = ?",
-						tenant, id, kb).Error; err != nil {
+					const predicate = " WHERE tenant_id = ? AND scope_id = ? AND knowledge_base_id = ?"
+					if err := tx.Exec("DELETE FROM "+table+predicate, tenant, id, kb).Error; err != nil {
 						return err
 					}
 				}
@@ -377,7 +380,8 @@ func (s *Store) removeScope(ctx context.Context, caller types.Caller, tenant uin
 			return errScopeChildren
 		}
 		var activeReports int64
-		if err := tx.Table("octo_report_schedules").Where("tenant_id = ? AND scope_id = ? AND enabled = ?", tenant, id, true).
+		if err := tx.Table("octo_report_schedules").
+			Where("tenant_id = ? AND scope_id = ? AND enabled = ?", tenant, id, true).
 			Count(&activeReports).Error; err != nil {
 			return err
 		}
