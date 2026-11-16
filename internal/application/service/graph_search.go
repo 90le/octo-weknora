@@ -45,7 +45,8 @@ func (s *graphSearchService) Search(
 	}
 	ctx, cancel := context.WithTimeout(ctx, types.GraphSearchTimeout)
 	defer cancel()
-	candidates, err := s.graph.SearchGraph(ctx, types.NameSpace{KnowledgeBase: kb.ID}, req.Query)
+	namespace := types.NameSpace{KnowledgeBase: kb.ID}
+	candidates, err := s.graph.BrowseGraph(ctx, namespace, req)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		return nil, apperrors.NewServiceUnavailableError("Knowledge graph query is temporarily unavailable")
@@ -72,6 +73,11 @@ func (s *graphSearchService) Search(
 		mark(reason)
 	}
 	ids := []string{}
+	layoutOnly := req.LayoutOnly()
+	evidenceLimit := types.GraphSearchMaxEvidence
+	if layoutOnly {
+		evidenceLimit = types.GraphBrowseMaxEvidence
+	}
 	wanted := map[string]bool{}
 	eligible := map[string][]string{}
 	for _, node := range candidates.Graph.Node {
@@ -102,7 +108,7 @@ func (s *graphSearchService) Search(
 		if !valid {
 			continue
 		}
-		if len(ids)+len(additional) > types.GraphSearchMaxEvidence {
+		if len(ids)+len(additional) > evidenceLimit {
 			mark("candidate_source_chunks")
 			continue
 		}
@@ -115,7 +121,11 @@ func (s *graphSearchService) Search(
 	}
 	sources := map[string]types.GraphSearchSourceChunk{}
 	if len(ids) != 0 {
-		rows, err := s.evidence.GetGraphSourceChunks(ctx, kb.TenantID, kb.ID, ids)
+		readEvidence := s.evidence.GetGraphSourceChunks
+		if layoutOnly {
+			readEvidence = s.evidence.GetGraphSourceMetadata
+		}
+		rows, err := readEvidence(ctx, kb.TenantID, kb.ID, ids)
 		if err != nil {
 			logger.ErrorWithFields(ctx, err, nil)
 			return nil, apperrors.NewInternalServerError("Failed to validate graph source chunks")
@@ -132,12 +142,15 @@ func (s *graphSearchService) Search(
 	nodes := map[string]types.GraphSearchEntity{}
 	publicIDs := map[string]bool{}
 	returnedSources := map[string]bool{}
-	for _, node := range candidates.Graph.Node {
+	for i, node := range candidates.Graph.Node {
 		if node == nil {
 			continue
 		}
 		chunkIDs, ok := eligible[node.ID]
 		if !ok {
+			if i == 0 && (req.Mode == "focus" || req.Mode == "detail") {
+				return result, nil
+			}
 			continue
 		}
 		valid, extra := true, 0
@@ -151,6 +164,9 @@ func (s *graphSearchService) Search(
 			}
 		}
 		if !valid {
+			if i == 0 && (req.Mode == "focus" || req.Mode == "detail") {
+				return result, nil
+			}
 			continue
 		}
 		id := graphSearchPublicID("entity", kb.ID, node.KnowledgeID, node.Name)
@@ -161,12 +177,15 @@ func (s *graphSearchService) Search(
 			mark("max_nodes")
 			continue
 		}
-		if len(result.SourceChunks)+extra > req.MaxSourceChunks {
+		if !layoutOnly && req.Mode != "detail" && len(result.SourceChunks)+extra > req.MaxSourceChunks {
 			mark("max_source_chunks")
 			continue
 		}
 		attributes := []string{}
 		for i, attribute := range node.Attributes {
+			if layoutOnly {
+				break
+			}
 			if i == types.GraphSearchMaxAttributes {
 				mark("entity_fields")
 				break
@@ -180,13 +199,17 @@ func (s *graphSearchService) Search(
 		}
 		entity := types.GraphSearchEntity{
 			ID: id, Name: node.Name, KnowledgeID: node.KnowledgeID,
-			Attributes: attributes, SourceChunkIDs: chunkIDs,
+			DocumentTitle: sources[chunkIDs[0]].Title, Attributes: attributes, SourceChunkIDs: []string{},
 		}
-		nodes[node.ID] = entity
-		publicIDs[id] = true
-		result.Entities = append(result.Entities, entity)
 		for _, id := range chunkIDs {
+			if layoutOnly {
+				break
+			}
 			if !returnedSources[id] {
+				if len(result.SourceChunks) >= req.MaxSourceChunks {
+					mark("max_source_chunks")
+					continue
+				}
 				row := sources[id]
 				result.SourceChunks = append(result.SourceChunks, row)
 				returnedSources[id] = true
@@ -194,7 +217,11 @@ func (s *graphSearchService) Search(
 					mark("source_fields")
 				}
 			}
+			entity.SourceChunkIDs = append(entity.SourceChunkIDs, id)
 		}
+		nodes[node.ID] = entity
+		publicIDs[id] = true
+		result.Entities = append(result.Entities, entity)
 	}
 	seenRelations := map[string]bool{}
 	for _, relation := range candidates.Graph.Relation {

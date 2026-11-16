@@ -125,6 +125,32 @@ func TestGraphSearchIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, empty.Graph.Node)
 
+	t.Run("browse overview, suggestions, exact document focus and relationship detail", func(t *testing.T) {
+		overview, err := repo.BrowseGraph(ctx, ns, types.GraphSearchRequest{Mode: "overview"})
+		require.NoError(t, err)
+		require.Len(t, overview.Graph.Node, 5)
+		require.Len(t, overview.Graph.Relation, 4)
+		require.Empty(t, overview.Graph.Node[0].Attributes)
+
+		suggestions, err := repo.BrowseGraph(ctx, ns, types.GraphSearchRequest{Mode: "suggest", Query: "aCMe"})
+		require.NoError(t, err)
+		require.Len(t, suggestions.Graph.Node, 4)
+		require.Equal(t, "Acme", suggestions.Graph.Node[0].Name)
+		require.Empty(t, suggestions.Graph.Relation)
+
+		focus, err := repo.BrowseGraph(ctx, ns, types.GraphSearchRequest{Mode: "focus", Query: "Acme", KnowledgeID: "doc2"})
+		require.NoError(t, err)
+		require.Len(t, focus.Graph.Node, 2)
+		require.Equal(t, "doc2", focus.Graph.Node[0].KnowledgeID)
+		require.Len(t, focus.Graph.Relation, 1)
+		require.Equal(t, "HAS_BRANCH_IN", focus.Graph.Relation[0].Type)
+
+		detail, err := repo.BrowseGraph(ctx, ns, types.GraphSearchRequest{Mode: "detail", Query: "Acme", KnowledgeID: "doc1", RelatedName: "Acme Shanghai"})
+		require.NoError(t, err)
+		require.Len(t, detail.Graph.Relation, 2)
+		require.Equal(t, []string{"attr1"}, detail.Graph.Node[0].Attributes)
+	})
+
 	t.Run("seed cap and exact-name priority", func(t *testing.T) {
 		_, err := neo4j.ExecuteQuery(ctx, driver, `
 			UNWIND range(0, 104) AS i CREATE (n:`+label+`

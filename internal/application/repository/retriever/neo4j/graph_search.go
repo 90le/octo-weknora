@@ -19,13 +19,17 @@ func NewGraphSearchRepository(driver neo4j.Driver) interfaces.GraphSearchReposit
 
 // graphSearchProjection bounds fields before they cross Bolt. One extra item
 // (or character) lets the service report clipping instead of a false total.
-func graphSearchProjection(alias string) string {
+func graphSearchProjection(alias string, layoutOnly bool) string {
+	attributes := "[a IN " + alias + ".attributes[..21] | substring(a, 0, 1001)]"
+	if layoutOnly {
+		attributes = "[]"
+	}
 	return alias + ` {
 		id: elementId(` + alias + `),
 		name: substring(` + alias + `.name, 0, 513),
 		knowledge_id: substring(` + alias + `.kg, 0, 129),
 		chunks: [c IN ` + alias + `.chunks[..513] | substring(c, 0, 129)],
-		attributes: [a IN ` + alias + `.attributes[..21] | substring(a, 0, 1001)]
+		attributes: ` + attributes + `
 	}`
 }
 
@@ -46,6 +50,12 @@ func (n *Neo4jRepository) graphSearchLabel(namespace types.NameSpace) (string, e
 func (n *Neo4jRepository) SearchGraph(
 	ctx context.Context, namespace types.NameSpace, query string,
 ) (*types.GraphSearchCandidates, error) {
+	return n.BrowseGraph(ctx, namespace, types.GraphSearchRequest{Query: query})
+}
+
+func (n *Neo4jRepository) BrowseGraph(
+	ctx context.Context, namespace types.NameSpace, req types.GraphSearchRequest,
+) (*types.GraphSearchCandidates, error) {
 	if n.driver == nil {
 		return nil, nil // Distinguished from an available backend with no matches.
 	}
@@ -61,21 +71,43 @@ func (n *Neo4jRepository) SearchGraph(
 	}()
 	value, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		out := &types.GraphSearchCandidates{Graph: &types.GraphData{}}
+		where := "n.name CONTAINS $query"
+		rank := "CASE WHEN n.name = $query THEN 0 ELSE 1 END, size(n.name), n.name, n.kg, elementId(n)"
+		seedLimit, rowLimit := types.GraphSearchMaxSeeds, types.GraphSearchMaxRows
+		neighborFilter := ""
+		switch req.Mode {
+		case "overview":
+			where = "size(n.chunks) > 0"
+			rank = "COUNT { (n)--(m:" + label + ") WHERE m.kg = n.kg AND size(m.chunks) > 0 } DESC, n.name, n.kg, elementId(n)"
+			seedLimit, rowLimit = types.GraphBrowseMaxNodes, types.GraphBrowseMaxRows
+			neighborFilter = "AND elementId(m) IN $seeds AND m.kg = n.kg"
+		case "suggest":
+			where = "size(n.chunks) > 0 AND toLower(n.name) CONTAINS toLower($query)"
+			rank = "CASE WHEN toLower(n.name) = toLower($query) THEN 0 WHEN toLower(n.name) STARTS WITH toLower($query) THEN 1 ELSE 2 END, size(n.name), n.name, n.kg, elementId(n)"
+		case "focus", "detail":
+			where = "n.kg = $document AND n.name = $query"
+			neighborFilter = "AND m.kg = n.kg AND size(m.chunks) > 0"
+			seedLimit = 1
+			if req.RelatedName != "" {
+				neighborFilter += " AND m.name = $related"
+			} else if req.Mode == "detail" {
+				neighborFilter += " AND m = n"
+			}
+		}
 		seedResult, err := tx.Run(ctx, `
 			MATCH (n:`+label+`)
-			WHERE n.name CONTAINS $query
-			WITH n ORDER BY CASE WHEN n.name = $query THEN 0 ELSE 1 END,
-				size(n.name), n.name, n.kg, elementId(n)
+			WHERE `+where+`
+			WITH n ORDER BY `+rank+`
 			LIMIT $probeLimit
-			RETURN `+graphSearchProjection("n")+` AS n`,
-			map[string]any{"query": query, "probeLimit": types.GraphSearchMaxSeeds + 1})
+			RETURN `+graphSearchProjection("n", req.LayoutOnly())+` AS n`,
+			map[string]any{"query": req.Query, "document": req.KnowledgeID, "probeLimit": seedLimit + 1})
 		if err != nil {
 			return nil, err
 		}
 		seedIDs := []string{}
 		seen := map[string]bool{}
 		for seedResult.Next(ctx) {
-			if len(seedIDs) == types.GraphSearchMaxSeeds {
+			if len(seedIDs) == seedLimit {
 				out.TruncationReasons = append(out.TruncationReasons, "candidate_seeds")
 				continue
 			}
@@ -90,7 +122,7 @@ func (n *Neo4jRepository) SearchGraph(
 		if err := seedResult.Err(); err != nil {
 			return nil, err
 		}
-		if len(seedIDs) == 0 {
+		if len(seedIDs) == 0 || req.Mode == "suggest" {
 			return out, nil
 		}
 		// Keep relation-less seeds, and expand each stored edge only from its
@@ -100,19 +132,19 @@ func (n *Neo4jRepository) SearchGraph(
 			UNWIND range(0, size($seeds) - 1) AS seed_index
 			MATCH (n:`+label+`) WHERE elementId(n) = $seeds[seed_index]
 			MATCH (n)-[r]-(m:`+label+`)
-			WHERE NOT elementId(m) IN $seeds[0..seed_index]
+			WHERE NOT elementId(m) IN $seeds[0..seed_index] `+neighborFilter+`
 			WITH n, r, m, seed_index ORDER BY seed_index, elementId(r)
 			LIMIT $probeLimit
-			RETURN `+graphSearchProjection("n")+` AS n, `+graphSearchProjection("m")+` AS m,
+			RETURN `+graphSearchProjection("n", req.LayoutOnly())+` AS n, `+graphSearchProjection("m", req.LayoutOnly())+` AS m,
 				elementId(r) AS id, elementId(startNode(r)) AS source_id,
 				elementId(endNode(r)) AS target_id, substring(type(r), 0, 129) AS type`,
-			map[string]any{"seeds": seedIDs, "probeLimit": types.GraphSearchMaxRows + 1})
+			map[string]any{"seeds": seedIDs, "related": req.RelatedName, "probeLimit": rowLimit + 1})
 		if err != nil {
 			return nil, err
 		}
 		count := 0
 		for rows.Next(ctx) {
-			if count == types.GraphSearchMaxRows {
+			if count == rowLimit {
 				out.TruncationReasons = append(out.TruncationReasons, "candidate_relations")
 				continue
 			}

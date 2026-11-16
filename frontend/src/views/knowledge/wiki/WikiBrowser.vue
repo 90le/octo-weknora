@@ -34,7 +34,7 @@
             <div class="wiki-graph-search">
               <t-select v-model="graphSearchValue" filterable :options="graphSearchEffectiveOptions"
                 :loading="graphSearchLoading" :on-search="handleGraphRemoteSearch"
-                :placeholder="$t('knowledgeEditor.wikiBrowser.searchPlaceholder')" @change="handleGraphSearchSelect"
+                :placeholder="entityGraph ? $t('knowledgeEditor.wikiBrowser.entityGraphSearch') : $t('knowledgeEditor.wikiBrowser.searchPlaceholder')" @change="handleGraphSearchSelect"
                 @enter="handleGraphSearchEnter" :popup-props="{ zIndex: 100 }" class="graph-search-select">
                 <template #prefixIcon><t-icon name="search" /></template>
               </t-select>
@@ -72,27 +72,27 @@
         <!-- Legend Overlay -->
         <div v-if="graphControlsVisible" class="wiki-graph-legend" :class="{ 'legend-shifted': graphDrawerVisible }">
           <div class="legend-items">
-            <div class="legend-item clickable" :class="{ disabled: !graphFilterTypes.has('summary') }"
+            <div v-if="!entityGraph" class="legend-item clickable" :class="{ disabled: !graphFilterTypes.has('summary') }"
               @click="toggleGraphFilterType('summary')">
               <span class="legend-dot" style="background: #0052d9"></span>
               {{ $t('knowledgeEditor.wikiBrowser.filterSummary') }}
             </div>
-            <div class="legend-item clickable" :class="{ disabled: !graphFilterTypes.has('entity') }"
-              @click="toggleGraphFilterType('entity')">
+            <div class="legend-item" :class="{ clickable: !entityGraph, disabled: !graphFilterTypes.has('entity') }"
+              @click="!entityGraph && toggleGraphFilterType('entity')">
               <span class="legend-dot" style="background: #2ba471"></span>
               {{ $t('knowledgeEditor.wikiBrowser.filterEntity') }}
             </div>
-            <div class="legend-item clickable" :class="{ disabled: !graphFilterTypes.has('concept') }"
+            <div v-if="!entityGraph" class="legend-item clickable" :class="{ disabled: !graphFilterTypes.has('concept') }"
               @click="toggleGraphFilterType('concept')">
               <span class="legend-dot" style="background: #e37318"></span>
               {{ $t('knowledgeEditor.wikiBrowser.filterConcept') }}
             </div>
-            <div class="legend-item clickable" :class="{ disabled: !graphFilterTypes.has('synthesis') }"
+            <div v-if="!entityGraph" class="legend-item clickable" :class="{ disabled: !graphFilterTypes.has('synthesis') }"
               @click="toggleGraphFilterType('synthesis')">
               <span class="legend-dot" style="background: #0594fa"></span>
               {{ $t('knowledgeEditor.wikiBrowser.filterSynthesis') }}
             </div>
-            <div class="legend-item clickable" :class="{ disabled: !graphFilterTypes.has('comparison') }"
+            <div v-if="!entityGraph" class="legend-item clickable" :class="{ disabled: !graphFilterTypes.has('comparison') }"
               @click="toggleGraphFilterType('comparison')">
               <span class="legend-dot" style="background: #d54941"></span>
               {{ $t('knowledgeEditor.wikiBrowser.filterComparison') }}
@@ -151,14 +151,47 @@
             <t-icon name="chart-bubble" size="48px" />
           </div>
           <p class="wiki-empty-desc">{{ graphLoading ? $t('knowledgeEditor.wikiBrowser.graphEmpty') :
-            $t('knowledgeEditor.wikiBrowser.graphNoData') }}</p>
+            $t(graphError ? 'knowledgeEditor.wikiBrowser.graphLoadFailed' :
+              entityGraph ? 'knowledgeEditor.wikiBrowser.entityGraphEmpty' : 'knowledgeEditor.wikiBrowser.graphNoData') }}</p>
+          <t-button v-if="graphError && !graphLoading" @click="loadGraph">{{ $t('common.retry') }}</t-button>
         </div>
 
         <!-- Graph page detail drawer -->
-        <t-drawer v-model:visible="graphDrawerVisible" :header="graphDrawerPage?.title || ''" size="480px"
+        <t-drawer v-model:visible="graphDrawerVisible" :header="entityGraph ? entityDetails?.title || '' : graphDrawerPage?.title || ''" size="480px"
           :footer="false" placement="right" :show-overlay="false" :close-btn="true" destroy-on-close
           class="wiki-graph-drawer">
-          <template v-if="graphDrawerPage">
+          <template v-if="entityGraph">
+            <t-loading v-if="entityDetailLoading" />
+            <p v-else-if="!entityDetails">{{ $t('knowledgeEditor.wikiBrowser.entityGraphDetailsUnavailable') }}</p>
+            <template v-else>
+              <div v-if="entityDetailNode" class="wiki-reader-meta">
+                <t-tag size="small" theme="success" variant="light-outline">{{ getTypeLabel('entity') }}</t-tag>
+                <t-button v-if="graphMode !== 'ego' || graphCenter !== entityDetailNode" size="small" variant="outline"
+                  @click="loadEgoGraph(entityDetailNode)">{{ $t('knowledgeEditor.wikiBrowser.expandNeighbors') }}</t-button>
+                <t-button v-if="graphMode === 'ego' && !entityExpanded.has(entityDetailNode)" size="small" variant="outline"
+                  @click="loadBloomNeighbors(entityDetailNode)">{{ $t('knowledgeEditor.wikiBrowser.bloomNeighbors') }}</t-button>
+              </div>
+              <div class="wiki-reader-body">
+                <p v-for="(attribute, i) in entityDetails.attributes" :key="i">{{ attribute }}</p>
+                <ul v-if="entityDetails.relations.length">
+                  <li v-for="relation in entityDetails.relations" :key="relation.id">
+                    {{ relation.source }} → {{ relation.type }} → {{ relation.target }}
+                  </li>
+                </ul>
+                <h3>{{ $t('knowledgeEditor.wikiBrowser.entityGraphSources') }}</h3>
+                <p v-if="entityDetails.relations.length">{{ $t('knowledgeEditor.wikiBrowser.entityGraphSourceHint') }}</p>
+                <p v-if="entityDetails.truncated">{{ $t('knowledgeEditor.wikiBrowser.entityGraphPartial') }}</p>
+                <article v-for="source in entityDetails.sources" :key="source.id" class="entity-source">
+                  <strong>{{ source.title }}</strong>
+                  <t-button size="small" variant="text" theme="primary" @click="emit('open-source-doc', source.knowledge_id)">
+                    {{ $t('knowledgeEditor.wikiBrowser.entityGraphOpenSource') }}
+                  </t-button>
+                  <p class="entity-source-text">{{ source.content }}{{ source.content_truncated ? '…' : '' }}</p>
+                </article>
+              </div>
+            </template>
+          </template>
+          <template v-else-if="graphDrawerPage">
             <div class="wiki-reader-meta" style="margin-bottom: 8px;">
               <t-tag size="small" :theme="getTypeTheme(graphDrawerPage.page_type)" variant="light-outline">
                 {{ getTypeLabel(graphDrawerPage.page_type) }}
@@ -839,6 +872,7 @@ import {
 } from './wikiDirectoryState'
 import { resolveWikiBacklinkTitle } from './wikiBacklinkTitles'
 import { buildGraphLayout, graphNodeRadius, stepGraphLayout, visibleGraphLabels, graphPointBounds, initialGraphViewport, graphClusterOutline, graphLandmarkTitle, type GraphBounds, type GraphCluster } from './wikiGraphLayout'
+import { getEntityGraph, getEntityGraphDetails, searchGraphEntities, type EntityGraphDetails } from './entityGraphSource'
 import { getKnowledgeDetails } from '@/api/knowledge-base'
 import { createSessions } from '@/api/chat'
 import ChatView from '@/views/chat/index.vue'
@@ -862,6 +896,7 @@ import {
   type WikiPage,
   type WikiFolderNode,
   type WikiGraphData,
+  type WikiGraphQueryParams,
   type WikiStats,
   type WikiPageIssue,
   type WikiIndexGroup,
@@ -880,12 +915,19 @@ const { t } = useI18n()
 const props = defineProps<{
   knowledgeBaseId: string
   view?: 'browser' | 'graph'
+  graphSource?: 'wiki' | 'entities'
   // canEdit 由父组件 KnowledgeBase.vue 透传（与 canEdit computed 同源）。
   // 控制 AutoFix / FixIssue / IgnoreIssue 三个写操作按钮的可见性，
   // 对应后端 g.OwnedWikiKBOrAdmin() 守卫（KB creator OR Admin+ OR
   // org-share editor）。父组件没传时按 false 兜底，避免漏 gate。
   canEdit?: boolean
 }>()
+const entityGraph = computed(() => props.graphSource === 'entities')
+const entityExpanded = ref(new Set<string>())
+const entityDetails = ref<EntityGraphDetails | null>(null)
+const entityDetailLoading = ref(false)
+const entityDetailNode = ref('')
+let graphDrawerRequest = 0
 
 const emit = defineEmits<{
   (e: 'open-source-doc', knowledgeId: string): void
@@ -1024,6 +1066,7 @@ const readerBodyRef = ref<HTMLElement | null>(null)
 const drawerBodyRef = ref<HTMLElement | null>(null)
 const loading = ref(false)
 const graphLoading = ref(false)
+const graphError = ref(false)
 const graphReady = ref(false)
 // Search and type filters must survive an empty or failed render, otherwise
 // the user has no way to leave that state.
@@ -1055,6 +1098,7 @@ const graphFilterTypes = ref<Set<string>>(new Set(['summary', 'entity', 'concept
 // "back to overview" and show the truncation hint.
 const graphMode = ref<'overview' | 'ego'>('overview')
 const graphCenter = ref<string>('')
+let graphViewRequest = 0
 const GRAPH_OVERVIEW_LIMIT = 500
 const GRAPH_EGO_LIMIT = 500
 const GRAPH_EGO_DEFAULT_DEPTH = 1
@@ -1586,13 +1630,15 @@ const graphStatusCard = computed((): { icon: string; title: string; primary: str
     const hiddenCount = showUnlinkedNodes.value ? 0 : graphUnlinkedSlugs.value.size
     const secondary = hiddenCount > 0
       ? t('knowledgeEditor.wikiBrowser.unlinkedHidden', { count: hiddenCount })
+      : entityGraph.value && meta.truncated
+      ? t('knowledgeEditor.wikiBrowser.entityGraphPartial')
       : meta.truncated
       ? t('knowledgeEditor.wikiBrowser.cardOverviewHintTruncated')
       : t('knowledgeEditor.wikiBrowser.cardOverviewHintFull')
     return {
       icon: 'chart-bubble',
       title: t('knowledgeEditor.wikiBrowser.cardOverviewTitle'),
-      primary: t('knowledgeEditor.wikiBrowser.cardOverviewPrimary', {
+      primary: entityGraph.value ? t('knowledgeEditor.wikiBrowser.entityGraphCount', { count: data.nodes.length - hiddenCount }) : t('knowledgeEditor.wikiBrowser.cardOverviewPrimary', {
         returned: data.nodes.length - hiddenCount,
         total: meta.total,
       }),
@@ -1631,12 +1677,29 @@ function renderMarkdown(content: string): string {
 }
 
 async function openGraphDrawer(slug: string) {
+  if (entityGraph.value) return openEntityDrawer(slug)
   try {
     const res = await getWikiPage(props.knowledgeBaseId, slug)
     graphDrawerPage.value = (res as any).data || res as any
     graphDrawerVisible.value = true
   } catch (e) {
     console.error(`Failed to load page ${slug}:`, e)
+  }
+}
+
+async function openEntityDrawer(slug: string, related?: string) {
+  const request = ++graphDrawerRequest
+  entityDetails.value = null
+  entityDetailNode.value = related ? '' : slug
+  entityDetailLoading.value = true
+  graphDrawerVisible.value = true
+  try {
+    const data = await getEntityGraphDetails(props.knowledgeBaseId, slug, related)
+    if (request === graphDrawerRequest) entityDetails.value = data
+  } catch (e) {
+    console.error('Failed to load entity graph details:', e)
+  } finally {
+    if (request === graphDrawerRequest) entityDetailLoading.value = false
   }
 }
 
@@ -3247,11 +3310,20 @@ function graphFilterSelectsNothing(): boolean {
   return graphFilterTypes.value.size === 0
 }
 
+async function fetchGraph(options: WikiGraphQueryParams): Promise<WikiGraphData> {
+  if (entityGraph.value) return getEntityGraph(props.knowledgeBaseId, options)
+  const res = await getWikiGraph(props.knowledgeBaseId, options)
+  return (res as any).data || res as any
+}
+
 async function loadGraph() {
+  const request = ++graphViewRequest
   graphLoading.value = true
   graphReady.value = false
+  graphError.value = false
   graphMode.value = 'overview'
   graphCenter.value = ''
+  entityExpanded.value = new Set()
   if (graphFilterSelectsNothing()) {
     // User has deselected every type — render an empty canvas without
     // hitting the backend.
@@ -3262,12 +3334,13 @@ async function loadGraph() {
     return
   }
   try {
-    const res = await getWikiGraph(props.knowledgeBaseId, {
+    const data = await fetchGraph({
       mode: 'overview',
       limit: GRAPH_OVERVIEW_LIMIT,
       types: graphFilterTypesToArray(),
     })
-    graphData.value = (res as any).data || res as any
+    if (request !== graphViewRequest) return
+    graphData.value = data
     // Seed the search dropdown's empty-state with this overview snapshot
     // so opening the select without typing shows the top-500 by link_count
     // — matching what the old client-filter dropdown used to surface.
@@ -3280,16 +3353,20 @@ async function loadGraph() {
     resetBloomGenerations(graphData.value?.nodes)
     await nextTick()
     renderGraph()
-    if (route.query.slug && typeof route.query.slug === 'string') {
+    if (!entityGraph.value && route.query.slug && typeof route.query.slug === 'string') {
       graphSelectedSlug.value = null // reset first to ensure watch triggers
       setTimeout(() => {
         handleGraphSearchSelect(route.query.slug as string)
       }, 300)
     }
   } catch (e) {
+    if (request !== graphViewRequest) return
+    graphError.value = true
+    graphData.value = null
+    renderGraph()
     console.error('Failed to load graph:', e)
   } finally {
-    graphLoading.value = false
+    if (request === graphViewRequest) graphLoading.value = false
   }
 }
 
@@ -3300,6 +3377,7 @@ async function loadGraph() {
 // loadGraph() again.
 async function loadEgoGraph(slug: string, depth = GRAPH_EGO_DEFAULT_DEPTH) {
   if (!slug) return
+  const request = ++graphViewRequest
   showUnlinkedNodes.value = true
   graphLoading.value = true
   graphReady.value = false
@@ -3314,16 +3392,18 @@ async function loadEgoGraph(slug: string, depth = GRAPH_EGO_DEFAULT_DEPTH) {
     return
   }
   try {
-    const res = await getWikiGraph(props.knowledgeBaseId, {
+    const data = await fetchGraph({
       mode: 'ego',
       center: slug,
       depth,
       limit: GRAPH_EGO_LIMIT,
       types: graphFilterTypesToArray(),
     })
-    graphData.value = (res as any).data || res as any
+    if (request !== graphViewRequest) return
+    graphData.value = data
     graphMode.value = 'ego'
     graphCenter.value = slug
+    entityExpanded.value = new Set([slug])
     // Entering (or re-entering) a fresh ego view resets the bloom
     // generation counter — we're no longer accumulating on top of the
     // previous canvas, so every node belongs to generation 0.
@@ -3334,12 +3414,13 @@ async function loadEgoGraph(slug: string, depth = GRAPH_EGO_DEFAULT_DEPTH) {
     await nextTick()
     renderGraph()
   } catch (e) {
+    if (request !== graphViewRequest) return
     console.error(`Failed to load ego graph for ${slug}:`, e)
     // Keep showing the previous graph; the caller still opens the page.
     await nextTick()
     renderGraph()
   } finally {
-    graphLoading.value = false
+    if (request === graphViewRequest) graphLoading.value = false
   }
 }
 
@@ -3384,17 +3465,19 @@ async function loadBloomNeighbors(anchorSlug: string, depth = GRAPH_EGO_DEFAULT_
     await loadEgoGraph(anchorSlug, depth)
     return
   }
+  if (entityGraph.value && graphLoading.value) return
+  const request = graphViewRequest
   graphLoading.value = true
   try {
-    const res = await getWikiGraph(props.knowledgeBaseId, {
+    const incoming = await fetchGraph({
       mode: 'ego',
       center: anchorSlug,
       depth,
       limit: GRAPH_EGO_LIMIT,
       types: graphFilterTypesToArray(),
     })
-    const incoming = (res as any).data || res as any
-    if (!incoming || !Array.isArray(incoming.nodes)) return
+    if (request !== graphViewRequest || !incoming || !Array.isArray(incoming.nodes)) return
+    if (entityGraph.value) entityExpanded.value.add(anchorSlug)
 
     bloomCurrentGeneration += 1
     const merged = mergeGraphData(graphData.value, incoming, bloomCurrentGeneration)
@@ -3415,7 +3498,7 @@ async function loadBloomNeighbors(anchorSlug: string, depth = GRAPH_EGO_DEFAULT_
   } catch (e) {
     console.error(`Failed to bloom neighbors for ${anchorSlug}:`, e)
   } finally {
-    graphLoading.value = false
+    if (request === graphViewRequest) graphLoading.value = false
   }
 }
 
@@ -3527,6 +3610,7 @@ function isFrontierCandidate(
   visibleDegree: number,
 ): boolean {
   if (node.slug === centerSlug) return false
+  if (entityGraph.value) return !entityExpanded.value.has(node.slug)
   if (GRAPH_SYSTEM_PAGE_TYPES.has(node.page_type)) return false
   return (node.link_count || 0) > visibleDegree
 }
@@ -3546,6 +3630,8 @@ async function growFrontier() {
     return
   }
   if (graphFilterSelectsNothing()) return
+  if (entityGraph.value && graphLoading.value) return
+  const request = graphViewRequest
 
   // Collect frontier nodes: visible degree < link_count AND not the ego
   // center AND not a system super-node. We compute visible degree inline
@@ -3563,6 +3649,7 @@ async function growFrontier() {
     }
   }
   if (frontier.length === 0) return
+  if (entityGraph.value) frontier.splice(24)
 
   graphLoading.value = true
   try {
@@ -3573,19 +3660,21 @@ async function growFrontier() {
     const responses: WikiGraphData[] = []
     let cursor = 0
     async function worker() {
-      while (cursor < frontier.length) {
+      while (request === graphViewRequest && cursor < frontier.length) {
         const idx = cursor++
         const slug = frontier[idx]
         try {
-          const res = await getWikiGraph(props.knowledgeBaseId, {
+          const data = await fetchGraph({
             mode: 'ego',
             center: slug,
             depth: GRAPH_EGO_DEFAULT_DEPTH,
             limit: GRAPH_EGO_LIMIT,
             types: graphFilterTypesToArray(),
           })
-          const data = (res as any).data || res as any
-          if (data?.nodes) responses.push(data)
+          if (request === graphViewRequest && data?.nodes) {
+            if (entityGraph.value) entityExpanded.value.add(slug)
+            responses.push(data)
+          }
         } catch (e) {
           console.error(`growFrontier: ego fetch failed for ${slug}:`, e)
         }
@@ -3596,7 +3685,7 @@ async function growFrontier() {
     for (let i = 0; i < workerCount; i++) workers.push(worker())
     await Promise.all(workers)
 
-    if (responses.length === 0) return
+    if (request !== graphViewRequest || responses.length === 0) return
 
     // All new arrivals belong to a single bloom generation — the user
     // performed one logical action, so LRU should evict them together.
@@ -3617,7 +3706,7 @@ async function growFrontier() {
     // Place each new node near an existing neighbor, retaining the old layout.
     renderGraph({ preserveLayout: true })
   } finally {
-    graphLoading.value = false
+    if (request === graphViewRequest) graphLoading.value = false
   }
 }
 
@@ -3848,6 +3937,7 @@ const nodeColorMap: Record<string, string> = {
 const graphEdgeColor = '#aeb5c0'
 const graphEdgeWidth = '0.8'
 const graphEdgeOpacity = '0.42'
+const edgeHitTargets = new WeakMap<SVGLineElement, SVGLineElement>()
 
 // Incremental expansion preserves existing positions and the viewport.
 interface RenderGraphOpts {
@@ -4167,6 +4257,32 @@ function renderGraph(opts: RenderGraphOpts = {}) {
       line.setAttribute('marker-start', 'url(#arrow-start)')
     }
     edgeG.appendChild(line)
+    if (entityGraph.value) {
+      const hit = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+      hit.setAttribute('stroke', 'transparent')
+      hit.setAttribute('stroke-width', '9')
+      hit.setAttribute('vector-effect', 'non-scaling-stroke')
+      hit.setAttribute('pointer-events', 'stroke')
+      hit.setAttribute('data-graph-edge', '')
+      hit.setAttribute('tabindex', '0')
+      hit.setAttribute('role', 'button')
+      hit.setAttribute('aria-label', t('knowledgeEditor.wikiBrowser.entityGraphRelation', {
+        source: nodeMap.get(edge.source)?.title, target: nodeMap.get(edge.target)?.title,
+      }))
+      hit.style.cursor = 'pointer'
+      const open = () => { void openEntityDrawer(edge.source, edge.target) }
+      hit.addEventListener('click', open)
+      hit.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          open()
+        }
+      })
+      hit.addEventListener('mouseenter', () => line.classList.add('entity-edge-hover'))
+      hit.addEventListener('mouseleave', () => line.classList.remove('entity-edge-hover'))
+      edgeG.appendChild(hit)
+      edgeHitTargets.set(line, hit)
+    }
     edgeEls.push({ line, source: edge.source, target: edge.target, bidir })
   }
 
@@ -4199,7 +4315,8 @@ function renderGraph(opts: RenderGraphOpts = {}) {
     const isEgoCenter = graph.meta?.mode === 'ego' && graph.meta.center === n.slug
     // In the overview nearly every page has neighbors beyond the top-N
     // slice, so the ring would only add noise; it guides ego exploration.
-    const showExpansionRing = graph.meta?.mode === 'ego' && hiddenNeighbors > 0 && !isEgoCenter
+    const showExpansionRing = graph.meta?.mode === 'ego' && !isEgoCenter &&
+      (entityGraph.value ? !entityExpanded.value.has(n.slug) : hiddenNeighbors > 0)
     const expansionRing = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
     expansionRing.setAttribute('r', String(r + 3))
     expansionRing.setAttribute('fill', 'none')
@@ -4514,10 +4631,13 @@ function setEdgePositions(line: SVGLineElement, s: GNode, t: GNode, nodeRadius: 
   const rS = nodeRadius(s) + margin
   const rT = nodeRadius(t) + margin
 
-  line.setAttribute('x1', String(s.x + ux * rS))
-  line.setAttribute('y1', String(s.y + uy * rS))
-  line.setAttribute('x2', String(t.x - ux * rT))
-  line.setAttribute('y2', String(t.y - uy * rT))
+  const hit = edgeHitTargets.get(line)
+  for (const element of hit ? [line, hit] : [line]) {
+    element.setAttribute('x1', String(s.x + ux * rS))
+    element.setAttribute('y1', String(s.y + uy * rS))
+    element.setAttribute('x2', String(t.x - ux * rT))
+    element.setAttribute('y2', String(t.y - uy * rT))
+  }
 }
 
 // ─── Drag ───
@@ -4738,7 +4858,7 @@ function setupPanZoom(svg: SVGSVGElement, rootG: SVGGElement, viewport?: { scale
   svg.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return
     // Only pan if clicking the SVG background, not a node
-    if (!(e.target as Element).closest('[data-graph-node], .graph-cluster-caption')) {
+    if (!(e.target as Element).closest('[data-graph-node], [data-graph-edge], .graph-cluster-caption')) {
       cancelAnimationFrame(animId)
       panning = true
       panStartX = e.clientX - translateX
@@ -4765,7 +4885,7 @@ function setupPanZoom(svg: SVGSVGElement, rootG: SVGGElement, viewport?: { scale
       const dx = e.clientX - dragStartX
       const dy = e.clientY - dragStartY
       if (Math.abs(dx) < 5 && Math.abs(dy) < 5) {
-        if (!(e.target as Element).closest('[data-graph-node], .graph-cluster-caption')) {
+        if (!(e.target as Element).closest('[data-graph-node], [data-graph-edge], .graph-cluster-caption')) {
           // Clear the innermost state first: a selection, then the group focus.
           if (graphSelectedSlug.value || graphDrawerVisible.value) {
             graphSelectedSlug.value = null
@@ -4901,6 +5021,7 @@ function clearHighlight(
 // search against the wiki API so the dropdown can reach pages that sit
 // outside the canvas (up to the whole 4万-page KB).
 const graphSearchOptions = ref<{ label: string; value: string }[]>([])
+const graphSearchKeyword = ref('')
 const graphSearchLoading = ref(false)
 let graphSearchDebounce: ReturnType<typeof setTimeout> | null = null
 let graphSearchSeq = 0
@@ -4916,18 +5037,28 @@ const graphSearchDefaultOptions = ref<{ label: string; value: string }[]>([])
 // computed keeps graphSearchOptions.value representing "current keyword
 // results" without having to remember which list is active.
 const graphSearchEffectiveOptions = computed(() => {
-  return graphSearchOptions.value.length > 0
+  return graphSearchKeyword.value
     ? graphSearchOptions.value
     : graphSearchDefaultOptions.value
 })
 
-function setGraphSearchDefaultFromNodes(nodes: { slug: string; title: string }[] | undefined) {
+function setGraphSearchDefaultFromNodes(nodes: WikiGraphData['nodes'] | undefined) {
   if (!nodes) return
-  graphSearchDefaultOptions.value = nodes.map(n => ({ label: n.title, value: n.slug }))
+  graphSearchDefaultOptions.value = nodes.map(n => ({ label: n.search_label || n.title, value: n.slug }))
+}
+
+async function graphSuggestions(query: string, limit: number) {
+  if (entityGraph.value) return searchGraphEntities(props.knowledgeBaseId, query, limit)
+  const res = await searchWikiPages(props.knowledgeBaseId, query, limit)
+  const pages: WikiPage[] = (res as any)?.data?.pages || (res as any)?.pages || []
+  return pages.map(p => ({ label: p.title, value: p.slug }))
 }
 
 async function handleGraphRemoteSearch(keyword: string) {
   const q = (keyword || '').trim()
+  const seq = ++graphSearchSeq
+  graphSearchKeyword.value = q
+  graphSearchOptions.value = []
   if (graphSearchDebounce) {
     clearTimeout(graphSearchDebounce)
     graphSearchDebounce = null
@@ -4943,13 +5074,11 @@ async function handleGraphRemoteSearch(keyword: string) {
   // Snapshot a monotonic sequence number so stale responses (user kept
   // typing while an earlier request was still in flight) don't overwrite
   // newer results with older ones.
-  const seq = ++graphSearchSeq
   graphSearchDebounce = setTimeout(async () => {
     try {
-      const res = await searchWikiPages(props.knowledgeBaseId, q, 20)
+      const options = await graphSuggestions(q, 20)
       if (seq !== graphSearchSeq) return
-      const pages: WikiPage[] = (res as any)?.data?.pages || (res as any)?.pages || []
-      graphSearchOptions.value = pages.map(p => ({ label: p.title, value: p.slug }))
+      graphSearchOptions.value = options
     } catch (e) {
       if (seq !== graphSearchSeq) return
       console.error('Wiki search failed:', e)
@@ -5037,10 +5166,7 @@ async function handleGraphSearchEnter(context: { inputValue: string }) {
 
   // First try the already-loaded remote suggestions — if the user picked a
   // keyword whose results are on screen, fire the first match immediately.
-  const match = graphSearchOptions.value.find(opt =>
-    opt.label.toLowerCase().includes(value.toLowerCase()) ||
-    opt.value.toLowerCase().includes(value.toLowerCase())
-  )
+  const match = graphSearchKeyword.value === value ? graphSearchOptions.value[0] : undefined
   if (match) {
     handleGraphSearchSelect(match.value)
     return
@@ -5050,11 +5176,9 @@ async function handleGraphSearchEnter(context: { inputValue: string }) {
   // network still pending). Run a one-shot search so Enter still navigates
   // somewhere useful rather than silently doing nothing.
   try {
-    const res = await searchWikiPages(props.knowledgeBaseId, value, 1)
-    const pages: WikiPage[] = (res as any)?.data?.pages || (res as any)?.pages || []
-    if (pages.length > 0) {
-      handleGraphSearchSelect(pages[0].slug)
-    }
+    const seq = graphSearchSeq
+    const [first] = await graphSuggestions(value, 1)
+    if (first && seq === graphSearchSeq) handleGraphSearchSelect(first.value)
   } catch (e) {
     console.error('Wiki search failed on enter:', e)
   }
@@ -5090,6 +5214,7 @@ watch(() => props.view, (v) => {
 })
 
 watch(() => route.query.slug, (newSlug) => {
+  if (entityGraph.value) return
   if (newSlug && typeof newSlug === 'string') {
     if (!selectedPage.value || selectedPage.value.slug !== newSlug) {
       if (props.view === 'graph') {
@@ -5102,12 +5227,18 @@ watch(() => route.query.slug, (newSlug) => {
 })
 
 onMounted(() => {
-  loadPages()
-  loadStats()
+  if (!entityGraph.value) {
+    loadPages()
+    loadStats()
+  }
   if (props.view === 'graph') loadGraph()
 })
 
 onUnmounted(() => {
+  graphSearchSeq++
+  graphDrawerRequest++
+  graphViewRequest++
+  if (graphSearchDebounce) clearTimeout(graphSearchDebounce)
   disposeGraphPanZoom()
   if (statsTimer) {
     clearInterval(statsTimer)
@@ -5132,6 +5263,20 @@ onUnmounted(() => {
 </script>
 
 <style scoped lang="less">
+.entity-source + .entity-source {
+  border-top: 1px solid var(--td-component-stroke);
+  padding-top: 12px;
+}
+.entity-source-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wiki-graph-canvas :deep(.entity-edge-hover) {
+  stroke: var(--td-brand-color);
+  stroke-opacity: 1;
+  stroke-width: 2;
+}
+
 .wiki-browser {
   display: flex;
   height: 100%;

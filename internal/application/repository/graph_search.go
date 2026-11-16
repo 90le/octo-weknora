@@ -21,7 +21,23 @@ func NewGraphSearchEvidenceRepository(db *gorm.DB) interfaces.GraphSearchEvidenc
 func (r *graphSearchEvidenceRepository) GetGraphSourceChunks(
 	ctx context.Context, tenantID uint64, kbID string, ids []string,
 ) ([]types.GraphSearchSourceChunk, error) {
-	if tenantID == 0 || kbID == "" || len(ids) > types.GraphSearchMaxEvidence {
+	return r.getGraphSourceChunks(ctx, tenantID, kbID, ids, false)
+}
+
+func (r *graphSearchEvidenceRepository) GetGraphSourceMetadata(
+	ctx context.Context, tenantID uint64, kbID string, ids []string,
+) ([]types.GraphSearchSourceChunk, error) {
+	return r.getGraphSourceChunks(ctx, tenantID, kbID, ids, true)
+}
+
+func (r *graphSearchEvidenceRepository) getGraphSourceChunks(
+	ctx context.Context, tenantID uint64, kbID string, ids []string, metadataOnly bool,
+) ([]types.GraphSearchSourceChunk, error) {
+	limit := types.GraphBrowseMaxEvidence
+	if !metadataOnly {
+		limit = types.GraphSearchMaxEvidence
+	}
+	if tenantID == 0 || kbID == "" || len(ids) > limit {
 		return nil, fmt.Errorf("invalid graph evidence scope or budget")
 	}
 	rows := []types.GraphSearchSourceChunk{}
@@ -32,11 +48,15 @@ func (r *graphSearchEvidenceRepository) GetGraphSourceChunks(
 	// the two models' GORM default scopes. SUBSTR is supported by every SQL
 	// backend; fetching one extra character detects clipping without loading
 	// unbounded content or doing a second, racy metadata-to-content lookup.
-	err := r.db.WithContext(ctx).Table("chunks AS c").
-		Select(`c.id, c.tenant_id, c.knowledge_base_id, c.knowledge_id,
-			c.chunk_index, c.start_at, c.end_at,
-			SUBSTR(c.content, 1, ?) AS content, SUBSTR(k.title, 1, 513) AS title`,
-			types.GraphSearchMaxContentRunes+1).
+	query := r.db.WithContext(ctx).Table("chunks AS c")
+	const fields = `c.id, c.tenant_id, c.knowledge_base_id, c.knowledge_id, SUBSTR(k.title, 1, 513) AS title`
+	if metadataOnly {
+		query = query.Select(fields)
+	} else {
+		query = query.Select(fields+`, c.chunk_index, c.start_at, c.end_at, SUBSTR(c.content, 1, ?) AS content`,
+			types.GraphSearchMaxContentRunes+1)
+	}
+	err := query.
 		Joins(`JOIN knowledges AS k ON k.id = c.knowledge_id
 			AND k.tenant_id = c.tenant_id AND k.knowledge_base_id = c.knowledge_base_id`).
 		Where("c.tenant_id = ? AND c.knowledge_base_id = ? AND c.id IN ?", tenantID, kbID, ids).
