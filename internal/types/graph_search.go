@@ -17,12 +17,18 @@ const (
 	GraphSearchMaxAttributes     = 20
 	GraphSearchMaxContentRunes   = 2000
 	GraphSearchTimeout           = 10 * time.Second
+	GraphBrowseMaxNodes          = 500
+	GraphBrowseMaxRows           = 1500
+	GraphBrowseMaxEvidence       = 2048
 )
 
 // GraphSearchRequest matches a case-sensitive entity-name substring. It does
 // not run a model, generate embeddings or change the regular retrieval pipeline.
 type GraphSearchRequest struct {
-	Query           string `json:"query" binding:"required" minLength:"1" maxLength:"512"`
+	Query           string `json:"query" maxLength:"512"`
+	Mode            string `json:"mode,omitempty"`
+	KnowledgeID     string `json:"knowledge_id,omitempty"`
+	RelatedName     string `json:"related_name,omitempty"`
 	MaxNodes        int    `json:"max_nodes" minimum:"0" maximum:"100" default:"50"`
 	MaxRelations    int    `json:"max_relations" minimum:"0" maximum:"200" default:"100"`
 	MaxSourceChunks int    `json:"max_source_chunks" minimum:"0" maximum:"50" default:"20"`
@@ -30,17 +36,41 @@ type GraphSearchRequest struct {
 
 // Normalize validates both HTTP and direct service callers. Zero means default.
 func (r *GraphSearchRequest) Normalize() error {
-	r.Query = strings.TrimSpace(r.Query)
-	if r.Query == "" || !utf8.ValidString(r.Query) || utf8.RuneCountInString(r.Query) > GraphSearchMaxNameRunes {
+	if r.Mode != "focus" && r.Mode != "detail" {
+		r.Query = strings.TrimSpace(r.Query)
+	}
+	if !utf8.ValidString(r.Query) || utf8.RuneCountInString(r.Query) > GraphSearchMaxNameRunes {
 		return fmt.Errorf("query must contain 1 to %d characters", GraphSearchMaxNameRunes)
+	}
+	switch r.Mode {
+	case "":
+		if r.Query == "" || r.KnowledgeID != "" || r.RelatedName != "" {
+			return fmt.Errorf("a query is required")
+		}
+	case "overview", "suggest":
+		if (r.Mode == "overview") != (r.Query == "") || r.KnowledgeID != "" || r.RelatedName != "" {
+			return fmt.Errorf("invalid overview or suggestion request")
+		}
+	case "focus", "detail":
+		if strings.TrimSpace(r.Query) == "" || strings.TrimSpace(r.KnowledgeID) == "" ||
+			len(r.KnowledgeID) > 128 || (r.Mode == "focus" && r.RelatedName != "") ||
+			utf8.RuneCountInString(r.RelatedName) > GraphSearchMaxNameRunes {
+			return fmt.Errorf("a valid entity name and document ID are required")
+		}
+	default:
+		return fmt.Errorf("invalid graph mode")
+	}
+	nodeLimit, relationLimit := 100, 200
+	if r.LayoutOnly() {
+		nodeLimit, relationLimit = GraphBrowseMaxNodes, GraphBrowseMaxRows
 	}
 	for _, limit := range []struct {
 		name                  string
 		value                 *int
 		defaultValue, maximum int
 	}{
-		{"max_nodes", &r.MaxNodes, 50, 100},
-		{"max_relations", &r.MaxRelations, 100, 200},
+		{"max_nodes", &r.MaxNodes, 50, nodeLimit},
+		{"max_relations", &r.MaxRelations, 100, relationLimit},
 		{"max_source_chunks", &r.MaxSourceChunks, 20, 50},
 	} {
 		if *limit.value < 0 || *limit.value > limit.maximum {
@@ -51,6 +81,11 @@ func (r *GraphSearchRequest) Normalize() error {
 		}
 	}
 	return nil
+}
+
+// LayoutOnly reports whether excerpt text and node attributes can be deferred.
+func (r GraphSearchRequest) LayoutOnly() bool {
+	return r.Mode == "overview" || r.Mode == "suggest" || r.Mode == "focus"
 }
 
 // GraphSearchCandidates is internal: physical graph identities never cross the
@@ -65,6 +100,7 @@ type GraphSearchEntity struct {
 	ID             string   `json:"id"`
 	Name           string   `json:"name"`
 	KnowledgeID    string   `json:"knowledge_id"`
+	DocumentTitle  string   `json:"document_title,omitempty"`
 	Attributes     []string `json:"attributes"`
 	SourceChunkIDs []string `json:"source_chunk_ids"`
 }

@@ -57,7 +57,6 @@ import type { KnowledgeProcessOverrides } from '@/types/knowledgeProcess';
 import { useUploadConfirmStore, type UploadConfirmResult } from '@/stores/uploadConfirm';
 import { useUploadTasksStore } from '@/stores/uploadTasks';
 import WikiBrowser from './wiki/WikiBrowser.vue';
-import EntityGraph from './wiki/EntityGraph.vue';
 import ImageGallery from './gallery/ImageGallery.vue';
 import { getWikiStats } from '@/api/wiki';
 import {
@@ -2359,11 +2358,11 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
           <t-button size="small" :variant="graphView === 'wiki' ? 'base' : 'outline'" @click="graphView = 'wiki'">Wiki 页面链接</t-button>
           <t-button size="small" :variant="graphView === 'entities' ? 'base' : 'outline'" @click="graphView = 'entities'">实体关系</t-button>
         </div>
-        <WikiBrowser v-if="kbId && (shownKbTab === 'wiki' || (shownKbTab === 'graph' && graphView === 'wiki'))" :knowledge-base-id="kbId" :view="activeKbTab === 'graph' ? 'graph' : 'browser'"
+        <WikiBrowser v-if="kbId" :key="`${kbId}:${shownKbTab === 'graph' ? graphView : 'wiki'}`"
+          :knowledge-base-id="kbId" :view="shownKbTab === 'graph' ? 'graph' : 'browser'"
+          :graph-source="shownKbTab === 'graph' ? graphView : 'wiki'"
           :can-edit="canEdit" @open-source-doc="openSourceDoc" @status-change="onWikiStatusChange"
           @view-graph="onViewWikiInGraph" />
-        <EntityGraph v-if="kbId && shownKbTab === 'graph' && graphView === 'entities'"
-          :knowledge-base-id="kbId" @open-source-doc="openSourceDoc" />
       </div>
 
       <!-- Image Gallery (4th tab) -->

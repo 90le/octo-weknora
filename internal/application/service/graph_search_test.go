@@ -23,6 +23,12 @@ type graphSearchStoreStub struct {
 	query      string
 }
 
+func (s *graphSearchStoreStub) BrowseGraph(
+	ctx context.Context, ns types.NameSpace, req types.GraphSearchRequest,
+) (*types.GraphSearchCandidates, error) {
+	return s.SearchGraph(ctx, ns, req.Query)
+}
+
 func (s *graphSearchStoreStub) SearchGraph(
 	_ context.Context, ns types.NameSpace, query string,
 ) (*types.GraphSearchCandidates, error) {
@@ -38,6 +44,12 @@ type graphSearchEvidenceStub struct {
 	tenantID uint64
 	kbID     string
 	ids      []string
+}
+
+func (s *graphSearchEvidenceStub) GetGraphSourceMetadata(
+	ctx context.Context, tenantID uint64, kbID string, ids []string,
+) ([]types.GraphSearchSourceChunk, error) {
+	return s.GetGraphSourceChunks(ctx, tenantID, kbID, ids)
 }
 
 func (s *graphSearchEvidenceStub) GetGraphSourceChunks(
@@ -70,6 +82,41 @@ func graphSearchTestSource(id, doc string) types.GraphSearchSourceChunk {
 		ID: id, KnowledgeID: doc,
 		TenantID: 7, KnowledgeBaseID: "kb", Title: doc, Content: "source " + id,
 	}
+}
+
+func TestGraphSearchOverviewDefersExcerptsAndValidatesBothEndpoints(t *testing.T) {
+	kb := graphSearchTestKB()
+	store := &graphSearchStoreStub{candidates: &types.GraphSearchCandidates{Graph: &types.GraphData{
+		Node: []*types.GraphNode{
+			{ID: "a", Name: "A", KnowledgeID: "doc", Chunks: []string{"one"}, Attributes: []string{"attribute"}},
+			{ID: "b", Name: "B", KnowledgeID: "doc", Chunks: []string{"two"}},
+			{ID: "c", Name: "C", KnowledgeID: "doc", Chunks: []string{"hidden"}},
+		},
+		Relation: []*types.GraphRelation{
+			{SourceID: "a", TargetID: "b", Type: "valid"},
+			{SourceID: "a", TargetID: "c", Type: "hidden"},
+		},
+	}}}
+	evidence := &graphSearchEvidenceStub{rows: []types.GraphSearchSourceChunk{
+		graphSearchTestSource("one", "doc"), graphSearchTestSource("two", "doc"),
+	}}
+	svc := NewGraphSearchService(store, evidence)
+	ctx := graphSearchTestContext(kb)
+	result, err := svc.Search(ctx, kb, types.GraphSearchRequest{Mode: "overview", MaxSourceChunks: 1})
+	require.NoError(t, err)
+	require.Len(t, result.Entities, 2)
+	require.Empty(t, result.Entities[0].Attributes)
+	require.Equal(t, "doc", result.Entities[0].DocumentTitle)
+	require.Empty(t, result.SourceChunks)
+	require.Len(t, result.Relationships, 1)
+	require.Equal(t, "valid", result.Relationships[0].Type)
+	require.Empty(t, result.Relationships[0].SourceChunkIDs)
+
+	nodes := store.candidates.Graph.Node
+	nodes[0], nodes[2] = nodes[2], nodes[0]
+	result, err = svc.Search(ctx, kb, types.GraphSearchRequest{Mode: "focus", Query: "C", KnowledgeID: "doc"})
+	require.NoError(t, err)
+	require.Empty(t, result.Entities, "a hidden anchor must not reveal its neighborhood")
 }
 
 func TestGraphSearchPublicIdentitiesDirectionAndProvenance(t *testing.T) {
