@@ -20,22 +20,38 @@ const (
 	GraphBrowseMaxNodes          = 500
 	GraphBrowseMaxRows           = 1500
 	GraphBrowseMaxEvidence       = 2048
+	GraphFrontierMaxAnchors      = 24
 )
+
+// GraphAnchor identifies one document-scoped entity without exposing storage IDs.
+type GraphAnchor struct {
+	Name        string `json:"name"`
+	KnowledgeID string `json:"knowledge_id"`
+}
 
 // GraphSearchRequest matches a case-sensitive entity-name substring. It does
 // not run a model, generate embeddings or change the regular retrieval pipeline.
 type GraphSearchRequest struct {
-	Query           string `json:"query" maxLength:"512"`
-	Mode            string `json:"mode,omitempty"`
-	KnowledgeID     string `json:"knowledge_id,omitempty"`
-	RelatedName     string `json:"related_name,omitempty"`
-	MaxNodes        int    `json:"max_nodes" minimum:"0" maximum:"100" default:"50"`
-	MaxRelations    int    `json:"max_relations" minimum:"0" maximum:"200" default:"100"`
-	MaxSourceChunks int    `json:"max_source_chunks" minimum:"0" maximum:"50" default:"20"`
+	Query           string        `json:"query" maxLength:"512"`
+	Mode            string        `json:"mode,omitempty"`
+	KnowledgeID     string        `json:"knowledge_id,omitempty"`
+	RelatedName     string        `json:"related_name,omitempty"`
+	SourceDocument  string        `json:"source_document,omitempty"`
+	RelationType    string        `json:"relation_type,omitempty"`
+	Anchors         []GraphAnchor `json:"anchors,omitempty"`
+	MaxNodes        int           `json:"max_nodes" minimum:"0" maximum:"100" default:"50"`
+	MaxRelations    int           `json:"max_relations" minimum:"0" maximum:"200" default:"100"`
+	MaxSourceChunks int           `json:"max_source_chunks" minimum:"0" maximum:"50" default:"20"`
 }
 
 // Normalize validates both HTTP and direct service callers. Zero means default.
 func (r *GraphSearchRequest) Normalize() error {
+	if len(r.SourceDocument) > 128 || utf8.RuneCountInString(r.RelationType) > 128 {
+		return fmt.Errorf("invalid graph filter")
+	}
+	if r.Mode != "frontier" && len(r.Anchors) > 0 {
+		return fmt.Errorf("anchors are only supported in frontier requests")
+	}
 	if r.Mode != "focus" && r.Mode != "detail" {
 		r.Query = strings.TrimSpace(r.Query)
 	}
@@ -56,6 +72,17 @@ func (r *GraphSearchRequest) Normalize() error {
 			len(r.KnowledgeID) > 128 || (r.Mode == "focus" && r.RelatedName != "") ||
 			utf8.RuneCountInString(r.RelatedName) > GraphSearchMaxNameRunes {
 			return fmt.Errorf("a valid entity name and document ID are required")
+		}
+	case "frontier":
+		if r.Query != "" || r.KnowledgeID != "" || r.RelatedName != "" ||
+			len(r.Anchors) == 0 || len(r.Anchors) > GraphFrontierMaxAnchors {
+			return fmt.Errorf("one to %d graph anchors are required", GraphFrontierMaxAnchors)
+		}
+		for _, anchor := range r.Anchors {
+			if strings.TrimSpace(anchor.Name) == "" || strings.TrimSpace(anchor.KnowledgeID) == "" ||
+				len(anchor.KnowledgeID) > 128 || utf8.RuneCountInString(anchor.Name) > GraphSearchMaxNameRunes {
+				return fmt.Errorf("invalid graph anchor")
+			}
 		}
 	default:
 		return fmt.Errorf("invalid graph mode")
@@ -85,7 +112,7 @@ func (r *GraphSearchRequest) Normalize() error {
 
 // LayoutOnly reports whether excerpt text and node attributes can be deferred.
 func (r GraphSearchRequest) LayoutOnly() bool {
-	return r.Mode == "overview" || r.Mode == "suggest" || r.Mode == "focus"
+	return r.Mode == "overview" || r.Mode == "suggest" || r.Mode == "focus" || r.Mode == "frontier"
 }
 
 // GraphSearchCandidates is internal: physical graph identities never cross the

@@ -72,6 +72,7 @@ func (n *Neo4jRepository) BrowseGraph(
 	}()
 	value, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		out := &types.GraphSearchCandidates{Graph: &types.GraphData{}}
+		match := "MATCH (n:" + label + ")"
 		where := "n.name CONTAINS $query"
 		rank := "CASE WHEN n.name = $query THEN 0 ELSE 1 END, size(n.name), n.name, n.kg, elementId(n)"
 		seedLimit, rowLimit := types.GraphSearchMaxSeeds, types.GraphSearchMaxRows
@@ -79,8 +80,12 @@ func (n *Neo4jRepository) BrowseGraph(
 		switch req.Mode {
 		case "overview":
 			where = "size(n.chunks) > 0"
-			rank = "COUNT { (n)--(m:" + label + ") WHERE m.kg = n.kg AND size(m.chunks) > 0 } DESC, " +
-				"n.name, n.kg, elementId(n)"
+			pattern := "(n)-[r]-(m:" + label + ") WHERE m.kg = n.kg AND size(m.chunks) > 0"
+			if req.RelationType != "" {
+				pattern += " AND type(r) = $relationType"
+				where += " AND EXISTS { " + pattern + " }"
+			}
+			rank = "COUNT { " + pattern + " } DESC, n.name, n.kg, elementId(n)"
 			seedLimit, rowLimit = types.GraphBrowseMaxNodes, types.GraphBrowseMaxRows
 			neighborFilter = "AND elementId(m) IN $seeds AND m.kg = n.kg"
 		case "suggest":
@@ -97,14 +102,34 @@ func (n *Neo4jRepository) BrowseGraph(
 			} else if req.Mode == "detail" {
 				neighborFilter += " AND m = n"
 			}
+		case "frontier":
+			match = "UNWIND $anchors AS anchor MATCH (n:" + label + ")"
+			where = "n.kg = anchor.document AND n.name = anchor.name"
+			rank = "n.name, n.kg, elementId(n)"
+			seedLimit, rowLimit = types.GraphFrontierMaxAnchors, types.GraphBrowseMaxRows
+			neighborFilter = "AND m.kg = n.kg AND size(m.chunks) > 0 AND m <> n"
+		}
+		if req.SourceDocument != "" {
+			where += " AND n.kg = $sourceDocument"
+		}
+		if req.RelationType != "" {
+			neighborFilter += " AND type(r) = $relationType"
+		}
+		anchors := make([]map[string]any, 0, len(req.Anchors))
+		for _, anchor := range req.Anchors {
+			anchors = append(anchors, map[string]any{"name": anchor.Name, "document": anchor.KnowledgeID})
 		}
 		seedResult, err := tx.Run(ctx, `
-			MATCH (n:`+label+`)
+			`+match+`
 			WHERE `+where+`
+			WITH DISTINCT n
 			WITH n ORDER BY `+rank+`
 			LIMIT $probeLimit
 			RETURN `+graphSearchProjection("n", req.LayoutOnly())+` AS n`,
-			map[string]any{"query": req.Query, "document": req.KnowledgeID, "probeLimit": seedLimit + 1})
+			map[string]any{
+				"query": req.Query, "document": req.KnowledgeID, "probeLimit": seedLimit + 1,
+				"sourceDocument": req.SourceDocument, "relationType": req.RelationType, "anchors": anchors,
+			})
 		if err != nil {
 			return nil, err
 		}
@@ -143,7 +168,10 @@ func (n *Neo4jRepository) BrowseGraph(
 				`+graphSearchProjection("m", req.LayoutOnly())+` AS m,
 				elementId(r) AS id, elementId(startNode(r)) AS source_id,
 				elementId(endNode(r)) AS target_id, substring(type(r), 0, 129) AS type`,
-			map[string]any{"seeds": seedIDs, "related": req.RelatedName, "probeLimit": rowLimit + 1})
+			map[string]any{
+				"seeds": seedIDs, "related": req.RelatedName, "probeLimit": rowLimit + 1,
+				"relationType": req.RelationType,
+			})
 		if err != nil {
 			return nil, err
 		}

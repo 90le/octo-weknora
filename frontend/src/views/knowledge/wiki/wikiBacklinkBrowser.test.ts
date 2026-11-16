@@ -53,13 +53,13 @@ async function fixture(graphSource?: 'entities') {
     searchGraphEntities: async (_kb: string, q: string) => [{ label: q, value: 'exact' }],
     getEntityGraphDetails: async (_kb: string, key: string) => {
       calls.push({ name: 'getEntityGraphDetails', args: [_kb, key] })
-      return { title: 'Acme', sources: [], attributes: [], relations: [], truncated: false }
+      return { title: 'Acme', document: null, sources: [], attributes: [], relations: [], truncated: false }
     },
   }
   const exports: any = {}
   runInNewContext(compiled, {
     exports, console: { error: (...args: unknown[]) => errors.push(args) },
-    setTimeout, clearTimeout, setInterval, clearInterval,
+    setTimeout, clearTimeout, setInterval, clearInterval, AbortController,
     localStorage: { getItem: () => null, setItem() {} },
     require(name: string) {
       if (name === 'vue' || name === 'marked') return require(name)
@@ -69,6 +69,7 @@ async function fixture(graphSource?: 'entities') {
       if (name === '@/stores/settings') return { useSettingsStore: () => ({}) }
       if (name === '@/api/wiki') return api
       if (name === './entityGraphSource') return entitySource
+      if (name === './entityGraphExploration') return require(`${name}.ts`)
       if (name === 'tdesign-vue-next') return { MessagePlugin: { success() {}, error() {} } }
       // DOM sanitization has separate tests; this fixture exercises the actual
       // component's title resolution and Markdown caller before that boundary.
@@ -106,7 +107,9 @@ test('entity mode opens an overview immediately and uses the shared jump and dra
     await nextTick()
     assert.equal(f.vm.graphData.meta.center, 'exact')
     assert.equal(f.vm.entityDetails.title, 'Acme')
-    assert.deepEqual(f.calls.map(call => call.name), ['getEntityGraph', 'getEntityGraph', 'getEntityGraphDetails'])
+    assert.deepEqual(f.calls.map(call => call.name).sort(), [
+      'getEntityGraph', 'getEntityGraph', 'getEntityGraph', 'getEntityGraphDetails',
+    ])
   } finally { f.close() }
 })
 

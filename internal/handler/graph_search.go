@@ -49,7 +49,7 @@ func (h *GraphSearchHandler) Search(c *gin.Context) {
 		_ = c.Error(err)
 		return
 	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	var req types.GraphSearchRequest
