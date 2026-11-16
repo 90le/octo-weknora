@@ -1,5 +1,12 @@
 # 项目进度
 
+## 2026-11-16 实体关系图筛选与边缘扩展（生产）
+
+- [PR #141](https://github.com/90le/octo-weknora/pull/141) 已合并，主线提交 `d9a3f9026`；`desktop-l9fnllu` 的生产应用、前端及 18080 预览均已切换到 `entity-explore-v1` 镜像。
+- 实体关系继续共用 Wiki 画布。可叠加选择关系类型和来源文档，关系按类型配色；侧栏可查看关系方向、相关实体、关联片段和原文。扩展标记仅在当前筛选下确认有未显示的关系时出现；未能完整核验的节点单独提示。来源片段仍是关联线索，打开原文沿用现有文档详情。
+- App、Go Lint、前端 CI 通过。隔离 Media Studio 浏览器验证搜索、叠加筛选、关系详情、片段和 PPTX 原文；聚焦「秒针 Serving」时提示 4 个可扩展边缘节点，显示的关系线从 12 条增加到 16 条。生产回查返回 353 个实体和 138 条关系；关系类型、文档过滤、扩展探测及来源文档和分块接口通过。
+- 正式配置继续关闭注册和自动迁移，匿名请求图谱返回 401，Neo4j 无主机端口；未重跑向量。回退文件为 `compose.before-entity-explore-20261116T054541Z.json` 和 `postgres.before-entity-explore-20261116T054541Z.dump`，旧预览容器为 `octo-entity-explore-preview-rollback-20261116T054541Z`。应用回退使用旧镜像与 Compose 配置，无需恢复生产数据库。
+
 ## 2026-11-16 知识库共用图谱界面（生产）
 
 - [PR #139](https://github.com/90le/octo-weknora/pull/139) 合并提交 `cf65a5dd1`。上线镜像为应用 `local/octo-weknora-app:shared-graph-5bbb003`、前端与 18080 预览 `local/octo-weknora-ui:shared-graph-4b70817`；后续提交只改了 Go 检查提出的格式问题。前端保留上一版静态资源。
