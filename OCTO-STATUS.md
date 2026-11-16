@@ -1,5 +1,12 @@
 # 项目进度
 
+## 2026-11-16 知识库共用图谱界面（生产）
+
+- [PR #139](https://github.com/90le/octo-weknora/pull/139) 合并提交 `cf65a5dd1`。上线镜像为应用 `local/octo-weknora-app:shared-graph-5bbb003`、前端与 18080 预览 `local/octo-weknora-ui:shared-graph-4b70817`；后续提交只改了 Go 检查提出的格式问题。前端保留上一版静态资源。
+- Wiki 页面链接与实体关系共用 Wiki 图谱组件、搜索下拉、布局、拖动缩放、邻居探索和详情抽屉。实体关系进入即加载已有概览，下拉用来源文档区分同名实体；点关系读取片段并打开原文。图谱概览与搜索验证可访问来源，仅点详情时取片段正文。关系来源仍是两端实体关联的片段。
+- App、Go Lint 和前端 CI 全部通过；定向 Neo4j 集成测试、Wiki 回归、语言字典检查通过。隔离浏览器以 Media Studio 数据验证首屏、搜索「秒针」、展开邻居、点关系和打开 PPTX；匿名与无授权空间四种查询均返回 401／403。生产复查显示 353 个实体、138 条关系，搜索、聚焦、来源文档与分块接口正常。
+- 注册关闭、自动迁移关闭、Neo4j 无主机端口，未重跑向量。生产回查 1680 条活动知识，待处理、解析中和同步中均为零。回退保留 `compose.before-shared-graph-20261116T042112Z.json`、`postgres.before-shared-graph-20261116T042112Z.dump` 和 `octo-shared-graph-preview-rollback-20261116T042112Z`。应用回退使用旧镜像与配置，不覆盖生产数据库。
+
 ## 2026-11-16 知识库实体关系图（生产）
 
 - [PR #138](https://github.com/90le/octo-weknora/pull/138) 合并提交 `24b9214afe83904e4666282b813739493ecc8898`；部署源码提交 `99ff5bf6f`。生产应用镜像 `local/octo-weknora-app:entity-graph-99ff5bf`，前端和 18080 预览镜像 `local/octo-weknora-ui:entity-graph-candidate-v2`。前端保留了切换前所有 992 个静态资源文件。应用保留 `anydoc` 编译选项。
