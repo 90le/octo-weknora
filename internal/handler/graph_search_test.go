@@ -81,7 +81,7 @@ func TestGraphSearchHandlerValidation(t *testing.T) {
 		"negative limit":   `{"query":"Acme","max_source_chunks":-1}`,
 		"excessive limit":  `{"query":"Acme","max_relations":201}`,
 		"long query":       `{"query":"` + strings.Repeat("中", 513) + `"}`,
-		"large body":       `{"query":"Acme"}` + strings.Repeat(" ", 8192),
+		"large body":       `{"query":"Acme"}` + strings.Repeat(" ", 64<<10),
 	} {
 		t.Run(name, func(t *testing.T) {
 			svc := &graphSearchHandlerServiceStub{}

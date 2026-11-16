@@ -155,6 +155,35 @@ func TestGraphSearchIntegration(t *testing.T) {
 		require.Equal(t, []string{"attr1"}, detail.Graph.Node[0].Attributes)
 	})
 
+	t.Run("filter and probe scoped relationships", func(t *testing.T) {
+		overview, err := repo.BrowseGraph(ctx, ns, types.GraphSearchRequest{
+			Mode: "overview", RelationType: "RELATED_TO", SourceDocument: "doc1",
+		})
+		require.NoError(t, err)
+		require.Len(t, overview.Graph.Node, 2)
+		require.Len(t, overview.Graph.Relation, 1)
+		require.Equal(t, "RELATED_TO", overview.Graph.Relation[0].Type)
+		require.Equal(t, "doc1", overview.Graph.Node[0].KnowledgeID)
+		anchors := []types.GraphAnchor{
+			{Name: "Acme", KnowledgeID: "doc2"},
+			{Name: "Acme Shanghai", KnowledgeID: "doc1"},
+		}
+		result, err := repo.BrowseGraph(ctx, ns, types.GraphSearchRequest{
+			Mode: "frontier", SourceDocument: "doc1", Anchors: anchors,
+		})
+		require.NoError(t, err)
+		require.Len(t, result.Graph.Node, 2)
+		require.Len(t, result.Graph.Relation, 2)
+		require.Empty(t, result.TruncationReasons)
+		typesFound := []string{result.Graph.Relation[0].Type, result.Graph.Relation[1].Type}
+		require.ElementsMatch(t, []string{"RELATED_TO", "HEADQUARTERED_IN"}, typesFound)
+		result, err = repo.BrowseGraph(ctx, ns, types.GraphSearchRequest{
+			Mode: "frontier", SourceDocument: "doc1", RelationType: "HAS_BRANCH_IN", Anchors: anchors,
+		})
+		require.NoError(t, err)
+		require.Empty(t, result.Graph.Relation)
+	})
+
 	t.Run("seed cap and exact-name priority", func(t *testing.T) {
 		_, err := neo4j.ExecuteQuery(ctx, driver, `
 			UNWIND range(0, 104) AS i CREATE (n:`+label+`

@@ -71,7 +71,32 @@
 
         <!-- Legend Overlay -->
         <div v-if="graphControlsVisible" class="wiki-graph-legend" :class="{ 'legend-shifted': graphDrawerVisible }">
-          <div class="legend-items">
+          <div v-if="entityGraph" class="entity-graph-filters">
+            <label>{{ $t('knowledgeEditor.wikiBrowser.entityRelationType') }}</label>
+            <t-select :value="entityFilters.relation_type" clearable filterable
+              :aria-label="$t('knowledgeEditor.wikiBrowser.entityRelationType')"
+              :placeholder="$t('knowledgeEditor.wikiBrowser.entityAllRelations')"
+              @change="changeEntityFilter('relation_type', $event)">
+              <t-option v-for="type in entityRelationOptions" :key="type" :value="type" :label="type">
+                <span class="relation-swatch" :style="{ background: entityRelationColor(type) }"></span>{{ type }}
+              </t-option>
+            </t-select>
+            <label>{{ $t('knowledgeEditor.wikiBrowser.entitySourceDocument') }}</label>
+            <t-select :value="entityFilters.source_document" :options="entityDocumentOptions" clearable filterable
+              :aria-label="$t('knowledgeEditor.wikiBrowser.entitySourceDocument')"
+              :placeholder="$t('knowledgeEditor.wikiBrowser.entityAllSources')"
+              @change="changeEntityFilter('source_document', $event)" />
+            <div v-if="!entityFilters.relation_type" class="entity-color-key">
+              <span v-for="type in entityRelationOptions.slice(0, 6)" :key="type">
+                <i class="relation-swatch" :style="{ background: entityRelationColor(type) }"></i>{{ type }}
+              </span>
+              <span v-if="entityHasMixedEdges">
+                <i class="relation-swatch" :style="{ background: entityMixedRelationColor }"></i>
+                {{ $t('knowledgeEditor.wikiBrowser.entityMixedRelations') }}
+              </span>
+            </div>
+          </div>
+          <div v-else class="legend-items">
             <div v-if="!entityGraph" class="legend-item clickable" :class="{ disabled: !graphFilterTypes.has('summary') }"
               @click="toggleGraphFilterType('summary')">
               <span class="legend-dot" style="background: #0052d9"></span>
@@ -119,11 +144,16 @@
                 $t('knowledgeEditor.wikiBrowser.showArrows')
               }}</span>
             </div>
-            <div v-if="graphMode === 'ego' && graphFrontierCount > 0" class="legend-action" @click="growFrontier"
-              :title="$t('knowledgeEditor.wikiBrowser.growFrontierTitle', { count: graphFrontierCount })">
+            <button v-if="graphMode === 'ego' && graphFrontierCount > 0" type="button" class="legend-action graph-unlinked-toggle"
+              @click="growFrontier" :title="$t(entityGraph ? 'knowledgeEditor.wikiBrowser.entityGrowFrontierHint' : 'knowledgeEditor.wikiBrowser.growFrontierTitle', { count: graphFrontierCount })">
               <span class="legend-action-icon"><t-icon name="chart-bubble" /></span>
               <span>{{ $t('knowledgeEditor.wikiBrowser.growFrontier', { count: graphFrontierCount }) }}</span>
-            </div>
+            </button>
+            <p v-if="entityGraph && graphMode === 'ego'" class="entity-frontier-status" aria-live="polite">
+              <template v-if="entityChecking">{{ $t('knowledgeEditor.wikiBrowser.entityCheckingNeighbors') }}</template>
+              <template v-else-if="entityFrontier.unknown">{{ $t('knowledgeEditor.wikiBrowser.entityUnknownNeighbors') }}</template>
+              <template v-else-if="!graphFrontierCount">{{ $t('knowledgeEditor.wikiBrowser.entityNoFrontier') }}</template>
+            </p>
             <div v-if="graphMode === 'ego'" class="legend-action" @click="loadGraph">
               <span class="legend-action-icon"><t-icon name="rollback" /></span>
               <span>{{ $t('knowledgeEditor.wikiBrowser.backToOverview') }}</span>
@@ -152,7 +182,9 @@
           </div>
           <p class="wiki-empty-desc">{{ graphLoading ? $t('knowledgeEditor.wikiBrowser.graphEmpty') :
             $t(graphError ? 'knowledgeEditor.wikiBrowser.graphLoadFailed' :
-              entityGraph ? 'knowledgeEditor.wikiBrowser.entityGraphEmpty' : 'knowledgeEditor.wikiBrowser.graphNoData') }}</p>
+              entityGraph ? (entityFilters.relation_type || entityFilters.source_document
+                ? 'knowledgeEditor.wikiBrowser.entityNoRelations' : 'knowledgeEditor.wikiBrowser.entityGraphEmpty')
+                : 'knowledgeEditor.wikiBrowser.graphNoData') }}</p>
           <t-button v-if="graphError && !graphLoading" @click="loadGraph">{{ $t('common.retry') }}</t-button>
         </div>
 
@@ -164,30 +196,54 @@
             <t-loading v-if="entityDetailLoading" />
             <p v-else-if="!entityDetails">{{ $t('knowledgeEditor.wikiBrowser.entityGraphDetailsUnavailable') }}</p>
             <template v-else>
+              <div class="entity-detail-document">
+                <span>{{ $t('knowledgeEditor.wikiBrowser.entitySourceDocument') }}</span>
+                <strong>{{ entityDetails.document.title }}</strong>
+                <t-button size="small" variant="text" theme="primary" @click="emit('open-source-doc', entityDetails.document.id)">
+                  {{ $t('knowledgeEditor.wikiBrowser.entityGraphOpenSource') }}
+                </t-button>
+              </div>
               <div v-if="entityDetailNode" class="wiki-reader-meta">
                 <t-tag size="small" theme="success" variant="light-outline">{{ getTypeLabel('entity') }}</t-tag>
                 <t-button v-if="graphMode !== 'ego' || graphCenter !== entityDetailNode" size="small" variant="outline"
                   @click="loadEgoGraph(entityDetailNode)">{{ $t('knowledgeEditor.wikiBrowser.expandNeighbors') }}</t-button>
-                <t-button v-if="graphMode === 'ego' && !entityExpanded.has(entityDetailNode)" size="small" variant="outline"
+                <t-button v-if="entityFrontier.expandable.has(entityDetailNode)" size="small" variant="outline"
                   @click="loadBloomNeighbors(entityDetailNode)">{{ $t('knowledgeEditor.wikiBrowser.bloomNeighbors') }}</t-button>
               </div>
-              <div class="wiki-reader-body">
-                <p v-for="(attribute, i) in entityDetails.attributes" :key="i">{{ attribute }}</p>
-                <ul v-if="entityDetails.relations.length">
-                  <li v-for="relation in entityDetails.relations" :key="relation.id">
-                    {{ relation.source }} → {{ relation.type }} → {{ relation.target }}
-                  </li>
-                </ul>
-                <h3>{{ $t('knowledgeEditor.wikiBrowser.entityGraphSources') }}</h3>
-                <p v-if="entityDetails.relations.length">{{ $t('knowledgeEditor.wikiBrowser.entityGraphSourceHint') }}</p>
-                <p v-if="entityDetails.truncated">{{ $t('knowledgeEditor.wikiBrowser.entityGraphPartial') }}</p>
-                <article v-for="source in entityDetails.sources" :key="source.id" class="entity-source">
-                  <strong>{{ source.title }}</strong>
-                  <t-button size="small" variant="text" theme="primary" @click="emit('open-source-doc', source.knowledge_id)">
-                    {{ $t('knowledgeEditor.wikiBrowser.entityGraphOpenSource') }}
-                  </t-button>
-                  <p class="entity-source-text">{{ source.content }}{{ source.content_truncated ? '…' : '' }}</p>
-                </article>
+              <div class="wiki-reader-body entity-details">
+                <section v-if="entityDetails.relations.length || entityDetailNode">
+                  <h3>{{ $t('knowledgeEditor.wikiBrowser.entityRelatedEntities') }}</h3>
+                  <div v-for="relation in entityDetails.relations" :key="relation.id" class="entity-relation-row">
+                    {{ relation.source }} → <span class="entity-relation-type">
+                      <i class="relation-swatch" :style="{ background: entityRelationColor(relation.type) }"></i>{{ relation.type }}
+                    </span> → {{ relation.target }}
+                  </div>
+                  <t-loading v-if="entityRelatedLoading" size="small" />
+                  <div v-for="peer in entityDrawerPeers" :key="peer.id" class="entity-relation-row">
+                    <span class="entity-relation-type">
+                      <i class="relation-swatch" :style="{ background: entityRelationColor(peer.type) }"></i>
+                      <span aria-hidden="true">{{ peer.incoming ? '←' : '→' }}</span> {{ peer.type }}
+                    </span>
+                    <button type="button" class="entity-peer-link" @click="handleGraphSearchSelect(peer.slug)">{{ peer.title }}</button>
+                  </div>
+                  <p v-if="entityDetailNode && !entityRelatedLoading && !entityDrawerPeers.length && !entityDetails.relations.length" class="entity-detail-hint">
+                    {{ $t(entityRelated ? 'knowledgeEditor.wikiBrowser.entityNoRelations' : 'knowledgeEditor.wikiBrowser.entityGraphDetailsUnavailable') }}
+                  </p>
+                  <p v-if="entityRelated?.meta.truncated" class="entity-detail-hint">{{ $t('knowledgeEditor.wikiBrowser.entityDetailPartial') }}</p>
+                </section>
+                <section v-if="entityDetails.attributes.length">
+                  <h3>{{ $t('knowledgeEditor.wikiBrowser.entityAttributes') }}</h3>
+                  <ul><li v-for="(attribute, i) in entityDetails.attributes" :key="i">{{ attribute }}</li></ul>
+                </section>
+                <section>
+                  <h3>{{ $t('knowledgeEditor.wikiBrowser.entityGraphSources') }}</h3>
+                  <p v-if="entityDetails.relations.length" class="entity-detail-hint">{{ $t('knowledgeEditor.wikiBrowser.entityGraphSourceHint') }}</p>
+                  <p v-if="entityDetails.truncated" class="entity-detail-hint">{{ $t('knowledgeEditor.wikiBrowser.entityDetailPartial') }}</p>
+                  <details v-for="source in entityDetails.sources" :key="source.id" class="entity-source">
+                    <summary>{{ $t('knowledgeEditor.wikiBrowser.entitySourceExcerpt', { index: source.chunk_index + 1 }) }}</summary>
+                    <p class="entity-source-text">{{ source.content }}{{ source.content_truncated ? '…' : '' }}</p>
+                  </details>
+                </section>
               </div>
             </template>
           </template>
@@ -872,7 +928,13 @@ import {
 } from './wikiDirectoryState'
 import { resolveWikiBacklinkTitle } from './wikiBacklinkTitles'
 import { buildGraphLayout, graphNodeRadius, stepGraphLayout, visibleGraphLabels, graphPointBounds, initialGraphViewport, graphClusterOutline, graphLandmarkTitle, type GraphBounds, type GraphCluster } from './wikiGraphLayout'
-import { getEntityGraph, getEntityGraphDetails, searchGraphEntities, type EntityGraphDetails } from './entityGraphSource'
+import {
+  getEntityGraph, getEntityGraphDetails, probeEntityFrontier, searchGraphEntities,
+  type EntityGraphDetails, type EntityGraphFilters,
+} from './entityGraphSource'
+import {
+  collectEntityExpansion, entityFrontierInfo, entityMixedRelationColor, entityRelationColor, type EntityFrontierProbe,
+} from './entityGraphExploration'
 import { getKnowledgeDetails } from '@/api/knowledge-base'
 import { createSessions } from '@/api/chat'
 import ChatView from '@/views/chat/index.vue'
@@ -923,8 +985,18 @@ const props = defineProps<{
   canEdit?: boolean
 }>()
 const entityGraph = computed(() => props.graphSource === 'entities')
-const entityExpanded = ref(new Set<string>())
+const entityFilters = ref<EntityGraphFilters>({})
+const entityRelationTypes = ref(new Set<string>())
+const entityDocuments = ref(new Map<string, string>())
+const entityProbes = ref(new Map<string, EntityFrontierProbe>())
+const entityChecking = ref(false)
+let entityProbeAbort: AbortController | undefined
+const entityRelationOptions = computed(() => [...entityRelationTypes.value].sort((a, b) => a.localeCompare(b)))
+const entityDocumentOptions = computed(() => [...entityDocuments.value].map(([value, label]) => ({ value, label }))
+  .sort((a, b) => a.label.localeCompare(b.label)))
 const entityDetails = ref<EntityGraphDetails | null>(null)
+const entityRelated = ref<WikiGraphData | null>(null)
+const entityRelatedLoading = ref(false)
 const entityDetailLoading = ref(false)
 const entityDetailNode = ref('')
 let graphDrawerRequest = 0
@@ -1059,6 +1131,33 @@ const globalIssues = ref<WikiPageIssue[]>([])
 const currentFixSessionId = ref('')
 const stats = ref<WikiStats | null>(null)
 const graphData = ref<WikiGraphData | null>(null)
+function entityTypesByPair(edges: WikiGraphData['edges']) {
+  const byPair = new Map<string, Set<string>>()
+  for (const edge of edges) {
+    const key = [edge.source, edge.target].sort().join('↔')
+    const types = byPair.get(key) ?? new Set<string>()
+    for (const relation of edge.relations ?? []) types.add(relation.type)
+    byPair.set(key, types)
+  }
+  return byPair
+}
+const entityHasMixedEdges = computed(() => entityGraph.value &&
+  [...entityTypesByPair(graphData.value?.edges ?? []).values()].some(types => types.size > 1))
+const entityDrawerPeers = computed(() => {
+  const key = entityDetailNode.value
+  const graph = entityRelated.value
+  if (!key || !graph) return []
+  const titles = new Map(graph.nodes.map(node => [node.slug, node.title]))
+  return graph.edges.flatMap(edge => {
+    const incoming = edge.target === key
+    if (!incoming && edge.source !== key) return []
+    const slug = incoming ? edge.source : edge.target
+    return (edge.relations ?? []).map(r => ({ ...r, slug, title: titles.get(slug) || '', incoming }))
+  }).slice(0, 60)
+})
+const entityFrontier = computed(() => entityGraph.value && graphData.value?.meta.mode === 'ego'
+  ? entityFrontierInfo(graphData.value, entityProbes.value)
+  : { expandable: new Set<string>(), unknown: 0 })
 const searchQuery = ref('')
 const graphSearchValue = ref('')
 const graphRef = ref<HTMLElement | null>(null)
@@ -1070,7 +1169,9 @@ const graphError = ref(false)
 const graphReady = ref(false)
 // Search and type filters must survive an empty or failed render, otherwise
 // the user has no way to leave that state.
-const graphControlsVisible = computed(() => graphReady.value || (!graphLoading.value && graphData.value !== null))
+const graphControlsVisible = computed(() => graphReady.value || (graphData.value !== null &&
+  (entityGraph.value || !graphLoading.value)) || (entityGraph.value &&
+  !!(entityFilters.value.source_document || entityFilters.value.relation_type)))
 const showArrows = ref(true)
 const showUnlinkedNodes = ref(true)
 const graphUnlinkedSlugs = computed(() => {
@@ -1551,6 +1652,7 @@ const graphDrawerCanBloom = computed(() => {
 // expands. Hidden when 0 so the button disappears once the local
 // neighborhood is fully explored (or only Index/Log super-nodes remain).
 const graphFrontierCount = computed(() => {
+  if (entityGraph.value) return entityFrontier.value.expandable.size
   const data = graphData.value
   if (!data || data.meta?.mode !== 'ego') return 0
   const visibleDegree = new Map<string, number>()
@@ -1690,11 +1792,19 @@ async function openGraphDrawer(slug: string) {
 async function openEntityDrawer(slug: string, related?: string) {
   const request = ++graphDrawerRequest
   entityDetails.value = null
+  entityRelated.value = null
+  entityRelatedLoading.value = !related
   entityDetailNode.value = related ? '' : slug
   entityDetailLoading.value = true
   graphDrawerVisible.value = true
+  if (!related) {
+    void getEntityGraph(props.knowledgeBaseId, { center: slug, limit: 60 }, entityFilters.value)
+      .then(data => { if (request === graphDrawerRequest) entityRelated.value = data })
+      .catch(() => {})
+      .finally(() => { if (request === graphDrawerRequest) entityRelatedLoading.value = false })
+  }
   try {
-    const data = await getEntityGraphDetails(props.knowledgeBaseId, slug, related)
+    const data = await getEntityGraphDetails(props.knowledgeBaseId, slug, related, entityFilters.value)
     if (request === graphDrawerRequest) entityDetails.value = data
   } catch (e) {
     console.error('Failed to load entity graph details:', e)
@@ -3311,9 +3421,78 @@ function graphFilterSelectsNothing(): boolean {
 }
 
 async function fetchGraph(options: WikiGraphQueryParams): Promise<WikiGraphData> {
-  if (entityGraph.value) return getEntityGraph(props.knowledgeBaseId, options)
+  if (entityGraph.value) return getEntityGraph(props.knowledgeBaseId, options, entityFilters.value)
   const res = await getWikiGraph(props.knowledgeBaseId, options)
   return (res as any).data || res as any
+}
+
+function collectEntityFacets(data: WikiGraphData) {
+  if (!entityGraph.value) return
+  for (const node of data.nodes) {
+    if (node.document_id && node.document_title) entityDocuments.value.set(node.document_id, node.document_title)
+  }
+  for (const edge of data.edges) {
+    for (const relation of edge.relations ?? []) entityRelationTypes.value.add(relation.type)
+  }
+}
+
+function resetEntityFrontier() {
+  entityProbeAbort?.abort()
+  entityProbes.value = new Map()
+  entityChecking.value = false
+}
+
+async function checkEntityFrontier() {
+  const graph = graphData.value
+  if (!entityGraph.value || !graph || graph.meta.mode !== 'ego') return
+  entityProbeAbort?.abort()
+  const abort = new AbortController()
+  entityProbeAbort = abort
+  const keys = graph.nodes.map(n => n.slug)
+    .filter(key => key !== graph.meta.center && !entityProbes.value.has(key))
+  if (!keys.length) {
+    entityChecking.value = false
+    return
+  }
+  entityChecking.value = true
+  const filters = entityFilters.value
+  // One bounded read per batch, independent of the number of visible relationships.
+  let offset = 0
+  async function worker() {
+    while (!abort.signal.aborted && offset < keys.length) {
+      const start = offset
+      offset += 24
+      const batch = keys.slice(start, offset)
+      try {
+        const result = await probeEntityFrontier(props.knowledgeBaseId, batch, filters, abort.signal)
+        if (abort.signal.aborted) return
+        collectEntityFacets(result)
+        const probe = { graph: result, complete: !result.meta.truncated }
+        for (const key of batch) entityProbes.value.set(key, probe)
+      } catch {
+        // No confirmation is different from an empty neighbourhood.
+      }
+    }
+  }
+  await Promise.all([worker(), worker()])
+  if (entityProbeAbort === abort) entityChecking.value = false
+}
+
+function changeEntityFilter(field: keyof EntityGraphFilters, value: unknown) {
+  entityFilters.value = { ...entityFilters.value, [field]: typeof value === 'string' && value ? value : undefined }
+  handleGraphRemoteSearch('')
+  graphSearchDefaultOptions.value = []
+  graphDrawerRequest++
+  graphDrawerVisible.value = false
+  graphSelectedSlug.value = null
+  graphHighlightSlug.value = null
+  const source = entityFilters.value.source_document
+  const center = graphData.value?.nodes.find(n => n.slug === graphCenter.value)
+  if (graphMode.value === 'ego' && center && (!source || center.document_id === source)) {
+    void loadEgoGraph(center.slug)
+  } else {
+    void loadGraph()
+  }
 }
 
 async function loadGraph() {
@@ -3323,7 +3502,7 @@ async function loadGraph() {
   graphError.value = false
   graphMode.value = 'overview'
   graphCenter.value = ''
-  entityExpanded.value = new Set()
+  resetEntityFrontier()
   if (graphFilterSelectsNothing()) {
     // User has deselected every type — render an empty canvas without
     // hitting the backend.
@@ -3341,6 +3520,7 @@ async function loadGraph() {
     })
     if (request !== graphViewRequest) return
     graphData.value = data
+    collectEntityFacets(data)
     // Seed the search dropdown's empty-state with this overview snapshot
     // so opening the select without typing shows the top-500 by link_count
     // — matching what the old client-filter dropdown used to surface.
@@ -3378,6 +3558,7 @@ async function loadGraph() {
 async function loadEgoGraph(slug: string, depth = GRAPH_EGO_DEFAULT_DEPTH) {
   if (!slug) return
   const request = ++graphViewRequest
+  resetEntityFrontier()
   showUnlinkedNodes.value = true
   graphLoading.value = true
   graphReady.value = false
@@ -3401,9 +3582,10 @@ async function loadEgoGraph(slug: string, depth = GRAPH_EGO_DEFAULT_DEPTH) {
     })
     if (request !== graphViewRequest) return
     graphData.value = data
+    collectEntityFacets(data)
     graphMode.value = 'ego'
     graphCenter.value = slug
-    entityExpanded.value = new Set([slug])
+    if (entityGraph.value && !graphSearchDefaultOptions.value.length) setGraphSearchDefaultFromNodes(data.nodes)
     // Entering (or re-entering) a fresh ego view resets the bloom
     // generation counter — we're no longer accumulating on top of the
     // previous canvas, so every node belongs to generation 0.
@@ -3465,7 +3647,7 @@ async function loadBloomNeighbors(anchorSlug: string, depth = GRAPH_EGO_DEFAULT_
     await loadEgoGraph(anchorSlug, depth)
     return
   }
-  if (entityGraph.value && graphLoading.value) return
+  if (entityGraph.value) return expandEntityAnchors([anchorSlug])
   const request = graphViewRequest
   graphLoading.value = true
   try {
@@ -3477,7 +3659,6 @@ async function loadBloomNeighbors(anchorSlug: string, depth = GRAPH_EGO_DEFAULT_
       types: graphFilterTypesToArray(),
     })
     if (request !== graphViewRequest || !incoming || !Array.isArray(incoming.nodes)) return
-    if (entityGraph.value) entityExpanded.value.add(anchorSlug)
 
     bloomCurrentGeneration += 1
     const merged = mergeGraphData(graphData.value, incoming, bloomCurrentGeneration)
@@ -3502,6 +3683,21 @@ async function loadBloomNeighbors(anchorSlug: string, depth = GRAPH_EGO_DEFAULT_
   }
 }
 
+async function expandEntityAnchors(keys: string[]) {
+  const base = graphData.value
+  if (!base || graphLoading.value) return
+  const anchors = keys.filter(key => entityFrontier.value.expandable.has(key)).slice(0, 24)
+  if (!anchors.length) return
+  const incoming = collectEntityExpansion(base, entityProbes.value, anchors)
+  if (!incoming.edges.length) return
+  const merged = mergeGraphData(base, incoming, ++bloomCurrentGeneration)
+  evictBloomOverflow(merged, new Set([graphCenter.value, graphSelectedSlug.value || '', ...anchors]))
+  graphData.value = merged
+  const applied = graphData.value
+  await nextTick()
+  if (graphData.value === applied) renderGraph({ preserveLayout: true })
+}
+
 // mergeGraphData folds `incoming` into `base` in-place-style (returns a
 // new object for Vue reactivity but shares page node shape). Dedupes
 // nodes by slug and edges by (source, target). New node slugs are tagged
@@ -3523,21 +3719,21 @@ function mergeGraphData(
     }
   }
   const edgeKey = (e: { source: string; target: string }) => `${e.source}→${e.target}`
-  const edgeSeen = new Set<string>()
-  const edges: WikiGraphData['edges'] = []
-  for (const e of base.edges) {
+  const byPair = new Map<string, WikiGraphData['edges'][number]>()
+  for (const e of [...base.edges, ...incoming.edges]) {
     const k = edgeKey(e)
-    if (!edgeSeen.has(k)) { edgeSeen.add(k); edges.push(e) }
-  }
-  for (const e of incoming.edges) {
-    const k = edgeKey(e)
-    if (!edgeSeen.has(k)) { edgeSeen.add(k); edges.push(e) }
+    const previous = byPair.get(k)
+    if (!previous) byPair.set(k, e)
+    else if (e.relations?.length) {
+      const byID = new Map([...(previous.relations ?? []), ...e.relations].map(r => [r.id, r]))
+      byPair.set(k, { ...previous, relations: [...byID.values()] })
+    }
   }
   const nodes = Array.from(nodeBySlug.values())
   const familiarCount = nodes.filter((n) => n.familiar).length
   return {
     nodes,
-    edges,
+    edges: [...byPair.values()],
     meta: {
       // Meta from the latest ego response describes the most recent
       // bloom, but we keep the overview denominator so the truncation
@@ -3610,7 +3806,6 @@ function isFrontierCandidate(
   visibleDegree: number,
 ): boolean {
   if (node.slug === centerSlug) return false
-  if (entityGraph.value) return !entityExpanded.value.has(node.slug)
   if (GRAPH_SYSTEM_PAGE_TYPES.has(node.page_type)) return false
   return (node.link_count || 0) > visibleDegree
 }
@@ -3629,8 +3824,8 @@ async function growFrontier() {
     // Overview has its own pivot mechanism (expand a single node).
     return
   }
+  if (entityGraph.value) return expandEntityAnchors([...entityFrontier.value.expandable])
   if (graphFilterSelectsNothing()) return
-  if (entityGraph.value && graphLoading.value) return
   const request = graphViewRequest
 
   // Collect frontier nodes: visible degree < link_count AND not the ego
@@ -3649,7 +3844,6 @@ async function growFrontier() {
     }
   }
   if (frontier.length === 0) return
-  if (entityGraph.value) frontier.splice(24)
 
   graphLoading.value = true
   try {
@@ -3672,7 +3866,6 @@ async function growFrontier() {
             types: graphFilterTypesToArray(),
           })
           if (request === graphViewRequest && data?.nodes) {
-            if (entityGraph.value) entityExpanded.value.add(slug)
             responses.push(data)
           }
         } catch (e) {
@@ -4238,6 +4431,7 @@ function renderGraph(opts: RenderGraphOpts = {}) {
   type EdgeEl = { line: SVGLineElement; source: string; target: string; bidir: boolean }
   const edgeEls: EdgeEl[] = []
   const processedPairs = new Set<string>()
+  const relationTypes = entityGraph.value ? entityTypesByPair(graph.edges) : null
 
   for (const edge of graph.edges) {
     const pairKey = [edge.source, edge.target].sort().join('↔')
@@ -4247,9 +4441,14 @@ function renderGraph(opts: RenderGraphOpts = {}) {
     const bidir = edgePairSet.has(`${edge.target}→${edge.source}`)
 
     const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
-    line.setAttribute('stroke', graphEdgeColor)
+    const types = [...(relationTypes?.get(pairKey) ?? [])]
+    if (types.length) {
+      line.dataset.relationColor = types.length > 1 ? entityMixedRelationColor : entityRelationColor(types[0]!)
+      line.style.setProperty('--entity-relation-color', line.dataset.relationColor)
+    }
+    line.setAttribute('stroke', line.dataset.relationColor || graphEdgeColor)
     line.setAttribute('stroke-width', graphEdgeWidth)
-    line.setAttribute('stroke-opacity', graphEdgeOpacity)
+    line.setAttribute('stroke-opacity', line.dataset.relationColor ? '0.7' : graphEdgeOpacity)
     line.setAttribute('stroke-linecap', 'round')
     if (showArrows.value) line.setAttribute('marker-end', 'url(#arrow-end)')
     line.style.transition = 'stroke 0.2s, stroke-width 0.2s, stroke-opacity 0.2s'
@@ -4268,7 +4467,7 @@ function renderGraph(opts: RenderGraphOpts = {}) {
       hit.setAttribute('role', 'button')
       hit.setAttribute('aria-label', t('knowledgeEditor.wikiBrowser.entityGraphRelation', {
         source: nodeMap.get(edge.source)?.title, target: nodeMap.get(edge.target)?.title,
-      }))
+      }) + (types.length ? ' · ' + types.join(' / ') : ''))
       hit.style.cursor = 'pointer'
       const open = () => { void openEntityDrawer(edge.source, edge.target) }
       hit.addEventListener('click', open)
@@ -4316,7 +4515,7 @@ function renderGraph(opts: RenderGraphOpts = {}) {
     // In the overview nearly every page has neighbors beyond the top-N
     // slice, so the ring would only add noise; it guides ego exploration.
     const showExpansionRing = graph.meta?.mode === 'ego' && !isEgoCenter &&
-      (entityGraph.value ? !entityExpanded.value.has(n.slug) : hiddenNeighbors > 0)
+      (entityGraph.value ? entityFrontier.value.expandable.has(n.slug) : hiddenNeighbors > 0)
     const expansionRing = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
     expansionRing.setAttribute('r', String(r + 3))
     expansionRing.setAttribute('fill', 'none')
@@ -4390,7 +4589,7 @@ function renderGraph(opts: RenderGraphOpts = {}) {
     // painter's algorithm draws it on top; the node-shadow filter and
     // the drawer cover it otherwise.
     let bloomBtn: SVGGElement | null = null
-    const bloomBtnEligible = !isEgoCenter && graph.meta?.mode === 'ego' && hiddenNeighbors > 0
+    const bloomBtnEligible = !isEgoCenter && graph.meta?.mode === 'ego' && (entityGraph.value || hiddenNeighbors > 0)
     if (bloomBtnEligible) {
       bloomBtn = document.createElementNS('http://www.w3.org/2000/svg', 'g')
       bloomBtn.classList.add('node-bloom-btn')
@@ -4451,7 +4650,7 @@ function renderGraph(opts: RenderGraphOpts = {}) {
         clearTimeout(graphHoverLeaveTimer)
         graphHoverLeaveTimer = null
       }
-      if (bloomBtn) {
+      if (bloomBtn && (!entityGraph.value || entityFrontier.value.expandable.has(n.slug))) {
         bloomBtn.style.opacity = '1'
         bloomBtn.style.pointerEvents = 'auto'
       }
@@ -4965,10 +5164,10 @@ function applyHighlight(
         nodeEls.find(n => n.node.slug === focusSlug)?.node.type || ''
       ] || '#0052d9'
 
-      e.line.setAttribute('stroke', hlColor)
+      e.line.setAttribute('stroke', e.line.dataset.relationColor || hlColor)
       setEdgeMarkers(e, '-hl')
     } else {
-      e.line.setAttribute('stroke', graphEdgeColor)
+      e.line.setAttribute('stroke', e.line.dataset.relationColor || graphEdgeColor)
       e.line.setAttribute('stroke-opacity', '0.08')
       e.line.setAttribute('stroke-width', graphEdgeWidth)
       setEdgeMarkers(e)
@@ -5006,10 +5205,10 @@ function clearHighlight(
     activeRing.style.opacity = '0'
   }
   for (const e of edgeEls) {
-    e.line.setAttribute('stroke', graphEdgeColor)
+    e.line.setAttribute('stroke', e.line.dataset.relationColor || graphEdgeColor)
     e.line.setAttribute('stroke-width', graphEdgeWidth)
     const outsideFocus = graphFocusedSlugs.size && (!graphFocusedSlugs.has(e.source) || !graphFocusedSlugs.has(e.target))
-    e.line.setAttribute('stroke-opacity', outsideFocus ? '0.05' : graphEdgeOpacity)
+    e.line.setAttribute('stroke-opacity', outsideFocus ? '0.05' : e.line.dataset.relationColor ? '0.7' : graphEdgeOpacity)
     setEdgeMarkers(e)
   }
 }
@@ -5048,7 +5247,7 @@ function setGraphSearchDefaultFromNodes(nodes: WikiGraphData['nodes'] | undefine
 }
 
 async function graphSuggestions(query: string, limit: number) {
-  if (entityGraph.value) return searchGraphEntities(props.knowledgeBaseId, query, limit)
+  if (entityGraph.value) return searchGraphEntities(props.knowledgeBaseId, query, limit, entityFilters.value.source_document)
   const res = await searchWikiPages(props.knowledgeBaseId, query, limit)
   const pages: WikiPage[] = (res as any)?.data?.pages || (res as any)?.pages || []
   return pages.map(p => ({ label: p.title, value: p.slug }))
@@ -5226,6 +5425,21 @@ watch(() => route.query.slug, (newSlug) => {
   }
 })
 
+watch(graphData, () => { void checkEntityFrontier() })
+watch(() => entityFrontier.value.expandable, keys => {
+  if (!entityGraph.value) return
+  for (const { g, node } of graphNodeElsRef) {
+    const confirmed = keys.has(node.slug)
+    const ring = g.querySelector<SVGCircleElement>('.node-expansion-ring')
+    if (ring) ring.style.opacity = confirmed ? '0.55' : '0'
+    const button = g.querySelector<SVGGElement>('.node-bloom-btn')
+    if (button && !confirmed) {
+      button.style.opacity = '0'
+      button.style.pointerEvents = 'none'
+    }
+  }
+})
+
 onMounted(() => {
   if (!entityGraph.value) {
     loadPages()
@@ -5235,6 +5449,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  resetEntityFrontier()
   graphSearchSeq++
   graphDrawerRequest++
   graphViewRequest++
@@ -5272,10 +5487,54 @@ onUnmounted(() => {
   overflow-wrap: anywhere;
 }
 .wiki-graph-canvas :deep(.entity-edge-hover) {
-  stroke: var(--td-brand-color);
+  stroke: var(--entity-relation-color, var(--td-brand-color));
   stroke-opacity: 1;
   stroke-width: 2;
 }
+.entity-graph-filters {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  width: 224px;
+  max-width: 48vw;
+  color: var(--td-text-color-secondary);
+  font-size: 13px;
+}
+.entity-color-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 4px;
+}
+.relation-swatch {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 5px;
+  border-radius: 3px;
+  width: 13px;
+  height: 4px;
+}
+.entity-frontier-status, .entity-detail-hint { color: var(--td-text-color-secondary); font-size: 12px; }
+.entity-frontier-status { margin: 4px 8px; }
+.entity-frontier-status:empty { display: none; }
+.entity-detail-document {
+  display: grid;
+  gap: 5px;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  margin-bottom: 12px;
+  border-radius: 6px;
+  background: var(--td-bg-color-container-hover);
+}
+.entity-detail-document span { color: var(--td-text-color-secondary); font-size: 12px; }
+.entity-detail-document .t-button { justify-self: start; }
+.entity-details section { padding: 10px 0; border-bottom: 1px solid var(--td-component-stroke); }
+.entity-details section h3 { margin: 0 0 8px; }
+.entity-relation-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 4px 0; }
+.entity-relation-type { border-radius: 4px; padding: 2px 5px; background: var(--td-bg-color-container-hover); }
+.entity-peer-link { border: 0; background: transparent; padding: 2px; color: var(--td-brand-color); cursor: pointer; }
+.entity-peer-link:hover { text-decoration: underline; }
+.entity-source summary { cursor: pointer; }
 
 .wiki-browser {
   display: flex;

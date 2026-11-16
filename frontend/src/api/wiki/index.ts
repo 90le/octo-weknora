@@ -82,8 +82,11 @@ export interface WikiGraphMeta {
 }
 
 export interface WikiGraphData {
-  nodes: { slug: string; title: string; page_type: string; link_count: number; familiar?: boolean; search_label?: string }[];
-  edges: { source: string; target: string }[];
+  nodes: {
+    slug: string; title: string; page_type: string; link_count: number; familiar?: boolean; search_label?: string;
+    document_id?: string; document_title?: string;
+  }[];
+  edges: { source: string; target: string; relations?: { id: string; type: string }[] }[];
   meta: WikiGraphMeta;
 }
 

@@ -84,6 +84,9 @@ func (s *graphSearchService) Search(
 		if node == nil || node.ID == "" || node.Name == "" || node.KnowledgeID == "" || len(node.Chunks) == 0 {
 			continue
 		}
+		if req.SourceDocument != "" && node.KnowledgeID != req.SourceDocument {
+			continue
+		}
 		if utf8.RuneCountInString(node.Name) > types.GraphSearchMaxNameRunes ||
 			len(node.KnowledgeID) > 128 || len(node.Chunks) > types.GraphSearchMaxEvidence {
 			mark("entity_fields")
@@ -228,6 +231,9 @@ func (s *graphSearchService) Search(
 		if relation == nil {
 			continue
 		}
+		if req.RelationType != "" && relation.Type != req.RelationType {
+			continue
+		}
 		source, sourceOK := nodes[relation.SourceID]
 		target, targetOK := nodes[relation.TargetID]
 		if !sourceOK || !targetOK || source.KnowledgeID != target.KnowledgeID || relation.Type == "" {
@@ -255,6 +261,16 @@ func (s *graphSearchService) Search(
 		slices.Sort(chunkIDs)
 		result.Relationships = append(result.Relationships, types.GraphSearchRelation{
 			ID: id, SourceID: source.ID, TargetID: target.ID, Type: relation.Type, SourceChunkIDs: chunkIDs,
+		})
+	}
+	if req.Mode == "overview" && req.RelationType != "" {
+		connected := map[string]bool{}
+		for _, relation := range result.Relationships {
+			connected[relation.SourceID] = true
+			connected[relation.TargetID] = true
+		}
+		result.Entities = slices.DeleteFunc(result.Entities, func(entity types.GraphSearchEntity) bool {
+			return !connected[entity.ID]
 		})
 	}
 	return result, nil
