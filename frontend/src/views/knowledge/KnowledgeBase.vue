@@ -57,6 +57,7 @@ import type { KnowledgeProcessOverrides } from '@/types/knowledgeProcess';
 import { useUploadConfirmStore, type UploadConfirmResult } from '@/stores/uploadConfirm';
 import { useUploadTasksStore } from '@/stores/uploadTasks';
 import WikiBrowser from './wiki/WikiBrowser.vue';
+import EntityGraph from './wiki/EntityGraph.vue';
 import ImageGallery from './gallery/ImageGallery.vue';
 import { getWikiStats } from '@/api/wiki';
 import {
@@ -97,6 +98,11 @@ const kbLoading = ref(false);
 const docListLoading = ref(true);
 const isFAQ = computed(() => (kbInfo.value?.type || '') === 'faq');
 const isWiki = computed(() => !!kbInfo.value?.indexing_strategy?.wiki_enabled);
+const hasEntityGraph = computed(() => !!kbInfo.value?.indexing_strategy?.graph_enabled);
+const graphView = ref<'wiki' | 'entities'>('wiki');
+watch([isWiki, hasEntityGraph, kbId], ([wiki, graph]) => {
+  graphView.value = wiki ? 'wiki' : graph ? 'entities' : 'wiki';
+}, { immediate: true });
 const validTabs = ['documents', 'wiki', 'graph', 'gallery'] as const
 type KbTab = typeof validTabs[number]
 const initTab = validTabs.includes(route.query.tab as any) ? (route.query.tab as KbTab) : 'documents'
@@ -126,8 +132,10 @@ const kbViewTabs = computed(() => {
     const indexing = wikiIsIndexing.value
     tabs.push(
       { key: 'wiki', icon: 'book-open', label: 'Wiki', tip: indexing ? wikiIndexingTip.value : t(`${w}.tabWikiTip`), indexing },
-      { key: 'graph', icon: 'relation', label: t(`${w}.tabGraph`), tip: indexing ? wikiIndexingTip.value : t(`${w}.tabGraphTip`), indexing },
     )
+  }
+  if (isWiki.value || hasEntityGraph.value) {
+    tabs.push({ key: 'graph', icon: 'relation', label: t(`${w}.tabGraph`), tip: t(`${w}.tabGraphTip`), indexing: isWiki.value && wikiIsIndexing.value })
   }
   tabs.push({ key: 'gallery', icon: 'image', label: t(`${w}.tabGallery`), tip: t(`${w}.tabGalleryTip`) })
   return tabs
@@ -143,6 +151,7 @@ const onViewWikiInGraph = async (slug: string) => {
   // (which spreads route.query) preserves slug instead of clobbering it.
   await router.replace({ query: { ...route.query, tab: 'graph', slug } })
   activeKbTab.value = 'graph'
+  graphView.value = 'wiki'
 }
 
 let wikiStatusTimer: ReturnType<typeof setInterval> | null = null
@@ -2345,10 +2354,16 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
       </div>
 
       <!-- Wiki Browser / Graph (shown when wiki or graph tab is active) -->
-      <div v-if="isWiki && (activeKbTab === 'wiki' || activeKbTab === 'graph')" class="wiki-main-area">
-        <WikiBrowser v-if="kbId" :knowledge-base-id="kbId" :view="activeKbTab === 'graph' ? 'graph' : 'browser'"
+      <div v-if="shownKbTab === 'wiki' || shownKbTab === 'graph'" class="wiki-main-area">
+        <div v-if="shownKbTab === 'graph' && isWiki && hasEntityGraph" style="display:flex;gap:8px;padding:8px 16px">
+          <t-button size="small" :variant="graphView === 'wiki' ? 'base' : 'outline'" @click="graphView = 'wiki'">Wiki 页面链接</t-button>
+          <t-button size="small" :variant="graphView === 'entities' ? 'base' : 'outline'" @click="graphView = 'entities'">实体关系</t-button>
+        </div>
+        <WikiBrowser v-if="kbId && (shownKbTab === 'wiki' || (shownKbTab === 'graph' && graphView === 'wiki'))" :knowledge-base-id="kbId" :view="activeKbTab === 'graph' ? 'graph' : 'browser'"
           :can-edit="canEdit" @open-source-doc="openSourceDoc" @status-change="onWikiStatusChange"
           @view-graph="onViewWikiInGraph" />
+        <EntityGraph v-if="kbId && shownKbTab === 'graph' && graphView === 'entities'"
+          :knowledge-base-id="kbId" @open-source-doc="openSourceDoc" />
       </div>
 
       <!-- Image Gallery (4th tab) -->
@@ -2356,7 +2371,7 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
 
       <!-- wiki/graph tabs only exist on wiki KBs; a stale tab (?tab= or one
            carried over from a previous KB) falls back to documents. -->
-      <template v-if="activeKbTab === 'documents' || (!isWiki && activeKbTab !== 'gallery')">
+      <template v-if="shownKbTab === 'documents'">
         <div class="knowledge-main">
           <KbFolderTree v-if="showFolderTree && !folderTreeCollapsed" :tree="folderTree" :selected-path="selectedFolderPath"
             :loading="folderTreeLoading" :can-edit="canEdit" :root-label="kbInfo?.name"
@@ -2738,6 +2753,8 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
 }
 
 .wiki-main-area {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
   overflow: hidden;
