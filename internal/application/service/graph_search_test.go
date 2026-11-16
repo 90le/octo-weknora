@@ -23,7 +23,9 @@ type graphSearchStoreStub struct {
 	query      string
 }
 
-func (s *graphSearchStoreStub) BrowseGraph(ctx context.Context, ns types.NameSpace, req types.GraphSearchRequest) (*types.GraphSearchCandidates, error) {
+func (s *graphSearchStoreStub) BrowseGraph(
+	ctx context.Context, ns types.NameSpace, req types.GraphSearchRequest,
+) (*types.GraphSearchCandidates, error) {
 	return s.SearchGraph(ctx, ns, req.Query)
 }
 
@@ -44,7 +46,9 @@ type graphSearchEvidenceStub struct {
 	ids      []string
 }
 
-func (s *graphSearchEvidenceStub) GetGraphSourceMetadata(ctx context.Context, tenantID uint64, kbID string, ids []string) ([]types.GraphSearchSourceChunk, error) {
+func (s *graphSearchEvidenceStub) GetGraphSourceMetadata(
+	ctx context.Context, tenantID uint64, kbID string, ids []string,
+) ([]types.GraphSearchSourceChunk, error) {
 	return s.GetGraphSourceChunks(ctx, tenantID, kbID, ids)
 }
 
@@ -108,7 +112,8 @@ func TestGraphSearchOverviewDefersExcerptsAndValidatesBothEndpoints(t *testing.T
 	require.Equal(t, "valid", result.Relationships[0].Type)
 	require.Empty(t, result.Relationships[0].SourceChunkIDs)
 
-	store.candidates.Graph.Node[0], store.candidates.Graph.Node[2] = store.candidates.Graph.Node[2], store.candidates.Graph.Node[0]
+	nodes := store.candidates.Graph.Node
+	nodes[0], nodes[2] = nodes[2], nodes[0]
 	result, err = svc.Search(ctx, kb, types.GraphSearchRequest{Mode: "focus", Query: "C", KnowledgeID: "doc"})
 	require.NoError(t, err)
 	require.Empty(t, result.Entities, "a hidden anchor must not reveal its neighborhood")

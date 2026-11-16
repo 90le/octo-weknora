@@ -138,14 +138,18 @@ func TestGraphSearchIntegration(t *testing.T) {
 		require.Equal(t, "Acme", suggestions.Graph.Node[0].Name)
 		require.Empty(t, suggestions.Graph.Relation)
 
-		focus, err := repo.BrowseGraph(ctx, ns, types.GraphSearchRequest{Mode: "focus", Query: "Acme", KnowledgeID: "doc2"})
+		focus, err := repo.BrowseGraph(ctx, ns, types.GraphSearchRequest{
+			Mode: "focus", Query: "Acme", KnowledgeID: "doc2",
+		})
 		require.NoError(t, err)
 		require.Len(t, focus.Graph.Node, 2)
 		require.Equal(t, "doc2", focus.Graph.Node[0].KnowledgeID)
 		require.Len(t, focus.Graph.Relation, 1)
 		require.Equal(t, "HAS_BRANCH_IN", focus.Graph.Relation[0].Type)
 
-		detail, err := repo.BrowseGraph(ctx, ns, types.GraphSearchRequest{Mode: "detail", Query: "Acme", KnowledgeID: "doc1", RelatedName: "Acme Shanghai"})
+		detail, err := repo.BrowseGraph(ctx, ns, types.GraphSearchRequest{
+			Mode: "detail", Query: "Acme", KnowledgeID: "doc1", RelatedName: "Acme Shanghai",
+		})
 		require.NoError(t, err)
 		require.Len(t, detail.Graph.Relation, 2)
 		require.Equal(t, []string{"attr1"}, detail.Graph.Node[0].Attributes)

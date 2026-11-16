@@ -53,6 +53,7 @@ func (n *Neo4jRepository) SearchGraph(
 	return n.BrowseGraph(ctx, namespace, types.GraphSearchRequest{Query: query})
 }
 
+// BrowseGraph reads bounded candidates for the selected view of one knowledge base.
 func (n *Neo4jRepository) BrowseGraph(
 	ctx context.Context, namespace types.NameSpace, req types.GraphSearchRequest,
 ) (*types.GraphSearchCandidates, error) {
@@ -78,12 +79,15 @@ func (n *Neo4jRepository) BrowseGraph(
 		switch req.Mode {
 		case "overview":
 			where = "size(n.chunks) > 0"
-			rank = "COUNT { (n)--(m:" + label + ") WHERE m.kg = n.kg AND size(m.chunks) > 0 } DESC, n.name, n.kg, elementId(n)"
+			rank = "COUNT { (n)--(m:" + label + ") WHERE m.kg = n.kg AND size(m.chunks) > 0 } DESC, " +
+				"n.name, n.kg, elementId(n)"
 			seedLimit, rowLimit = types.GraphBrowseMaxNodes, types.GraphBrowseMaxRows
 			neighborFilter = "AND elementId(m) IN $seeds AND m.kg = n.kg"
 		case "suggest":
 			where = "size(n.chunks) > 0 AND toLower(n.name) CONTAINS toLower($query)"
-			rank = "CASE WHEN toLower(n.name) = toLower($query) THEN 0 WHEN toLower(n.name) STARTS WITH toLower($query) THEN 1 ELSE 2 END, size(n.name), n.name, n.kg, elementId(n)"
+			rank = "CASE WHEN toLower(n.name) = toLower($query) THEN 0 " +
+				"WHEN toLower(n.name) STARTS WITH toLower($query) THEN 1 ELSE 2 END, " +
+				"size(n.name), n.name, n.kg, elementId(n)"
 		case "focus", "detail":
 			where = "n.kg = $document AND n.name = $query"
 			neighborFilter = "AND m.kg = n.kg AND size(m.chunks) > 0"
@@ -135,7 +139,8 @@ func (n *Neo4jRepository) BrowseGraph(
 			WHERE NOT elementId(m) IN $seeds[0..seed_index] `+neighborFilter+`
 			WITH n, r, m, seed_index ORDER BY seed_index, elementId(r)
 			LIMIT $probeLimit
-			RETURN `+graphSearchProjection("n", req.LayoutOnly())+` AS n, `+graphSearchProjection("m", req.LayoutOnly())+` AS m,
+			RETURN `+graphSearchProjection("n", req.LayoutOnly())+` AS n,
+				`+graphSearchProjection("m", req.LayoutOnly())+` AS m,
 				elementId(r) AS id, elementId(startNode(r)) AS source_id,
 				elementId(endNode(r)) AS target_id, substring(type(r), 0, 129) AS type`,
 			map[string]any{"seeds": seedIDs, "related": req.RelatedName, "probeLimit": rowLimit + 1})

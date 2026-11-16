@@ -83,6 +83,7 @@ func (r *GraphSearchRequest) Normalize() error {
 	return nil
 }
 
+// LayoutOnly reports whether excerpt text and node attributes can be deferred.
 func (r GraphSearchRequest) LayoutOnly() bool {
 	return r.Mode == "overview" || r.Mode == "suggest" || r.Mode == "focus"
 }
