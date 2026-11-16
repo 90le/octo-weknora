@@ -3794,7 +3794,7 @@ export default {
         }
       },
       tabGraph: 'Graph',
-      tabGraphTip: 'A graph of links between Wiki pages (page-link graph). This is NOT the same as the LLM-extracted entity-relationship Knowledge Graph configured under "KB Settings → Knowledge Graph".',
+      tabGraphTip: 'Explore Wiki page links and extracted entity relationships.',
       searchPlaceholder: 'Search wiki pages...',
       searchNoResults: 'No matching pages found',
       viewModeToggle: 'Switch directory view',

@@ -22,7 +22,7 @@ function page(slug: string, titles: Record<string, string> = {}) {
   return { id: slug, slug, title: slug, content: '', version: 1, in_links: Object.keys(titles), in_link_titles: titles }
 }
 
-async function fixture() {
+async function fixture(graphSource?: 'entities') {
   const calls: { name: string; args: any[] }[] = []
   const errors: unknown[][] = []
   let response: any = page('first')
@@ -44,6 +44,18 @@ async function fixture() {
     getWikiIndex: async () => ({ groups: [] }),
     getWikiStats: async () => ({}),
   }
+  const entitySource = {
+    getEntityGraph: async (_kb: string, options: { center?: string }) => {
+      calls.push({ name: 'getEntityGraph', args: [_kb, options.center] })
+      return { nodes: [{ slug: 'exact', title: 'Acme', page_type: 'entity', link_count: 0 }], edges: [],
+        meta: { mode: options.center ? 'ego' : 'overview', center: options.center, returned: 1, total: 1, truncated: false } }
+    },
+    searchGraphEntities: async (_kb: string, q: string) => [{ label: q, value: 'exact' }],
+    getEntityGraphDetails: async (_kb: string, key: string) => {
+      calls.push({ name: 'getEntityGraphDetails', args: [_kb, key] })
+      return { title: 'Acme', sources: [], attributes: [], relations: [], truncated: false }
+    },
+  }
   const exports: any = {}
   runInNewContext(compiled, {
     exports, console: { error: (...args: unknown[]) => errors.push(args) },
@@ -56,6 +68,7 @@ async function fixture() {
       if (name === '@/stores/menu') return { useMenuStore: () => ({}) }
       if (name === '@/stores/settings') return { useSettingsStore: () => ({}) }
       if (name === '@/api/wiki') return api
+      if (name === './entityGraphSource') return entitySource
       if (name === 'tdesign-vue-next') return { MessagePlugin: { success() {}, error() {} } }
       // DOM sanitization has separate tests; this fixture exercises the actual
       // component's title resolution and Markdown caller before that boundary.
@@ -72,7 +85,7 @@ async function fixture() {
     insert() {}, remove() {}, setElementText() {}, setText() {}, patchProp() {},
     parentNode: () => null, nextSibling: () => null,
   })
-  const app = renderer.createApp(exports.default, { knowledgeBaseId: 'kb-1' })
+  const app = renderer.createApp(exports.default, { knowledgeBaseId: 'kb-1', graphSource, view: graphSource ? 'graph' : undefined })
   const vm: any = app.mount({})
   await new Promise(resolve => setImmediate(resolve))
   await nextTick()
@@ -83,6 +96,19 @@ async function fixture() {
     close: () => app.unmount(),
   }
 }
+
+test('entity mode opens an overview immediately and uses the shared jump and drawer flow', async () => {
+  const f = await fixture('entities')
+  try {
+    assert.equal(f.vm.graphData.meta.mode, 'overview')
+    assert.equal(f.vm.graphSearchEffectiveOptions[0].label, 'Acme')
+    await f.vm.handleGraphSearchSelect('exact')
+    await nextTick()
+    assert.equal(f.vm.graphData.meta.center, 'exact')
+    assert.equal(f.vm.entityDetails.title, 'Acme')
+    assert.deepEqual(f.calls.map(call => call.name), ['getEntityGraph', 'getEntityGraph', 'getEntityGraphDetails'])
+  } finally { f.close() }
+})
 
 test('page navigation consumes all response titles without a separate title request', async () => {
   const f = await fixture()
