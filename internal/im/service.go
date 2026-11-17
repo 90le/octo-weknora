@@ -3061,7 +3061,9 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 
 	// Create user message
 	query := imQuestionText(msg)
-	userMsg, err := s.messageService.CreateMessage(qaCtx, createIMUserMessagePayload(session.ID, query, requestID, attachments))
+	userMsg, err := s.messageService.CreateMessage(
+		qaCtx, createIMUserMessagePayload(session.ID, query, requestID, attachments),
+	)
 	if err != nil {
 		return fmt.Errorf("create user message: %w", err)
 	}
@@ -3262,7 +3264,9 @@ loop:
 
 // fallbackNonStream is used when streaming initialization fails.
 func (s *Service) fallbackNonStream(ctx context.Context, msg *IncomingMessage, session *types.Session, customAgent *types.CustomAgent, kbIDs []string, attachments types.MessageAttachments, imageURLs []string, adapter Adapter, userKey string, tenant *types.Tenant) error {
-	answer, err := s.runQA(ctx, session, imQuestionText(msg), customAgent, kbIDs, attachments, imageURLs, userKey, msg.Quote)
+	answer, err := s.runQA(
+		ctx, session, imQuestionText(msg), customAgent, kbIDs, attachments, imageURLs, userKey, msg.Quote,
+	)
 	if err != nil {
 		logger.Errorf(ctx, "[IM] QA fallback failed: %v", err)
 		answer = imQAFailureReplyForContext(ctx, err)
