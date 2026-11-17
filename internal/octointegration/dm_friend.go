@@ -54,7 +54,7 @@ func CheckDMFriend(ctx context.Context, token, uid string, transport *http.Clien
 	if err != nil {
 		return false, ErrPlatform
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	const maxResponse = 16 * 1024
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponse+1))
 	if err != nil || len(raw) > maxResponse {
