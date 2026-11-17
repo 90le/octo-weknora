@@ -277,7 +277,10 @@ func (h *IMHandler) UpdateIMChannel(c *gin.Context) {
 	if req.SessionMode != nil {
 		channel.SessionMode = *req.SessionMode
 	}
-	if req.KnowledgeBaseID != nil {
+	// The generic file-saving binding predates Octo's private KB list.
+	// Older editors echo the stored binding even when it is no longer live.
+	// Carrying it forward must not block updates to the actual private scope.
+	if req.KnowledgeBaseID != nil && (channel.Platform != "octo" || *req.KnowledgeBaseID != before.KnowledgeBaseID) {
 		ctx := c.Request.Context()
 		if err := h.imService.SetChannelKnowledgeBaseID(ctx, channel, *req.KnowledgeBaseID); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "knowledge base not found"})

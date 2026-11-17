@@ -29,8 +29,12 @@
       <h4>私聊知识</h4>
       <label>可查询的知识库</label>
       <t-select v-model="model.knowledge_base_ids" aria-label="私聊知识库" placeholder="选择知识库" multiple clearable filterable
-        :options="knowledgeBases.map(kb => ({ label: kb.name, value: kb.id }))" />
+        :options="knowledgeOptions" />
       <p>没有选择知识库时，Bot 不处理私聊问答。</p>
+      <t-alert v-if="unavailableKnowledge.length" theme="warning">
+        {{ unavailableKnowledge.length }} 个已选知识库当前不可用。请移除后重新选择。
+        <t-button variant="text" theme="primary" size="small" @click="removeUnavailableKnowledge">移除不可用项</t-button>
+      </t-alert>
     </div>
 
     <div class="private-list private-divider">
@@ -104,6 +108,15 @@ const tools: { key: keyof OctoPrivateTools; label: string; hint: string }[] = [
 ];
 const overlap = computed(() => model.value.allowed_uids.filter(uid => model.value.blocked_uids.includes(uid)).length);
 const enabledTools = computed(() => Object.values(model.value.tools).filter(Boolean).length);
+const knownKnowledge = computed(() => new Set(props.knowledgeBases.map(kb => kb.id)));
+const unavailableKnowledge = computed(() => model.value.knowledge_base_ids.filter(id => !knownKnowledge.value.has(id)));
+const knowledgeOptions = computed(() => [
+  ...props.knowledgeBases.map(kb => ({ label: kb.name, value: kb.id })),
+  ...unavailableKnowledge.value.map(id => ({ label: `当前不可用 · ${id}`, value: id })),
+]);
+function removeUnavailableKnowledge() {
+  model.value.knowledge_base_ids = model.value.knowledge_base_ids.filter(id => knownKnowledge.value.has(id));
+}
 const shownTools = computed(() => [
   ...tools.filter(tool => props.preview?.policy.tools[tool.key]).map(tool => tool.label),
   ...(props.preview?.policy.tools.allow_generated_files ? ['旧版 Markdown 发送'] : []),

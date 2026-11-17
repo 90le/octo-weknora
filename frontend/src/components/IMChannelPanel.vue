@@ -277,7 +277,7 @@
       </div>
 
       <div v-else-if="wizardStep === 2" class="im-step-body">
-        <OctoPrivateAccess v-if="formData.platform === 'octo' && authStore.hasRole('admin')" v-model="octoPrivateDraft" :knowledge-bases="knowledgeBases"
+        <OctoPrivateAccess v-if="formData.platform === 'octo' && authStore.hasRole('admin')" v-model="octoPrivateDraft" :knowledge-bases="octoKnowledgeBases"
           :preview="currentOctoPreview" :busy="octoPreviewLoading" @preview="reviewOctoPrivate" />
         <p v-else-if="formData.platform === 'octo'" class="form-desc">由工作区管理员管理私聊权限。</p>
         <section v-else class="setting-drawer__section im-drawer__section">
@@ -952,7 +952,10 @@ async function handleDrawerConfirm() {
 }
 
 // Knowledge base options for file-to-KB feature
-const knowledgeBases = ref<{ id: string; name: string }[]>([]);
+const knowledgeBases = ref<{ id: string; name: string; tenant_id?: number }[]>([]);
+const octoKnowledgeBases = computed(() => knowledgeBases.value.filter(kb =>
+  !kb.tenant_id || Number(kb.tenant_id) === Number(authStore.currentTenantId),
+));
 
 // WeChat QR code binding state
 const wechatQRContent = ref('');  // raw text to encode as QR code
@@ -1199,7 +1202,9 @@ async function loadChannels(quiet = false) {
     loadError.value = '';
     allChannels.value = channelRes.data || [];
     agents.value = chatResources.agents as CustomAgent[];
-    knowledgeBases.value = chatResources.rawKnowledgeBases.map((kb: any) => ({ id: kb.id, name: kb.name }));
+    knowledgeBases.value = chatResources.rawKnowledgeBases.map((kb: any) => ({
+      id: kb.id, name: kb.name, tenant_id: kb.tenant_id,
+    }));
   } catch {
     if (requestVersion === channelLoadVersion) loadError.value = allChannels.value.length ? '状态刷新失败，当前保留上次读取的结果。请重试。' : '渠道读取失败，请重试；这不表示没有配置 Bot。';
   } finally {
@@ -1351,7 +1356,9 @@ async function handleSave() {
         output_mode: formData.value.output_mode,
         locale: formData.value.locale,
         session_mode: formData.value.session_mode,
-        knowledge_base_id: normalizeOptionalString(formData.value.knowledge_base_id),
+        ...(formData.value.platform === 'octo' ? {} : {
+          knowledge_base_id: normalizeOptionalString(formData.value.knowledge_base_id),
+        }),
         credentials,
         private_preview: preview,
         enabled: editingEnabled.value,
@@ -1372,7 +1379,9 @@ async function handleSave() {
         output_mode: formData.value.output_mode,
         locale: formData.value.locale,
         session_mode: formData.value.session_mode,
-        knowledge_base_id: normalizeOptionalString(formData.value.knowledge_base_id),
+        ...(formData.value.platform === 'octo' ? {} : {
+          knowledge_base_id: normalizeOptionalString(formData.value.knowledge_base_id),
+        }),
         credentials,
         private_preview: preview,
       });
