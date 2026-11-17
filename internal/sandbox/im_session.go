@@ -469,7 +469,8 @@ func (m *SessionBoundManager) discardStoppedIMSandbox(
 		return err
 	}
 	if m.imDiskVerifier != nil {
-		if err = m.imDiskVerifier.VerifyIMSandboxDisk(ctx, key.TenantID, key.SessionID, binding.ConfigID, c); err != nil {
+		err = m.imDiskVerifier.VerifyIMSandboxDisk(ctx, key.TenantID, key.SessionID, binding.ConfigID, c)
+		if err != nil {
 			return fmt.Errorf("%w: %v", ErrIMDiskLimitUnavailable, err)
 		}
 	}

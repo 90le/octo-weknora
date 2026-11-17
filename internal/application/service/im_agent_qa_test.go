@@ -580,7 +580,9 @@ func TestIMAgentQAEndToEndShellAndRevocation(t *testing.T) {
 		}}
 		followup.calls.Store(1) // Only generate a reply; no new shell action.
 		var asked []string
-		sessionSvc.modelService = imQAModelService{model: followup, onModel: func(id string) { asked = append(asked, id) }}
+		sessionSvc.modelService = imQAModelService{
+			model: followup, onModel: func(id string) { asked = append(asked, id) },
+		}
 		require.NoError(t, sessionSvc.AgentQA(nextCtx, &nextReq, event.NewEventBus()))
 		require.Contains(t, asked, settings.model)
 		require.True(t, gotHistory.Load(), "previous turn reaches the new model")
