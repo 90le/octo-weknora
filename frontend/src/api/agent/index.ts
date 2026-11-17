@@ -387,6 +387,7 @@ export interface IMChannelOverview {
   output_mode: IMChannel['output_mode'];
   locale?: IMChannel['locale'];
   session_mode?: IMChannel['session_mode'];
+  private_access?: OctoPrivateSummary;
   bot_identity: string;
   runtime_status?: IMChannelRuntimeStatus;
   created_at: string;
@@ -397,11 +398,48 @@ export function listAllIMChannels() {
   return get<{ data: IMChannelOverview[] }>('/api/v1/im-channels');
 }
 
-export function createIMChannel(agentId: string, data: Partial<IMChannel>) {
+export interface OctoPrivateTools {
+  allow_file_delivery: boolean;
+  allow_sandbox_shell: boolean;
+  allow_sandbox_skills: boolean;
+  allow_generated_files: boolean;
+}
+
+export interface OctoPrivatePolicy {
+  mode: 'disabled' | 'creator_only' | 'allowlist';
+  allowed_uids: string[];
+  blocked_uids: string[];
+  knowledge_base_ids: string[];
+  tools: OctoPrivateTools;
+}
+
+export interface OctoPrivatePreview {
+  token?: string;
+  creator_uid?: string;
+  decision?: string;
+  problem?: string;
+  policy: OctoPrivatePolicy;
+  previous?: OctoPrivateSummary;
+}
+
+export type OctoPrivateSummary = { mode: OctoPrivatePolicy['mode']; allowed: number; blocked: number; knowledge: number };
+
+export function previewOctoPrivatePolicy(data: {
+  channel_id?: string;
+  test_uid?: string;
+  knowledge_base_id?: string;
+  credentials: Record<string, unknown>;
+}) {
+  return post<{ data: OctoPrivatePreview }>('/api/v1/im-channels/octo-private-preview', data);
+}
+
+type IMChannelWrite = Partial<IMChannel> & { private_preview?: string };
+
+export function createIMChannel(agentId: string, data: IMChannelWrite) {
   return post<{ data: IMChannel }>(`/api/v1/agents/${agentId}/im-channels`, data);
 }
 
-export function updateIMChannel(id: string, data: Partial<IMChannel>) {
+export function updateIMChannel(id: string, data: IMChannelWrite) {
   return put<{ data: IMChannel }>(`/api/v1/im-channels/${id}`, data);
 }
 

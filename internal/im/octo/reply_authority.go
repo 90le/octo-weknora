@@ -2,6 +2,7 @@ package octo
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/im"
 )
@@ -22,6 +23,10 @@ func permitsReply(authority string, current *im.ExecutionScope) bool {
 	// An answer may contain external evidence fetched while this grant existed.
 	// Do not deliver it after an administrator revokes public web access.
 	if old.AllowPublicWeb && !current.AllowPublicWeb {
+		return false
+	}
+	if strings.HasPrefix(old.ScopeID, "dm:") && ((old.AllowSandboxShell && !current.AllowSandboxShell) ||
+		(old.AllowSandboxSkills && !current.AllowSandboxSkills)) {
 		return false
 	}
 	// Administrative catalog reads can contain unpublished draft bodies even

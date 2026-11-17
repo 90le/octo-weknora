@@ -30,6 +30,9 @@
               <span v-if="agentDisplayName(channel)" class="channel-card__agent-name">
                 {{ agentDisplayName(channel) }}
               </span>
+              <span v-if="'private_access' in channel && channel.private_access" class="channel-card__agent-name">
+                {{ privateAccessSummary(channel.private_access) }}
+              </span>
               <p v-if="channel.enabled && ['stopped','unavailable','reconnecting'].includes(channel.runtime_status?.state || '')" class="channel-runtime-message">{{ channel.runtime_status?.message || '请打开详情核对连接。' }}</p>
             </div>
             <div v-if="authStore.hasRole('admin')" class="channel-card__actions" @click.stop>
@@ -80,21 +83,23 @@
         <t-icon v-else name="chat-message" />
       </template>
 
-      <template v-if="wizardStep > 0" #footer-left>
+      <template v-if="wizardStep > 0 && !quickOctoEdit" #footer-left>
         <t-button variant="outline" @click="prevWizardStep">
           {{ $t('datasource.back') }}
         </t-button>
       </template>
 
       <div class="im-steps">
-        <div v-for="(title, i) in stepTitles" :key="i"
-          :class="['im-step', { active: wizardStep === i, done: wizardStep > i }]">
-          <span class="im-step-num">
+        <component :is="quickOctoEdit ? 'button' : 'div'" v-for="(title, i) in stepTitles" :key="i"
+          :type="quickOctoEdit ? 'button' : undefined" :aria-current="wizardStep === i ? 'step' : undefined"
+          :class="['im-step', { active: wizardStep === i, done: wizardStep > i && !quickOctoEdit }]"
+          @click="quickOctoEdit && (wizardStep = i)">
+          <span v-if="!quickOctoEdit" class="im-step-num">
             <t-icon v-if="wizardStep > i" name="check" class="im-step-check" />
             <template v-else>{{ i + 1 }}</template>
           </span>
           <span class="im-step-title">{{ title }}</span>
-        </div>
+        </component>
       </div>
       <t-alert v-if="editingChannel?.runtime_status && ['stopped','unavailable','reconnecting'].includes(editingChannel.runtime_status.state)" theme="warning" class="channel-runtime-notice">{{ editingChannel.runtime_status.message || '当前连接未就绪。' }} 配置启用不表示已经连接；修复后重新启用，再核对连接状态。</t-alert>
 
@@ -165,6 +170,27 @@
 
       <!-- Step 2: Connection -->
       <div v-else-if="wizardStep === 1" class="im-step-body">
+        <section v-if="formData.platform === 'octo'" class="setting-drawer__section im-drawer__section">
+          <h4 class="setting-drawer__section-title">Bot 连接</h4>
+          <div class="drawer-form">
+              <div class="form-item">
+                <label class="form-label required">Octo 连接标识</label>
+                <t-select v-model="formData.credentials.account_id" :loading="octoConnectionsLoading" placeholder="选择已配置的 Octo 连接" filterable @change="verifyOctoIdentity">
+                  <t-option v-for="connection in octoConnections" :key="connection.account_id" :value="connection.account_id" :label="connection.account_id" />
+                </t-select>
+                <t-button variant="text" @click="showOctoConnection = true">新增或更新 Bot 连接</t-button>
+                <t-button variant="text" :loading="octoIdentityLoading" :disabled="!formData.credentials.account_id" @click="verifyOctoIdentity">重新核验身份</t-button>
+                <p class="form-desc">复用已保存的加密连接，无需重复填写 Token。添加连接后会自动选择。</p>
+                <p class="form-desc">连接密钥更换后，重新启用此渠道以加载新连接。启用前确认同一 Bot 没有同时连接其他接收服务。</p>
+              </div>
+              <div class="form-item">
+                <label class="form-label required">已核验的 Bot</label>
+                <t-loading :loading="octoIdentityLoading"><t-input :value="octoIdentity ? `${octoIdentity.name || 'Octo Bot'} · ${octoIdentity.bot_uid}` : ''" readonly placeholder="选择连接后自动核验" /></t-loading>
+                <p v-if="octoIdentityError" class="form-desc" role="alert">{{ octoIdentityError }}</p>
+              </div>
+          </div>
+        </section>
+
         <section v-if="formData.platform !== 'wechat'" class="setting-drawer__section im-drawer__section">
           <h4 class="setting-drawer__section-title">{{ $t('agentEditor.im.sectionAccess') }}</h4>
 
@@ -224,7 +250,7 @@
                 {{ $t('agentEditor.im.sessionModeThread') }}
               </button>
             </div>
-            <p class="form-desc">{{ formData.platform === 'octo' ? '每位用户在每个群／子区拥有独立对话。子区使用自己的知识库绑定。' : $t('agentEditor.im.sessionModeHint') }}</p>
+            <p class="form-desc">{{ formData.platform === 'octo' ? '每位用户有独立对话，群和子区使用各自的知识库绑定。' : $t('agentEditor.im.sessionModeHint') }}</p>
           </div>
 
           <div class="form-item">
@@ -250,21 +276,19 @@
         </section>
       </div>
 
-      <!-- Step 3: File knowledge base -->
       <div v-else-if="wizardStep === 2" class="im-step-body">
-        <section class="setting-drawer__section im-drawer__section">
-          <h4 class="setting-drawer__section-title">{{ formData.platform === 'octo' ? '私聊知识范围' : $t('agentEditor.im.sectionKnowledge') }}</h4>
+        <OctoPrivateAccess v-if="formData.platform === 'octo' && authStore.hasRole('admin')" v-model="octoPrivateDraft" :knowledge-bases="octoKnowledgeBases"
+          :preview="currentOctoPreview" :busy="octoPreviewLoading" @preview="reviewOctoPrivate" />
+        <p v-else-if="formData.platform === 'octo'" class="form-desc">由工作区管理员管理私聊权限。</p>
+        <section v-else class="setting-drawer__section im-drawer__section">
+          <h4 class="setting-drawer__section-title">{{ $t('agentEditor.im.sectionKnowledge') }}</h4>
           <div class="form-item">
-            <label class="form-label">{{ formData.platform === 'octo' ? '私聊知识库' : $t('agentEditor.im.fileKnowledgeBase') }}</label>
-            <t-select v-if="formData.platform === 'octo'" v-model="formData.credentials.dm_knowledge_base_ids" placeholder="选择私聊可查询的知识库（可多选）" multiple clearable filterable>
-              <t-option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id" :label="kb.name" />
-            </t-select>
-            <t-select v-else v-model="formData.knowledge_base_id"
+            <label class="form-label">{{ $t('agentEditor.im.fileKnowledgeBase') }}</label>
+            <t-select v-model="formData.knowledge_base_id"
               :placeholder="$t('agentEditor.im.fileKnowledgeBasePlaceholder')" clearable filterable>
               <t-option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id" :label="kb.name" />
             </t-select>
-            <p v-if="formData.platform === 'octo'" class="form-desc">仅供白名单中的私聊用户查询。群和子区使用「Octo 群与子区」中各自的绑定；附件不会自动入库。</p>
-            <p v-else class="form-desc">{{ $t('agentEditor.im.fileKnowledgeBaseHint') }}</p>
+            <p class="form-desc">{{ $t('agentEditor.im.fileKnowledgeBaseHint') }}</p>
           </div>
         </section>
       </div>
@@ -276,27 +300,9 @@
           <div class="drawer-form">
             <!-- WeCom credentials -->
             <template v-if="formData.platform === 'octo'">
-              <div class="form-item">
-                <label class="form-label required">Octo 连接标识</label>
-                <t-select v-model="formData.credentials.account_id" :loading="octoConnectionsLoading" placeholder="选择已配置的 Octo 连接" filterable @change="verifyOctoIdentity">
-                  <t-option v-for="connection in octoConnections" :key="connection.account_id" :value="connection.account_id" :label="connection.account_id" />
-                </t-select>
-                <t-button variant="text" @click="showOctoConnection = true">新增或更新 Bot 连接</t-button>
-                <t-button variant="text" :loading="octoIdentityLoading" :disabled="!formData.credentials.account_id" @click="verifyOctoIdentity">重新核验身份</t-button>
-                <p class="form-desc">复用已保存的加密连接，无需重复填写 Token。添加连接后会自动选择。</p>
-                <p class="form-desc">连接密钥更换后，重新启用此渠道以加载新连接。启用前确认同一 Bot 没有同时连接其他接收服务。</p>
-              </div>
-              <div class="form-item">
-                <label class="form-label required">已核验的 Bot</label>
-                <t-loading :loading="octoIdentityLoading"><t-input :value="octoIdentity ? `${octoIdentity.name || 'Octo Bot'} · ${octoIdentity.bot_uid}` : ''" readonly placeholder="选择连接后自动核验" /></t-loading>
-                <p v-if="octoIdentityError" class="form-desc" role="alert">{{ octoIdentityError }}</p>
-              </div>
-              <div class="form-item">
-                <label class="form-label">允许私聊的用户 UID</label>
-                <t-tag-input v-model="formData.credentials.allowed_dm_uids" placeholder="输入原生 UID，回车添加；留空拒绝私聊" />
-                <t-button v-if="octoIdentity?.owner_uid" variant="text" @click="formData.credentials.allowed_dm_uids = [octoIdentity.owner_uid]">仅允许 Bot 创建者私聊</t-button>
-                <p class="form-desc">使用原生 UID，不使用姓名判断权限。允许私聊还需在上一步选择私聊知识库。</p>
-              </div>
+              <details class="octo-group-settings">
+                <summary>群和子区 · 高级设置</summary>
+                <p class="form-desc">这些能力只在群／子区权限允许时生效。私聊另有独立配置。</p>
               <div class="form-item">
                 <label class="form-label">额外允许提问的 Bot UID</label>
                 <t-tag-input v-model="formData.credentials.allowed_bot_uids" placeholder="可选；仍须属于对应群和子区" />
@@ -338,6 +344,7 @@
                   <t-switch v-model="formData.credentials.allow_sandbox_skills" size="small" />
                 </div>
               </div>
+              </details>
             </template>
             <template v-if="formData.platform === 'wecom'">
               <div class="platform-link-hint">
@@ -687,8 +694,8 @@ import { normalizeOptionalString } from '@/utils/optionalString';
 import {
   listIMChannels, createIMChannel, updateIMChannel, deleteIMChannel, toggleIMChannel,
   getIMChannelWebOwner, bindIMChannelWebOwner, unbindIMChannelWebOwner,
-  getWeChatQRCode, pollWeChatQRCodeStatus, listAllIMChannels,
-  type IMChannelOverview, type CustomAgent,
+  getWeChatQRCode, pollWeChatQRCodeStatus, listAllIMChannels, previewOctoPrivatePolicy,
+  type IMChannelOverview, type CustomAgent, type OctoPrivatePolicy, type OctoPrivatePreview,
 } from '@/api/agent';
 import { useWebOwnerBinding } from '@/api/agent/webOwner';
 import { useChatResourcesStore } from '@/stores/chatResources';
@@ -697,6 +704,7 @@ import { useAuthStore } from '@/stores/auth';
 import { listConnections as listOctoConnections, connectionIdentity, type OctoIdentity } from '@/api/octo';
 import OctoConnectionDialog from '@/views/integrations/OctoConnectionDialog.vue';
 import OctoChannelEvents from '@/views/integrations/OctoChannelEvents.vue';
+import OctoPrivateAccess from '@/components/OctoPrivateAccess.vue';
 import SettingDrawer from '@/components/settings/SettingDrawer.vue';
 import IntegrationsAgentFilter from '@/components/IntegrationsAgentFilter.vue';
 import wecomLogo from '@/assets/img/im/wecom.svg';
@@ -776,9 +784,82 @@ const showOctoConnection = ref(false), octoIdentityLoading = ref(false), octoIde
 const octoIdentity = ref<OctoIdentity | null>(null);
 const showOctoEvents=ref(false),octoEventsChannel=ref({id:'',name:''});
 let octoIdentityVersion = 0;
+function readOctoPrivate(credentials: Record<string, any>, fallback = '', fresh = false): OctoPrivatePolicy {
+  const tools = credentials.dm_tools || credentials;
+  return {
+    mode: credentials.dm_access_mode || (fresh ? 'disabled' : 'allowlist'),
+    allowed_uids: [...(credentials.dm_allowlist_uids || credentials.allowed_dm_uids || [])],
+    blocked_uids: [...(credentials.blocked_dm_uids || [])],
+    knowledge_base_ids: [...(credentials.dm_knowledge_base_ids || (fallback ? [fallback] : []))],
+    tools: {
+      allow_file_delivery: tools.allow_file_delivery === true,
+      allow_sandbox_shell: tools.allow_sandbox_shell === true,
+      allow_sandbox_skills: tools.allow_sandbox_skills === true,
+      allow_generated_files: tools.allow_generated_files === true,
+    },
+  };
+}
+const octoPrivateDraft = ref(readOctoPrivate({}, '', true));
+const octoDraftSignature = () => JSON.stringify([
+  formData.value.credentials.account_id, formData.value.credentials.bot_uid, octoPrivateDraft.value,
+]);
+const octoPrivateBaseline = ref('');
+const octoPrivateChanged = computed(() => {
+  const config = formData.value.credentials;
+  return !editingChannel.value || octoDraftSignature() !== octoPrivateBaseline.value ||
+    (!config.dm_tools && JSON.stringify(readOctoPrivate(config).tools) !== JSON.stringify(octoPrivateDraft.value.tools));
+});
+const octoPreview = ref<{ key: string; result: OctoPrivatePreview }>();
+const octoPreviewLoading = ref(false);
+let octoPreviewVersion = 0;
+const currentOctoPreview = computed(() =>
+  octoPreview.value?.key === octoDraftSignature() ? octoPreview.value.result : undefined,
+);
+const quickOctoEdit = computed(() => !!editingChannel.value && formData.value.platform === 'octo');
+
+function privateAccessSummary(summary: NonNullable<IMChannelOverview['private_access']>) {
+  const audience = summary.mode === 'disabled' ? '关闭私聊'
+    : summary.mode === 'creator_only' ? '仅创建者'
+    : summary.allowed ? `白名单 ${summary.allowed} 个` : '白名单为空';
+  return `${audience} · 黑名单 ${summary.blocked} 个 · ${summary.knowledge} 个私聊知识库`;
+}
+
+function octoDraftCredentials() {
+  const draft = octoPrivateDraft.value;
+  return {
+    ...formData.value.credentials, dm_access_mode: draft.mode,
+    allowed_dm_uids: [], dm_allowlist_uids: draft.allowed_uids, blocked_dm_uids: draft.blocked_uids,
+    dm_knowledge_base_ids: draft.knowledge_base_ids, dm_tools: draft.tools,
+  };
+}
+
+async function reviewOctoPrivate(uid = '') {
+  const key = octoDraftSignature(), version = ++octoPreviewVersion;
+  octoPreview.value = undefined;
+  octoPreviewLoading.value = false;
+  if (!formData.value.credentials.account_id || !formData.value.credentials.bot_uid || octoIdentityLoading.value) {
+    MessagePlugin.warning('请先在「连接设置」选择并核验 Bot。');
+    return;
+  }
+  octoPreviewLoading.value = true;
+  try {
+    const res = await previewOctoPrivatePolicy({
+      channel_id: editingChannel.value?.id, test_uid: uid || undefined,
+      credentials: octoDraftCredentials(),
+    });
+    if (version === octoPreviewVersion && key === octoDraftSignature()) octoPreview.value = { key, result: res.data };
+  } catch {
+    if (version === octoPreviewVersion) MessagePlugin.error('无法预览权限，请核对连接后重试。');
+  } finally {
+    if (version === octoPreviewVersion) octoPreviewLoading.value = false;
+  }
+}
 async function verifyOctoIdentity() {
   const account = String(formData.value.credentials.account_id || ''), version = ++octoIdentityVersion;
-  octoIdentity.value = null; octoIdentityError.value = ''; formData.value.credentials.bot_uid = '';
+  const stored = editingChannel.value?.public_config;
+  const savedUID = stored?.account_id === account ? stored?.bot_uid : '';
+  octoIdentity.value = savedUID ? { bot_uid: savedUID, name: formData.value.name } : null;
+  octoIdentityError.value = ''; formData.value.credentials.bot_uid = savedUID || '';
   if (!account) return;
   octoIdentityLoading.value = true;
   try { const result = await connectionIdentity(account); if (version === octoIdentityVersion) { octoIdentity.value = result.data; formData.value.credentials.bot_uid = result.data.bot_uid; } }
@@ -794,15 +875,17 @@ async function onOctoConnectionSaved(account: string, identity: OctoIdentity) {
 const stepTitles = computed(() => [
   t('agentEditor.im.stepBasic'),
   t('agentEditor.im.stepConnection'),
-  formData.value.platform === 'octo' ? '私聊知识范围' : t('agentEditor.im.stepKnowledge'),
-  formData.value.platform === 'octo' ? '连接与访问范围' : t('agentEditor.im.stepCredentials'),
+  formData.value.platform === 'octo' ? '私聊权限' : t('agentEditor.im.stepKnowledge'),
+  formData.value.platform === 'octo' ? '群与子区' : t('agentEditor.im.stepCredentials'),
 ]);
 
 const drawerStepDescription = computed(() => stepTitles.value[wizardStep.value] ?? '');
 
-const drawerConfirmText = computed(() =>
-  wizardStep.value < stepTitles.value.length - 1 ? t('common.next') : t('common.save'),
-);
+const drawerConfirmText = computed(() => {
+  if (formData.value.platform === 'octo' && wizardStep.value === 2 &&
+      octoPrivateChanged.value && !currentOctoPreview.value?.token) return quickOctoEdit.value ? '先预览再保存' : '先预览再继续';
+  return !quickOctoEdit.value && wizardStep.value < stepTitles.value.length - 1 ? t('common.next') : t('common.save');
+});
 
 const platformOptions = computed(() => ([
   { value: 'octo' as IMPlatform, label: 'Octo', logo: '' },
@@ -856,8 +939,12 @@ function prevWizardStep() {
 }
 
 async function handleDrawerConfirm() {
-  if (wizardStep.value < stepTitles.value.length - 1) {
+  if (!quickOctoEdit.value && wizardStep.value < stepTitles.value.length - 1) {
     if (!validateWizardStep(wizardStep.value)) return;
+    if (formData.value.platform === 'octo' && wizardStep.value === 2 && !currentOctoPreview.value?.token) {
+      await reviewOctoPrivate();
+      return;
+    }
     wizardStep.value += 1;
     return;
   }
@@ -865,7 +952,10 @@ async function handleDrawerConfirm() {
 }
 
 // Knowledge base options for file-to-KB feature
-const knowledgeBases = ref<{ id: string; name: string }[]>([]);
+const knowledgeBases = ref<{ id: string; name: string; tenant_id?: number }[]>([]);
+const octoKnowledgeBases = computed(() => knowledgeBases.value.filter(kb =>
+  !kb.tenant_id || Number(kb.tenant_id) === Number(authStore.currentTenantId),
+));
 
 // WeChat QR code binding state
 const wechatQRContent = ref('');  // raw text to encode as QR code
@@ -974,7 +1064,8 @@ watch(() => [formData.value.platform, showCreateDialog.value], async ([platform,
   try { const result = await listOctoConnections(); if (identityVersion === octoIdentityVersion) octoConnections.value = result.data || []; }
   catch { if (identityVersion === octoIdentityVersion) { octoConnections.value = []; MessagePlugin.warning('暂时无法加载 Octo 连接，请稍后重试。'); } }
   finally { if (identityVersion === octoIdentityVersion) octoConnectionsLoading.value = false; }
-  if (identityVersion === octoIdentityVersion && formData.value.credentials.account_id && showCreateDialog.value && formData.value.platform === 'octo') await verifyOctoIdentity();
+  if (identityVersion === octoIdentityVersion && !editingChannel.value && formData.value.credentials.account_id
+    && showCreateDialog.value && formData.value.platform === 'octo') await verifyOctoIdentity();
 });
 
 function onPlatformChange(val: string | number | boolean) {
@@ -987,6 +1078,7 @@ function onPlatformChange(val: string | number | boolean) {
   wechatQRStatus.value = '';
   // WeChat uses fixed mode/output
   if (val === 'octo') {
+    octoPrivateDraft.value = readOctoPrivate({}, '', true);
     editingEnabled.value = false;
     formData.value.mode = 'websocket';
     formData.value.output_mode = 'full';
@@ -1110,7 +1202,9 @@ async function loadChannels(quiet = false) {
     loadError.value = '';
     allChannels.value = channelRes.data || [];
     agents.value = chatResources.agents as CustomAgent[];
-    knowledgeBases.value = chatResources.rawKnowledgeBases.map((kb: any) => ({ id: kb.id, name: kb.name }));
+    knowledgeBases.value = chatResources.rawKnowledgeBases.map((kb: any) => ({
+      id: kb.id, name: kb.name, tenant_id: kb.tenant_id,
+    }));
   } catch {
     if (requestVersion === channelLoadVersion) loadError.value = allChannels.value.length ? '状态刷新失败，当前保留上次读取的结果。请重试。' : '渠道读取失败，请重试；这不表示没有配置 Bot。';
   } finally {
@@ -1175,6 +1269,14 @@ async function editChannel(channel: IMChannel | IMChannelOverview) {
   if (fullChannel.platform === 'octo' && !Array.isArray(formData.value.credentials.dm_knowledge_base_ids)) {
     formData.value.credentials.dm_knowledge_base_ids = fullChannel.knowledge_base_id ? [fullChannel.knowledge_base_id] : [];
   }
+  if (fullChannel.platform === 'octo') {
+    octoPrivateDraft.value = readOctoPrivate(formData.value.credentials, fullChannel.knowledge_base_id);
+    octoPrivateBaseline.value = octoDraftSignature();
+    if (formData.value.credentials.bot_uid) {
+      octoIdentity.value = { bot_uid: formData.value.credentials.bot_uid, name: fullChannel.name };
+    }
+    wizardStep.value = 2;
+  }
   normalizeYunzhijiaCredentials();
   showCreateDialog.value = true;
 }
@@ -1182,6 +1284,8 @@ async function editChannel(channel: IMChannel | IMChannelOverview) {
 function resetForm() {
   channelEditVersion++;
   octoIdentityVersion++; octoIdentity.value = null; octoIdentityError.value = ''; octoIdentityLoading.value = false; showOctoConnection.value = false;
+  octoPreviewVersion++; octoPreview.value = undefined; octoPreviewLoading.value = false; octoPrivateBaseline.value = '';
+  octoPrivateDraft.value = readOctoPrivate({}, '', true);
   editingChannel.value = null;
   editingEnabled.value = true;
   wizardStep.value = 0;
@@ -1208,12 +1312,15 @@ async function handleSave() {
   saving.value = true;
   try {
     if (formData.value.platform === 'octo') {
-      if (octoIdentityLoading.value || !octoIdentity.value || !String(formData.value.credentials.account_id || '').trim() || !String(formData.value.credentials.bot_uid || '').trim()) {
+      const config = formData.value.credentials;
+      if (octoIdentityLoading.value || !String(config.account_id || '').trim() || !String(config.bot_uid || '').trim()) {
+        wizardStep.value = 1;
         MessagePlugin.warning('请选择 Octo 连接并完成身份核验');
         return;
       }
-      if (formData.value.credentials.allowed_dm_uids?.length && !formData.value.credentials.dm_knowledge_base_ids?.length) {
-        MessagePlugin.warning('已允许私聊，请返回上一步选择私聊知识库；或清空私聊名单。');
+      if (octoPrivateChanged.value && !currentOctoPreview.value?.token) {
+        wizardStep.value = 2;
+        await reviewOctoPrivate();
         return;
       }
       if ((formData.value.credentials.management_bot_uids || []).some((uid: string) => !(formData.value.credentials.allowed_bot_uids || []).includes(uid))) {
@@ -1224,6 +1331,9 @@ async function handleSave() {
       formData.value.session_mode = 'user';
       formData.value.output_mode = 'full';
     }
+    const sendPrivate = formData.value.platform === 'octo' && octoPrivateChanged.value;
+    const credentials = sendPrivate ? octoDraftCredentials() : formData.value.credentials;
+    const preview = sendPrivate ? currentOctoPreview.value?.token : undefined;
     // For WeChat, validate that credentials are bound
     if (formData.value.platform === 'wechat' && !formData.value.credentials.bot_token) {
       MessagePlugin.warning(t('agentEditor.im.wechatScanBind'));
@@ -1246,8 +1356,11 @@ async function handleSave() {
         output_mode: formData.value.output_mode,
         locale: formData.value.locale,
         session_mode: formData.value.session_mode,
-        knowledge_base_id: normalizeOptionalString(formData.value.knowledge_base_id),
-        credentials: formData.value.credentials,
+        ...(formData.value.platform === 'octo' ? {} : {
+          knowledge_base_id: normalizeOptionalString(formData.value.knowledge_base_id),
+        }),
+        credentials,
+        private_preview: preview,
         enabled: editingEnabled.value,
         ...(formData.value.target_agent_id ? { agent_id: formData.value.target_agent_id } : {}),
       });
@@ -1266,8 +1379,11 @@ async function handleSave() {
         output_mode: formData.value.output_mode,
         locale: formData.value.locale,
         session_mode: formData.value.session_mode,
-        knowledge_base_id: normalizeOptionalString(formData.value.knowledge_base_id),
-        credentials: formData.value.credentials,
+        ...(formData.value.platform === 'octo' ? {} : {
+          knowledge_base_id: normalizeOptionalString(formData.value.knowledge_base_id),
+        }),
+        credentials,
+        private_preview: preview,
       });
       MessagePlugin.success(t('common.createSuccess'));
     }
@@ -1276,7 +1392,13 @@ async function handleSave() {
     await loadChannels();
   } catch (e: any) {
     const msg = e?.message || (typeof e?.error === 'string' ? e.error : null) || t('common.operationFailed');
-    MessagePlugin.error(msg);
+    if (formData.value.platform === 'octo' && (e?.status === 409 || /private policy changed/i.test(msg))) {
+      wizardStep.value = 2;
+      octoPreview.value = undefined;
+      MessagePlugin.warning('配置已变化，请重新预览私聊权限后再保存。');
+    } else {
+      MessagePlugin.error(msg);
+    }
   } finally {
     saving.value = false;
   }

@@ -132,6 +132,17 @@ func SummarizeIMChannelsForRole(channels []IMChannel, role types.TenantRole) []I
 		public["allow_file_delivery"] = GetExplicitBool(config, "allow_file_delivery")
 		public["allow_sandbox_shell"] = GetExplicitBool(config, "allow_sandbox_shell")
 		public["allow_sandbox_skills"] = GetExplicitBool(config, "allow_sandbox_skills")
+		if policy, err := ReadOctoPrivatePolicy(&ch, config); err == nil {
+			if _, explicit := config["dm_access_mode"]; explicit {
+				public["dm_access_mode"] = policy.Mode
+				public["dm_allowlist_uids"] = policy.AllowedUIDs
+				public["blocked_dm_uids"] = policy.BlockedUIDs
+				public["dm_tools"] = policy.Tools
+			}
+		}
+		if _, stored := config["dm_knowledge_base_ids"]; !stored && ch.KnowledgeBaseID != "" {
+			public["dm_knowledge_base_ids"] = []string{ch.KnowledgeBaseID}
+		}
 		out[i].PublicConfig = public
 	}
 	return out
@@ -210,6 +221,9 @@ func (ch *IMChannel) validateSessionMode() error {
 		config, err := ParseCredentials(ch.Credentials)
 		if err != nil || GetString(config, "account_id") == "" || GetString(config, "bot_uid") == "" {
 			return fmt.Errorf("Octo account_id and bot_uid required")
+		}
+		if _, err := ReadOctoPrivatePolicy(ch, config); err != nil {
+			return err
 		}
 		for _, key := range []string{
 			"allow_generated_files", "allow_file_delivery", "allow_sandbox_shell",

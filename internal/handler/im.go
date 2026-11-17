@@ -82,6 +82,7 @@ func (h *IMHandler) CreateIMChannel(c *gin.Context) {
 		KnowledgeBaseID string     `json:"knowledge_base_id"`
 		Credentials     types.JSON `json:"credentials"`
 		Enabled         *bool      `json:"enabled"`
+		PrivatePreview  string     `json:"private_preview" binding:"max=64"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -141,6 +142,10 @@ func (h *IMHandler) CreateIMChannel(c *gin.Context) {
 	}
 	if channel.Credentials == nil {
 		channel.Credentials = types.JSON("{}")
+	}
+	if err := h.imService.PrepareOctoPrivateSave(c.Request.Context(), nil, channel, req.PrivatePreview); err != nil {
+		writeOctoPrivateError(c, err)
+		return
 	}
 
 	if err := h.imService.CreateChannel(channel); err != nil {
@@ -233,6 +238,7 @@ func (h *IMHandler) UpdateIMChannel(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "channel not found"})
 		return
 	}
+	before := *channel
 
 	var req struct {
 		Name            *string    `json:"name"`
@@ -244,6 +250,7 @@ func (h *IMHandler) UpdateIMChannel(c *gin.Context) {
 		Credentials     types.JSON `json:"credentials"`
 		Enabled         *bool      `json:"enabled"`
 		AgentID         *string    `json:"agent_id"`
+		PrivatePreview  string     `json:"private_preview" binding:"max=64"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -270,7 +277,10 @@ func (h *IMHandler) UpdateIMChannel(c *gin.Context) {
 	if req.SessionMode != nil {
 		channel.SessionMode = *req.SessionMode
 	}
-	if req.KnowledgeBaseID != nil {
+	// The generic file-saving binding predates Octo's private KB list.
+	// Older editors echo the stored binding even when it is no longer live.
+	// Carrying it forward must not block updates to the actual private scope.
+	if req.KnowledgeBaseID != nil && (channel.Platform != "octo" || *req.KnowledgeBaseID != before.KnowledgeBaseID) {
 		ctx := c.Request.Context()
 		if err := h.imService.SetChannelKnowledgeBaseID(ctx, channel, *req.KnowledgeBaseID); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "knowledge base not found"})
@@ -294,7 +304,16 @@ func (h *IMHandler) UpdateIMChannel(c *gin.Context) {
 		}
 	}
 
+	ctx := c.Request.Context()
+	if err := h.imService.PrepareOctoPrivateSave(ctx, &before, channel, req.PrivatePreview); err != nil {
+		writeOctoPrivateError(c, err)
+		return
+	}
 	if err := h.imService.UpdateChannel(channel); err != nil {
+		if errors.Is(err, im.ErrOctoPrivatePreview) {
+			writeOctoPrivateError(c, err)
+			return
+		}
 		logger.Errorf(c.Request.Context(), "[IM] Update channel failed: %v", err)
 		if strings.HasPrefix(err.Error(), "duplicate_bot:") {
 			c.JSON(http.StatusConflict, gin.H{"error": strings.TrimPrefix(err.Error(), "duplicate_bot: ")})
