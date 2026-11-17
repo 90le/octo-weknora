@@ -162,6 +162,12 @@ func TestIMSandboxGrantRechecksIdentitySessionAndAgent(t *testing.T) {
 	require.NoError(t, db.Model(&ChannelSession{}).Where("id = ?", mapping.ID).Update("chat_id", "other").Error)
 	require.Error(t, grant.Revalidate(ctx))
 	require.NoError(t, db.Model(&ChannelSession{}).Where("id = ?", mapping.ID).Update("chat_id", "group").Error)
+	agent.Config.ModelID = "different-model"
+	require.Error(t, grant.Revalidate(ctx), "changing models revokes a running turn's grant")
+	agent.Config.ModelID = ""
+	agent.Config.ReasoningEffort = "high"
+	require.Error(t, grant.Revalidate(ctx), "changing effort revokes a running turn's grant")
+	agent.Config.ReasoningEffort = ""
 	agent.Config.SelectedSkills = []string{"other"}
 	require.Error(t, grant.Revalidate(ctx))
 	agent.Config.SelectedSkills = []string{"allowed"}

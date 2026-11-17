@@ -2,6 +2,9 @@ package types
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 )
 
@@ -12,7 +15,7 @@ type IMSandboxGrant struct {
 	SessionID           string
 	TenantID            uint64
 	ConfigID            string
-	AgentConfigDigest   string
+	AgentSandboxDigest  string
 	SkillsSelectionMode string
 	SelectedSkillNames  []string
 	// These are admitted channel switches, not a substitute for Revalidate.
@@ -21,6 +24,21 @@ type IMSandboxGrant struct {
 	SkillsRequested bool
 	TurnBarrier     *IMSandboxTurnBarrier
 	Revalidate      func(context.Context) error
+}
+
+// IMSandboxAgentDigest identifies the Agent configuration a clean workspace
+// may be reused with. Model selection and reasoning affect inference, not the
+// workspace's access. Keep every other field in the digest by default.
+func IMSandboxAgentDigest(cfg CustomAgentConfig) (string, error) {
+	cfg.ModelID = ""
+	cfg.ReasoningEffort = ""
+	cfg.Thinking = nil
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 type imSandboxPolicyKey struct{}

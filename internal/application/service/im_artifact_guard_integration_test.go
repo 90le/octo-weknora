@@ -42,7 +42,7 @@ func TestIMArtifactCollectorUsesGuardedDockerSession(t *testing.T) {
 	ctx = types.WithSessionID(ctx, "s-1")
 	ctx = types.WithIMKnowledgeScope(ctx, []string{"kb"})
 	ctx = types.WithIMSandboxGrant(ctx, types.IMSandboxGrant{
-		SessionID: "s-1", TenantID: 7, ConfigID: "cfg", AgentConfigDigest: strings.Repeat("a", 64), AllowShell: true,
+		SessionID: "s-1", TenantID: 7, ConfigID: "cfg", AgentSandboxDigest: strings.Repeat("a", 64), AllowShell: true,
 		Revalidate: func(context.Context) error {
 			if revoked.Load() {
 				return types.ErrIMSandboxDenied

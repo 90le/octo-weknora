@@ -375,11 +375,12 @@ func (m *SessionBoundManager) ExecIMShell(
 	return remoteExecuteResult(result, nil, time.Since(started)), nil
 }
 
-// QuiesceIMSession stops a previously bound Octo container before a new
-// turn uses or snapshots it. Policy/image differences do not authorize reads
-// or execution, but must not prevent stopping an owned container. Caller must
-// hold the session turn lock and fence any prior lease holder.
-func (m *SessionBoundManager) QuiesceIMSession(ctx context.Context, sessionID string) (string, error) {
+// QuiesceIMSession stops a previously bound Octo container before a new turn.
+// A non-nil checkReplacement allows removal of a verified, stopped sandbox
+// whose old policy differs. Caller must hold the fenced session turn lock.
+func (m *SessionBoundManager) QuiesceIMSession(
+	ctx context.Context, sessionID string, checkReplacement func(context.Context) error,
+) (string, error) {
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
 	if !ok || !types.HasIMKnowledgeScope(ctx) || (!grant.AllowShell && !grant.AllowSkills) ||
 		grant.SessionID != sessionID ||
@@ -432,10 +433,55 @@ func (m *SessionBoundManager) QuiesceIMSession(ctx context.Context, sessionID st
 		if err = m.stopIMContainer(lockCtx, binding.SandboxID); err != nil {
 			return fmt.Errorf("%w: %v", ErrIMStopUnconfirmed, err)
 		}
+		policy := types.IMSandboxPolicyFromContext(lockCtx)
+		oldPolicy := labels[remoteMetadataIMPolicy]
+		if checkReplacement != nil && oldPolicy != policy {
+			return m.discardStoppedIMSandbox(lockCtx, key, *binding, c, oldPolicy, policy, checkReplacement)
+		}
 		id = binding.SandboxID
 		return nil
 	})
 	return id, err
+}
+
+// This is only a replacement path. Checking the old fingerprint here cannot
+// authorize reads or execution; EnsureIMSession still requires the new one.
+func (m *SessionBoundManager) discardStoppedIMSandbox(
+	ctx context.Context, key SessionSandboxKey, binding SessionSandboxBinding, c container.InspectResponse,
+	oldPolicy, policy string, checkReplacement func(context.Context) error,
+) error {
+	if !imPolicyID.MatchString(policy) || !imPolicyID.MatchString(oldPolicy) ||
+		m.lifecycle.createRequest.Metadata[remoteMetadataIMPolicy] != policy || m.config == nil {
+		return types.ErrIMSandboxDenied
+	}
+	trustedImage := getIMTrustedImage()
+	if m.config.DockerImage != trustedImage || binding.TemplateID != trustedImage {
+		return types.ErrIMSandboxDenied
+	}
+	if err := m.RequireIMDiskIsolation(); err != nil {
+		return err
+	}
+	img, err := m.dockerClient.api.ImageInspect(ctx, trustedImage)
+	if err != nil {
+		return err
+	}
+	if err = verifyIMDockerContainer(c, img.InspectResponse, binding, key, trustedImage, oldPolicy); err != nil {
+		return err
+	}
+	if m.imDiskVerifier != nil {
+		if err = m.imDiskVerifier.VerifyIMSandboxDisk(ctx, key.TenantID, key.SessionID, binding.ConfigID, c); err != nil {
+			return fmt.Errorf("%w: %v", ErrIMDiskLimitUnavailable, err)
+		}
+	}
+	if err = checkReplacement(ctx); err != nil {
+		return err
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	// The lifecycle lock serializes removal and the binding compare/delete.
+	// The new sandbox is created lazily; its attachments come from the session.
+	return m.lifecycle.destroyBindingLocked(ctx, key, binding)
 }
 
 // StopIMSession stops only the already-inspected, still-matching binding.
