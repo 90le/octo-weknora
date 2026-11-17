@@ -21,6 +21,14 @@ func (c *Connection) trustedIdentity() *ConnectionIdentity {
 	return &identity
 }
 
+// VerifiedOwnerUID reads the owner verified for this exact Bot connection.
+func (c *Connection) VerifiedOwnerUID(botUID string) string {
+	if identity := c.trustedIdentity(); identity != nil && identity.BotUID == botUID && validID(identity.OwnerUID) {
+		return identity.OwnerUID
+	}
+	return ""
+}
+
 // The caller just authenticated this UID using this exact credential snapshot.
 // Do not advance UpdatedAt: recording a display identity is not a token change.
 func (s *Store) RecordVerifiedIdentity(ctx context.Context, tenant uint64, account, ciphertext string, identity ConnectionIdentity) error {

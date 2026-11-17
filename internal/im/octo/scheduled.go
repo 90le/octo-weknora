@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 
 	"github.com/Tencent/WeKnora/internal/im"
@@ -54,7 +55,11 @@ func (a *Adapter) reportPrincipal(ctx context.Context, s octobusiness.ReportSche
 		return p, im.ErrScopeDenied
 	}
 	if s.RecipientType == "private" {
-		if !configuredUID(config, "allowed_dm_uids", s.RecipientUID) {
+		dm, policyErr := im.ReadOctoPrivatePolicy(&channel, config)
+		// Scheduled reports still require an explicit recipient and live group
+		// membership. Creator mode does not add report recipients.
+		if policyErr != nil || !slices.Contains(dm.AllowedUIDs, s.RecipientUID) ||
+			dm.AudienceDecision(s.RecipientUID, connection.VerifiedOwnerUID(a.uid)) != "allowed" {
 			return p, im.ErrScopeDenied
 		}
 		memberPaths := []string{"/v1/bot/groups/" + scope.GroupID + "/members"}

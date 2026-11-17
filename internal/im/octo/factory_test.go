@@ -68,6 +68,39 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 	if got.AllowGeneratedFiles {
 		t.Fatal("generated files must default off")
 	}
+	t.Run("creator-only DM uses verified identity and never changes group authorization", func(t *testing.T) {
+		ctx := context.Background()
+		identity := `{"bot_uid":"bot","owner_uid":"owner"}`
+		if err := db.Exec("UPDATE octo_connections SET verified_identity=?", identity).Error; err != nil {
+			t.Fatal(err)
+		}
+		original := `{"account_id":"account","bot_uid":"bot","allowed_dm_uids":["owner"]}`
+		defer func() {
+			if err := db.Exec("UPDATE im_channels SET credentials=?", original).Error; err != nil {
+				t.Error(err)
+			}
+		}()
+		policy := `{"account_id":"account","bot_uid":"bot","dm_access_mode":"creator_only",
+			"allowed_dm_uids":[],"dm_allowlist_uids":["other"],"blocked_dm_uids":[],
+			"dm_tools":{"allow_file_delivery":true,"allow_sandbox_shell":false,"allow_sandbox_skills":false,
+				"allow_generated_files":false}}`
+		if err := db.Exec("UPDATE im_channels SET credentials=?", policy).Error; err != nil {
+			t.Fatal(err)
+		}
+		private := &im.IncomingMessage{Platform: Platform, UserID: "owner", ChatType: im.ChatTypeDirect}
+		direct, err := a.AuthorizeExecution(ctx, nil, private)
+		if err != nil || direct == nil || !direct.AllowFileDelivery {
+			t.Fatalf("creator DM did not receive the private grant: %+v %v", direct, err)
+		}
+		private.UserID = "other"
+		if denied, err := a.AuthorizeExecution(ctx, nil, private); err != im.ErrScopeDenied || denied != nil {
+			t.Fatalf("inactive whitelist admitted non-creator: %+v %v", denied, err)
+		}
+		group, err := a.AuthorizeExecution(ctx, nil, msg)
+		if err != nil || group == nil || group.AllowFileDelivery {
+			t.Fatalf("private tool grant leaked into group: %+v %v", group, err)
+		}
+	})
 	fileConfig := `{"account_id":"account","bot_uid":"bot",` +
 		`"allowed_dm_uids":["owner"],"allow_generated_files":true}`
 	if err = db.Exec("UPDATE im_channels SET credentials=?", fileConfig).Error; err != nil {

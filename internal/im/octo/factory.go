@@ -131,45 +131,22 @@ func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint6
 		if db.WithContext(ctx).Where("tenant_id = ? AND account_id = ?", tenant, account).First(&connection).Error != nil || connection.Token != ciphertext {
 			return nil, im.ErrScopeDenied
 		}
-		// The first release is group/subarea knowledge access. DM admission is
-		// explicit and opt-in by native UID; an empty allowlist denies all DMs.
 		if msg.ChatType == im.ChatTypeDirect {
-			if !configuredUID(config, "allowed_dm_uids", msg.UserID) {
+			p, err := im.ReadOctoPrivatePolicy(&channel, config)
+			if err != nil || p.Decision(msg.UserID, connection.VerifiedOwnerUID(a.uid)) != "allowed" {
 				return nil, im.ErrScopeDenied
 			}
-			ids := []string{}
-			if raw, exists := config["dm_knowledge_base_ids"]; exists {
-				values, ok := raw.([]interface{})
-				if !ok {
-					return nil, im.ErrScopeDenied
-				}
-				seen := map[string]bool{}
-				for _, v := range values {
-					id, ok := v.(string)
-					if !ok || id == "" {
-						return nil, im.ErrScopeDenied
-					}
-					if !seen[id] {
-						ids = append(ids, id)
-						seen[id] = true
-					}
-				}
-			} else if channel.KnowledgeBaseID != "" {
-				ids = append(ids, channel.KnowledgeBaseID)
-			}
-			if len(ids) == 0 {
-				return nil, im.ErrScopeDenied
-			}
+			ids := p.KnowledgeIDs
 			var count int64
 			if db.WithContext(ctx).Table("knowledge_bases").Where("tenant_id = ? AND id IN ? AND deleted_at IS NULL", tenant, ids).Count(&count).Error != nil || count != int64(len(ids)) {
 				return nil, im.ErrScopeDenied
 			}
 			result := &im.ExecutionScope{
 				AccountID: account, ScopeID: "dm:" + msg.UserID, ScopeName: "私聊", KnowledgeBaseIDs: ids,
-				AllowGeneratedFiles: im.GetBool(config, "allow_generated_files"),
-				AllowFileDelivery:   im.GetExplicitBool(config, "allow_file_delivery"),
-				AllowSandboxShell:   im.GetExplicitBool(config, "allow_sandbox_shell"),
-				AllowSandboxSkills:  im.GetExplicitBool(config, "allow_sandbox_skills"),
+				AllowGeneratedFiles: p.Tools.Legacy,
+				AllowFileDelivery:   p.Tools.Files,
+				AllowSandboxShell:   p.Tools.Shell,
+				AllowSandboxSkills:  p.Tools.Skills,
 				Revision:            fmt.Sprint(channel.ID, channel.AgentID, connection.UpdatedAt),
 			}
 			var profile struct {

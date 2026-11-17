@@ -1699,7 +1699,7 @@ func sameChannelRuntimeConfig(cached, fresh *IMChannel) bool {
 		cached.KnowledgeBaseID == fresh.KnowledgeBaseID &&
 		cached.SessionMode == fresh.SessionMode &&
 		(cached.Platform != "octo" || cached.OwnerIdentityGeneration == fresh.OwnerIdentityGeneration) &&
-		equalChannelCredentials(cached.Credentials, fresh.Credentials)
+		equalChannelRuntimeCredentials(cached.Platform, cached.Credentials, fresh.Credentials)
 }
 
 func equalChannelCredentials(left, right types.JSON) bool {
@@ -3539,6 +3539,9 @@ func (s *Service) ListChannelsByAgent(agentID string, tenantID uint64) ([]IMChan
 // per-agent endpoint which enforces the same tenant scope anyway.
 type ChannelWithAgent struct {
 	RuntimeStatus *ChannelRuntimeStatus `json:"runtime_status,omitempty" gorm:"-"`
+	PrivateAccess *OctoPrivateSummary   `json:"private_access,omitempty" gorm:"-"`
+	Credentials   types.JSON            `json:"-"`
+	KnowledgeID   string                `json:"-" gorm:"column:knowledge_base_id"`
 	ID            string                `json:"id"`
 	TenantID      uint64                `json:"tenant_id"`
 	AgentID       string                `json:"agent_id"`
@@ -3563,11 +3566,15 @@ type ChannelWithAgent struct {
 func (s *Service) ListChannelsByTenant(ctx context.Context, tenantID uint64) ([]ChannelWithAgent, error) {
 	builtinIDs := types.GetBuiltinAgentIDs()
 	var rows []ChannelWithAgent
-	q := s.db.Table("im_channels AS c").
-		Select(`c.id, c.tenant_id, c.agent_id,
+	columns := `c.id, c.tenant_id, c.agent_id,
                 COALESCE(a.name, '') AS agent_name,
                 c.platform, c.name, c.enabled, c.mode, c.output_mode, c.locale,
-                c.session_mode, c.bot_identity, c.created_at, c.updated_at`).
+                c.session_mode, c.bot_identity, c.created_at, c.updated_at`
+	role, _ := ctx.Value(types.TenantRoleContextKey).(types.TenantRole)
+	if role.HasPermission(types.TenantRoleAdmin) {
+		columns += ", c.credentials, c.knowledge_base_id"
+	}
+	q := s.db.Table("im_channels AS c").Select(columns).
 		Joins(`LEFT JOIN custom_agents AS a
                ON a.id = c.agent_id AND a.tenant_id = c.tenant_id AND a.deleted_at IS NULL`).
 		Where("c.tenant_id = ? AND c.deleted_at IS NULL", tenantID)
@@ -3583,6 +3590,17 @@ func (s *Service) ListChannelsByTenant(ctx context.Context, tenantID uint64) ([]
 	relocalizeBuiltinChannelAgentNames(ctx, rows)
 	for i := range rows {
 		rows[i].RuntimeStatus = s.channelRuntimeStatus(rows[i].ID, rows[i].Enabled)
+		if rows[i].Platform == "octo" && role.HasPermission(types.TenantRoleAdmin) {
+			cfg, err := ParseCredentials(rows[i].Credentials)
+			if err == nil {
+				p, err := ReadOctoPrivatePolicy(&IMChannel{KnowledgeBaseID: rows[i].KnowledgeID}, cfg)
+				if err == nil {
+					summary := p.summary()
+					rows[i].PrivateAccess = &summary
+				}
+			}
+		}
+		rows[i].Credentials = nil
 	}
 	return rows, nil
 }
@@ -3673,13 +3691,33 @@ func (s *Service) UpdateChannel(channel *IMChannel) error {
 	if err := s.checkDuplicateBot(channel, channel.ID); err != nil {
 		return err
 	}
-	if err := s.db.Save(channel).Error; err != nil {
-		return err
-	}
+	var before *IMChannel
 	if channel.Platform == "octo" {
+		var err error
+		before, err = s.GetChannelByIDAndTenant(channel.ID, channel.TenantID)
+		if err != nil {
+			return err
+		}
+		if !before.UpdatedAt.Equal(channel.UpdatedAt) {
+			return ErrOctoPrivatePreview
+		}
+		write := s.db.Model(channel).Where("tenant_id = ? AND updated_at = ?", channel.TenantID, before.UpdatedAt).
+			Select("name", "agent_id", "enabled", "mode", "output_mode", "locale", "knowledge_base_id",
+				"bot_identity", "session_mode", "credentials", "updated_at").Updates(channel)
+		if write.Error != nil {
+			return write.Error
+		}
+		if write.RowsAffected != 1 {
+			return ErrOctoPrivatePreview
+		}
 		if err := s.db.First(channel, "id = ?", channel.ID).Error; err != nil {
 			return err
 		}
+		if sameChannelRuntimeConfig(before, channel) {
+			return nil
+		}
+	} else if err := s.db.Save(channel).Error; err != nil {
+		return err
 	}
 	// Restart channel: stop old, start new if enabled
 	s.StopChannel(channel.ID)
