@@ -1961,7 +1961,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 	// Title an untitled IM session from its first text message, like web chats.
 	// GenerateTitleAsync self-guards on a non-empty title and persists to the DB;
 	// nil eventBus is fine (IM has no live stream — the sidebar reloads it).
-	if session.Title == "" && strings.TrimSpace(msg.Content) != "" {
+	if query := imQuestionText(msg); session.Title == "" && strings.TrimSpace(query) != "" {
 		// Copy the session: the async title goroutine writes Title while the QA
 		// worker below shares the same *session.
 		sessionForTitle := *session
@@ -1969,7 +1969,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 		if customAgent != nil && customAgent.Config.ModelID != "" {
 			titleModelID = customAgent.Config.ModelID
 		}
-		s.sessionService.GenerateTitleAsync(sessionCtx, &sessionForTitle, msg.Content, titleModelID, nil)
+		s.sessionService.GenerateTitleAsync(sessionCtx, &sessionForTitle, query, titleModelID, nil)
 	}
 
 	s.persistIMLastRequestState(sessionCtx, session.ID, agentID, customAgent, nil)
@@ -2024,7 +2024,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg *IncomingMessage, chann
 }
 
 func emptyIncomingMessageReply(msg *IncomingMessage) (string, bool) {
-	if msg == nil || strings.TrimSpace(msg.Content) != "" {
+	if msg == nil || strings.TrimSpace(imQuestionText(msg)) != "" {
 		return "", false
 	}
 	// Image/file events are allowed to arrive without a caption. Do not depend
@@ -2049,6 +2049,9 @@ func emptyIncomingMessageReply(msg *IncomingMessage) (string, bool) {
 	case "video":
 		return "暂不支持视频消息。请改用纯文本发送；图片或文件请单独发送。", true
 	default:
+		if msg.Platform == "octo" && msg.Extra["octo_addressed"] == "true" {
+			return "请补充你想问的问题，或附上图片／文件。", true
+		}
 		return "未能识别这条消息中的文字内容。请改用纯文本发送；图片或文件请单独发送。", true
 	}
 }
@@ -2226,7 +2229,9 @@ func (s *Service) executeQARequestCore(req *qaRequest) {
 	}
 
 	// Non-streaming fallback: collect full answer then send.
-	answer, err := s.runQA(ctx, req.session, req.msg.Content, req.agent, kbIDs, attachments, imageURLs, req.userKey, req.msg.Quote)
+	answer, err := s.runQA(
+		ctx, req.session, imQuestionText(req.msg), req.agent, kbIDs, attachments, imageURLs, req.userKey, req.msg.Quote,
+	)
 	if err != nil {
 		logger.Errorf(ctx, "[IM] QA failed: %v, sending fallback reply", err)
 		answer = imQAFailureReplyForContext(ctx, err)
@@ -2277,7 +2282,7 @@ func (s *Service) handleMessageFullOutput(
 	}
 
 	answer, qaErr := s.runQA(
-		ctx, session, msg.Content, customAgent, kbIDs, attachments, imageURLs, userKey, msg.Quote,
+		ctx, session, imQuestionText(msg), customAgent, kbIDs, attachments, imageURLs, userKey, msg.Quote,
 	)
 	if qaErr != nil {
 		logger.Errorf(ctx, "[IM] Full-output QA failed: %v, sending fallback reply", qaErr)
@@ -2522,7 +2527,7 @@ func shortID(id string) string {
 // message has text to summarise (so it gets a content-based title later, like
 // web chats), otherwise the IM identity title so the row is never blank.
 func imInitialSessionTitle(msg *IncomingMessage, identityTitle func(*IncomingMessage) string) string {
-	if strings.TrimSpace(msg.Content) != "" {
+	if strings.TrimSpace(imQuestionText(msg)) != "" {
 		return ""
 	}
 	return identityTitle(msg)
@@ -3055,7 +3060,8 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 	requestID := uuid.New().String()
 
 	// Create user message
-	userMsg, err := s.messageService.CreateMessage(qaCtx, createIMUserMessagePayload(session.ID, msg.Content, requestID, attachments))
+	query := imQuestionText(msg)
+	userMsg, err := s.messageService.CreateMessage(qaCtx, createIMUserMessagePayload(session.ID, query, requestID, attachments))
 	if err != nil {
 		return fmt.Errorf("create user message: %w", err)
 	}
@@ -3090,7 +3096,7 @@ func (s *Service) handleMessageStream(ctx context.Context, msg *IncomingMessage,
 			defer closeComplete()
 		}
 		var err error
-		req := buildIMQARequest(session, msg.Content, assistantMsg.ID, userMsg.ID, customAgent, kbIDs, msg.Quote, attachments)
+		req := buildIMQARequest(session, query, assistantMsg.ID, userMsg.ID, customAgent, kbIDs, msg.Quote, attachments)
 		addExecutionContext(ctx, req)
 		req.ImageURLs = imageURLs
 		if req.QuotedContext != "" {
@@ -3256,7 +3262,7 @@ loop:
 
 // fallbackNonStream is used when streaming initialization fails.
 func (s *Service) fallbackNonStream(ctx context.Context, msg *IncomingMessage, session *types.Session, customAgent *types.CustomAgent, kbIDs []string, attachments types.MessageAttachments, imageURLs []string, adapter Adapter, userKey string, tenant *types.Tenant) error {
-	answer, err := s.runQA(ctx, session, msg.Content, customAgent, kbIDs, attachments, imageURLs, userKey, msg.Quote)
+	answer, err := s.runQA(ctx, session, imQuestionText(msg), customAgent, kbIDs, attachments, imageURLs, userKey, msg.Quote)
 	if err != nil {
 		logger.Errorf(ctx, "[IM] QA fallback failed: %v", err)
 		answer = imQAFailureReplyForContext(ctx, err)
@@ -3838,7 +3844,11 @@ func fileMessageQAContent(msg *IncomingMessage) string {
 	if strings.TrimSpace(msg.Content) != "" {
 		return msg.Content
 	}
-	fileName := strings.TrimSpace(msg.FileName)
+	return fileOnlyQAContent(msg.FileName)
+}
+
+func fileOnlyQAContent(name string) string {
+	fileName := strings.TrimSpace(name)
 	if fileName == "" {
 		fileName = "未命名文件"
 	}

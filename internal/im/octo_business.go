@@ -25,7 +25,7 @@ func (s *Service) businessContext(ctx context.Context, req *qaRequest, scope *Ex
 		if req.msg == nil {
 			return ctx
 		}
-		return answerevidence.WithContract(ctx, req.msg.Content)
+		return answerevidence.WithContract(ctx, imQuestionText(req.msg))
 	}
 	principal := func(current *ExecutionScope) octobusiness.Principal {
 		text := req.msg.Content
@@ -58,7 +58,13 @@ func (s *Service) businessContext(ctx context.Context, req *qaRequest, scope *Ex
 		return p
 	}
 	p := principal(scope)
-	ctx = answerevidence.WithContract(ctx, p.MessageText)
+	intentText := p.MessageText
+	if _, ok := req.msg.Extra[OctoQuestionTextKey]; ok {
+		// Retrieval uses the clean question; exact maintenance confirmation
+		// still uses only the raw message or an existing native leading command.
+		intentText = imQuestionText(req.msg)
+	}
+	ctx = answerevidence.WithContract(ctx, intentText)
 	p.Validate = func(callCtx context.Context) (octobusiness.Principal, error) {
 		current, err := authorizeExecution(callCtx, req.adapter, req.channel, req.msg)
 		if err != nil {
