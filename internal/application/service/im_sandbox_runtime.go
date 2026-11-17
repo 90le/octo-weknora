@@ -158,8 +158,8 @@ func withIMSandboxConfigBaseline(ctx context.Context, pinner *SessionSandboxPinn
 	return context.WithValue(ctx, imSandboxConfigBaselineKey{}, fingerprint), nil
 }
 
-// Each turn gets a policy identity. Existing containers with a different
-// Agent/config/Skill snapshot must never be reused after revocation.
+// The workspace policy identifies the allowed sandbox/Skill state. The native
+// grant separately rechecks the complete configuration for the running turn.
 type imSkillFingerprintKey struct{}
 
 func withIMSandboxPolicy(ctx context.Context) (context.Context, error) {
@@ -168,7 +168,7 @@ func withIMSandboxPolicy(ctx context.Context) (context.Context, error) {
 		return ctx, nil
 	}
 	config, ok := ctx.Value(imSandboxConfigBaselineKey{}).([32]byte)
-	if !ok || grant.AgentConfigDigest == "" {
+	if !ok || grant.AgentSandboxDigest == "" {
 		return nil, types.ErrIMSandboxDenied
 	}
 	var skills [32]byte
@@ -180,15 +180,17 @@ func withIMSandboxPolicy(ctx context.Context) (context.Context, error) {
 		}
 	}
 	material, err := json.Marshal(struct {
+		Version                  int
 		Tenant                   uint64
 		Session, ConfigID, Agent string
 		Config, Skills           [32]byte
 		Shell, Skill             bool
 	}{
+		2,
 		grant.TenantID,
 		grant.SessionID,
 		grant.ConfigID,
-		grant.AgentConfigDigest,
+		grant.AgentSandboxDigest,
 		config,
 		skills,
 		grant.AllowShell,
@@ -270,7 +272,16 @@ func ReconcileIMSandboxBeforeTurn(
 	if !ok || backend.GetType() != sandbox.SandboxTypeDocker {
 		return errors.New("octo sandbox: isolated Docker manager required")
 	}
-	_, err = backend.QuiesceIMSession(ctx, sessionID)
+	// Never remove an orphan binding where the owning session lacks its
+	// authoritative SQL pin. Quiesce still stops it if ownership is proven.
+	var checkReplacement func(context.Context) error
+	if !pin.IsZero() {
+		checkReplacement = func(checkCtx context.Context) error {
+			_, err := ValidateIMSandboxPin(checkCtx, pinner, sessionID, false)
+			return err
+		}
+	}
+	_, err = backend.QuiesceIMSession(ctx, sessionID, checkReplacement)
 	if errors.Is(err, sandbox.ErrIMSandboxNotFound) {
 		// A pin can be saved before the first command creates a container.
 		// A successful authoritative lookup proving no binding is safe.

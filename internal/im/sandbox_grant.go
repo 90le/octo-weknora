@@ -50,7 +50,13 @@ func (s *Service) withIMSandboxGrant(
 	if err != nil {
 		return ctx
 	}
+	// A running turn still checks the complete Agent configuration. Only the
+	// digest stored on a reusable sandbox ignores inference settings.
 	agentFingerprint := sha256.Sum256(raw)
+	sandboxDigest, err := types.IMSandboxAgentDigest(agent.Config)
+	if err != nil {
+		return ctx
+	}
 	admitted := scopeFingerprint(scope)
 	// Freeze identity material independently of any later mutation to the
 	// queued message or its metadata map.
@@ -71,7 +77,7 @@ func (s *Service) withIMSandboxGrant(
 		SessionID:           sessionID,
 		TenantID:            tenantID,
 		ConfigID:            configID,
-		AgentConfigDigest:   fmt.Sprintf("%x", agentFingerprint),
+		AgentSandboxDigest:  sandboxDigest,
 		AllowShell:          scope.AllowSandboxShell,
 		AllowSkills:         scope.AllowSandboxSkills && skillsSelected,
 		SkillsRequested:     scope.AllowSandboxSkills,

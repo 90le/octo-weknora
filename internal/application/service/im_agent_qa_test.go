@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/models/chat"
@@ -59,22 +60,20 @@ func (imQAChecker) SessionExists(_ context.Context, key sandbox.SessionSandboxKe
 	return key.TenantID == 7 && key.SessionID == "s-1", nil
 }
 
-type imQAMessages struct{ interfaces.MessageRepository }
-
-func (imQAMessages) GetSessionAttachments(context.Context, string) (types.MessageAttachments, error) {
-	return nil, nil
-}
-
 type imQAModelService struct {
 	interfaces.ModelService
-	model chat.Chat
+	model   chat.Chat
+	onModel func(string)
 }
 
 func (m imQAModelService) GetModelByID(context.Context, string) (*types.Model, error) {
 	return &types.Model{ID: "fake", Type: types.ModelTypeKnowledgeQA}, nil
 }
 
-func (m imQAModelService) GetChatModel(context.Context, string) (chat.Chat, error) {
+func (m imQAModelService) GetChatModel(_ context.Context, id string) (chat.Chat, error) {
+	if m.onModel != nil {
+		m.onModel(id)
+	}
 	return m.model, nil
 }
 
@@ -84,6 +83,7 @@ type imQAModel struct {
 	contextLost atomic.Bool
 	leaked      atomic.Bool
 	onTool      func()
+	onCall      func([]chat.Message, *chat.ChatOptions)
 }
 
 func (*imQAModel) Chat(context.Context, []chat.Message, *chat.ChatOptions) (*types.ChatResponse, error) {
@@ -95,6 +95,9 @@ func (m *imQAModel) ChatStream(
 	messages []chat.Message,
 	opts *chat.ChatOptions,
 ) (<-chan types.StreamResponse, error) {
+	if m.onCall != nil {
+		m.onCall(messages, opts)
+	}
 	for _, message := range messages {
 		if strings.Contains(message.Content, "must-not-stream-after-revoke") {
 			m.leaked.Store(true)
@@ -141,6 +144,9 @@ func (*imQAModel) GetModelID() string   { return "fake" }
 type imQADocker struct {
 	mu             sync.Mutex
 	image          string
+	id             string
+	created        int
+	removed        int
 	cfg            *container.Config
 	host           *container.HostConfig
 	running        bool
@@ -181,18 +187,38 @@ func (d *imQADocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		d.cfg = &body.Config
 		d.host = body.HostConfig
+		d.created++
+		id := fmt.Sprintf("c%d", d.created)
+		d.id = id
 		d.mu.Unlock()
-		writeIMJSON(w, map[string]any{"Id": "c1", "Warnings": []string{}})
+		writeIMJSON(w, map[string]any{"Id": id, "Warnings": []string{}})
 		return
 	}
-	if strings.HasSuffix(path, "/containers/c1/start") {
+	d.mu.Lock()
+	id := d.id
+	d.mu.Unlock()
+	containerPath := "/containers/" + id
+	if id != "" && strings.HasSuffix(path, containerPath) && r.Method == http.MethodDelete {
+		d.mu.Lock()
+		if d.running {
+			d.mu.Unlock()
+			http.Error(w, "workspace is still running", http.StatusConflict)
+			return
+		}
+		d.removed++
+		d.id, d.cfg, d.host = "", nil, nil
+		d.mu.Unlock()
+		w.WriteHeader(204)
+		return
+	}
+	if id != "" && strings.HasSuffix(path, containerPath+"/start") {
 		d.mu.Lock()
 		d.running = true
 		d.mu.Unlock()
 		w.WriteHeader(204)
 		return
 	}
-	if strings.HasSuffix(path, "/containers/c1/stop") {
+	if id != "" && strings.HasSuffix(path, containerPath+"/stop") {
 		d.stops.Add(1)
 		d.mu.Lock()
 		d.running = false
@@ -204,14 +230,14 @@ func (d *imQADocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(204)
 		return
 	}
-	if strings.HasSuffix(path, "/containers/c1/json") {
+	if id != "" && strings.HasSuffix(path, containerPath+"/json") {
 		d.mu.Lock()
 		status := "exited"
 		if d.running {
 			status = "running"
 		}
 		response := container.InspectResponse{
-			ID:         "c1",
+			ID:         id,
 			Image:      d.image,
 			Config:     d.cfg,
 			HostConfig: d.host,
@@ -221,7 +247,7 @@ func (d *imQADocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeIMJSON(w, response)
 		return
 	}
-	if strings.HasSuffix(path, "/containers/c1/exec") {
+	if id != "" && strings.HasSuffix(path, containerPath+"/exec") {
 		var body struct{ Cmd []string }
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		cmd := strings.Join(body.Cmd, " ")
@@ -365,7 +391,9 @@ func TestIMAgentQAEndToEndShellAndRevocation(t *testing.T) {
 		Docker:                &types.DockerSandboxConfig{Image: "base", Host: host, TLSCertPath: certs},
 	}
 	db := newPinTestDB(t)
-	require.NoError(t, db.AutoMigrate(&types.TenantSandboxConfigEntity{}, &types.Message{}))
+	require.NoError(t, db.AutoMigrate(
+		&types.TenantSandboxConfigEntity{}, &types.Message{}, &types.MessageArtifactRecord{},
+	))
 	require.NoError(
 		t,
 		db.Create(
@@ -395,18 +423,17 @@ func TestIMAgentQAEndToEndShellAndRevocation(t *testing.T) {
 	sessionSvc := &sessionService{
 		cfg:             appConfig,
 		modelService:    imQAModelService{model: model},
-		messageRepo:     imQAMessages{},
+		messageRepo:     repository.NewMessageRepository(db),
 		agentService:    agentSvc,
 		sandboxResolver: resolver,
 		sandboxPinner:   pinner,
 	}
 	var revoked atomic.Bool
 	grant := types.IMSandboxGrant{
-		SessionID:         "s-1",
-		TenantID:          7,
-		ConfigID:          "cfg",
-		AgentConfigDigest: strings.Repeat("a", 64),
-		AllowShell:        true,
+		SessionID:  "s-1",
+		TenantID:   7,
+		ConfigID:   "cfg",
+		AllowShell: true,
 		Revalidate: func(ctx context.Context) error {
 			principal, ok := types.PrincipalFromContext(ctx)
 			sid, has := types.SessionIDFromContext(ctx)
@@ -421,7 +448,6 @@ func TestIMAgentQAEndToEndShellAndRevocation(t *testing.T) {
 	ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalIMUser, ID: "native"})
 	ctx = types.WithIMKnowledgeScope(ctx, nil)
 	ctx = types.WithIMSandboxRequests(ctx, true, false)
-	ctx = types.WithIMSandboxGrant(ctx, grant)
 	var streamed atomic.Int64
 	ctx = sandbox.WithCommandOutput(ctx, func(_ string, data []byte) { streamed.Add(int64(len(data))) })
 	agent := &types.CustomAgent{
@@ -429,6 +455,7 @@ func TestIMAgentQAEndToEndShellAndRevocation(t *testing.T) {
 		TenantID: 7,
 		Config: types.CustomAgentConfig{
 			ModelID:             "fake",
+			MultiTurnEnabled:    true,
 			WebSearchProviderID: "unused",
 			KBSelectionMode:     "none",
 			SkillsSelectionMode: "none",
@@ -436,6 +463,18 @@ func TestIMAgentQAEndToEndShellAndRevocation(t *testing.T) {
 			AllowedTools:        []string{"__no_scoped_tools__"},
 			MaxIterations:       3,
 		},
+	}
+	agent.EnsureDefaults()
+	grant.AgentSandboxDigest, err = types.IMSandboxAgentDigest(agent.Config)
+	require.NoError(t, err)
+	ctx = types.WithIMSandboxGrant(ctx, grant)
+	const oldMessage = "prior-session-turn-marker"
+	prior := []types.Message{{Role: "user", Content: oldMessage}, {Role: "assistant", Content: "prior answer"}}
+	for i, msg := range prior {
+		msg.ID, msg.SessionID = fmt.Sprintf("prior-%d", i), "s-1"
+		msg.IsCompleted = true
+		msg.CreatedAt = time.Now().Add(time.Duration(i-10) * time.Minute)
+		require.NoError(t, db.Create(&msg).Error)
 	}
 	req := &types.QARequest{
 		Session:            &types.Session{ID: "s-1", TenantID: 7},
@@ -504,6 +543,60 @@ func TestIMAgentQAEndToEndShellAndRevocation(t *testing.T) {
 	require.Error(t, err)
 	_, err = bounded.ReadSessionFileBounded(ctx, "s-1", "/workspace/output/large.docx", (20<<20)+1)
 	require.Error(t, err)
+
+	// Simulate a container left by the earlier release. Route each follow-up
+	// through the same session and verify it reaches the newly chosen model
+	// with the original history and the requested effort.
+	daemon.mu.Lock()
+	daemon.cfg.Labels["weknora_im_policy"] = strings.Repeat("b", 64)
+	daemon.mu.Unlock()
+	for _, settings := range []struct{ model, effort string }{
+		{"fake", "high"}, {"backup", "max"}, {"fake", "auto"},
+	} {
+		nextAgent := *agent
+		nextAgent.Config.ModelID = settings.model
+		nextAgent.Config.ReasoningEffort = settings.effort
+		thinking := true
+		nextAgent.Config.Thinking = &thinking
+		nextAgent.EnsureDefaults()
+		nextGrant := grant
+		nextGrant.AgentSandboxDigest, err = types.IMSandboxAgentDigest(nextAgent.Config)
+		require.NoError(t, err)
+		require.Equal(t, grant.AgentSandboxDigest, nextGrant.AgentSandboxDigest)
+		nextCtx, err := sessionSvc.PrepareIMSandboxContext(types.WithIMSandboxGrant(ctx, nextGrant), true)
+		require.NoError(t, err)
+		require.NoError(t, ReconcileIMSandboxBeforeTurn(nextCtx, pinner, resolver, "s-1"))
+		nextReq := *req
+		nextReq.CustomAgent = &nextAgent
+		var gotHistory atomic.Bool
+		var gotEffort atomic.Bool
+		followup := &imQAModel{onCall: func(messages []chat.Message, opts *chat.ChatOptions) {
+			for _, msg := range messages {
+				if msg.Role == "user" && msg.Content == oldMessage {
+					gotHistory.Store(true)
+				}
+			}
+			gotEffort.Store(string(opts.ReasoningEffort) == settings.effort)
+		}}
+		followup.calls.Store(1) // Only generate a reply; no new shell action.
+		var asked []string
+		sessionSvc.modelService = imQAModelService{
+			model: followup, onModel: func(id string) { asked = append(asked, id) },
+		}
+		require.NoError(t, sessionSvc.AgentQA(nextCtx, &nextReq, event.NewEventBus()))
+		require.Contains(t, asked, settings.model)
+		require.True(t, gotHistory.Load(), "previous turn reaches the new model")
+		require.True(t, gotEffort.Load(), "requested reasoning effort reaches the new model")
+		require.True(t, followup.offered.Load(), "the original sandbox permissions still apply")
+		pin, err := pinner.Read(nextCtx, "s-1")
+		require.NoError(t, err)
+		require.Equal(t, SandboxPin{ConfigID: "cfg", TenantID: 7}, pin)
+		daemon.mu.Lock()
+		created, removed := daemon.created, daemon.removed
+		daemon.mu.Unlock()
+		require.Equal(t, 2, created, "subsequent settings changes must reuse the same sandbox")
+		require.Equal(t, 1, removed, "retire only the legacy container")
+	}
 
 	// Revocation between the model response and tool execution must stop
 	// the actual shell call, even though the same sandbox is already pinned.

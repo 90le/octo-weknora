@@ -330,6 +330,28 @@ func TestIMDockerManagerExecutesOnlyInspectedSession(t *testing.T) {
 	}()
 	_, err = mgr.EnsureIMSession(ctx, "session", true)
 	require.Error(t, err)
+	// A new turn can retire an old workspace only with a sound security
+	// envelope and a still-valid pin. A changed policy alone is not enough.
+	mgr.lifecycle.createRequest.Metadata[remoteMetadataIMPolicy] = changedPolicy
+	assertPin := func(context.Context) error { return nil }
+	_, err = mgr.QuiesceIMSession(changed, "session", assertPin)
+	require.Error(t, err, "never remove a container with an unsafe network")
+	require.Empty(t, fake.removed)
+	fake.inspect[id].HostConfig.NetworkMode = "none"
+	_, err = mgr.QuiesceIMSession(changed, "session", func(context.Context) error { return types.ErrIMSandboxDenied })
+	require.ErrorIs(t, err, types.ErrIMSandboxDenied)
+	_, err = mgr.QuiesceIMSession(changed, "session", nil)
+	require.NoError(t, err)
+	require.Empty(t, fake.removed, "missing SQL pin cannot authorize removal")
+	_, err = mgr.QuiesceIMSession(changed, "session", assertPin)
+	require.NoError(t, err)
+	require.Equal(t, []string{id}, fake.removed)
+	_, err = mgr.EnsureIMSession(changed, "session", false)
+	require.ErrorIs(t, err, ErrIMSandboxNotFound)
+	fake.createdID = "container-2"
+	newID, err := mgr.EnsureIMSession(changed, "session", true)
+	require.NoError(t, err)
+	require.NotEqual(t, id, newID)
 }
 
 type imFixtureEngine struct {

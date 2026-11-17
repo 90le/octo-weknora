@@ -98,11 +98,11 @@ func TestIMActualShellToolRevalidatesPinAndContext(t *testing.T) {
 	require.NoError(t, err)
 	var revoked atomic.Bool
 	grant := types.IMSandboxGrant{
-		SessionID:         "s-1",
-		TenantID:          7,
-		ConfigID:          "cfg",
-		AllowShell:        true,
-		AgentConfigDigest: "agent",
+		SessionID:          "s-1",
+		TenantID:           7,
+		ConfigID:           "cfg",
+		AllowShell:         true,
+		AgentSandboxDigest: "agent",
 		Revalidate: func(ctx context.Context) error {
 			if revoked.Load() {
 				return types.ErrIMSandboxDenied
@@ -171,18 +171,18 @@ func TestIMActualShellToolRevalidatesPinAndContext(t *testing.T) {
 
 func TestIMPolicyFingerprintChangesWithSkillsAndAgent(t *testing.T) {
 	grant := types.IMSandboxGrant{
-		SessionID:         "s",
-		TenantID:          7,
-		ConfigID:          "cfg",
-		AgentConfigDigest: "agent",
-		AllowShell:        true,
-		Revalidate:        func(context.Context) error { return nil },
+		SessionID:          "s",
+		TenantID:           7,
+		ConfigID:           "cfg",
+		AgentSandboxDigest: "agent",
+		AllowShell:         true,
+		Revalidate:         func(context.Context) error { return nil },
 	}
 	ctx := types.WithIMSandboxGrant(context.Background(), grant)
 	ctx = context.WithValue(ctx, imSandboxConfigBaselineKey{}, [32]byte{1})
 	a, err := withIMSandboxPolicy(ctx)
 	require.NoError(t, err)
-	grant.AgentConfigDigest = "changed"
+	grant.AgentSandboxDigest = "changed"
 	b, err := withIMSandboxPolicy(types.WithIMSandboxGrant(ctx, grant))
 	require.NoError(t, err)
 	require.NotEqual(t, types.IMSandboxPolicyFromContext(a), types.IMSandboxPolicyFromContext(b))

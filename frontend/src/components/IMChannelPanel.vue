@@ -1309,6 +1309,7 @@ function resetForm() {
 }
 
 async function handleSave() {
+  if (saving.value) return;
   saving.value = true;
   try {
     if (formData.value.platform === 'octo') {
@@ -1392,7 +1393,8 @@ async function handleSave() {
     await loadChannels();
   } catch (e: any) {
     const msg = e?.message || (typeof e?.error === 'string' ? e.error : null) || t('common.operationFailed');
-    if (formData.value.platform === 'octo' && (e?.status === 409 || /private policy changed/i.test(msg))) {
+    if (formData.value.platform === 'octo' &&
+      (e?.code === 'octo_private_preview_required' || /private policy changed/i.test(msg))) {
       wizardStep.value = 2;
       octoPreview.value = undefined;
       MessagePlugin.warning('配置已变化，请重新预览私聊权限后再保存。');

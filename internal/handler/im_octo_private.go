@@ -52,7 +52,13 @@ func (h *IMHandler) PreviewOctoPrivatePolicy(c *gin.Context) {
 func writeOctoPrivateError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, im.ErrOctoPrivatePreview):
-		c.JSON(http.StatusConflict, gin.H{"error": "Octo private policy changed; preview again"})
+		// An already-open editor from before the rollout may not have a
+		// preview button. Tell that editor how to recover without accepting
+		// an unreviewed change to the channel's private access.
+		c.JSON(http.StatusConflict, gin.H{
+			"code":  "octo_private_preview_required",
+			"error": "请刷新渠道页面，在「私聊权限」重新预览后保存。",
+		})
 	case errors.Is(err, im.ErrOctoPrivateInvalid), errors.Is(err, gorm.ErrRecordNotFound):
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid or unverified Octo private policy"})
 	default:
