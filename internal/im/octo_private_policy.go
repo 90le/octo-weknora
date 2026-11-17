@@ -12,6 +12,7 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/octointegration"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/utils"
 )
 
 var (
@@ -24,6 +25,7 @@ var (
 const (
 	octoPrivateDisabled = "disabled"
 	octoPrivateOwner    = "creator_only"
+	octoPrivateFriends  = "creator_and_friends"
 	octoPrivateList     = "allowlist"
 )
 
@@ -80,7 +82,7 @@ func ReadOctoPrivatePolicy(ch *IMChannel, cfg map[string]any) (OctoPrivatePolicy
 	if raw, exists := cfg["dm_access_mode"]; exists {
 		mode, _ := raw.(string)
 		switch mode {
-		case octoPrivateDisabled, octoPrivateOwner, octoPrivateList:
+		case octoPrivateDisabled, octoPrivateOwner, octoPrivateFriends, octoPrivateList:
 			p.Mode = mode
 		default:
 			return p, ErrOctoPrivateInvalid
@@ -126,8 +128,13 @@ func ReadOctoPrivatePolicy(ch *IMChannel, cfg map[string]any) (OctoPrivatePolicy
 	return p, nil
 }
 
+func (p OctoPrivatePolicy) needsVerifiedCreator() bool {
+	return p.Mode == octoPrivateOwner || p.Mode == octoPrivateFriends
+}
+
 // AudienceDecision evaluates the UID without inheriting a knowledge scope.
-func (p OctoPrivatePolicy) AudienceDecision(uid, owner string) string {
+// checkFriend is called only for a non-creator in the friends mode.
+func (p OctoPrivatePolicy) AudienceDecision(uid, owner string, checkFriend func() (bool, error)) string {
 	switch {
 	case !validPrivateUID(uid):
 		return "invalid_uid"
@@ -135,8 +142,23 @@ func (p OctoPrivatePolicy) AudienceDecision(uid, owner string) string {
 		return "blocked"
 	case p.Mode == octoPrivateDisabled:
 		return "disabled"
-	case p.Mode == octoPrivateOwner && owner == "":
+	case p.needsVerifiedCreator() && owner == "":
 		return "creator_unverified"
+	case p.Mode == octoPrivateFriends:
+		if uid == owner {
+			return "allowed"
+		}
+		if checkFriend == nil {
+			return "friend_unavailable"
+		}
+		friend, err := checkFriend()
+		if err != nil {
+			return "friend_unavailable"
+		}
+		if !friend {
+			return "not_friend"
+		}
+		return "allowed"
 	case p.Mode == octoPrivateOwner && uid != owner:
 		return "not_creator"
 	case p.Mode == octoPrivateList && !slices.Contains(p.AllowedUIDs, uid):
@@ -149,12 +171,17 @@ func (p OctoPrivatePolicy) AudienceDecision(uid, owner string) string {
 }
 
 // Decision also requires a knowledge scope for private questions.
-func (p OctoPrivatePolicy) Decision(uid, owner string) string {
-	result := p.AudienceDecision(uid, owner)
-	if result == "allowed" && len(p.KnowledgeIDs) == 0 {
-		return "no_knowledge"
+func (p OctoPrivatePolicy) Decision(uid, owner string, checkFriend func() (bool, error)) string {
+	if len(p.KnowledgeIDs) == 0 {
+		// Do not query the platform when no knowledge can be used. Still
+		// return a definitive local denial such as blacklisted or disabled.
+		result := p.AudienceDecision(uid, owner, nil)
+		if result == "allowed" || result == "friend_unavailable" {
+			return "no_knowledge"
+		}
+		return result
 	}
-	return result
+	return p.AudienceDecision(uid, owner, checkFriend)
 }
 
 // OctoPrivatePreview reports the same policy the next message would encounter.
@@ -187,10 +214,28 @@ func (p OctoPrivatePolicy) summary() OctoPrivateSummary {
 	return OctoPrivateSummary{p.Mode, count, len(p.BlockedUIDs), len(p.KnowledgeIDs)}
 }
 
-// OctoPrivatePolicyPreview evaluates a draft without registering the Bot or
-// making an Octo request. The stamp binds the draft to the durable channel.
+// OctoPrivatePolicyPreview evaluates the draft without sending or reconnecting
+// the Bot. Only a friends-mode UID test can need a read-only platform check.
 func (s *Service) OctoPrivatePolicyPreview(
 	ctx context.Context, current, proposed *IMChannel, uid string,
+) (OctoPrivatePreview, error) {
+	return s.previewOctoPrivatePolicy(ctx, current, proposed, uid, previewDMFriend)
+}
+
+func previewDMFriend(ctx context.Context, conn octointegration.Connection, uid string) (bool, error) {
+	if !strings.HasPrefix(conn.Token, utils.EncPrefix) {
+		return false, octointegration.ErrEncryption
+	}
+	token, err := utils.DecryptStoredSecret(conn.Token)
+	if err != nil {
+		return false, octointegration.ErrEncryption
+	}
+	return octointegration.CheckDMFriend(ctx, token, uid, nil)
+}
+
+func (s *Service) previewOctoPrivatePolicy(
+	ctx context.Context, current, proposed *IMChannel, uid string,
+	checkFriend func(context.Context, octointegration.Connection, string) (bool, error),
 ) (OctoPrivatePreview, error) {
 	cfg, err := ParseCredentials(proposed.Credentials)
 	if err != nil {
@@ -219,14 +264,11 @@ func (s *Service) OctoPrivatePolicyPreview(
 		return out, err
 	}
 	out.OwnerUID = conn.VerifiedOwnerUID(bot)
-	if uid != "" {
-		out.Decision = p.Decision(uid, out.OwnerUID)
-	}
 	switch {
-	case p.Mode == octoPrivateOwner && out.OwnerUID == "":
+	case p.needsVerifiedCreator() && out.OwnerUID == "":
 		out.Problem = "creator_unverified"
 	case len(p.KnowledgeIDs) == 0 &&
-		(p.Mode == octoPrivateOwner || (p.Mode == octoPrivateList && len(p.AllowedUIDs) > 0)):
+		(p.needsVerifiedCreator() || (p.Mode == octoPrivateList && len(p.AllowedUIDs) > 0)):
 		out.Problem = "no_knowledge"
 	case p.Mode != octoPrivateDisabled && len(p.KnowledgeIDs) > 0:
 		var count int64
@@ -239,8 +281,16 @@ func (s *Service) OctoPrivatePolicyPreview(
 			out.Problem = "invalid_knowledge"
 		}
 	}
+	if uid != "" {
+		out.Decision = p.Decision(uid, out.OwnerUID, func() (bool, error) {
+			if out.Problem != "" {
+				return false, octointegration.ErrPlatform
+			}
+			return checkFriend(ctx, conn, uid)
+		})
+	}
 	if out.Problem != "" {
-		if out.Decision == "allowed" {
+		if out.Decision == "allowed" || out.Decision == "friend_unavailable" {
 			out.Decision = out.Problem
 		}
 		return out, nil
@@ -286,7 +336,7 @@ func (s *Service) PrepareOctoPrivateSave(ctx context.Context, current, next *IMC
 		if !samePrivatePolicy(oldPolicy, nextPolicy) || changesPrivateStorage(prior, cfg) {
 			return ErrOctoPrivatePreview
 		}
-		if nextPolicy.Mode == octoPrivateOwner && (GetString(prior, "account_id") != GetString(cfg, "account_id") ||
+		if nextPolicy.needsVerifiedCreator() && (GetString(prior, "account_id") != GetString(cfg, "account_id") ||
 			GetString(prior, "bot_uid") != GetString(cfg, "bot_uid")) {
 			return ErrOctoPrivatePreview
 		}

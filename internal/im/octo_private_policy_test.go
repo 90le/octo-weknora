@@ -2,6 +2,7 @@ package im
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/octointegration"
@@ -37,7 +38,7 @@ func TestOctoPrivatePreviewAndHotSave(t *testing.T) {
 	require.NoError(t, err)
 	legacy, err := ReadOctoPrivatePolicy(original, legacyConfig)
 	require.NoError(t, err)
-	require.Equal(t, "allowed", legacy.Decision("peer", ""))
+	require.Equal(t, "allowed", legacy.Decision("peer", "", nil))
 	require.True(t, legacy.Tools.Shell)
 
 	next := *original
@@ -49,8 +50,8 @@ func TestOctoPrivatePreviewAndHotSave(t *testing.T) {
 	preview, err := svc.OctoPrivatePolicyPreview(ctx, original, &next, "owner")
 	require.NoError(t, err)
 	require.Equal(t, "blocked", preview.Decision)
-	require.Equal(t, "not_creator", preview.Policy.Decision("peer", preview.OwnerUID))
-	require.Equal(t, "allowed", legacy.Decision("owner", preview.OwnerUID))
+	require.Equal(t, "not_creator", preview.Policy.Decision("peer", preview.OwnerUID, nil))
+	require.Equal(t, "allowed", legacy.Decision("owner", preview.OwnerUID, nil))
 	require.Empty(t, preview.Problem)
 	require.NotEmpty(t, preview.Token)
 	require.ErrorIs(t, svc.PrepareOctoPrivateSave(ctx, original, &next, ""), ErrOctoPrivatePreview)
@@ -84,4 +85,50 @@ func TestOctoPrivatePreviewAndHotSave(t *testing.T) {
 	require.False(t, after.Tools.Shell)
 	require.ErrorIs(t, svc.PrepareOctoPrivateSave(ctx, saved, &next, preview.Token), ErrOctoPrivatePreview)
 	require.ErrorIs(t, svc.UpdateChannel(original), ErrOctoPrivatePreview, "stale row cannot overwrite the policy")
+
+	friends := *saved
+	friends.Credentials = types.JSON(`{"account_id":"account","bot_uid":"bot","allowed_dm_uids":[],
+		"dm_access_mode":"creator_and_friends","dm_allowlist_uids":["peer","owner"],
+		"blocked_dm_uids":["owner"],"dm_knowledge_base_ids":["kb"],
+		"allowed_bot_uids":["group-bot"],"allow_sandbox_shell":true,
+		"dm_tools":{"allow_file_delivery":false,"allow_sandbox_shell":false,
+			"allow_sandbox_skills":false,"allow_generated_files":false}}`)
+	var calls int
+	var isFriend bool
+	var lookupErr error
+	checker := func(_ context.Context, connection octointegration.Connection, uid string) (bool, error) {
+		calls++
+		require.Equal(t, "account", connection.AccountID)
+		require.Equal(t, "outside-list", uid)
+		return isFriend, lookupErr
+	}
+	blocked, err := svc.previewOctoPrivatePolicy(ctx, saved, &friends, "owner", checker)
+	require.NoError(t, err)
+	require.Equal(t, "blocked", blocked.Decision)
+	require.Zero(t, calls, "blacklist wins before the platform lookup")
+	isFriend = true
+	allowed, err := svc.previewOctoPrivatePolicy(ctx, saved, &friends, "outside-list", checker)
+	require.NoError(t, err)
+	require.Equal(t, "allowed", allowed.Decision)
+	isFriend = false
+	revoked, err := svc.previewOctoPrivatePolicy(ctx, saved, &friends, "outside-list", checker)
+	require.NoError(t, err)
+	require.Equal(t, "not_friend", revoked.Decision)
+	lookupErr = errors.New("test network failure")
+	failed, err := svc.previewOctoPrivatePolicy(ctx, saved, &friends, "outside-list", checker)
+	require.NoError(t, err)
+	require.Equal(t, "friend_unavailable", failed.Decision)
+	require.Equal(t, 3, calls)
+	require.NoError(t, svc.PrepareOctoPrivateSave(ctx, saved, &friends, allowed.Token))
+	require.NoError(t, svc.UpdateChannel(&friends))
+	svc.reloadChannelFromDB(channel.ID, "friends-mode replica reload")
+	require.EqualValues(t, 1, counters.starts.Load())
+	require.Zero(t, counters.stops.Load())
+	savedFriends, err := svc.GetChannelByIDAndTenant(channel.ID, 1)
+	require.NoError(t, err)
+	storedFriends, err := ParseCredentials(savedFriends.Credentials)
+	require.NoError(t, err)
+	require.Equal(t, "creator_and_friends", storedFriends["dm_access_mode"])
+	require.Equal(t, []any{"owner", "peer"}, storedFriends["dm_allowlist_uids"])
+	require.Equal(t, []any{"group-bot"}, storedFriends["allowed_bot_uids"])
 }

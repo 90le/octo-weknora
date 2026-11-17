@@ -820,6 +820,7 @@ const quickOctoEdit = computed(() => !!editingChannel.value && formData.value.pl
 function privateAccessSummary(summary: NonNullable<IMChannelOverview['private_access']>) {
   const audience = summary.mode === 'disabled' ? '关闭私聊'
     : summary.mode === 'creator_only' ? '仅创建者'
+    : summary.mode === 'creator_and_friends' ? '创建者和 Bot 好友'
     : summary.allowed ? `白名单 ${summary.allowed} 个` : '白名单为空';
   return `${audience} · 黑名单 ${summary.blocked} 个 · ${summary.knowledge} 个私聊知识库`;
 }

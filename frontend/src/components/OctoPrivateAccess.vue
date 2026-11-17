@@ -21,7 +21,7 @@
       <label>UID 黑名单 <small>{{ model.blocked_uids.length }} 个</small></label>
       <t-tag-input v-model="model.blocked_uids" :max="100" :input-props="{ 'aria-label': 'UID 黑名单' }"
         placeholder="粘贴 UID，回车添加" @paste="pasteUIDs($event.e, 'blocked_uids')" />
-      <p>黑名单优先，包括创建者。可一次粘贴多行 UID。</p>
+      <p>黑名单优先，包括创建者和好友。可一次粘贴多行 UID。</p>
       <t-alert v-if="overlap" theme="warning">有 {{ overlap }} 个 UID 同时在两张名单中，实际结果为拒绝。</t-alert>
     </div>
 
@@ -55,7 +55,9 @@
         <p v-else-if="preview.decision && lastTestUID === uid.trim()">
           <strong>{{ preview.decision === 'allowed' ? '允许' : '拒绝' }}：</strong>{{ reasons[preview.decision] }}
         </p>
-        <p v-if="preview.creator_uid && preview.policy.mode === 'creator_only'">创建者 UID：<code>{{ preview.creator_uid }}</code></p>
+        <p v-if="preview.creator_uid && ['creator_only', 'creator_and_friends'].includes(preview.policy.mode)">
+          创建者 UID：<code>{{ preview.creator_uid }}</code>
+        </p>
         <p v-if="!preview.problem && preview.policy.mode !== 'disabled' && shownTools.length">
           私聊可申请：{{ shownTools.join('、') }}。实际可用性还受智能体配置约束。
         </p>
@@ -99,6 +101,7 @@ function requestPreview() {
 const modes = [
   { value: 'disabled', label: '关闭私聊', hint: '不处理任何私聊问答' },
   { value: 'creator_only', label: '仅创建者', hint: '只允许 Octo 核验过的 Bot 创建者' },
+  { value: 'creator_and_friends', label: '创建者和 Bot 好友', hint: '按 Octo 当前好友关系放行，无需逐个添加 UID' },
   { value: 'allowlist', label: '仅白名单', hint: '只允许名单中的原生 UID' },
 ] as const;
 const tools: { key: keyof OctoPrivateTools; label: string; hint: string }[] = [
@@ -127,6 +130,8 @@ const reasons: Record<string, string> = {
   disabled: '当前关闭私聊。',
   creator_unverified: '尚未核验创建者，请检查 Bot 连接。',
   not_creator: '这个 UID 不是已核验的创建者。',
+  not_friend: '这个 UID 不是该 Bot 的好友。',
+  friend_unavailable: '暂时无法向 Octo 核实好友关系，本次按拒绝处理。',
   not_listed: '这个 UID 不在白名单中。',
   invalid_uid: '请输入有效的原生 UID。',
   no_knowledge: '请至少选择一个可查询的知识库。',
