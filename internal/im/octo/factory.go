@@ -133,7 +133,9 @@ func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint6
 		}
 		if msg.ChatType == im.ChatTypeDirect {
 			p, err := im.ReadOctoPrivatePolicy(&channel, config)
-			if err != nil || p.Decision(msg.UserID, connection.VerifiedOwnerUID(a.uid)) != "allowed" {
+			if err != nil || p.Decision(msg.UserID, connection.VerifiedOwnerUID(a.uid), func() (bool, error) {
+				return octointegration.CheckDMFriend(ctx, a.api.token, msg.UserID, a.api.http)
+			}) != "allowed" {
 				return nil, im.ErrScopeDenied
 			}
 			ids := p.KnowledgeIDs

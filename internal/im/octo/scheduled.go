@@ -57,9 +57,11 @@ func (a *Adapter) reportPrincipal(ctx context.Context, s octobusiness.ReportSche
 	if s.RecipientType == "private" {
 		dm, policyErr := im.ReadOctoPrivatePolicy(&channel, config)
 		// Scheduled reports still require an explicit recipient and live group
-		// membership. Creator mode does not add report recipients.
+		// membership. Neither creator nor friends mode adds report recipients.
 		if policyErr != nil || !slices.Contains(dm.AllowedUIDs, s.RecipientUID) ||
-			dm.AudienceDecision(s.RecipientUID, connection.VerifiedOwnerUID(a.uid)) != "allowed" {
+			dm.AudienceDecision(s.RecipientUID, connection.VerifiedOwnerUID(a.uid), func() (bool, error) {
+				return octointegration.CheckDMFriend(ctx, a.api.token, s.RecipientUID, a.api.http)
+			}) != "allowed" {
 			return p, im.ErrScopeDenied
 		}
 		memberPaths := []string{"/v1/bot/groups/" + scope.GroupID + "/members"}

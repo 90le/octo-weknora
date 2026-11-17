@@ -406,7 +406,7 @@ export interface OctoPrivateTools {
 }
 
 export interface OctoPrivatePolicy {
-  mode: 'disabled' | 'creator_only' | 'allowlist';
+  mode: 'disabled' | 'creator_only' | 'creator_and_friends' | 'allowlist';
   allowed_uids: string[];
   blocked_uids: string[];
   knowledge_base_ids: string[];

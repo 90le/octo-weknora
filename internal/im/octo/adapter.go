@@ -125,6 +125,11 @@ func (a *Adapter) Normalize(raw *wire.Message) (*im.IncomingMessage, error) {
 	}
 	if p.AddressedTo(a.uid) {
 		m.Extra["octo_addressed"] = "true"
+		if p.Type == 1 || p.Type == 2 || p.Type == 3 || p.Type == 8 || p.Type == 14 {
+			if text, changed := questionWithoutBotMention(m.Content, p.Mention.Entities, a.uid); changed {
+				m.Extra[im.OctoQuestionTextKey] = text
+			}
+		}
 		if command, ok := leadingNativeCommandText(m.Content, p.Mention.Entities, a.uid); ok {
 			m.Extra["octo_command_text"] = command
 		}
@@ -188,7 +193,7 @@ func leadingNativeCommandText(text string, entities []wire.Entity, uid string) (
 			continue
 		}
 		end := entity.Length
-		if end < len(units) && units[end-1] >= 0xD800 && units[end-1] <= 0xDBFF && units[end] >= 0xDC00 && units[end] <= 0xDFFF {
+		if splitsUTF16(units, end) {
 			continue
 		}
 		label := string(utf16.Decode(units[:end]))
