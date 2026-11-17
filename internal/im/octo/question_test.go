@@ -44,7 +44,9 @@ func TestOctoQuestionStripsOnlyNativeCurrentBotMentions(t *testing.T) {
 				UIDs: []string{a.uid}, Entities: entities,
 			}})
 			require.NoError(t, err)
-			msg, err := a.Normalize(&wire.Message{ID: "123", Sender: "user", Channel: "group", ChannelType: 2, Payload: body})
+			msg, err := a.Normalize(&wire.Message{
+				ID: "123", Sender: "user", Channel: "group", ChannelType: 2, Payload: body,
+			})
 			require.NoError(t, err)
 			require.NotNil(t, msg)
 			clean, ok := msg.Extra[im.OctoQuestionTextKey]
