@@ -104,7 +104,8 @@ func (s *Service) confirmIssue(ctx context.Context, p Principal, proposal *Propo
 		if err := proposals.Updates(map[string]any{"status": next, "result": result, "updated_at": now}).Error; err != nil {
 			return err
 		}
-		if err := audit(tx, p, "octo.issue.proposal."+next, proposal.ID, map[string]string{"knowledge_base_id": proposal.KnowledgeBaseID}); err != nil {
+		auditAction := types.AuditAction("octo.issue.proposal." + next)
+		if err := audit(tx, p, auditAction, proposal.ID, map[string]string{"knowledge_base_id": proposal.KnowledgeBaseID}); err != nil {
 			return err
 		}
 		proposal.Status, proposal.Result = next, result
