@@ -318,10 +318,11 @@ func (s *Service) GetIssue(ctx context.Context, id string) (*Issue, []IssueEvent
 }
 
 type IssueUpdate struct {
-	Status    string  `json:"status"`
-	OwnerUID  *string `json:"owner_uid"`
-	OwnerName *string `json:"owner_name"`
-	Note      string  `json:"note"`
+	Status         string  `json:"status"`
+	OwnerUID       *string `json:"owner_uid"`
+	OwnerName      *string `json:"owner_name"`
+	OwnerContactID string  `json:"owner_contact_id,omitempty"`
+	Note           string  `json:"note"`
 }
 
 func (s *Service) UpdateIssue(ctx context.Context, id string, in IssueUpdate) (*Issue, error) {
@@ -332,7 +333,8 @@ func (s *Service) UpdateIssue(ctx context.Context, id string, in IssueUpdate) (*
 	if in.Status != "open" && in.Status != "inprogress" && in.Status != "resolved" && in.Status != "closed" {
 		return nil, ErrInvalid
 	}
-	if len(in.Note) > 4000 || (in.OwnerUID == nil) != (in.OwnerName == nil) {
+	if len(in.Note) > 4000 || (in.OwnerUID == nil) != (in.OwnerName == nil) ||
+		(in.OwnerContactID != "" && (in.OwnerUID != nil || len(in.OwnerContactID) > 128)) {
 		return nil, ErrInvalid
 	}
 	var row Issue
@@ -346,7 +348,7 @@ func (s *Service) UpdateIssue(ctx context.Context, id string, in IssueUpdate) (*
 			return e
 		}
 		manager := p.Console || p.CanManageScope
-		if !manager && (row.ReporterUID != p.UserID || in.OwnerUID != nil || in.Status == "resolved" || in.Status == "inprogress") {
+		if !manager && (row.ReporterUID != p.UserID || in.OwnerUID != nil || in.OwnerContactID != "" || in.Status == "resolved" || in.Status == "inprogress") {
 			return ErrDenied
 		}
 		encodedUpdate, _ := json.Marshal(in)
@@ -361,14 +363,20 @@ func (s *Service) UpdateIssue(ctx context.Context, id string, in IssueUpdate) (*
 				return nil
 			}
 		}
-		if in.OwnerUID != nil {
+		if in.OwnerContactID != "" {
+			var contact Contact
+			if e := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND id = ?", p.TenantID, row.KnowledgeBaseID, in.OwnerContactID).First(&contact).Error; e != nil {
+				return e
+			}
+			row.OwnerUID, row.OwnerName = contact.UID, contact.Name
+		} else if in.OwnerUID != nil {
 			if len(*in.OwnerUID) > 128 || len(*in.OwnerName) > 256 {
 				return ErrInvalid
 			}
 			row.OwnerUID = *in.OwnerUID
 			row.OwnerName = *in.OwnerName
 		}
-		if row.Status == in.Status && in.Note == "" && in.OwnerUID == nil {
+		if row.Status == in.Status && in.Note == "" && in.OwnerUID == nil && in.OwnerContactID == "" {
 			return nil
 		}
 		row.Status = in.Status
@@ -378,7 +386,7 @@ func (s *Service) UpdateIssue(ctx context.Context, id string, in IssueUpdate) (*
 		if e := tx.Create(&IssueEvent{ID: uuid.NewString(), TenantID: p.TenantID, IssueID: id, ActorUID: p.UserID, ActorName: p.UserName, Status: in.Status, Note: in.Note, IdempotencyKey: eventKey}).Error; e != nil {
 			return e
 		}
-		return audit(tx, p, "octo.issue.updated", id, map[string]string{"status": in.Status})
+		return audit(tx, p, "octo.issue.updated", id, map[string]string{"status": in.Status, "owner_uid": row.OwnerUID})
 	})
 	return &row, err
 }

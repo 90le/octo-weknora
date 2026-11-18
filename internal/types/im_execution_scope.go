@@ -2,6 +2,15 @@ package types
 
 import "context"
 
+// OctoQuestionTextKey holds the transport-validated question without the
+// addressed Bot's native mention.
+const OctoQuestionTextKey = "octo_question_text"
+
+func OctoAddressedQuestion(extra map[string]string) (string, bool) {
+	text, ok := extra[OctoQuestionTextKey]
+	return text, ok && extra["octo_addressed"] == "true"
+}
+
 type (
 	imKnowledgeScopeKey      struct{}
 	imPublicWebAuthorizerKey struct{}

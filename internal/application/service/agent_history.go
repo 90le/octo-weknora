@@ -15,6 +15,7 @@ import (
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
+	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -84,7 +85,20 @@ func LoadAgentHistory(
 	checkpoint := loadContextCheckpoint(ctx, messageRepo, sessionID)
 	out := []chat.Message{}
 	if checkpoint != nil {
-		out = append(out, compaction.SummaryMessage(checkpoint.ContextCheckpoint.Summary))
+		summary := checkpoint.ContextCheckpoint.Summary
+		if types.HasIMKnowledgeScope(ctx) {
+			paragraphs := strings.Split(summary, "\n\n")
+			kept := paragraphs[:0]
+			for _, paragraph := range paragraphs {
+				if !octobusiness.HasHistoricalPreviewCommand(paragraph) {
+					kept = append(kept, paragraph)
+				}
+			}
+			summary = strings.TrimSpace(strings.Join(kept, "\n\n"))
+		}
+		if summary != "" {
+			out = append(out, compaction.SummaryMessage(summary))
+		}
 	}
 
 	var (
@@ -102,6 +116,7 @@ func LoadAgentHistory(
 		replay       = newHistoryReplay(estimator, 0, retainRetrievalHistory)
 	)
 	replay.locale = types.LanguageFromContextOrDefault(ctx)
+	replay.scopedIM = types.HasIMKnowledgeScope(ctx)
 	for len(rows) < agentHistoryMaxRows {
 		page, err := messageRepo.ListMessagesBySessionBeforeCursor(
 			ctx, sessionID, before, beforeID, agentHistoryPageSize,
@@ -257,6 +272,7 @@ type historyReplay struct {
 	estimator              *agenttoken.Estimator
 	budget                 int
 	retainRetrievalHistory bool
+	scopedIM               bool
 	locale                 string
 	built                  map[string][]chat.Message
 	tokens                 map[string]int
@@ -304,8 +320,14 @@ func (r *historyReplay) messages(t *agentHistoryTurn) []chat.Message {
 	for i, u := range t.users {
 		users[i] = r.stored(u)
 	}
-	msgs := append([]chat.Message{r.openingUserMessage(users[0])},
-		buildTurnBodyMessages(r.stored(t.assistant), users[1:])...)
+	assistant := r.stored(t.assistant)
+	var msgs []chat.Message
+	if r.scopedIM {
+		msgs = buildScopedIMTurnMessages(users, assistant)
+		msgs[0] = r.openingUserMessage(users[0])
+	} else {
+		msgs = append([]chat.Message{r.openingUserMessage(users[0])}, buildTurnBodyMessages(assistant, users[1:])...)
+	}
 	for i := range msgs {
 		msgs[i].TurnID = id
 	}
@@ -412,26 +434,26 @@ func buildHistoricalTurnMessages(ctx context.Context, users []*types.Message, as
 	if len(users) == 0 || assistant == nil {
 		return nil
 	}
-	out := []chat.Message{buildUserHistoryMessage(users[0])}
 	if types.HasIMKnowledgeScope(ctx) {
-		// This is a completed historical turn. Keep the user's actual words,
-		// including any mid-run update, but do not re-inject the live steering
-		// wrapper or old tool outputs into the next scoped request.
-		for _, user := range users[1:] {
-			out = append(out, buildUserHistoryMessage(user))
-		}
-		// A failed or cancelled IM turn still gives a follow-up its original
-		// question, but the system's error notice is not an answer to build on.
-		// Exact text handles rows persisted before IsFallback was set.
-		if assistant.Channel == "im" && (assistant.IsFallback || types.IsIMFallbackAnswer(assistant.Content)) {
-			return out
-		}
-		if final := finalAnswerHistoryMessage(assistant); final != nil {
-			out = append(out, *final)
-		}
+		return buildScopedIMTurnMessages(users, assistant)
+	}
+	out := []chat.Message{buildUserHistoryMessage(users[0])}
+	return append(out, buildTurnBodyMessages(assistant, users[1:])...)
+}
+
+func buildScopedIMTurnMessages(users []*types.Message, assistant *types.Message) []chat.Message {
+	out := make([]chat.Message, 0, len(users)+1)
+	for _, user := range users {
+		out = append(out, buildUserHistoryMessage(user))
+	}
+	if octobusiness.HasHistoricalPreviewCommand(assistant.Content) ||
+		(assistant.Channel == "im" && (assistant.IsFallback || types.IsIMFallbackAnswer(assistant.Content))) {
 		return out
 	}
-	return append(out, buildTurnBodyMessages(assistant, users[1:])...)
+	if final := finalAnswerHistoryMessage(assistant); final != nil {
+		out = append(out, *final)
+	}
+	return out
 }
 
 // buildTurnBodyMessages replays one turn's assistant work with any mid-run

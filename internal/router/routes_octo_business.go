@@ -12,6 +12,7 @@ func RegisterOctoBusinessRoutes(r *gin.RouterGroup, h *octobusiness.Handler, g *
 	a.GET("/issues", h.ListIssues)
 	a.GET("/issues/:id", h.GetIssue)
 	a.PATCH("/issues/:id", h.UpdateIssue)
+	a.POST("/issues/:id/retest", h.RetestIssue)
 	a.GET("/contacts", h.Contacts)
 	a.PUT("/contacts", h.PutContact)
 	a.DELETE("/contacts/:id", h.DeleteContact)

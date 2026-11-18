@@ -8,13 +8,19 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
-type Handler struct{ service *Service }
+type Handler struct {
+	service  *Service
+	sessions interfaces.SessionService
+}
 
-func NewHandler(service *Service) *Handler { return &Handler{service: service} }
+func NewHandler(service *Service, sessions interfaces.SessionService) *Handler {
+	return &Handler{service: service, sessions: sessions}
+}
 
 // ConsoleContext uses only authentication middleware state. The initial UI is
 // workspace-administrator only; group maintainers use native scoped IM tools.
@@ -43,6 +49,10 @@ func respond(c *gin.Context, data any, err error) {
 	case errors.Is(err, ErrInvalid), errors.Is(err, ErrClarify):
 		status = http.StatusBadRequest
 		message = err.Error()
+	case errors.Is(err, errRetestUnavailable):
+		status, message = http.StatusConflict, err.Error()
+	case errors.Is(err, errRetestIncomplete):
+		status, message = http.StatusBadGateway, err.Error()
 	case errors.Is(err, ErrConflict), errors.Is(err, gorm.ErrDuplicatedKey):
 		status = http.StatusConflict
 		message = "Operation changed; refresh before retrying"
@@ -98,7 +108,21 @@ func (h *Handler) GetIssue(c *gin.Context) {
 		return
 	}
 	row, events, err := h.service.GetIssue(ctx, c.Param("id"))
-	respond(c, gin.H{"issue": row, "events": events}, err)
+	if err != nil {
+		respond(c, nil, err)
+		return
+	}
+	evidence, err := h.service.issueEvidence(ctx, row)
+	respond(c, gin.H{"issue": row, "events": events, "evidence": evidence}, ignoreMissingEvidence(err))
+}
+func (h *Handler) RetestIssue(c *gin.Context) {
+	ctx, err := ConsoleContext(c)
+	if err != nil {
+		respond(c, nil, err)
+		return
+	}
+	result, err := h.service.retestIssue(ctx, h.sessions, c.Param("id"))
+	respond(c, result, err)
 }
 func (h *Handler) UpdateIssue(c *gin.Context) {
 	ctx, err := ConsoleContext(c)

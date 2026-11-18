@@ -146,20 +146,44 @@
             <h5>问题描述</h5><p class="prewrap">{{ selected.description }}</p>
             <template v-if="selected.steps"><h5>复现步骤</h5><p class="prewrap">{{ selected.steps }}</p></template>
             <template v-if="selected.expected"><h5>预期结果</h5><p class="prewrap">{{ selected.expected }}</p></template>
-            <h5>原始消息</h5><blockquote class="prewrap">{{ selected.original_message || '未保存原始消息' }}</blockquote>
+            <h5>登记消息</h5><blockquote class="prewrap">{{ selected.original_message || '未保存登记消息' }}</blockquote>
             <ul v-if="selected.attachments?.length" class="attachments"><li v-for="(attachment, index) in selected.attachments" :key="index">
               <a v-if="safeAttachmentURL(attachment.url)" :href="safeAttachmentURL(attachment.url)!" target="_blank" rel="noopener noreferrer">{{ attachment.name || '附件' }}</a>
               <span v-else>{{ attachment.name || '附件（链接不可用）' }}</span>
             </li></ul>
           </section>
           <section class="detail-section">
+            <h4>原问与答复</h4>
+            <template v-if="issueEvidence?.answer || issueEvidence?.question">
+              <h5>原问题</h5>
+              <blockquote class="prewrap">{{ issueEvidence.question || '未保留可核对的原问题' }}</blockquote>
+              <h5>当时的 Bot 答复</h5>
+              <blockquote class="prewrap">{{ issueEvidence.answer || '未保留答复正文' }}</blockquote>
+            </template>
+            <p v-else class="hint">这条登记没有可追溯的原问与答复。</p>
+            <template v-if="issueEvidence?.question">
+              <p class="hint">在独立会话中用当前智能体和关联知识库复测。多轮问题请在判断结果时考虑先前上下文。</p>
+              <t-button variant="outline" :loading="retestLoading" :disabled="issueSaving" @click="runRetest">复测原问题</t-button>
+              <t-alert v-if="retestError" theme="error">{{ retestError }}</t-alert>
+              <div v-if="retestResult">
+                <h5>本次复测答复</h5>
+                <blockquote class="prewrap">{{ retestResult.answer }}</blockquote>
+                <p v-if="retestResult.sources.length" class="hint">本次查阅了 {{ retestResult.sources.join('、') }}</p>
+                <p class="hint">请核对原答复和资料，在处理说明里保存复测结论。</p>
+              </div>
+            </template>
+          </section>
+          <section class="detail-section">
             <h4>更新处理</h4>
             <div class="two-col">
               <label>处理状态<t-select v-model="issueEdit.status" :options="statusOptions" /></label>
-              <div />
-              <label>负责人姓名<t-input v-model="issueEdit.owner_name" :maxlength="256" placeholder="未指定时可留空" /></label>
-              <label>负责人原生 UID<t-input v-model="issueEdit.owner_uid" :maxlength="128" placeholder="与姓名一同填写或清空" /></label>
+              <label>分派给知识库联系人<t-select v-model="ownerContactID" :options="ownerContactOptions" :loading="ownerContactsLoading" clearable placeholder="选择联系人或手动填写" /></label>
+              <template v-if="!ownerContactID">
+                <label>负责人姓名<t-input v-model="issueEdit.owner_name" :maxlength="256" placeholder="未指定时可留空" /></label>
+                <label>负责人原生 UID<t-input v-model="issueEdit.owner_uid" :maxlength="128" placeholder="与姓名一同填写或清空" /></label>
+              </template>
             </div>
+            <p v-if="ownerContactsError" class="hint">{{ ownerContactsError }}</p>
             <label>处理说明<t-textarea v-model="issueEdit.note" :maxlength="4000" placeholder="记录处理结果、资料链接或关闭原因" /></label>
             <p class="hint">保存处理记录不会修改知识库，也不会给负责人发送通知。</p>
             <t-button :loading="issueSaving" @click="saveIssue">保存处理记录</t-button>
@@ -197,8 +221,8 @@ import { useRoute } from 'vue-router'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import { listScopes, type OctoScope } from '@/api/octo'
 import {
-  listIssues, issueDetail, updateIssue, listContacts, saveContact, deleteContact, issueReport,
-  type OctoIssue, type OctoContact, type IssueEvent, type IssueStatus, type IssueFilter,
+  listIssues, issueDetail, updateIssue, retestIssue, listContacts, saveContact, deleteContact, issueReport,
+  type OctoIssue, type OctoContact, type IssueEvent, type IssueStatus, type IssueFilter, type IssueEvidence, type IssueRetest,
 } from '@/api/octo-business'
 import { useAuthStore } from '@/stores/auth'
 import { issueKindLabels, issueStatusLabels, displayPerson, csvCell, safeAttachmentURL } from './octoBusinessDisplay'
@@ -302,6 +326,18 @@ const detailVisible = ref(false)
 const detailLoading = ref(false)
 const detailError = ref('')
 const issueSaving = ref(false)
+const issueEvidence = ref<IssueEvidence | null>(null)
+const retestResult = ref<IssueRetest | null>(null)
+const retestLoading = ref(false)
+const retestError = ref('')
+const ownerContacts = ref<OctoContact[]>([])
+const ownerContactsLoading = ref(false)
+const ownerContactsError = ref('')
+const ownerContactID = ref('')
+const ownerContactOptions = computed(() => ownerContacts.value.map(contact => ({
+  value: contact.id,
+  label: [contact.name, contact.topic, contact.is_default ? '默认' : ''].filter(Boolean).join(' · '),
+})))
 const issueEdit = ref<{ status: IssueStatus; owner_uid: string; owner_name: string; note: string }>({ status: 'open', owner_uid: '', owner_name: '', note: '' })
 async function openIssue(id: string) {
   const version = ++detailVersion
@@ -311,6 +347,14 @@ async function openIssue(id: string) {
   detailError.value = ''
   selected.value = null
   events.value = []
+  issueEvidence.value = null
+  retestResult.value = null
+  retestError.value = ''
+  retestLoading.value = false
+  ownerContacts.value = []
+  ownerContactsLoading.value = false
+  ownerContactID.value = ''
+  ownerContactsError.value = ''
   try {
     const result = await issueDetail(id)
     if (version !== detailVersion) return
@@ -320,21 +364,47 @@ async function openIssue(id: string) {
     }
     selected.value = result.data.issue
     events.value = result.data.events
+    issueEvidence.value = result.data.evidence ?? null
     issueEdit.value = { status: selected.value.status, owner_uid: selected.value.owner_uid || '', owner_name: selected.value.owner_name || '', note: '' }
+    void loadOwnerContacts(selected.value.knowledge_base_id, version)
   } catch {
     if (version === detailVersion) detailError.value = '读取详情失败，记录可能已删除或权限已变更。'
   } finally { if (version === detailVersion) detailLoading.value = false }
 }
+async function loadOwnerContacts(kb: string, version: number) {
+  ownerContactsLoading.value = true
+  try {
+    const response = await listContacts(kb)
+    if (version === detailVersion) ownerContacts.value = response.data
+  } catch {
+    if (version === detailVersion) ownerContactsError.value = '联系人读取失败，可以先手动填写。'
+  } finally { if (version === detailVersion) ownerContactsLoading.value = false }
+}
+async function runRetest() {
+  if (!selected.value || retestLoading.value || !issueEvidence.value?.question) return
+  const version = detailVersion
+  retestLoading.value = true
+  retestResult.value = null
+  retestError.value = ''
+  try {
+    const response = await retestIssue(selected.value.id)
+    if (version === detailVersion) retestResult.value = response.data
+  } catch {
+    if (version === detailVersion) retestError.value = '复测未完成，请检查 Bot、知识库绑定和模型状态。'
+  } finally { if (version === detailVersion) retestLoading.value = false }
+}
 async function saveIssue() {
   if (!selected.value || issueSaving.value) return
-  if (Boolean(issueEdit.value.owner_uid.trim()) !== Boolean(issueEdit.value.owner_name.trim())) {
+  const { status, note, owner_uid, owner_name } = issueEdit.value
+  if (!ownerContactID.value && Boolean(owner_uid.trim()) !== Boolean(owner_name.trim())) {
     await MessagePlugin.warning('负责人姓名和 UID 请一同填写，或一同清空')
     return
   }
   const id = selected.value.id, version = contextVersion
   issueSaving.value = true
   try {
-    await updateIssue(id, { ...issueEdit.value })
+    const owner = ownerContactID.value ? { owner_contact_id: ownerContactID.value } : { owner_uid, owner_name }
+    await updateIssue(id, { status, note, ...owner })
     if (version !== contextVersion) return
     await Promise.all([
       detailVisible.value && detailID.value === id ? openIssue(id) : Promise.resolve(),

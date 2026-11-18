@@ -13,8 +13,11 @@ const root='/api/v1/octo/business'
 export const issueQuery=(filter:IssueFilter)=>new URLSearchParams(Object.entries(filter).filter(([,v])=>v!==undefined&&v!=='').map(([k,v])=>[k,String(v)])).toString()
 export const listIssues=(filter:IssueFilter)=>get(`${root}/issues?${issueQuery(filter)}`) as unknown as Promise<Envelope<{items:OctoIssue[];total:number}>>
 export interface IssueEvent {actor_uid:string;actor_name:string;status:IssueStatus;note:string;created_at:string}
-export const issueDetail=(id:string)=>get(`${root}/issues/${encodeURIComponent(id)}`) as unknown as Promise<Envelope<{issue:OctoIssue;events:IssueEvent[]}>>
-export const updateIssue=(id:string, data:{status:IssueStatus;owner_uid:string;owner_name:string;note:string})=>patch(`${root}/issues/${encodeURIComponent(id)}`,data)
+export interface IssueEvidence {question?:string;question_message_id?:string;answer?:string;answer_message_id?:string}
+export interface IssueRetest {answer:string;model_id:string;sources:string[]}
+export const issueDetail=(id:string)=>get(`${root}/issues/${encodeURIComponent(id)}`) as unknown as Promise<Envelope<{issue:OctoIssue;events:IssueEvent[];evidence?:IssueEvidence|null}>>
+export const updateIssue=(id:string, data:{status:IssueStatus;owner_uid?:string;owner_name?:string;owner_contact_id?:string;note:string})=>patch(`${root}/issues/${encodeURIComponent(id)}`,data)
+export const retestIssue=(id:string)=>post<Envelope<IssueRetest>>(`${root}/issues/${encodeURIComponent(id)}/retest`, {}, { timeout:95000 })
 export const listContacts=(kb:string)=>get(`${root}/contacts?knowledge_base_id=${encodeURIComponent(kb)}`) as unknown as Promise<Envelope<OctoContact[]>>
 export const saveContact=(data:OctoContact)=>put(`${root}/contacts`,data)
 export const deleteContact=(id:string)=>del(`${root}/contacts/${encodeURIComponent(id)}`)
