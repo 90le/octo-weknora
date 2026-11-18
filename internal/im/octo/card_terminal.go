@@ -17,11 +17,23 @@ func confirmationTerminalText(p *octobusiness.Proposal, now time.Time) string {
 	}
 	switch p.Status {
 	case "completed":
+		if p.Action == octobusiness.IssueProposalAction {
+			var result struct {
+				IssueID string `json:"issue_id"`
+			}
+			if json.Unmarshal(p.Result, &result) == nil && result.IssueID != "" {
+				return "问题已登记。编号 " + result.IssueID
+			}
+			return "问题已登记，可在问题列表中查看。"
+		}
 		if p.Action == "delete_kb" {
 			return deletionReceiptText
 		}
 		return "已完成，知识变更已执行。"
 	case "cancelled":
+		if p.Action == octobusiness.IssueProposalAction {
+			return "登记已取消。"
+		}
 		return "已取消，未执行本次变更。"
 	case "failed":
 		return "处理未确认完成，请先检查实际结果，再决定是否重新发起。"

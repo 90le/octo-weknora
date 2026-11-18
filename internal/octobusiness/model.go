@@ -32,6 +32,7 @@ type Principal struct {
 	TenantID                                                     uint64
 	AccountID, ChannelID, ScopeID, ScopeName, GroupID, SubareaID string
 	UserID, UserName, MessageID, MessageText                     string
+	QuotedReplyID                                                string
 	Attachments                                                  []Attachment
 	KnowledgeBaseIDs, ManageKnowledgeBaseIDs                     []string
 	ReadIssueScopeIDs                                            []string
@@ -72,6 +73,7 @@ func currentPrincipal(ctx context.Context) (Principal, error) {
 		}
 		// Message identity/content are immutable transport facts, not refreshed model input.
 		fresh.MessageID, fresh.MessageText, fresh.Attachments = p.MessageID, p.MessageText, p.Attachments
+		fresh.QuotedReplyID = p.QuotedReplyID
 		return fresh, nil
 	}
 	if !p.Console {

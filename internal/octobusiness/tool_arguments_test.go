@@ -131,10 +131,10 @@ func TestToolSingleReadableKnowledgeBaseDefaultsForIssue(t *testing.T) {
 	result, err := NewTool(s).Execute(principalContext(principal), json.RawMessage(`{"operation":"create_issue","kind":"missing","title":"采购付款周期","description":"已成功检索但资料未说明实际付款周期。","retrieval_status":"no_answer"}`))
 	require.NoError(t, err)
 	require.True(t, result.Success, result.Error)
-	var issue Issue
-	require.NoError(t, json.Unmarshal([]byte(result.Output), &issue))
-	require.Equal(t, "kb-a", issue.KnowledgeBaseID)
-	require.Equal(t, principal.UserID, issue.ReporterUID)
+	var preview Proposal
+	require.NoError(t, json.Unmarshal([]byte(result.Output), &preview))
+	require.Equal(t, "kb-a", preview.KnowledgeBaseID)
+	require.Equal(t, "pending", preview.Status)
 	require.Empty(t, principal.ManageKnowledgeBaseIDs)
 }
 func TestToolDefaultsSelectOnlyTheExactEligibleSet(t *testing.T) {

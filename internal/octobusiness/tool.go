@@ -104,7 +104,11 @@ func (t *Tool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolRe
 	case "contacts":
 		result, err = t.service.Contacts(ctx, in.KnowledgeBaseID)
 	case "create_issue":
-		result, err = t.service.CreateIssue(ctx, in.IssueInput)
+		if principal.Console {
+			result, err = t.service.CreateIssue(ctx, in.IssueInput)
+		} else {
+			result, err = t.service.ProposeIssue(ctx, in.IssueInput)
+		}
 	case "get_issue":
 		var issue *Issue
 		var events []IssueEvent

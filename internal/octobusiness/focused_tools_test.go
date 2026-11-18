@@ -93,18 +93,19 @@ func TestFocusedIssueClarificationsAreInputFactsAndReuseIdempotency(t *testing.T
 	second, err := tool.Execute(principalContext(testPrincipal()), payload)
 	require.NoError(t, err)
 	require.True(t, second.Success, second.Error)
-	var a, b Issue
+	var a, b Proposal
 	require.NoError(t, json.Unmarshal([]byte(first.Output), &a))
 	require.NoError(t, json.Unmarshal([]byte(second.Output), &b))
 	require.Equal(t, a.ID, b.ID)
 	require.Equal(t, "kb-a", a.KnowledgeBaseID)
+	require.Equal(t, "pending", a.Status)
 	result, err := tool.Execute(principalContext(testPrincipal()), json.RawMessage(`{"action":"create","kind":"bug","title":"导出失败","description":"用户说导出失败。","expected":"生成文件","steps":"点击导出","input_clarifications_needed":["尚未说明具体哪个产品"]}`))
 	require.NoError(t, err)
 	require.False(t, result.Success)
 	require.Equal(t, ErrClarify.Error(), result.Error)
 	var count int64
 	require.NoError(t, service.db.Model(&Issue{}).Count(&count).Error)
-	require.EqualValues(t, 1, count)
+	require.Zero(t, count)
 }
 
 func TestFocusedPreviewAliasesProposalAndKeepsNativeConfirmation(t *testing.T) {
@@ -201,9 +202,10 @@ func TestLegacyIssueContentAliasIsNotExposedByFocusedSchema(t *testing.T) {
 	result, err := NewTool(service).Execute(principalContext(testPrincipal()), json.RawMessage(`{"operation":"create_issue","kind":"suggestion","title":"改进提示","content":"用户希望按钮文案更清楚。"}`))
 	require.NoError(t, err)
 	require.True(t, result.Success, result.Error)
-	var issue Issue
-	require.NoError(t, json.Unmarshal([]byte(result.Output), &issue))
-	require.Equal(t, "用户希望按钮文案更清楚。", issue.Description)
+	var proposal Proposal
+	require.NoError(t, json.Unmarshal([]byte(result.Output), &proposal))
+	require.Equal(t, "pending", proposal.Status)
+	require.Contains(t, string(proposal.Result), "用户希望按钮文案更清楚。")
 }
 
 func TestFocusedToolsUsePortableFlatJSONSchemas(t *testing.T) {

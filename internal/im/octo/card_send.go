@@ -70,6 +70,8 @@ func confirmationPreview(p *octobusiness.Proposal) (string, bool) {
 		"scope": "当前区域", "name": "名称", "knowledge_base_name": "知识库",
 		"knowledge_base_id": "知识库编号", "knowledge_id": "文档编号", "content": "正文",
 		"template_knowledge_base": "模板知识库", "inheriting_subareas": "受影响的继承子区数量", "notice": "影响说明",
+		"title": "问题", "kind": "类型", "description": "已知情况", "steps": "复现步骤",
+		"expected": "预期结果", "quoted_reply_id": "引用的回复编号",
 	}
 	if p.Action == "create_kb" || p.Action == "rename" || p.Action == "delete_kb" {
 		labels["name"] = "知识库名称"
@@ -85,6 +87,12 @@ func confirmationPreview(p *octobusiness.Proposal) (string, bool) {
 		"knowledge_id",
 		"template_knowledge_base",
 		"content",
+		"title",
+		"kind",
+		"description",
+		"steps",
+		"expected",
+		"quoted_reply_id",
 		"inheriting_subareas",
 		"notice",
 	}
@@ -144,14 +152,15 @@ func confirmationPreview(p *octobusiness.Proposal) (string, bool) {
 
 func confirmationCardPayload(preview string, p *octobusiness.Proposal) map[string]any {
 	labels := map[string]string{
-		"create_kb":       "创建知识库",
-		"rename":          "重命名知识库",
-		"save_draft":      "保存草稿",
-		"publish":         "发布文档",
-		"delete_document": "删除文档",
-		"bind":            "绑定知识库",
-		"unbind":          "解绑知识库",
-		"delete_kb":       "删除知识库",
+		"create_kb":                      "创建知识库",
+		"rename":                         "重命名知识库",
+		"save_draft":                     "保存草稿",
+		"publish":                        "发布文档",
+		"delete_document":                "删除文档",
+		"bind":                           "绑定知识库",
+		"unbind":                         "解绑知识库",
+		"delete_kb":                      "删除知识库",
+		octobusiness.IssueProposalAction: "登记问题",
 	}
 	label := labels[p.Action]
 	if label == "" {

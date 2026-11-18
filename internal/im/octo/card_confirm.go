@@ -237,11 +237,15 @@ func (a *Adapter) confirmationHandler(
 		result, err := a.business.Confirm(octobusiness.WithPrincipal(ctx, p), proposal.ID, cancel)
 		text := "操作未确认完成，状态可能未知。请先检查知识库和操作记录，再决定是否重新发起。"
 		if err == nil && result != nil {
-			switch result.Status {
-			case "completed":
-				text = "知识变更已执行。"
-			case "cancelled":
-				text = "知识变更已取消。"
+			if result.Action == octobusiness.IssueProposalAction {
+				text = confirmationTerminalText(result, time.Now())
+			} else {
+				switch result.Status {
+				case "completed":
+					text = "知识变更已执行。"
+				case "cancelled":
+					text = "知识变更已取消。"
+				}
 			}
 		}
 		// SendReply persists its result before attempting delivery. A transport
