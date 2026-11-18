@@ -261,7 +261,7 @@ label, .review section { display: grid; gap: 8px; }
 .turn, .review section {
   padding: 16px;
   border: 1px solid var(--td-component-border);
-  border-radius: 8px;
+  border-radius: var(--app-radius-md);
 }
 h3, p, blockquote { margin: 0; }
 .turn { display: grid; gap: 8px; }

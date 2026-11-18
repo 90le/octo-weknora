@@ -12,6 +12,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 type qualityExcerpt struct {
@@ -217,7 +218,9 @@ func (s *Service) analyzeQuality(
 	}
 	author := qualityAuthor(p, fresh, rows[0])
 	proposal := qualityProposal{RunID: uuid.NewString(), Input: input, Finding: finding, Signature: signature}
-	saved, err := s.saveProposal(ctx, author, qualityAction, input.LibraryID, proposal, map[string]any{})
+	reviewService := *s
+	reviewService.db = s.db.Session(&gorm.Session{Logger: gormlogger.Discard})
+	saved, err := reviewService.saveProposal(ctx, author, qualityAction, input.LibraryID, proposal, map[string]any{})
 	if err != nil {
 		return nil, err
 	}

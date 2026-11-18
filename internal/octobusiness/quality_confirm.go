@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 const qualityAction = "review_quality"
@@ -39,7 +40,8 @@ func (s *Service) confirmQuality(
 		return nil, ErrClarify
 	}
 	find := func(db *gorm.DB) *gorm.DB {
-		return db.Where("tenant_id = ? AND user_id = ? AND action = ? AND id = ?", p.TenantID, p.UserID, qualityAction, id)
+		return db.Where("tenant_id = ? AND user_id = ? AND action = ? AND id = ?",
+			p.TenantID, p.UserID, qualityAction, id)
 	}
 	var stored Proposal
 	if err := find(s.db.WithContext(ctx)).First(&stored).Error; err != nil {
@@ -56,7 +58,8 @@ func (s *Service) confirmQuality(
 		return nil, ErrConflict
 	}
 	row := &Issue{}
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	reviewDB := s.db.Session(&gorm.Session{Logger: gormlogger.Discard}).WithContext(ctx)
+	err = reviewDB.Transaction(func(tx *gorm.DB) error {
 		snapshot := *s
 		snapshot.db = tx
 		var locked Proposal

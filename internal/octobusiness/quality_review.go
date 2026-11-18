@@ -110,7 +110,8 @@ func (entry qualityInbox) row(scope *qualityScope) (qualityRow, bool) {
 		AccountID, ScopeID                       string
 		KnowledgeBaseIDs, ManageKnowledgeBaseIDs []string
 	}
-	if json.Unmarshal([]byte(entry.Input), &input) != nil || json.Unmarshal([]byte(entry.Authority), &authority) != nil ||
+	if json.Unmarshal([]byte(entry.Input), &input) != nil ||
+		json.Unmarshal([]byte(entry.Authority), &authority) != nil ||
 		input.MessageType != "text" || input.ChatType != "group" || input.UserID == "" ||
 		input.Extra["octo_group_id"] != scope.GroupID || input.Extra["octo_subarea_id"] != scope.SubareaID ||
 		input.Extra["octo_card_event_key"] != "" || authority.ScopeID != scope.ID ||
@@ -134,7 +135,8 @@ func (entry qualityInbox) row(scope *qualityScope) (qualityRow, bool) {
 	_ = json.Unmarshal([]byte(input.Extra[QualityTurnKey]), &evidence)
 	row := qualityRow{
 		ID: entry.MessageID, Question: limitQualityText(question, 4000), Answer: limitQualityText(entry.Reply, 8000),
-		Outcome: qualityOutcome(entry, evidence), CreatedAt: entry.CreatedAt, userID: input.UserID, name: input.UserName,
+		Outcome: qualityOutcome(entry, evidence), CreatedAt: entry.CreatedAt,
+		userID: input.UserID, name: input.UserName,
 		libraries: authority.KnowledgeBaseIDs,
 	}
 	if entry.State != "delivered" {
