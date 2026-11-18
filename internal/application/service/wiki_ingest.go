@@ -2811,7 +2811,8 @@ func (s *wikiIngestService) generateWithTemplateResult(
 
 				// A provider that rejects streaming or returns a partial answer
 				// still gets a bounded attempt using the usual buffered path.
-				if !(streamAttempt && ctx.Err() == nil) && !isTransientLLMError(ctx, callErr) {
+				canRetry := (streamAttempt && ctx.Err() == nil) || isTransientLLMError(ctx, callErr)
+				if !canRetry {
 					return nil, fmt.Errorf("LLM call failed: %w", callErr)
 				}
 				if attempt == wikiLLMMaxAttempts {
