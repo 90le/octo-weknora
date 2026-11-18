@@ -12,7 +12,8 @@ import (
 
 type (
 	retrievalTraceKey struct{}
-	RetrievalTrace    struct {
+	// RetrievalTrace tracks trusted retrieval outcomes for one request.
+	RetrievalTrace struct {
 		mu                sync.Mutex
 		succeeded, failed bool
 		sources           []SourceCitation
