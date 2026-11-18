@@ -1,18 +1,22 @@
 package im
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Tencent/WeKnora/internal/types"
+)
 
 // OctoQuestionTextKey is populated by the authenticated Octo adapter after
 // validating native mention spans. Content remains available for commands and
 // the original platform message remains available for reply quotations.
-const OctoQuestionTextKey = "octo_question_text"
+const OctoQuestionTextKey = types.OctoQuestionTextKey
 
 func imQuestionText(msg *IncomingMessage) string {
 	if msg == nil {
 		return ""
 	}
-	text, ok := msg.Extra[OctoQuestionTextKey]
-	if msg.Platform != "octo" || msg.Extra["octo_addressed"] != "true" || !ok {
+	text, ok := types.OctoAddressedQuestion(msg.Extra)
+	if msg.Platform != "octo" || !ok {
 		return msg.Content
 	}
 	if strings.TrimSpace(text) == "" && (msg.MessageType == MessageTypeFile || msg.MessageType == MessageTypeImage) {

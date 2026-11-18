@@ -8,13 +8,21 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
-type Handler struct{ service *Service }
+// Handler exposes Octo operations to authorized workspace administrators.
+type Handler struct {
+	service  *Service
+	sessions interfaces.SessionService
+}
 
-func NewHandler(service *Service) *Handler { return &Handler{service: service} }
+// NewHandler wires the workbench to the existing question-answering service.
+func NewHandler(service *Service, sessions interfaces.SessionService) *Handler {
+	return &Handler{service: service, sessions: sessions}
+}
 
 // ConsoleContext uses only authentication middleware state. The initial UI is
 // workspace-administrator only; group maintainers use native scoped IM tools.
@@ -29,6 +37,7 @@ func ConsoleContext(c *gin.Context) (context.Context, error) {
 	p := Principal{TenantID: caller.TenantID, UserID: caller.UserID, UserName: caller.UserID, ChannelID: "console", Console: true, CanManageScope: true}
 	return WithPrincipal(c.Request.Context(), p), nil
 }
+
 func respond(c *gin.Context, data any, err error) {
 	if err == nil {
 		c.JSON(http.StatusOK, gin.H{"success": true, "data": data})
@@ -43,6 +52,10 @@ func respond(c *gin.Context, data any, err error) {
 	case errors.Is(err, ErrInvalid), errors.Is(err, ErrClarify):
 		status = http.StatusBadRequest
 		message = err.Error()
+	case errors.Is(err, errRetestUnavailable):
+		status, message = http.StatusConflict, err.Error()
+	case errors.Is(err, errRetestIncomplete):
+		status, message = http.StatusBadGateway, err.Error()
 	case errors.Is(err, ErrConflict), errors.Is(err, gorm.ErrDuplicatedKey):
 		status = http.StatusConflict
 		message = "Operation changed; refresh before retrying"
@@ -52,6 +65,7 @@ func respond(c *gin.Context, data any, err error) {
 	}
 	c.JSON(status, gin.H{"success": false, "error": message})
 }
+
 func httpFilter(c *gin.Context) (IssueFilter, error) {
 	f := IssueFilter{ScopeID: c.Query("scope_id"), KnowledgeBaseID: c.Query("knowledge_base_id"), Kind: c.Query("kind"), Status: c.Query("status"), Keyword: c.Query("keyword")}
 	var err error
@@ -77,6 +91,7 @@ func httpFilter(c *gin.Context) (IssueFilter, error) {
 	}
 	return f, nil
 }
+
 func (h *Handler) ListIssues(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -91,6 +106,7 @@ func (h *Handler) ListIssues(c *gin.Context) {
 	rows, err := h.service.ListIssues(ctx, f)
 	respond(c, rows, err)
 }
+
 func (h *Handler) GetIssue(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -98,8 +114,25 @@ func (h *Handler) GetIssue(c *gin.Context) {
 		return
 	}
 	row, events, err := h.service.GetIssue(ctx, c.Param("id"))
-	respond(c, gin.H{"issue": row, "events": events}, err)
+	if err != nil {
+		respond(c, nil, err)
+		return
+	}
+	evidence, err := h.service.issueEvidence(ctx, row)
+	respond(c, gin.H{"issue": row, "events": events, "evidence": evidence}, ignoreMissingEvidence(err))
 }
+
+// RetestIssue runs the original question in a separate read-only turn.
+func (h *Handler) RetestIssue(c *gin.Context) {
+	ctx, err := ConsoleContext(c)
+	if err != nil {
+		respond(c, nil, err)
+		return
+	}
+	result, err := h.service.retestIssue(ctx, h.sessions, c.Param("id"))
+	respond(c, result, err)
+}
+
 func (h *Handler) UpdateIssue(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -114,6 +147,7 @@ func (h *Handler) UpdateIssue(c *gin.Context) {
 	row, err := h.service.UpdateIssue(ctx, c.Param("id"), input)
 	respond(c, row, err)
 }
+
 func (h *Handler) Contacts(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -123,6 +157,7 @@ func (h *Handler) Contacts(c *gin.Context) {
 	rows, err := h.service.Contacts(ctx, c.Query("knowledge_base_id"))
 	respond(c, rows, err)
 }
+
 func (h *Handler) PutContact(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -137,6 +172,7 @@ func (h *Handler) PutContact(c *gin.Context) {
 	row, err := h.service.PutContact(ctx, input)
 	respond(c, row, err)
 }
+
 func (h *Handler) DeleteContact(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -146,6 +182,7 @@ func (h *Handler) DeleteContact(c *gin.Context) {
 	err = h.service.DeleteContact(ctx, c.Param("id"))
 	respond(c, gin.H{"deleted": err == nil}, err)
 }
+
 func (h *Handler) Report(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -170,6 +207,7 @@ func (h *Handler) ReportSchedules(c *gin.Context) {
 	rows, err := h.service.ListReportSchedules(ctx)
 	respond(c, rows, err)
 }
+
 func (h *Handler) PutReportSchedule(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -185,6 +223,7 @@ func (h *Handler) PutReportSchedule(c *gin.Context) {
 	row, err := h.service.PutReportSchedule(ctx, input)
 	respond(c, row, err)
 }
+
 func (h *Handler) DeleteReportSchedule(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
