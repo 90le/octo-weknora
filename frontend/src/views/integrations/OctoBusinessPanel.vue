@@ -200,7 +200,7 @@
               </div>
             </template>
           </section>
-          <OctoIssueReply v-if="!selected.is_direct" :key="selected.id" :issue="selected" />
+          <OctoIssueReply :key="selected.id" :issue="selected" />
           <section v-if="!selected.archive_state" class="detail-section">
             <h4>更新处理</h4>
             <div class="two-col">

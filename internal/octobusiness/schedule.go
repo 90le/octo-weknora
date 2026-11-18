@@ -61,6 +61,10 @@ type ReportSchedule struct {
 	MinimumUsers  int        `json:"minimum_users"`
 	OnlyChanges   bool       `json:"only_changes"`
 	Instruction   string     `json:"instruction"`
+	Topic         string     `json:"topic"`
+	QuietStart    int        `json:"quiet_start"`
+	QuietEnd      int        `json:"quiet_end"`
+	CooldownHours int        `json:"cooldown_hours"`
 	Manual        bool       `json:"-" gorm:"-"`
 }
 
@@ -316,8 +320,13 @@ func (s *Service) ProcessReportTask(ctx context.Context, task *asynq.Task) error
 		if e != nil {
 			return e
 		}
-		if s.reportShouldSkip(ctx, schedule, report, run) {
+		skip, e := s.reportShouldSkip(ctx, schedule, report, run)
+		if e != nil {
+			return e
+		}
+		if skip != "" {
 			status = "skipped"
+			run.ErrorCode = skip
 			return nil
 		}
 		if schedule.Mode == "generate" || schedule.Mode == "approval" {
@@ -360,7 +369,10 @@ func (s *Service) ProcessReportTask(ctx context.Context, task *asynq.Task) error
 	}
 	write, writeCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer writeCancel()
-	runPatch := map[string]any{"status": status, "updated_at": time.Now(), "error_code": reportErrorCode(sendErr)}
+	if sendErr != nil {
+		run.ErrorCode = reportErrorCode(sendErr)
+	}
+	runPatch := map[string]any{"status": status, "updated_at": time.Now(), "error_code": run.ErrorCode}
 	if err = s.db.WithContext(write).Model(&ReportRun{}).Where("id = ? AND status = 'sending'", key).
 		Updates(runPatch).Error; err != nil {
 		return err
@@ -433,6 +445,12 @@ func (s *Service) guardReportSchedule(ctx context.Context, schedule ReportSchedu
 // after the task deadline plus a grace period. This is safe across replicas.
 func (s *Service) recoverInterruptedReports(ctx context.Context, now time.Time) error {
 	cutoff := now.Add(-reportTaskTimeout - reportRecoveryGrace)
+	generate := s.db.WithContext(ctx).Model(&ReportRun{}).
+		Where("status = 'generating' AND updated_at < ?", cutoff).
+		Updates(map[string]any{"status": "failed", "error_code": "generation_interrupted"})
+	if generate.Error != nil {
+		return generate.Error
+	}
 	var runs []ReportRun
 	if err := s.db.WithContext(ctx).Where("status = ? AND updated_at < ?", "sending", cutoff).Order("updated_at, id").Limit(100).Find(&runs).Error; err != nil {
 		return err

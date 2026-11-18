@@ -1,6 +1,7 @@
 package octobusiness
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -19,6 +20,31 @@ func TestOperationsReportMonthEndAndCalendarWindow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, time.Date(2025, time.December, 31, 16, 0, 0, 0, time.UTC), from)
 	require.Equal(t, time.Date(2026, time.January, 31, 16, 0, 0, 0, time.UTC), to)
+}
+
+func TestAnomalyQuietHoursCooldownAndCoverage(t *testing.T) {
+	s := testService(t)
+	ctx := context.Background()
+	plan := ReportSchedule{
+		Template: "anomaly", Timezone: "Asia/Shanghai", Threshold: 2, MinimumUsers: 2,
+		QuietStart: 22, QuietEnd: 8, CooldownHours: 6,
+	}
+	due := time.Date(2026, time.November, 18, 15, 0, 0, 0, time.UTC)
+	run := ReportRun{ID: "candidate", TenantID: 1, ScheduleID: "plan", DueAt: due}
+	report := &Report{Operations: &operationalReport{Metrics: map[string]int64{"attention": 2, "attention_people": 2}}}
+	reason, err := s.reportShouldSkip(ctx, plan, report, run)
+	require.NoError(t, err)
+	require.Equal(t, "quiet_hours", reason)
+	run.DueAt = due.Add(10 * time.Hour)
+	old := ReportRun{ID: "earlier", TenantID: 1, ScheduleID: "plan", DueAt: run.DueAt.Add(-time.Hour), Status: "sent"}
+	require.NoError(t, s.db.Create(&old).Error)
+	reason, err = s.reportShouldSkip(ctx, plan, report, run)
+	require.NoError(t, err)
+	require.Equal(t, "cooldown", reason)
+	report.Operations.Limited = true
+	reason, err = s.reportShouldSkip(ctx, plan, report, run)
+	require.NoError(t, err)
+	require.Equal(t, "incomplete_sample", reason)
 }
 
 func TestArchiveBatchKeepsHistoryAndRejectsStaleRow(t *testing.T) {

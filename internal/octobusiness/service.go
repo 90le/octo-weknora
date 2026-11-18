@@ -27,6 +27,7 @@ type Service struct {
 	ReportPrincipal     func(context.Context, ReportSchedule) (context.Context, error)
 	ReportDelivery      func(context.Context, ReportSchedule, *Report, *ReportArtifact) error
 	ManualReplyDelivery func(context.Context, ManualReplyTarget, string, string) (string, error)
+	ManualReplyCheck    func(context.Context, ManualReplyTarget) error
 	reportCron          *cron.Cron
 	reportModels        qualityModelResolver
 }
