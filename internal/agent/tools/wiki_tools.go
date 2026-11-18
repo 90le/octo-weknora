@@ -701,6 +701,10 @@ func (t *wikiReadPageTool) Execute(ctx context.Context, args json.RawMessage) (*
 	}
 
 	finalOutput, truncatedSlugs, omittedSlugs := renderWikiPagesWithinBudget(pending, OutputBudget(ctx))
+	readKBs := make(map[string][]string)
+	for _, item := range pending[:len(pending)-len(omittedSlugs)] {
+		readKBs[item.page.Slug] = append(readKBs[item.page.Slug], item.kbID)
+	}
 	if len(omittedSlugs) > 0 {
 		finalOutput += fmt.Sprintf(
 			"\n\n<omitted_pages reason=\"output budget exceeded\">\n%s\n</omitted_pages>"+
@@ -726,6 +730,7 @@ func (t *wikiReadPageTool) Execute(ctx context.Context, args json.RawMessage) (*
 		Success: true,
 		Output:  finalOutput,
 		Data: map[string]interface{}{
+			"read_kbs":        readKBs,
 			"found_kbs":       foundKBs,
 			"ambiguous_slugs": ambiguous,
 			"truncated_slugs": truncatedSlugs,

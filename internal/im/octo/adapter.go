@@ -232,7 +232,7 @@ func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *
 			scope, scopeErr = a.AuthorizeExecution(ctx, nil, in)
 		}
 		var saved Inbox
-		savedErr := a.inboxQuery(ctx, in.MessageID).Select("authority", "state").First(&saved).Error
+		savedErr := a.inboxQuery(ctx, in.MessageID).Select("authority", "state", "input").First(&saved).Error
 		if scopeErr != nil || savedErr != nil || (receiptScope == nil && !permitsReply(saved.Authority, scope)) {
 			_ = a.inboxQuery(ctx, in.MessageID).Where("state <> ?", "delivered").Updates(map[string]any{"state": "ignored", "error_code": "authorization_changed"}).Error
 			return im.ErrScopeDenied
@@ -240,7 +240,21 @@ func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *
 		if saved.State == "delivered" {
 			return nil
 		}
-		if err := a.inboxQuery(ctx, in.MessageID).Updates(map[string]any{"state": "reply_pending", "reply": reply.Content, "attempts": gorm.Expr("attempts + 1"), "updated_at": time.Now()}).Error; err != nil {
+		update := map[string]any{
+			"state": "reply_pending", "reply": reply.Content,
+			"attempts": gorm.Expr("attempts + 1"), "updated_at": time.Now(),
+		}
+		if evidence := octobusiness.EncodedQualityTurn(ctx); evidence != "" &&
+			in.ChatType == im.ChatTypeGroup && in.MessageType == im.MessageTypeText {
+			var original im.IncomingMessage
+			if json.Unmarshal([]byte(saved.Input), &original) == nil && original.Extra != nil {
+				original.Extra[octobusiness.QualityTurnKey] = evidence
+				if encoded, encodeErr := json.Marshal(&original); encodeErr == nil {
+					update["input"] = string(encoded)
+				}
+			}
+		}
+		if err := a.inboxQuery(ctx, in.MessageID).Updates(update).Error; err != nil {
 			return err
 		}
 	}

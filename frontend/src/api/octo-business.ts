@@ -18,6 +18,24 @@ export interface IssueRetest {answer:string;model_id:string;sources:string[]}
 export const issueDetail=(id:string)=>get(`${root}/issues/${encodeURIComponent(id)}`) as unknown as Promise<Envelope<{issue:OctoIssue;events:IssueEvent[];evidence?:IssueEvidence|null}>>
 export const updateIssue=(id:string, data:{status:IssueStatus;owner_uid?:string;owner_name?:string;owner_contact_id?:string;note:string})=>patch(`${root}/issues/${encodeURIComponent(id)}`,data)
 export const retestIssue=(id:string)=>post<Envelope<IssueRetest>>(`${root}/issues/${encodeURIComponent(id)}/retest`, {}, { timeout:95000 })
+export interface QualityRow {
+  id: string; question: string; answer: string; outcome: string; created_at: string
+  unanswered_repeats: number; group_key: string; unavailable_sources: number; sources?: {library: string}[]
+}
+export interface QualityPage {
+  rows: QualityRow[]; libraries: {id: string; name: string}[]
+  sample_size: number; since: string; truncated: boolean
+}
+export interface QualityDraft {
+  id?: string; expires_at?: string
+  finding: { category: string; title: string; reason: string; suggestion: string; evidence: {ref: string; quote: string}[] }
+  excerpts: {id: string; label: string; text?: string; status?: string}[]
+}
+export const listQuality=(scope: string)=>get<Envelope<QualityPage>>(`${root}/quality?scope_id=${encodeURIComponent(scope)}`)
+export const analyzeQuality=(data: {scope_id: string; library_id: string; message_ids: string[]})=>
+  post<Envelope<QualityDraft>>(`${root}/quality/analyze`, data, { timeout:75000 })
+export const confirmQuality=(id: string,data: {title: string; note: string; contact_id: string})=>
+  post<Envelope<OctoIssue>>(`${root}/quality/${encodeURIComponent(id)}/confirm`, data)
 export const listContacts=(kb:string)=>get(`${root}/contacts?knowledge_base_id=${encodeURIComponent(kb)}`) as unknown as Promise<Envelope<OctoContact[]>>
 export const saveContact=(data:OctoContact)=>put(`${root}/contacts`,data)
 export const deleteContact=(id:string)=>del(`${root}/contacts/${encodeURIComponent(id)}`)
