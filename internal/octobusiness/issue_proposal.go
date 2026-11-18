@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// IssueProposalAction identifies feedback previews in the shared confirmation UI.
 const IssueProposalAction = "register_issue"
 
 type issueProposalPayload struct {
@@ -18,6 +19,7 @@ type issueProposalPayload struct {
 	QuotedReplyID string `json:"quoted_reply_id,omitempty"`
 }
 
+// ProposeIssue validates the current feedback and prepares a preview for its author.
 func (s *Service) ProposeIssue(ctx context.Context, in IssueInput) (*Proposal, error) {
 	p, err := currentPrincipal(ctx)
 	if err != nil {
@@ -91,7 +93,8 @@ func (s *Service) confirmIssue(ctx context.Context, p Principal, proposal *Propo
 					Note:           "反馈引用的 Octo 回复消息编号 " + payload.QuotedReplyID,
 					IdempotencyKey: digest("issue-quoted-reply", payload.Issue.ID),
 				}
-				if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "idempotency_key"}}, DoNothing: true}).Create(&event).Error; err != nil {
+				conflict := clause.OnConflict{Columns: []clause.Column{{Name: "idempotency_key"}}, DoNothing: true}
+				if err := tx.Clauses(conflict).Create(&event).Error; err != nil {
 					return err
 				}
 			}
@@ -101,11 +104,13 @@ func (s *Service) confirmIssue(ctx context.Context, p Principal, proposal *Propo
 			}
 			next, result = "completed", types.JSON(encoded)
 		}
-		if err := proposals.Updates(map[string]any{"status": next, "result": result, "updated_at": now}).Error; err != nil {
+		updates := map[string]any{"status": next, "result": result, "updated_at": now}
+		if err := proposals.Updates(updates).Error; err != nil {
 			return err
 		}
 		auditAction := types.AuditAction("octo.issue.proposal." + next)
-		if err := audit(tx, p, auditAction, proposal.ID, map[string]string{"knowledge_base_id": proposal.KnowledgeBaseID}); err != nil {
+		details := map[string]string{"knowledge_base_id": proposal.KnowledgeBaseID}
+		if err := audit(tx, p, auditAction, proposal.ID, details); err != nil {
 			return err
 		}
 		proposal.Status, proposal.Result = next, result
