@@ -351,7 +351,8 @@ func (s *Service) UpdateIssue(ctx context.Context, id string, in IssueUpdate) (*
 		}
 		manager := p.Console || p.CanManageScope
 		changesOwner := in.OwnerUID != nil || in.OwnerContactID != ""
-		if !manager && (row.ReporterUID != p.UserID || changesOwner || in.Status == "resolved" || in.Status == "inprogress") {
+		advancesStatus := in.Status == "resolved" || in.Status == "inprogress"
+		if !manager && (row.ReporterUID != p.UserID || advancesStatus || changesOwner) {
 			return ErrDenied
 		}
 		encodedUpdate, _ := json.Marshal(in)

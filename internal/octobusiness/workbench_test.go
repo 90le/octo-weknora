@@ -13,8 +13,9 @@ func TestIssueEvidenceUsesTheAdmittedQuestionInTheSameScope(t *testing.T) {
 	p.MessageID = "octo:bot:30"
 	row, err := s.CreateIssue(principalContext(p), gapInput())
 	require.NoError(t, err)
-	require.NoError(t, s.db.Exec(`CREATE TABLE octo_message_inbox
-		(tenant_id BIGINT, channel_id TEXT, message_id TEXT, authority TEXT, input TEXT, reply TEXT, state TEXT)`).Error)
+	require.NoError(t, s.db.Exec(`CREATE TABLE octo_message_inbox (
+		tenant_id BIGINT, channel_id TEXT, message_id TEXT, authority TEXT, input TEXT, reply TEXT, state TEXT
+	)`).Error)
 	auth := `{"AccountID":"bot","ScopeID":"scope-A","KnowledgeBaseIDs":["kb-a"]}`
 	payload := `{"reply":{"message_id":"20","payload":{"reply":{"message_id":10,"from_uid":"alice"}}}}`
 	extra := map[string]string{"octo_group_id": "group-A", "octo_message_id": "30", "octo_original_payload": payload}
