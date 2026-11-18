@@ -3,18 +3,25 @@ package octobusiness
 import (
 	"context"
 	"encoding/json"
+	"slices"
+	"sort"
 	"sync"
 
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-type retrievalTraceKey struct{}
-type RetrievalTrace struct {
-	mu                sync.Mutex
-	succeeded, failed bool
-	sources           []SourceCitation
-	citationsEnabled  bool
-}
+type (
+	retrievalTraceKey struct{}
+	// RetrievalTrace tracks trusted retrieval outcomes for one request.
+	RetrievalTrace struct {
+		mu                sync.Mutex
+		succeeded, failed bool
+		sources           []SourceCitation
+		citationsEnabled  bool
+		quality           *QualityTurn
+		wikiRead          []QualitySource
+	}
+)
 
 // SourceCitation is turn-local transport metadata derived only from trusted
 // tool provenance. It is not a model-provided citation tag and is never stored
@@ -72,6 +79,7 @@ func CitationRenderingEnabled(ctx context.Context) bool {
 	defer trace.mu.Unlock()
 	return trace.citationsEnabled
 }
+
 func retrievalReady(ctx context.Context) bool {
 	trace, ok := ctx.Value(retrievalTraceKey{}).(*RetrievalTrace)
 	if !ok {
@@ -107,11 +115,13 @@ func TrackRetrieval(tool types.Tool) types.Tool {
 		return tool
 	}
 }
+
 func (t *trackedRetrieval) Cleanup(ctx context.Context) {
 	if cleanable, ok := t.Tool.(types.Cleanable); ok {
 		cleanable.Cleanup(ctx)
 	}
 }
+
 func (t *trackedRetrieval) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	result, err := t.Tool.Execute(ctx, args)
 	if trace, ok := ctx.Value(retrievalTraceKey{}).(*RetrievalTrace); ok {
@@ -127,6 +137,21 @@ func (t *trackedRetrieval) Execute(ctx context.Context, args json.RawMessage) (*
 				trace.succeeded = true
 			}
 			switch toolName {
+			case "wiki_read_page":
+				read, _ := result.Data["read_kbs"].(map[string][]string)
+				slugs := make([]string, 0, len(read))
+				for slug := range read {
+					slugs = append(slugs, slug)
+				}
+				sort.Strings(slugs)
+				for _, slug := range slugs {
+					for _, id := range read[slug] {
+						item := QualitySource{Library: id, WikiSlug: slug}
+						if len(trace.wikiRead) < 12 && !slices.Contains(trace.wikiRead, item) {
+							trace.wikiRead = append(trace.wikiRead, item)
+						}
+					}
+				}
 			case "source_browse":
 				var input struct {
 					Action string `json:"action"`

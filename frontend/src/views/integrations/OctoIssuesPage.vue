@@ -3,10 +3,12 @@
     <template #navigation>
       <nav class="operations-navigation" aria-label="问题运营">
         <router-link :to="{name:'knowledgeIssues'}" :aria-current="view==='issues'?'page':undefined">问题列表</router-link>
+        <router-link :to="{name:'knowledgeQuality'}" :aria-current="view==='quality'?'page':undefined">问答质量</router-link>
         <router-link :to="{name:'knowledgeReports'}" :aria-current="view==='reports'?'page':undefined">报告与周报</router-link>
       </nav>
     </template>
-    <OctoBusinessPanel :key="workspaceKey" :view="view" />
+    <OctoQualityReview v-if="view==='quality'" :key="workspaceKey" />
+    <OctoBusinessPanel v-else :key="workspaceKey" :view="view" />
   </KnowledgeOperationsLayout>
 </template>
 <script setup lang="ts">
@@ -15,7 +17,8 @@ import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import KnowledgeOperationsLayout from './KnowledgeOperationsLayout.vue'
 import OctoBusinessPanel from './OctoBusinessPanel.vue'
+import OctoQualityReview from './OctoQualityReview.vue'
 const route=useRoute(), auth=useAuthStore()
-const view=computed(()=>route.name==='knowledgeReports'?'reports':'issues')
-const workspaceKey=computed(()=>String(auth.currentTenantId||''))
+const view=computed(()=>route.name==='knowledgeQuality'?'quality':route.name==='knowledgeReports'?'reports':'issues')
+const workspaceKey=computed(()=>String(auth.effectiveTenantId||''))
 </script>

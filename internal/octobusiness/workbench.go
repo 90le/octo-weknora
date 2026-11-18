@@ -44,6 +44,20 @@ func (s *Service) issueEvidence(ctx context.Context, issue *Issue) (*issueEviden
 		return nil, ignoreMissingEvidence(err)
 	}
 	feedback := row.message(issue)
+	if feedback != nil && issue.IdempotencyKey == qualityIssueKey(issue) {
+		question := feedback.Content
+		if clean, ok := types.OctoAddressedQuestion(feedback.Extra); ok {
+			question = clean
+		}
+		answer := ""
+		if row.State == "delivered" {
+			answer = limitQualityText(row.Reply, 8000)
+		}
+		return &issueEvidence{
+			Question:          limitQualityText(strings.TrimSpace(question), 4000),
+			QuestionMessageID: feedback.Extra["octo_message_id"], Answer: answer,
+		}, nil
+	}
 	if feedback == nil || feedback.Quote == nil || !feedback.Quote.IsBotMessage ||
 		!validText(feedback.Quote.MessageID, 32) || !validText(feedback.Quote.SenderID, 128) ||
 		!strings.HasPrefix(issue.MessageID, "octo:"+feedback.Quote.SenderID+":") {
@@ -86,7 +100,7 @@ func ignoreMissingEvidence(err error) error {
 }
 
 type evidenceInbox struct {
-	Input, Authority, Reply string
+	Input, Authority, Reply, State string
 }
 
 type evidenceMessage struct {

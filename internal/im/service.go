@@ -2235,6 +2235,7 @@ func (s *Service) executeQARequestCore(req *qaRequest) {
 	if err != nil {
 		logger.Errorf(ctx, "[IM] QA failed: %v, sending fallback reply", err)
 		answer = imQAFailureReplyForContext(ctx, err)
+		octobusiness.RecordQualityTurn(ctx, nil, true)
 	}
 
 	outCtx := imOutboundContext(ctx)
@@ -3525,7 +3526,9 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	}
 
 	// Return raw answer — callers apply cleanIMContent with the appropriate FileService.
-	return s.appendOctoSources(ctx, answer, []*types.SearchResult(assistantMsg.KnowledgeReferences)), nil
+	refs := []*types.SearchResult(assistantMsg.KnowledgeReferences)
+	octobusiness.RecordQualityTurn(ctx, refs, assistantMsg.IsFallback)
+	return s.appendOctoSources(ctx, answer, refs), nil
 }
 
 // ── CRUD operations for IM channels ──

@@ -205,6 +205,9 @@ func (s *Service) Confirm(ctx context.Context, id string, cancel bool) (*Proposa
 	if err = q.First(&row).Error; err != nil {
 		return nil, err
 	}
+	if row.Action == qualityAction {
+		return nil, ErrDenied
+	}
 	if !p.Console {
 		nativeID, nativeCancel, ok := Confirmation(p.MessageText)
 		if !ok || nativeID != id || nativeCancel != cancel {

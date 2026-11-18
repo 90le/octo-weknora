@@ -17,11 +17,12 @@ import (
 type Handler struct {
 	service  *Service
 	sessions interfaces.SessionService
+	models   interfaces.ModelService
 }
 
 // NewHandler wires the workbench to the existing question-answering service.
-func NewHandler(service *Service, sessions interfaces.SessionService) *Handler {
-	return &Handler{service: service, sessions: sessions}
+func NewHandler(service *Service, sessions interfaces.SessionService, models interfaces.ModelService) *Handler {
+	return &Handler{service: service, sessions: sessions, models: models}
 }
 
 // ConsoleContext uses only authentication middleware state. The initial UI is
@@ -55,6 +56,8 @@ func respond(c *gin.Context, data any, err error) {
 	case errors.Is(err, errRetestUnavailable):
 		status, message = http.StatusConflict, err.Error()
 	case errors.Is(err, errRetestIncomplete):
+		status, message = http.StatusBadGateway, err.Error()
+	case errors.Is(err, errQualityAnalysis):
 		status, message = http.StatusBadGateway, err.Error()
 	case errors.Is(err, ErrConflict), errors.Is(err, gorm.ErrDuplicatedKey):
 		status = http.StatusConflict

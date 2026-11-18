@@ -210,8 +210,11 @@ func (s *Service) prepareIssue(ctx context.Context, p Principal, in IssueInput) 
 }
 
 func insertIssue(tx *gorm.DB, p Principal, row *Issue) error {
-	key := digest("issue", fmtTenant(p.TenantID), p.AccountID, p.ChannelID, p.ScopeID,
-		p.UserID, row.MessageID, row.Kind)
+	key := row.IdempotencyKey
+	if key == "" {
+		key = digest("issue", fmtTenant(p.TenantID), p.AccountID, p.ChannelID, p.ScopeID,
+			p.UserID, row.MessageID, row.Kind)
+	}
 	row.ID = uuid.NewString()
 	row.IdempotencyKey = key
 	conflict := clause.OnConflict{Columns: []clause.Column{{Name: "idempotency_key"}}, DoNothing: true}
