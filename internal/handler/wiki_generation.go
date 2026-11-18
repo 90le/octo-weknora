@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// ListGenerationTasks reads generation failures and retry progress for a Wiki.
 func (h *WikiPageHandler) ListGenerationTasks(c *gin.Context) {
 	kbID, tenantID, err := h.validateWikiKB(c)
 	if err != nil {
@@ -32,6 +33,7 @@ func (h *WikiPageHandler) ListGenerationTasks(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
 }
 
+// RetryGenerationTasks queues one or more eligible failed Wiki documents.
 func (h *WikiPageHandler) RetryGenerationTasks(c *gin.Context) {
 	kbID, tenantID, err := h.validateWikiKB(c)
 	if err != nil {

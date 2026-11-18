@@ -47,7 +47,7 @@ func ListWikiGenerationRows(
 	}
 	refs := "json_each(page.source_refs) ref"
 	refValue := "ref.value"
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		refs = "jsonb_array_elements_text(page.source_refs) AS ref(value)"
 	}
 	published := `EXISTS (

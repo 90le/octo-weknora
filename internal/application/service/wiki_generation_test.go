@@ -3,15 +3,65 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/agent"
 	"github.com/Tencent/WeKnora/internal/application/repository"
+	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+type wikiRetrySummaryModel struct {
+	finishReason string
+	buffered     int
+	streamed     int
+}
+
+func (*wikiRetrySummaryModel) GetModelID() string   { return "wiki-summary-test" }
+func (*wikiRetrySummaryModel) GetModelName() string { return "wiki-summary-test" }
+
+func (m *wikiRetrySummaryModel) Chat(
+	context.Context, []chat.Message, *chat.ChatOptions,
+) (*types.ChatResponse, error) {
+	m.buffered++
+	return nil, errors.New("model gateway HTTP 504")
+}
+
+func (m *wikiRetrySummaryModel) ChatStream(
+	context.Context, []chat.Message, *chat.ChatOptions,
+) (<-chan types.StreamResponse, error) {
+	m.streamed++
+	stream := make(chan types.StreamResponse, 2)
+	stream <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: "SUMMARY: Fixture"}
+	stream <- types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Done: true, FinishReason: m.finishReason}
+	close(stream)
+	return stream, nil
+}
+
+func TestWikiGenerationRetrySummaryUsesCompleteStreamAfterTimeout(t *testing.T) {
+	ctx := context.WithValue(context.Background(), wikiRetrySummaryKey{}, true)
+	worker := &wikiIngestService{}
+	model := &wikiRetrySummaryModel{finishReason: "stop"}
+	result, err := worker.generateWithTemplateResult(ctx, model, agent.WikiSummaryPrompt, map[string]string{
+		"Content": "A synthetic test document.",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "SUMMARY: Fixture", result.Content)
+	require.Equal(t, 1, model.buffered)
+	require.Equal(t, 1, model.streamed)
+
+	for _, reason := range []string{"", "length", types.FinishReasonIncomplete} {
+		model.finishReason = reason
+		partial, err := collectWikiRetrySummary(ctx, model, nil, nil)
+		require.Error(t, err)
+		require.Nil(t, partial)
+	}
+}
 
 func TestWikiGenerationRecoversArchivedDocumentFailures(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

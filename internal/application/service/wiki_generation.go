@@ -4,28 +4,66 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-const (
-	wikiGenerationPageSize   = 50
-	WikiGenerationRetryLimit = 20
-)
+const wikiGenerationPageSize = 50
+
+// WikiGenerationRetryLimit is the maximum number of documents per request.
+const WikiGenerationRetryLimit = 20
+
+type wikiRetrySummaryKey struct{}
+
+// collectWikiRetrySummary buffers the stream and accepts only a complete
+// answer. A dropped connection must not publish an incomplete summary.
+func collectWikiRetrySummary(
+	ctx context.Context, model chat.Chat, messages []chat.Message, opts *chat.ChatOptions,
+) (*types.ChatResponse, error) {
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stream, err := model.ChatStream(streamCtx, messages, opts)
+	if err != nil {
+		return nil, err
+	}
+	var content strings.Builder
+	for event := range stream {
+		switch event.ResponseType {
+		case types.ResponseTypeError:
+			return nil, fmt.Errorf("wiki summary stream: %s", event.Content)
+		case types.ResponseTypeAnswer:
+			content.WriteString(event.Content)
+			if event.Done && event.FinishReason != "" && event.FinishReason != types.FinishReasonIncomplete &&
+				!isLengthStopFinishReason(event.FinishReason) &&
+				strings.TrimSpace(content.String()) != "" {
+				return &types.ChatResponse{Content: content.String(), FinishReason: event.FinishReason}, nil
+			}
+		}
+	}
+	if err := streamCtx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, errors.New(types.StreamEndedEarlyError)
+}
 
 var (
+	// ErrWikiGenerationUnavailable indicates that the target Wiki cannot be used.
 	ErrWikiGenerationUnavailable = errors.New("wiki is disabled or unavailable")
-	ErrWikiGenerationModel       = errors.New("wiki generation model is unavailable")
+	// ErrWikiGenerationModel indicates that the configured synthesis model could not be loaded.
+	ErrWikiGenerationModel = errors.New("wiki generation model is unavailable")
 )
 
+// WikiGenerationTask shows the current status of a document with a recorded failure.
 type WikiGenerationTask struct {
 	KnowledgeID string     `json:"knowledge_id"`
 	Title       string     `json:"title"`
@@ -35,11 +73,13 @@ type WikiGenerationTask struct {
 	Attempts    int        `json:"attempts"`
 }
 
+// WikiGenerationPage is one page of document-level generation tasks.
 type WikiGenerationPage struct {
 	Tasks      []WikiGenerationTask `json:"tasks"`
 	NextCursor string               `json:"next_cursor,omitempty"`
 }
 
+// WikiGenerationRetryResult reports accepted and skipped documents.
 type WikiGenerationRetryResult struct {
 	Queued          []string `json:"queued"`
 	Skipped         int      `json:"skipped"`
@@ -55,12 +95,14 @@ type WikiGenerationService struct {
 	kb    interfaces.KnowledgeBaseService
 }
 
+// NewWikiGenerationService wires the Wiki maintenance service to the durable queue.
 func NewWikiGenerationService(
 	db *gorm.DB, queue interfaces.TaskEnqueuer, model interfaces.ModelService, kb interfaces.KnowledgeBaseService,
 ) *WikiGenerationService {
 	return &WikiGenerationService{db: db, queue: queue, model: model, kb: kb}
 }
 
+// List reads generation failures and the current status within one knowledge base.
 func (s *WikiGenerationService) List(
 	ctx context.Context, tenantID uint64, kbID, cursor string,
 ) (WikiGenerationPage, error) {
@@ -144,6 +186,7 @@ func wikiSynthesisModelID(kb *types.KnowledgeBase) string {
 	return kb.SummaryModelID
 }
 
+// Retry restores eligible document failures to the Wiki ingest queue.
 func (s *WikiGenerationService) Retry(
 	ctx context.Context, tenantID uint64, kbID string, ids []string,
 ) (WikiGenerationRetryResult, error) {
@@ -173,7 +216,7 @@ func (s *WikiGenerationService) Retry(
 		docQuery := tx.Model(&types.Knowledge{}).Select("id").
 			Where("id IN ? AND tenant_id = ? AND knowledge_base_id = ?", ids, tenantID, kbID).
 			Order("id")
-		if tx.Dialector.Name() == "postgres" {
+		if tx.Name() == "postgres" {
 			query = query.Clauses(clause.Locking{Strength: "SHARE"})
 			docQuery = docQuery.Clauses(clause.Locking{Strength: "UPDATE"})
 		}

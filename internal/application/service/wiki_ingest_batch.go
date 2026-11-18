@@ -1532,13 +1532,18 @@ func (s *wikiIngestService) mapOneDocument(
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		summaryContent, summaryErr = s.generateWithTemplate(ctx, chatModel, agent.WikiSummaryPrompt, map[string]string{
+		summaryCtx := ctx
+		if op.ManualRetry {
+			summaryCtx = context.WithValue(ctx, wikiRetrySummaryKey{}, true)
+		}
+		summaryInput := map[string]string{
 			"Content":            content,
 			"Language":           lang,
 			"ExtractedSlugs":     slugListing,
 			"CustomInstructions": batchCtx.ContentInstructions,
 			"InstructionScope":   "wiki_content",
-		})
+		}
+		summaryContent, summaryErr = s.generateWithTemplate(summaryCtx, chatModel, agent.WikiSummaryPrompt, summaryInput)
 		if summaryErr != nil {
 			s.tracker().FailSpan(ctx, summarySpan, "SUMMARY_FAILED", summaryErr.Error(), summaryErr)
 		} else {

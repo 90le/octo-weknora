@@ -2765,10 +2765,12 @@ func (s *wikiIngestService) generateWithTemplateResult(
 	ctx = types.WithLLMCallMetadata(ctx, purpose, prefixFingerprint)
 
 	tenantID, tenantScoped := types.TenantIDFromContext(ctx)
+	retrySummary, _ := ctx.Value(wikiRetrySummaryKey{}).(bool)
 	requestJSON, _ := json.Marshal(struct {
-		Messages []chat.Message    `json:"messages"`
-		Options  *chat.ChatOptions `json:"options"`
-	}{Messages: messages, Options: opts})
+		Messages     []chat.Message    `json:"messages"`
+		Options      *chat.ChatOptions `json:"options"`
+		RetrySummary bool              `json:"retry_summary,omitempty"`
+	}{Messages: messages, Options: opts, RetrySummary: retrySummary})
 	requestKey := chat.BuildPromptCacheKey(
 		tenantID, chatModel.GetModelID(), "wiki_exact_request",
 		chat.FingerprintPromptPrefix(string(requestJSON)),
@@ -2791,7 +2793,16 @@ func (s *wikiIngestService) generateWithTemplateResult(
 		call := func(msgs []chat.Message) (*types.ChatResponse, error) {
 			var lastErr error
 			for attempt := 1; attempt <= wikiLLMMaxAttempts; attempt++ {
-				response, callErr := chatModel.Chat(ctx, msgs, opts)
+				var response *types.ChatResponse
+				var callErr error
+				if retrySummary && attempt == 2 && wikiGenerationIssue(lastErr.Error(), "") == "gateway_timeout" {
+					response, callErr = collectWikiRetrySummary(ctx, chatModel, msgs, opts)
+					if callErr != nil {
+						callErr = errors.Join(lastErr, callErr)
+					}
+				} else {
+					response, callErr = chatModel.Chat(ctx, msgs, opts)
+				}
 				if callErr == nil && response != nil {
 					return response, nil
 				}
