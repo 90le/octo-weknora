@@ -24,14 +24,17 @@ func TestIssueEvidenceUsesTheAdmittedQuestionInTheSameScope(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	question := `{"MessageType":"text","UserID":"alice","Content":"@Octo 小测 原问题","Extra":{"octo_group_id":"group-A","octo_message_id":"10","octo_addressed":"true","octo_question_text":"原问题"}}`
+	question := `{"MessageType":"text","UserID":"alice","Content":"@Octo 小测 原问题",` +
+		`"Extra":{"octo_group_id":"group-A","octo_message_id":"10","octo_addressed":"true","octo_question_text":"原问题"}}`
 	insert := "INSERT INTO octo_message_inbox VALUES (1,'group-A',?,?,?,?, 'delivered')"
 	require.NoError(t, s.db.Exec(insert, p.MessageID, auth, string(feedback), "").Error)
 	require.NoError(t, s.db.Exec(insert, "octo:bot:10", auth, question, "旧答复").Error)
 	admin := principalContext(Principal{TenantID: 1, ChannelID: "console", UserID: "admin", Console: true})
 	evidence, err := s.issueEvidence(admin, row)
 	require.NoError(t, err)
-	require.Equal(t, &IssueEvidence{Question: "原问题", QuestionMessageID: "10", Answer: "旧答复", AnswerMessageID: "20"}, evidence)
+	require.Equal(t, &issueEvidence{
+		Question: "原问题", QuestionMessageID: "10", Answer: "旧答复", AnswerMessageID: "20",
+	}, evidence)
 	require.NoError(t, s.db.Exec("UPDATE octo_message_inbox SET authority = ? WHERE message_id = 'octo:bot:10'",
 		`{"AccountID":"bot","ScopeID":"other-scope","KnowledgeBaseIDs":["kb-a"]}`).Error)
 	evidence, err = s.issueEvidence(admin, row)

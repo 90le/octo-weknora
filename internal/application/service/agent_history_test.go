@@ -65,7 +65,8 @@ func TestScopedIMHistoryKeepsQuestionWithoutStaleConfirmation(t *testing.T) {
 	ctx := types.WithIMKnowledgeScope(context.Background(), []string{"kb-current"})
 	user := []*types.Message{{Content: "这项资料缺口需要处理"}}
 	old := &types.Message{Channel: "im", Content: "待确认。请发送 确认 OP-5972ba24-8e67-43a5-9e26-99e547d4de0f"}
-	require.Equal(t, []chat.Message{{Role: "user", Content: user[0].Content}}, buildHistoricalTurnMessages(ctx, user, old))
+	require.Equal(t, []chat.Message{{Role: "user", Content: user[0].Content}},
+		buildHistoricalTurnMessages(ctx, user, old))
 	require.Contains(t, buildHistoricalTurnMessages(context.Background(), user, old)[1].Content, "OP-5972ba24")
 }
 

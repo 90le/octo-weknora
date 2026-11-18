@@ -6,6 +6,7 @@ import "context"
 // addressed Bot's native mention.
 const OctoQuestionTextKey = "octo_question_text"
 
+// OctoAddressedQuestion reads the normalized text of a native mention.
 func OctoAddressedQuestion(extra map[string]string) (string, bool) {
 	text, ok := extra[OctoQuestionTextKey]
 	return text, ok && extra["octo_addressed"] == "true"

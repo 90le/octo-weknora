@@ -16,7 +16,7 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 )
 
-type IssueEvidence struct {
+type issueEvidence struct {
 	Question          string `json:"question,omitempty"`
 	QuestionMessageID string `json:"question_message_id,omitempty"`
 	Answer            string `json:"answer,omitempty"`
@@ -26,7 +26,7 @@ type IssueEvidence struct {
 // The inbox has a durable native quote, including the Bot's own reply anchor.
 // Follow that anchor back to admitted input. The outer feedback text is not
 // the original question and cannot be used as a replay prompt.
-func (s *Service) issueEvidence(ctx context.Context, issue *Issue) (*IssueEvidence, error) {
+func (s *Service) issueEvidence(ctx context.Context, issue *Issue) (*issueEvidence, error) {
 	p, err := currentPrincipal(ctx)
 	if err != nil || !p.Console || p.TenantID != issue.TenantID {
 		return nil, ErrDenied
@@ -49,7 +49,7 @@ func (s *Service) issueEvidence(ctx context.Context, issue *Issue) (*IssueEviden
 		!strings.HasPrefix(issue.MessageID, "octo:"+feedback.Quote.SenderID+":") {
 		return nil, nil
 	}
-	evidence := &IssueEvidence{Answer: feedback.Quote.Content, AnswerMessageID: feedback.Quote.MessageID}
+	evidence := &issueEvidence{Answer: feedback.Quote.Content, AnswerMessageID: feedback.Quote.MessageID}
 	originalID := feedback.originalQuestionID()
 	if originalID == "" || originalID == feedback.Extra["octo_message_id"] {
 		return evidence, nil
@@ -134,26 +134,30 @@ func (m evidenceMessage) originalQuestionID() string {
 
 func decimalNativeID(raw json.RawMessage) string {
 	value := strings.Trim(string(raw), "\"")
-	if value == "" || len(value) > 32 || strings.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
+	nonDecimal := strings.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) >= 0
+	if value == "" || len(value) > 32 || nonDecimal {
 		return ""
 	}
 	return value
 }
 
-type IssueRetest struct {
+type issueRetest struct {
 	Answer  string   `json:"answer"`
 	ModelID string   `json:"model_id"`
 	Sources []string `json:"sources"`
 }
 
-var errRetestUnavailable = errors.New("Original question or authorized channel is unavailable for retest")
-var errRetestIncomplete = errors.New("The retest did not produce a complete answer")
+var (
+	errRetestUnavailable = errors.New("original question or authorized channel is unavailable for retest")
+	errRetestIncomplete  = errors.New("retest did not produce a complete answer")
+)
 
 func (s *Service) retestAgent(ctx context.Context, issue *Issue) (*types.CustomAgent, error) {
 	store := octointegration.NewStore(s.db)
 	scope, err := store.Get(ctx, issue.TenantID, issue.ScopeID)
 	if err != nil || scope.AccountID != issue.AccountID || scope.GroupID != issue.GroupID ||
-		scope.SubareaID != issue.SubareaID || scope.VerifiedAt == nil || scope.SyncStatus != "verified" || scope.NameSource != "octo" {
+		scope.SubareaID != issue.SubareaID || scope.VerifiedAt == nil ||
+		scope.SyncStatus != "verified" || scope.NameSource != "octo" {
 		return nil, errRetestUnavailable
 	}
 	bindings, err := store.Effective(ctx, issue.TenantID, scope.ID)
@@ -170,8 +174,9 @@ func (s *Service) retestAgent(ctx context.Context, issue *Issue) (*types.CustomA
 	var agent types.CustomAgent
 	if err := s.db.WithContext(ctx).Table("custom_agents AS a").Select("a.*").
 		Joins("JOIN im_channels AS c ON c.tenant_id = a.tenant_id AND c.agent_id = a.id").
-		Where("a.tenant_id = ? AND a.deleted_at IS NULL AND c.id = ? AND c.enabled = ? AND c.platform = 'octo' AND c.deleted_at IS NULL",
+		Where("a.tenant_id = ? AND a.deleted_at IS NULL AND c.id = ? AND c.enabled = ?",
 			issue.TenantID, issue.ChannelID, true).
+		Where("c.platform = 'octo' AND c.deleted_at IS NULL").
 		Where("c.credentials->>'account_id' = ?", issue.AccountID).
 		Take(&agent).Error; err != nil {
 		return nil, errRetestUnavailable
@@ -182,7 +187,9 @@ func (s *Service) retestAgent(ctx context.Context, issue *Issue) (*types.CustomA
 	return &agent, nil
 }
 
-func (s *Service) retestIssue(ctx context.Context, sessions interfaces.SessionService, id string) (*IssueRetest, error) {
+func (s *Service) retestIssue(
+	ctx context.Context, sessions interfaces.SessionService, id string,
+) (*issueRetest, error) {
 	issue, _, err := s.GetIssue(ctx, id)
 	if err != nil {
 		return nil, err
@@ -223,10 +230,11 @@ func (s *Service) retestIssue(ctx context.Context, sessions interfaces.SessionSe
 	agent.Config.WebSearchEnabled = false
 	agent.Config.MCPSelectionMode = "none"
 	agent.Config.SkillsSelectionMode = "none"
-	ctx, cancel := context.WithTimeout(WithRetrievalTrace(types.WithIMKnowledgeScope(ctx, agent.Config.KnowledgeBases)), 90*time.Second)
+	ctx = WithRetrievalTrace(types.WithIMKnowledgeScope(ctx, agent.Config.KnowledgeBases))
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	bus := event.NewEventBus()
-	result := &IssueRetest{Sources: []string{}}
+	result := &issueRetest{Sources: []string{}}
 	var incomplete bool
 	var wikiSlugs []string
 	bus.On(event.EventError, func(_ context.Context, _ event.Event) error {

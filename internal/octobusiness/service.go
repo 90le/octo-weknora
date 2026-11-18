@@ -41,10 +41,12 @@ func contains(ids []string, id string) bool {
 	}
 	return false
 }
+
 func digest(parts ...string) string {
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:])
 }
+
 func validText(s string, max int) bool {
 	return strings.TrimSpace(s) != "" && len(s) <= max && !strings.ContainsRune(s, 0)
 }
@@ -348,7 +350,8 @@ func (s *Service) UpdateIssue(ctx context.Context, id string, in IssueUpdate) (*
 			return e
 		}
 		manager := p.Console || p.CanManageScope
-		if !manager && (row.ReporterUID != p.UserID || in.OwnerUID != nil || in.OwnerContactID != "" || in.Status == "resolved" || in.Status == "inprogress") {
+		changesOwner := in.OwnerUID != nil || in.OwnerContactID != ""
+		if !manager && (row.ReporterUID != p.UserID || changesOwner || in.Status == "resolved" || in.Status == "inprogress") {
 			return ErrDenied
 		}
 		encodedUpdate, _ := json.Marshal(in)
@@ -365,7 +368,8 @@ func (s *Service) UpdateIssue(ctx context.Context, id string, in IssueUpdate) (*
 		}
 		if in.OwnerContactID != "" {
 			var contact Contact
-			if e := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND id = ?", p.TenantID, row.KnowledgeBaseID, in.OwnerContactID).First(&contact).Error; e != nil {
+			if e := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND id = ?",
+				p.TenantID, row.KnowledgeBaseID, in.OwnerContactID).First(&contact).Error; e != nil {
 				return e
 			}
 			row.OwnerUID, row.OwnerName = contact.UID, contact.Name
