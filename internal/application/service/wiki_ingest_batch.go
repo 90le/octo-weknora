@@ -484,28 +484,47 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		}
 	}
 
-	// Crash/abort safety net (standard/claim mode only). If this batch exits
+	// Lite holds the KB lock already. Persist the state of manually retried
+	// rows so progress survives the cleanup of the original parse spans.
+	claimedIDs := peekedIDs
+	if s.redisClient == nil {
+		claimedIDs = nil
+		if marker, ok := s.pendingRepo.(interfaces.TaskPendingOpsProcessingMarker); ok {
+			for _, op := range pendingOps {
+				if op.ManualRetry && op.dbID > 0 {
+					claimedIDs = append(claimedIDs, op.dbID)
+				}
+			}
+			if err := marker.MarkClaimedByIDs(ctx, claimedIDs); err != nil {
+				exitStatus = "mark_retry_running_failed"
+				return fmt.Errorf("wiki ingest: record running retry: %w", err)
+			}
+		}
+	}
+
+	// Crash/abort safety net for durable claims. If this batch exits
 	// abnormally — panic, ctx timeout, or an early error return — BEFORE it
 	// settles its claimed rows (trim + requeueFailedOps), release the claims
 	// so the next trigger can re-claim within seconds instead of waiting out
 	// wikiClaimStaleAfter (~90m). On the normal path claimsSettled flips true
 	// once the rows reach their terminal state, making this a no-op. Uses a
 	// bounded detached cleanup context because ctx may already be cancelled on
-	// the timeout path. Lite mode peeks without claiming, so there is nothing
-	// to release.
+	// the timeout path.
 	claimsSettled := false
-	if s.redisClient != nil && len(peekedIDs) > 0 {
+	if len(claimedIDs) > 0 {
 		defer func() {
 			if claimsSettled {
 				return
 			}
 			releaseCtx, releaseCancel := wikiIngestCleanupContext(ctx)
 			defer releaseCancel()
-			if err := s.pendingRepo.ReleaseByIDs(releaseCtx, peekedIDs); err != nil {
-				logger.Warnf(ctx, "wiki ingest: failed to release %d claims on abnormal exit for KB %s: %v", len(peekedIDs), payload.KnowledgeBaseID, err)
+			if err := s.pendingRepo.ReleaseByIDs(releaseCtx, claimedIDs); err != nil {
+				logger.Warnf(ctx, "wiki ingest: failed to release %d claims on abnormal exit for KB %s: %v",
+					len(claimedIDs), payload.KnowledgeBaseID, err)
 				return
 			}
-			logger.Warnf(ctx, "wiki ingest: released %d claimed rows on abnormal exit for KB %s (re-claimable immediately)", len(peekedIDs), payload.KnowledgeBaseID)
+			logger.Warnf(ctx, "wiki ingest: released %d claimed rows on abnormal exit for KB %s",
+				len(claimedIDs), payload.KnowledgeBaseID)
 		}()
 	}
 

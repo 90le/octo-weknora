@@ -23,6 +23,14 @@ func NewTaskPendingOpsRepository(db *gorm.DB) interfaces.TaskPendingOpsRepositor
 	return &taskPendingOpsRepository{db: db}
 }
 
+func (r *taskPendingOpsRepository) MarkClaimedByIDs(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Model(&types.TaskPendingOp{}).
+		Where("id IN ?", ids).Update("claimed_at", time.Now()).Error
+}
+
 // Enqueue inserts a single op. Callers must populate TenantID/TaskType/
 // Scope/ScopeID/Op (Payload optional). ID, FailCount default to zero;
 // EnqueuedAt is filled with the DB-side default if left zero.

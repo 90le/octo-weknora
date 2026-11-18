@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -93,7 +93,8 @@ func TestWikiGenerationRecoversArchivedDocumentFailures(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "queued", page.Tasks[0].Status)
 	require.Equal(t, "queued", page.Tasks[1].Status)
-	require.NoError(t, db.Model(&pending[0]).Update("claimed_at", time.Now()).Error)
+	marker := repository.NewTaskPendingOpsRepository(db).(interfaces.TaskPendingOpsProcessingMarker)
+	require.NoError(t, marker.MarkClaimedByIDs(ctx, []int64{pending[0].ID}))
 	page, err = svc.List(ctx, 7, "kb-1", "")
 	require.NoError(t, err)
 	require.Equal(t, "running", page.Tasks[0].Status)

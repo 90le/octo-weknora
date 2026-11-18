@@ -93,6 +93,12 @@ type TaskPendingOpsClaimableCounter interface {
 	ClaimableCount(ctx context.Context, taskType, scope, scopeID string, staleBefore time.Time) (int64, error)
 }
 
+// TaskPendingOpsProcessingMarker records execution for a worker that already
+// owns its batch through a process-local lock.
+type TaskPendingOpsProcessingMarker interface {
+	MarkClaimedByIDs(ctx context.Context, ids []int64) error
+}
+
 // TaskPendingOpsScopeCleaner is an optional extension for callers that need
 // to discard every durable pending operation owned by a deleted scope. It is
 // intentionally separate from TaskPendingOpsRepository so alternate queue
