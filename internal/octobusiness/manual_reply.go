@@ -54,7 +54,8 @@ func (s *Service) manualReplyTarget(
 	lookup := func(id string) (evidenceInbox, error) {
 		var entry evidenceInbox
 		err := s.db.WithContext(ctx).Table("octo_message_inbox").
-			Where("tenant_id = ? AND channel_id = ? AND message_id = ?", issue.TenantID, issue.ChannelID, id).Take(&entry).Error
+			Where("tenant_id = ? AND channel_id = ? AND message_id = ?", issue.TenantID, issue.ChannelID, id).
+			Take(&entry).Error
 		return entry, err
 	}
 	inboxID := issue.MessageID
@@ -97,6 +98,7 @@ func (s *Service) manualReplyTarget(
 // ManualSourceDigest binds a prepared reply to the evidence loaded by Octo's adapter.
 func ManualSourceDigest(input, authority string) string { return digest(input, authority) }
 
+// PreviewIssueReply resolves the recipient and stores a short-lived unsent reply.
 func (h *Handler) PreviewIssueReply(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -133,6 +135,7 @@ func (h *Handler) PreviewIssueReply(c *gin.Context) {
 	respond(c, reply, err)
 }
 
+// SendIssueReply claims a prepared reply and submits it to the Octo adapter.
 func (h *Handler) SendIssueReply(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -153,7 +156,8 @@ func (s *Service) sendIssueReply(ctx context.Context, issueID, id string) (*manu
 		return nil, err
 	}
 	query := func(call context.Context) *gorm.DB {
-		return s.db.WithContext(call).Model(&manualReply{}).Where("tenant_id = ? AND issue_id = ? AND id = ?", p.TenantID, issue.ID, id)
+		return s.db.WithContext(call).Model(&manualReply{}).
+			Where("tenant_id = ? AND issue_id = ? AND id = ?", p.TenantID, issue.ID, id)
 	}
 	var reply manualReply
 	if err = query(ctx).Where("actor_uid = ?", p.UserID).Take(&reply).Error; err != nil {
@@ -170,7 +174,8 @@ func (s *Service) sendIssueReply(ctx context.Context, issueID, id string) (*manu
 		return nil, errReplySource
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		claim := tx.Model(&manualReply{}).Where("id = ? AND tenant_id = ? AND status = ?", reply.ID, p.TenantID, "preview").
+		claim := tx.Model(&manualReply{}).
+			Where("id = ? AND tenant_id = ? AND status = ?", reply.ID, p.TenantID, "preview").
 			Update("status", "sending")
 		if claim.Error != nil {
 			return claim.Error
@@ -197,6 +202,7 @@ func (s *Service) sendIssueReply(ctx context.Context, issueID, id string) (*manu
 	return &reply, err
 }
 
+// IssueReplies lists recorded delivery attempts for a visible issue.
 func (h *Handler) IssueReplies(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -209,7 +215,8 @@ func (h *Handler) IssueReplies(c *gin.Context) {
 		return
 	}
 	rows := []manualReply{}
-	err = h.service.db.WithContext(ctx).Where("tenant_id = ? AND issue_id = ? AND status <> 'preview'", issue.TenantID, issue.ID).
+	err = h.service.db.WithContext(ctx).
+		Where("tenant_id = ? AND issue_id = ? AND status <> 'preview'", issue.TenantID, issue.ID).
 		Order("created_at DESC, id").Limit(50).Find(&rows).Error
 	for i := range rows {
 		if rows[i].Status == "sending" && time.Since(rows[i].UpdatedAt) > 2*time.Minute {

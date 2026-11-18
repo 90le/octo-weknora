@@ -65,9 +65,9 @@ func (s *Service) batchIssues(ctx context.Context, in issueBatchInput) ([]operat
 	result := make([]operationResult, 0, len(in.Targets))
 	for _, item := range in.Targets {
 		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			copy := *s
-			copy.db = tx
-			return copy.applyIssueBatch(ctx, p, item, in)
+			scoped := *s
+			scoped.db = tx
+			return scoped.applyIssueBatch(ctx, p, item, in)
 		})
 		result = append(result, operationResult{ID: item.ID, State: operationState(err)})
 	}
@@ -118,7 +118,8 @@ func (s *Service) applyIssueBatch(
 	if err := s.db.Create(&event).Error; err != nil {
 		return err
 	}
-	return audit(s.db, p, types.AuditAction("octo.issue."+in.Action), row.ID, map[string]string{"archive_state": row.ArchiveState})
+	return audit(s.db, p, types.AuditAction("octo.issue."+in.Action), row.ID,
+		map[string]string{"archive_state": row.ArchiveState})
 }
 
 // BatchIssues applies checked operations to the selected issue versions.

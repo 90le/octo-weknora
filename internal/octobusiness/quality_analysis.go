@@ -296,7 +296,8 @@ func assessQuality(
 }
 
 func validQualityFinding(f qualityFinding, excerpts []qualityExcerpt) bool {
-	if !contains([]string{"missing", "citation", "outdated", "technical", "adequate", "watch", "uncertain"}, f.Category) ||
+	categories := []string{"missing", "citation", "outdated", "technical", "adequate", "watch", "uncertain"}
+	if !contains(categories, f.Category) ||
 		len(f.Topic) > 256 ||
 		!validText(f.Title, 300) || !validText(f.Reason, 4000) || !validText(f.Suggestion, 4000) ||
 		len(f.Evidence) == 0 || len(f.Evidence) > 6 {

@@ -324,12 +324,15 @@ func nativeReplyPayload(in *im.IncomingMessage, kind int, text string) (map[stri
 			label = "@" + in.UserID
 		}
 		text = label + " " + text
-		payload["mention"] = map[string]any{"uids": []string{in.UserID}, "entities": []wire.Entity{{UID: in.UserID, Offset: 0, Length: len(utf16.Encode([]rune(label)))}}}
+		entity := wire.Entity{UID: in.UserID, Length: len(utf16.Encode([]rune(label)))}
+		payload["mention"] = map[string]any{"uids": []string{in.UserID}, "entities": []wire.Entity{entity}}
 	}
 	payload["content"] = text
 	// Card responses have no user-authored message to quote.
 	if in.Extra["octo_card_event_key"] == "" {
-		quote := map[string]any{"message_id": in.Extra["octo_message_id"], "from_uid": in.UserID, "from_name": in.UserName}
+		quote := map[string]any{
+			"message_id": in.Extra["octo_message_id"], "from_uid": in.UserID, "from_name": in.UserName,
+		}
 		var original map[string]json.RawMessage
 		if json.Unmarshal([]byte(in.Extra["octo_original_payload"]), &original) == nil {
 			quote["payload"] = original

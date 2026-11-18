@@ -9,7 +9,9 @@ import (
 
 func TestOperationsReportMonthEndAndCalendarWindow(t *testing.T) {
 	at := time.Date(2026, time.February, 27, 7, 0, 0, 0, time.UTC)
-	plan := ReportSchedule{Timezone: "Asia/Shanghai", Frequency: "monthly", MonthDay: 31, Hour: 9, Period: "previous_month"}
+	plan := ReportSchedule{
+		Timezone: "Asia/Shanghai", Frequency: "monthly", MonthDay: 31, Hour: 9, Period: "previous_month",
+	}
 	next, err := nextReportTime(plan, at)
 	require.NoError(t, err)
 	require.Equal(t, time.Date(2026, time.February, 28, 1, 0, 0, 0, time.UTC), next)

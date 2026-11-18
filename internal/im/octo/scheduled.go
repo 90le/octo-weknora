@@ -39,7 +39,8 @@ func (a *Adapter) reportPrincipal(ctx context.Context, s octobusiness.ReportSche
 		return p, octobusiness.ReportAccessError("connection")
 	}
 	scope, err := octointegration.NewStore(a.db).Get(ctx, s.TenantID, s.ScopeID)
-	if err != nil || scope.AccountID != account || scope.SyncStatus != "verified" || scope.VerifiedAt == nil || scope.NameSource != "octo" {
+	if err != nil || scope.AccountID != account || scope.SyncStatus != "verified" ||
+		scope.VerifiedAt == nil || scope.NameSource != "octo" {
 		return p, octobusiness.ReportAccessError("scope")
 	}
 	endpoint := "/v1/bot/groups/" + scope.GroupID

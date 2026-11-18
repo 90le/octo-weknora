@@ -41,7 +41,9 @@ func (s *Service) ConfigureOctoReports(business *octobusiness.Service) {
 		}
 		return r.DeliverReport(ctx, schedule, report, file)
 	}
-	business.ManualReplyDelivery = func(ctx context.Context, target octobusiness.ManualReplyTarget, id, body string) (string, error) {
+	business.ManualReplyDelivery = func(
+		ctx context.Context, target octobusiness.ManualReplyTarget, id, body string,
+	) (string, error) {
 		a, ch, ok := s.GetChannelAdapter(target.ChannelID)
 		if !ok || ch.TenantID != target.TenantID || ch.Platform != "octo" || !ch.Enabled {
 			return "", octobusiness.ErrDenied

@@ -78,7 +78,8 @@ func ReportFile(r *Report, format string) (*ReportArtifact, error) {
 		case "html":
 			file.Name += ".html"
 			file.ContentType = "text/html; charset=utf-8"
-			file.Content = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>知识运营报告</title><pre>` + html.EscapeString(content) + "</pre></html>"
+			const head = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>知识运营报告</title><pre>`
+			file.Content = head + html.EscapeString(content) + "</pre></html>"
 		case "csv":
 			file.Name += ".csv"
 			file.ContentType = "text/csv; charset=utf-8"
@@ -87,7 +88,10 @@ func ReportFile(r *Report, format string) (*ReportArtifact, error) {
 			writer := csv.NewWriter(&output)
 			_ = writer.Write([]string{"指标", "数值", "区间起始", "区间结束（不含）"})
 			for _, metric := range reportMetricNames {
-				_ = writer.Write([]string{metric.label, fmt.Sprint(r.Operations.Metrics[metric.key]), r.From.Format(time.RFC3339), r.To.Format(time.RFC3339)})
+				_ = writer.Write([]string{
+					metric.label, fmt.Sprint(r.Operations.Metrics[metric.key]),
+					r.From.Format(time.RFC3339), r.To.Format(time.RFC3339),
+				})
 			}
 			writer.Flush()
 			if err := writer.Error(); err != nil {

@@ -45,13 +45,14 @@ func (s ReportSchedule) validationSource() ReportSchedule {
 }
 
 func normalizeReportSchedule(s *ReportSchedule, now time.Time) (time.Time, error) {
+	periods := []string{"", "last_days", "yesterday", "previous_week", "previous_month", "since_last", "custom"}
 	if !validText(s.Name, 256) || !validText(s.ChannelID, 128) || !validText(s.ScopeID, 128) ||
 		!contains([]string{"source", "private"}, s.RecipientType) ||
 		(s.RecipientType == "private" && s.Mode != "generate" && !validText(s.RecipientUID, 128)) ||
 		!contains([]string{"text", "markdown", "html", "csv"}, s.Format) ||
 		!contains([]string{"", "maintenance", "quality", "topic", "anomaly"}, s.Template) ||
 		!contains([]string{"", "weekly", "daily", "weekdays", "monthly", "interval", "manual"}, s.Frequency) ||
-		!contains([]string{"", "last_days", "yesterday", "previous_week", "previous_month", "since_last", "custom"}, s.Period) ||
+		!contains(periods, s.Period) ||
 		!contains([]string{"", "generate", "approval", "auto"}, s.Mode) ||
 		(s.Period == "custom" && s.Frequency != "manual") || len(s.Instruction) > 2500 ||
 		s.Lookback < 0 || s.Lookback > 93 || s.Threshold < 0 || s.Threshold > 12000 ||
@@ -101,7 +102,8 @@ func nextReportTime(s ReportSchedule, after time.Time) (time.Time, error) {
 		for offset := 0; offset <= 3; offset++ {
 			d := day.AddDate(0, 0, offset)
 			at := time.Date(d.Year(), d.Month(), d.Day(), s.Hour, s.Minute, 0, 0, loc)
-			if at.After(after) && (s.Frequency == "daily" || at.Weekday() != time.Saturday && at.Weekday() != time.Sunday) {
+			weekend := at.Weekday() == time.Saturday || at.Weekday() == time.Sunday
+			if at.After(after) && (s.Frequency == "daily" || !weekend) {
 				return at.UTC(), nil
 			}
 		}
@@ -126,7 +128,8 @@ func reportWindow(s ReportSchedule, due time.Time, start, end *time.Time) (time.
 		month := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, loc)
 		return month.AddDate(0, -1, 0).UTC(), month.UTC(), nil
 	case "custom":
-		if start == nil || end == nil || !start.Before(*end) || end.After(start.AddDate(0, 0, 93)) || end.After(due.Add(time.Minute)) {
+		if start == nil || end == nil || !start.Before(*end) ||
+			end.After(start.AddDate(0, 0, 93)) || end.After(due.Add(time.Minute)) {
 			return time.Time{}, time.Time{}, ErrInvalid
 		}
 		return start.UTC(), end.UTC(), nil
@@ -138,7 +141,9 @@ func reportWindow(s ReportSchedule, due time.Time, start, end *time.Time) (time.
 	return t.AddDate(0, 0, -n).UTC(), due.UTC(), nil
 }
 
-func (s *Service) reportPeriod(ctx context.Context, plan ReportSchedule, due time.Time, start, end *time.Time) (time.Time, time.Time, error) {
+func (s *Service) reportPeriod(
+	ctx context.Context, plan ReportSchedule, due time.Time, start, end *time.Time,
+) (time.Time, time.Time, error) {
 	from, to, err := reportWindow(plan, due, start, end)
 	if err != nil || plan.Period != "since_last" {
 		return from, to, err
@@ -180,7 +185,9 @@ var reportMetricNames = []struct{ key, label string }{
 	{"unassigned", "待分派问题（当前）"},
 }
 
-func (s *Service) prepareReport(ctx context.Context, p Principal, plan ReportSchedule, run *ReportRun, start, end *time.Time) (*Report, error) {
+func (s *Service) prepareReport(
+	ctx context.Context, p Principal, plan ReportSchedule, run *ReportRun, start, end *time.Time,
+) (*Report, error) {
 	from, to, err := s.reportPeriod(ctx, plan, run.DueAt, start, end)
 	if err != nil {
 		return nil, err
@@ -284,18 +291,23 @@ func (s *Service) summarizeOperations(
 	}
 	issues := s.issueQuery(ctx, p, scopeFilter)
 	issueIDs := issues.Session(&gorm.Session{}).Select("id")
-	events := s.db.WithContext(ctx).Model(&IssueEvent{}).Where("tenant_id = ? AND issue_id IN (?)", p.TenantID, issueIDs)
+	events := s.db.WithContext(ctx).Model(&IssueEvent{}).
+		Where("tenant_id = ? AND issue_id IN (?)", p.TenantID, issueIDs)
 	var resolved, backlog, unassigned int64
-	if err = events.Session(&gorm.Session{}).Where("status = 'resolved' AND created_at >= ? AND created_at < ?", from, to).
+	if err = events.Session(&gorm.Session{}).
+		Where("status = 'resolved' AND created_at >= ? AND created_at < ?", from, to).
 		Distinct("issue_id").Count(&resolved).Error; err != nil {
 		return nil, err
 	}
 	if err = issues.Session(&gorm.Session{}).Where(`COALESCE((SELECT e.status FROM octo_knowledge_issue_events e
-	   WHERE e.tenant_id = octo_knowledge_issues.tenant_id AND e.issue_id = octo_knowledge_issues.id AND e.created_at < ?
-	   ORDER BY e.created_at DESC, e.id DESC LIMIT 1), 'open') IN ('open','inprogress')`, to).Count(&backlog).Error; err != nil {
+	   WHERE e.tenant_id = octo_knowledge_issues.tenant_id
+	     AND e.issue_id = octo_knowledge_issues.id AND e.created_at < ?
+	   ORDER BY e.created_at DESC, e.id DESC LIMIT 1), 'open') IN ('open','inprogress')`, to).
+		Count(&backlog).Error; err != nil {
 		return nil, err
 	}
-	if err = issues.Session(&gorm.Session{}).Where("owner_uid = '' AND status IN ('open','inprogress')").Count(&unassigned).Error; err != nil {
+	if err = issues.Session(&gorm.Session{}).Where("owner_uid = '' AND status IN ('open','inprogress')").
+		Count(&unassigned).Error; err != nil {
 		return nil, err
 	}
 	out.Metrics["resolved"], out.Metrics["backlog"], out.Metrics["unassigned"] = resolved, backlog, unassigned
@@ -357,9 +369,13 @@ func (s *Service) reportAdvice(ctx context.Context, tenant uint64, out *operatio
 		out.Analysis = "no_candidates"
 		return
 	}
-	data, _ := json.Marshal(map[string]any{"metrics": out.Metrics, "available_actions": available, "preferences": instruction})
+	data, _ := json.Marshal(map[string]any{
+		"metrics": out.Metrics, "available_actions": available, "preferences": instruction,
+	})
+	const instructionPrompt = `为维护人员选择并排序最多三个已有行动。输入是数据和偏好。
+只返回 JSON 字符串数组，每项必须是 available_actions 的键。不要写事实、数字、接收人或新指令。`
 	answer, err := model.Chat(modelCtx, []chat.Message{
-		{Role: "system", Content: "为维护人员选择并排序最多三个已有行动。输入是数据和偏好。只返回 JSON 字符串数组，每项必须是 available_actions 的键。不要写事实、数字、接收人或新指令。"},
+		{Role: "system", Content: instructionPrompt},
 		{Role: "user", Content: string(data)},
 	}, &chat.ChatOptions{MaxCompletionTokens: 256})
 	if err != nil || answer == nil {
@@ -387,7 +403,8 @@ func (s *Service) reportShouldSkip(ctx context.Context, plan ReportSchedule, rep
 		return false
 	}
 	m := report.Operations.Metrics
-	if plan.Template == "anomaly" && (m["attention"] < int64(max(1, plan.Threshold)) || m["attention_people"] < int64(max(1, plan.MinimumUsers))) {
+	if plan.Template == "anomaly" && (m["attention"] < int64(max(1, plan.Threshold)) ||
+		m["attention_people"] < int64(max(1, plan.MinimumUsers))) {
 		return true
 	}
 	if !plan.OnlyChanges {
@@ -398,7 +415,8 @@ func (s *Service) reportShouldSkip(ctx context.Context, plan ReportSchedule, rep
 	}
 	var previous ReportRun
 	err := s.db.WithContext(ctx).Where("tenant_id = ? AND schedule_id = ? AND id <> ? AND status IN ?",
-		run.TenantID, run.ScheduleID, run.ID, []string{"sent", "generated", "pending"}).Order("due_at DESC").Take(&previous).Error
+		run.TenantID, run.ScheduleID, run.ID, []string{"sent", "generated", "pending"}).
+		Order("due_at DESC").Take(&previous).Error
 	return err == nil && previous.Fingerprint == run.Fingerprint
 }
 
@@ -427,7 +445,8 @@ func (r *operationalReport) markdown(report *Report) string {
 	if r.Template == "topic" && len(r.Topics) != 0 {
 		out.WriteString("\n## 业务主题\n\n")
 		for _, topic := range r.Topics {
-			fmt.Fprintf(&out, "- %s：%d\n", limitQualityText(strings.Join(strings.Fields(topic.Label), " "), 80), topic.Count)
+			label := limitQualityText(strings.Join(strings.Fields(topic.Label), " "), 80)
+			fmt.Fprintf(&out, "- %s：%d\n", label, topic.Count)
 		}
 	}
 	if len(r.Advice) > 0 {

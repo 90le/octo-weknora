@@ -16,6 +16,7 @@ type reportDates struct {
 	To   *time.Time `json:"to"`
 }
 
+// PreviewReportSchedule checks the source, output target and time window.
 func (h *Handler) PreviewReportSchedule(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -69,6 +70,7 @@ func (s *Service) consolePlan(ctx context.Context, id string) (ReportSchedule, e
 	return plan, err
 }
 
+// ReportHistory returns statuses and time windows of the retained runs.
 func (h *Handler) ReportHistory(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -81,11 +83,13 @@ func (h *Handler) ReportHistory(c *gin.Context) {
 		return
 	}
 	rows := []ReportRun{}
-	err = h.service.db.WithContext(ctx).Omit("snapshot").Where("tenant_id = ? AND schedule_id = ?", plan.TenantID, plan.ID).
+	err = h.service.db.WithContext(ctx).Omit("snapshot").
+		Where("tenant_id = ? AND schedule_id = ?", plan.TenantID, plan.ID).
 		Order("due_at DESC, id").Limit(100).Find(&rows).Error
 	respond(c, rows, err)
 }
 
+// GenerateReport creates a report snapshot without sending it.
 func (h *Handler) GenerateReport(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -106,7 +110,9 @@ func (h *Handler) GenerateReport(c *gin.Context) {
 	respond(c, run, err)
 }
 
-func (s *Service) generateConsoleReport(ctx context.Context, plan ReportSchedule, input reportDates) (*ReportRun, error) {
+func (s *Service) generateConsoleReport(
+	ctx context.Context, plan ReportSchedule, input reportDates,
+) (*ReportRun, error) {
 	ctx, cancel := context.WithTimeout(ctx, reportTaskTimeout)
 	defer cancel()
 	plan.Manual = true
@@ -138,7 +144,7 @@ func (s *Service) generateConsoleReport(ctx context.Context, plan ReportSchedule
 		return nil, claim.Error
 	}
 	if claim.RowsAffected != 1 {
-		err := s.db.WithContext(ctx).Where("tenant_id = ? AND schedule_id = ? AND id = ?", plan.TenantID, plan.ID, id).Take(&run).Error
+		err := s.reportRunQuery(ctx, plan, id).Take(&run).Error
 		return &run, err
 	}
 	report, processErr := s.prepareReport(reportCtx, p, plan, &run, input.From, input.To)
@@ -155,11 +161,12 @@ func (s *Service) generateConsoleReport(ctx context.Context, plan ReportSchedule
 	}
 	write, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancelWrite()
-	err = s.db.WithContext(write).Model(&ReportRun{}).Where("tenant_id = ? AND schedule_id = ? AND id = ?", plan.TenantID, plan.ID, id).
+	err = s.reportRunQuery(write, plan, id).
 		Updates(map[string]any{"status": run.Status, "error_code": run.ErrorCode}).Error
 	return &run, err
 }
 
+// ReportRunDetail shows the snapshot after rechecking current authorization.
 func (h *Handler) ReportRunDetail(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -175,9 +182,16 @@ func (h *Handler) ReportRunDetail(c *gin.Context) {
 	respond(c, run, err)
 }
 
-func (s *Service) loadReportRun(ctx context.Context, plan ReportSchedule, id string) (*ReportRun, context.Context, error) {
+func (s *Service) reportRunQuery(ctx context.Context, plan ReportSchedule, id string) *gorm.DB {
+	return s.db.WithContext(ctx).Model(&ReportRun{}).
+		Where("tenant_id = ? AND schedule_id = ? AND id = ?", plan.TenantID, plan.ID, id)
+}
+
+func (s *Service) loadReportRun(
+	ctx context.Context, plan ReportSchedule, id string,
+) (*ReportRun, context.Context, error) {
 	var run ReportRun
-	err := s.db.WithContext(ctx).Where("tenant_id = ? AND schedule_id = ? AND id = ?", plan.TenantID, plan.ID, id).Take(&run).Error
+	err := s.reportRunQuery(ctx, plan, id).Take(&run).Error
 	if err != nil || run.Snapshot == "" {
 		return &run, nil, err
 	}
@@ -201,6 +215,7 @@ func (s *Service) loadReportRun(ctx context.Context, plan ReportSchedule, id str
 	return &run, WithReportAuthority(reportCtx, p), nil
 }
 
+// SendReportRun approves delivery of the retained snapshot to its verified destination.
 func (h *Handler) SendReportRun(c *gin.Context) {
 	ctx, err := ConsoleContext(c)
 	if err != nil {
@@ -253,7 +268,9 @@ func (s *Service) sendReportRun(ctx context.Context, plan ReportSchedule, id str
 		return nil, ErrDenied
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		claim := tx.Model(&ReportRun{}).Where("tenant_id = ? AND schedule_id = ? AND id = ? AND status = 'pending'", plan.TenantID, plan.ID, id).
+		claim := tx.Model(&ReportRun{}).
+			Where("tenant_id = ? AND schedule_id = ? AND id = ?", plan.TenantID, plan.ID, id).
+			Where("status = 'pending'").
 			Update("status", "sending")
 		if claim.Error != nil {
 			return claim.Error
@@ -277,7 +294,7 @@ func (s *Service) sendReportRun(ctx context.Context, plan ReportSchedule, id str
 	}
 	write, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancelWrite()
-	err = s.db.WithContext(write).Model(&ReportRun{}).Where("tenant_id = ? AND schedule_id = ? AND id = ?", plan.TenantID, plan.ID, id).
+	err = s.reportRunQuery(write, plan, id).
 		Updates(map[string]any{"status": run.Status, "error_code": run.ErrorCode}).Error
 	return run, err
 }

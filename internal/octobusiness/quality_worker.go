@@ -69,7 +69,9 @@ func (s *Service) writeQualitySettings(
 func (s *Service) writeQualityReview(ctx context.Context, review qualityReview, columns []string) error {
 	return s.db.Session(&gorm.Session{Logger: gormlogger.Discard}).WithContext(ctx).
 		Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "tenant_id"}, {Name: "channel_id"}, {Name: "scope_id"}, {Name: "message_id"}},
+			Columns: []clause.Column{
+				{Name: "tenant_id"}, {Name: "channel_id"}, {Name: "scope_id"}, {Name: "message_id"},
+			},
 			DoUpdates: clause.AssignmentColumns(columns),
 		}).Create(&review).Error
 }
@@ -291,7 +293,8 @@ func (s *Service) executeQualityReview(
 	if err != nil || fields == nil {
 		fields = map[string]any{"state": "failed", "available_at": nil, "updated_at": time.Now().UTC()}
 		if item.AttemptCount < 2 && errors.Is(err, errQualityAnalysis) {
-			fields["state"], fields["available_at"] = "queued", time.Now().UTC().Add(time.Duration(item.AttemptCount+1)*time.Minute)
+			backoff := time.Duration(item.AttemptCount+1) * time.Minute
+			fields["state"], fields["available_at"] = "queued", time.Now().UTC().Add(backoff)
 		}
 	}
 	// A shutdown may cancel the model request; persist the outcome before leaving.
@@ -304,7 +307,8 @@ func (s *Service) executeQualityReview(
 }
 
 func (s *Service) runQualityFinding(
-	ctx context.Context, models qualityModelResolver, scope *qualityScope, input qualityAnalysisInput, settings qualitySettings,
+	ctx context.Context, models qualityModelResolver, scope *qualityScope,
+	input qualityAnalysisInput, settings qualitySettings,
 ) (map[string]any, error) {
 	rows, err := s.loadQualityRows(ctx, scope, input)
 	if err != nil {

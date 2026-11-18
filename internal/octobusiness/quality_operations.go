@@ -69,8 +69,8 @@ func (s *Service) qualityBatch(
 		}
 		groupID = canonical.GroupKey
 		var saved qualityReview
-		if err := s.qualityReviewQuery(ctx, scope).Where("message_id = ?", canonical.ID).Take(&saved).Error; err == nil &&
-			saved.GroupID != "" {
+		query := s.qualityReviewQuery(ctx, scope).Where("message_id = ?", canonical.ID)
+		if err := query.Take(&saved).Error; err == nil && saved.GroupID != "" {
 			groupID = saved.GroupID
 		}
 	}
@@ -92,9 +92,9 @@ func (s *Service) qualityBatch(
 	results := make([]operationResult, 0, len(in.Messages))
 	for _, id := range in.Messages {
 		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			copy := *s
-			copy.db = tx
-			row, err := copy.qualityOperationRow(ctx, scope, id)
+			scoped := *s
+			scoped.db = tx
+			row, err := scoped.qualityOperationRow(ctx, scope, id)
 			if err != nil {
 				return err
 			}
@@ -108,7 +108,7 @@ func (s *Service) qualityBatch(
 				if !contains(row.libraries, in.LibraryID) {
 					return ErrDenied
 				}
-				return copy.enqueueQualityReview(ctx, scope, review, in.LibraryID)
+				return scoped.enqueueQualityReview(ctx, scope, review, in.LibraryID)
 			case "topic":
 				review.Topic = strings.TrimSpace(in.Value)
 				columns = append(columns, "topic")
@@ -128,10 +128,11 @@ func (s *Service) qualityBatch(
 				review.GroupID = groupID
 				columns = append(columns, "group_id")
 			}
-			if err := copy.writeQualityReview(ctx, review, columns); err != nil {
+			if err := scoped.writeQualityReview(ctx, review, columns); err != nil {
 				return err
 			}
-			return audit(tx, p, types.AuditAction("octo.quality."+in.Action), id, map[string]string{"scope_id": in.ScopeID})
+			return audit(tx, p, types.AuditAction("octo.quality."+in.Action), id,
+				map[string]string{"scope_id": in.ScopeID})
 		})
 		results = append(results, operationResult{ID: id, State: operationState(err)})
 	}

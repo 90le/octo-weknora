@@ -20,6 +20,7 @@ import (
 )
 
 const (
+	// TypeReportSend is the internal queue event for a due report schedule.
 	TypeReportSend      = "octo:report_send"
 	reportTaskTimeout   = 2 * time.Minute
 	reportRecoveryGrace = time.Minute
@@ -231,7 +232,9 @@ func (s *Service) EnqueueDueReports(ctx context.Context, queue interfaces.TaskEn
 		return err
 	}
 	var schedules []ReportSchedule
-	if err := s.db.WithContext(ctx).Where("enabled = ? AND frequency <> 'manual' AND next_run_at <= ?", true, now).Order("next_run_at, id").Limit(100).Find(&schedules).Error; err != nil {
+	source := s.db.WithContext(ctx).Where("enabled = ? AND frequency <> 'manual' AND next_run_at <= ?", true, now).
+		Order("next_run_at, id").Limit(100)
+	if err := source.Find(&schedules).Error; err != nil {
 		return err
 	}
 	for _, schedule := range schedules {
@@ -279,7 +282,10 @@ func (s *Service) ProcessReportTask(ctx context.Context, task *asynq.Task) error
 	}
 	key := digest("report", fmtTenant(schedule.TenantID), schedule.ID, input.DueAt.UTC().Format(time.RFC3339Nano))
 	schedule.RunKey = key
-	run := ReportRun{ID: key, TenantID: schedule.TenantID, ScheduleID: schedule.ID, DueAt: input.DueAt, Status: "sending", Revision: &schedule.UpdatedAt}
+	run := ReportRun{
+		ID: key, TenantID: schedule.TenantID, ScheduleID: schedule.ID, DueAt: input.DueAt,
+		Status: "sending", Revision: &schedule.UpdatedAt,
+	}
 	claim := s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&run)
 	if claim.Error != nil {
 		return claim.Error
@@ -354,10 +360,15 @@ func (s *Service) ProcessReportTask(ctx context.Context, task *asynq.Task) error
 	}
 	write, writeCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer writeCancel()
-	if err = s.db.WithContext(write).Model(&ReportRun{}).Where("id = ? AND status = 'sending'", key).Updates(map[string]any{"status": status, "updated_at": time.Now(), "error_code": reportErrorCode(sendErr)}).Error; err != nil {
+	runPatch := map[string]any{"status": status, "updated_at": time.Now(), "error_code": reportErrorCode(sendErr)}
+	if err = s.db.WithContext(write).Model(&ReportRun{}).Where("id = ? AND status = 'sending'", key).
+		Updates(runPatch).Error; err != nil {
 		return err
 	}
-	if err = s.db.WithContext(write).Model(&ReportSchedule{}).Where("id = ? AND tenant_id = ? AND updated_at = ?", schedule.ID, schedule.TenantID, schedule.UpdatedAt).UpdateColumns(map[string]any{"last_status": status, "last_error": message, "last_run_at": now}).Error; err != nil {
+	planPatch := map[string]any{"last_status": status, "last_error": message, "last_run_at": now}
+	if err = s.db.WithContext(write).Model(&ReportSchedule{}).
+		Where("id = ? AND tenant_id = ? AND updated_at = ?", schedule.ID, schedule.TenantID, schedule.UpdatedAt).
+		UpdateColumns(planPatch).Error; err != nil {
 		return err
 	}
 	if sendErr != nil {
@@ -379,7 +390,8 @@ func reportAuthority(p Principal) string {
 // Do not silently deliver a report prepared for an older recipient or settings.
 func (s *Service) ensureReportScheduleCurrent(ctx context.Context, schedule ReportSchedule) error {
 	var count int64
-	query := s.db.WithContext(ctx).Model(&ReportSchedule{}).Where("id = ? AND tenant_id = ? AND updated_at = ?", schedule.ID, schedule.TenantID, schedule.UpdatedAt)
+	query := s.db.WithContext(ctx).Model(&ReportSchedule{}).
+		Where("id = ? AND tenant_id = ? AND updated_at = ?", schedule.ID, schedule.TenantID, schedule.UpdatedAt)
 	if !schedule.Manual {
 		query = query.Where("enabled = ?", true)
 	}

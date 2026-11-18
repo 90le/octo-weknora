@@ -266,7 +266,7 @@ func (s *Service) collectQuality(
 	if err != nil {
 		return nil, false, err
 	}
-	defer cursor.Close()
+	defer func() { _ = cursor.Close() }()
 	var rows []qualityRow
 	// The UI flags an incomplete window so a safety cap cannot be mistaken for a full count.
 	const candidateLimit = 12000
