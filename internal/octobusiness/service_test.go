@@ -34,6 +34,11 @@ func testService(t *testing.T) *Service {
 	migration, err = os.ReadFile("../../migrations/sqlite/000044_octo_report_schedules.up.sql")
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(migration)).Error)
+	for _, name := range []string{"000042_octo_message_inbox.up.sql", "000053_octo_operations.up.sql"} {
+		migration, err = os.ReadFile("../../migrations/sqlite/" + name)
+		require.NoError(t, err)
+		require.NoError(t, db.Exec(string(migration)).Error)
+	}
 	return NewService(db, nil, nil)
 }
 

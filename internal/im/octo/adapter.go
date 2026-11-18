@@ -274,28 +274,9 @@ func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *
 		return errors.New("missing original Octo message ID")
 	}
 	text := reply.Content
-	payload := map[string]any{"type": 1}
-	if kind != 1 {
-		label := "@" + in.UserName
-		if in.UserName == "" {
-			label = "@" + in.UserID
-		}
-		text = label + " " + text
-		payload["mention"] = map[string]any{"uids": []string{in.UserID}, "entities": []wire.Entity{{UID: in.UserID, Offset: 0, Length: len(utf16.Encode([]rune(label)))}}}
-	}
+	payload, text := nativeReplyPayload(in, kind, text)
 	if receiptScope == nil {
 		a.contactEntities(ctx, in, text, payload)
-	}
-	payload["content"] = text
-	// A card click is not a user-authored message. Do not render an empty
-	// quoted message that attributes the bot's card to the operator.
-	if in.Extra["octo_card_event_key"] == "" {
-		quote := map[string]any{"message_id": id, "from_uid": in.UserID, "from_name": in.UserName}
-		var original map[string]json.RawMessage
-		if json.Unmarshal([]byte(in.Extra["octo_original_payload"]), &original) == nil {
-			quote["payload"] = original
-		}
-		payload["reply"] = quote
 	}
 	// Models cannot redirect replies or inject mention-all through ReplyMessage.Extra.
 	var result struct {
@@ -333,6 +314,32 @@ func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *
 		}
 	}
 	return nil
+}
+
+func nativeReplyPayload(in *im.IncomingMessage, kind int, text string) (map[string]any, string) {
+	payload := map[string]any{"type": 1}
+	if kind != 1 {
+		label := "@" + in.UserName
+		if in.UserName == "" {
+			label = "@" + in.UserID
+		}
+		text = label + " " + text
+		entity := wire.Entity{UID: in.UserID, Length: len(utf16.Encode([]rune(label)))}
+		payload["mention"] = map[string]any{"uids": []string{in.UserID}, "entities": []wire.Entity{entity}}
+	}
+	payload["content"] = text
+	// Card responses have no user-authored message to quote.
+	if in.Extra["octo_card_event_key"] == "" {
+		quote := map[string]any{
+			"message_id": in.Extra["octo_message_id"], "from_uid": in.UserID, "from_name": in.UserName,
+		}
+		var original map[string]json.RawMessage
+		if json.Unmarshal([]byte(in.Extra["octo_original_payload"]), &original) == nil {
+			quote["payload"] = original
+		}
+		payload["reply"] = quote
+	}
+	return payload, text
 }
 
 func (a *Adapter) DownloadFile(ctx context.Context, msg *im.IncomingMessage) (io.ReadCloser, string, error) {

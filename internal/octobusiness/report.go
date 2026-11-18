@@ -10,15 +10,16 @@ import (
 )
 
 type Report struct {
-	Counts      map[string]int64 `json:"counts"`
-	Items       []Issue          `json:"items"`
-	Total       int64            `json:"total"`
-	Truncated   bool             `json:"truncated"`
-	From        *time.Time       `json:"from"`
-	To          *time.Time       `json:"to"`
-	GeneratedAt time.Time        `json:"generated_at"`
-	Scope       string           `json:"scope"`
-	Notice      string           `json:"notice"`
+	Counts      map[string]int64   `json:"counts"`
+	Items       []Issue            `json:"items"`
+	Total       int64              `json:"total"`
+	Truncated   bool               `json:"truncated"`
+	From        *time.Time         `json:"from"`
+	To          *time.Time         `json:"to"`
+	GeneratedAt time.Time          `json:"generated_at"`
+	Scope       string             `json:"scope"`
+	Notice      string             `json:"notice"`
+	Operations  *operationalReport `json:"operations,omitempty"`
 }
 
 func (s *Service) Report(ctx context.Context, f IssueFilter) (*Report, error) {
@@ -28,6 +29,9 @@ func (s *Service) Report(ctx context.Context, f IssueFilter) (*Report, error) {
 	}
 	if f.From != nil && f.To != nil && !f.To.After(*f.From) {
 		return nil, ErrInvalid
+	}
+	if f.Visibility == "" {
+		f.Visibility = "all"
 	}
 	r := &Report{Counts: map[string]int64{}, Items: []Issue{}, From: f.From, To: f.To, GeneratedAt: time.Now().UTC(), Scope: p.ScopeName, Notice: "仅统计已登记的问题，不代表全部提问量或总体解答率。关闭问题不代表知识已更新。统计周期按登记时间筛选，不含结束时刻。"}
 	if p.IsDirect {
@@ -64,6 +68,41 @@ func ReportFile(r *Report, format string) (*ReportArtifact, error) {
 		return nil, ErrInvalid
 	}
 	file := &ReportArtifact{Name: "knowledge-issues-" + r.GeneratedAt.Format("20060102") + "." + format}
+	if r.Operations != nil {
+		file.Name = "knowledge-operations-" + r.GeneratedAt.Format("20060102")
+		content := r.Operations.markdown(r)
+		switch format {
+		case "markdown":
+			file.Name += ".md"
+			file.ContentType, file.Content = "text/markdown; charset=utf-8", content
+		case "html":
+			file.Name += ".html"
+			file.ContentType = "text/html; charset=utf-8"
+			const head = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>知识运营报告</title><pre>`
+			file.Content = head + html.EscapeString(content) + "</pre></html>"
+		case "csv":
+			file.Name += ".csv"
+			file.ContentType = "text/csv; charset=utf-8"
+			var output strings.Builder
+			output.WriteString("\uFEFF")
+			writer := csv.NewWriter(&output)
+			_ = writer.Write([]string{"指标", "数值", "区间起始", "区间结束（不含）"})
+			for _, metric := range reportMetricNames {
+				_ = writer.Write([]string{
+					metric.label, fmt.Sprint(r.Operations.Metrics[metric.key]),
+					r.From.Format(time.RFC3339), r.To.Format(time.RFC3339),
+				})
+			}
+			writer.Flush()
+			if err := writer.Error(); err != nil {
+				return nil, err
+			}
+			file.Content = output.String()
+		default:
+			return nil, ErrInvalid
+		}
+		return file, nil
+	}
 	var b strings.Builder
 	from, to := "未限定起点", "未限定终点"
 	if r.From != nil {
@@ -137,6 +176,7 @@ func issueStatusLabel(status string) string {
 		return status
 	}
 }
+
 func issueKindLabel(kind string) string {
 	switch kind {
 	case "missing":
@@ -149,6 +189,7 @@ func issueKindLabel(kind string) string {
 		return kind
 	}
 }
+
 func safeCSV(s string) string {
 	trimmed := strings.TrimLeft(s, " \t\r\n")
 	if trimmed != "" && strings.ContainsAny(trimmed[:1], "=+-@") {

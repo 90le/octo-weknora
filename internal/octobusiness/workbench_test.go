@@ -13,9 +13,6 @@ func TestIssueEvidenceUsesTheAdmittedQuestionInTheSameScope(t *testing.T) {
 	p.MessageID = "octo:bot:30"
 	row, err := s.CreateIssue(principalContext(p), gapInput())
 	require.NoError(t, err)
-	require.NoError(t, s.db.Exec(`CREATE TABLE octo_message_inbox (
-		tenant_id BIGINT, channel_id TEXT, message_id TEXT, authority TEXT, input TEXT, reply TEXT, state TEXT
-	)`).Error)
 	auth := `{"AccountID":"bot","ScopeID":"scope-A","KnowledgeBaseIDs":["kb-a"]}`
 	payload := `{"reply":{"message_id":"20","payload":{"reply":{"message_id":10,"from_uid":"alice"}}}}`
 	extra := map[string]string{"octo_group_id": "group-A", "octo_message_id": "30", "octo_original_payload": payload}
@@ -27,7 +24,9 @@ func TestIssueEvidenceUsesTheAdmittedQuestionInTheSameScope(t *testing.T) {
 	require.NoError(t, err)
 	question := `{"MessageType":"text","UserID":"alice","Content":"@Octo 小测 原问题",` +
 		`"Extra":{"octo_group_id":"group-A","octo_message_id":"10","octo_addressed":"true","octo_question_text":"原问题"}}`
-	insert := "INSERT INTO octo_message_inbox VALUES (1,'group-A',?,?,?,?, 'delivered')"
+	insert := `INSERT INTO octo_message_inbox
+		(tenant_id,channel_id,message_id,authority,input,reply,state,created_at,updated_at)
+		VALUES (1,'group-A',?,?,?,?,'delivered',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`
 	require.NoError(t, s.db.Exec(insert, p.MessageID, auth, string(feedback), "").Error)
 	require.NoError(t, s.db.Exec(insert, "octo:bot:10", auth, question, "旧答复").Error)
 	admin := principalContext(Principal{TenantID: 1, ChannelID: "console", UserID: "admin", Console: true})

@@ -451,7 +451,7 @@ const isMenuItemActive = (itemPath: string): boolean => {
         case 'channels':
             return currentRoute === 'knowledgeChannels' || currentRoute === 'octoGroups';
         case 'issues':
-            return currentRoute === 'knowledgeIssues' || currentRoute === 'knowledgeReports';
+            return ['knowledgeIssues', 'knowledgeReports', 'knowledgeOperations', 'knowledgeQuality'].includes(String(currentRoute));
         case 'agents':
             return currentRoute === 'agentList';
         case 'toolbox':

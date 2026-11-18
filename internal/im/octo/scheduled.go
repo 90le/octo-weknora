@@ -19,28 +19,29 @@ import (
 func (a *Adapter) reportPrincipal(ctx context.Context, s octobusiness.ReportSchedule) (octobusiness.Principal, error) {
 	p := octobusiness.Principal{}
 	if a.db == nil || s.TenantID != a.tenantID || s.ChannelID != a.channelID {
-		return p, im.ErrScopeDenied
+		return p, octobusiness.ReportAccessError("channel")
 	}
 	var channel im.IMChannel
 	if a.db.WithContext(ctx).Where("id = ? AND tenant_id = ? AND enabled = ?", s.ChannelID, s.TenantID, true).First(&channel).Error != nil {
-		return p, im.ErrScopeDenied
+		return p, octobusiness.ReportAccessError("channel")
 	}
 	config, err := im.ParseCredentials(channel.Credentials)
 	if err != nil || im.GetString(config, "bot_uid") != a.uid {
-		return p, im.ErrScopeDenied
+		return p, octobusiness.ReportAccessError("connection")
 	}
 	var connection octointegration.Connection
 	account := im.GetString(config, "account_id")
 	if a.db.WithContext(ctx).Where("tenant_id = ? AND account_id = ?", s.TenantID, account).First(&connection).Error != nil {
-		return p, im.ErrScopeDenied
+		return p, octobusiness.ReportAccessError("connection")
 	}
 	secret, err := utils.DecryptStoredSecret(connection.Token)
 	if err != nil || secret != a.api.token {
-		return p, im.ErrScopeDenied
+		return p, octobusiness.ReportAccessError("connection")
 	}
 	scope, err := octointegration.NewStore(a.db).Get(ctx, s.TenantID, s.ScopeID)
-	if err != nil || scope.AccountID != account || scope.SyncStatus != "verified" {
-		return p, im.ErrScopeDenied
+	if err != nil || scope.AccountID != account || scope.SyncStatus != "verified" ||
+		scope.VerifiedAt == nil || scope.NameSource != "octo" {
+		return p, octobusiness.ReportAccessError("scope")
 	}
 	endpoint := "/v1/bot/groups/" + scope.GroupID
 	if scope.SubareaID != "" {
@@ -52,7 +53,7 @@ func (a *Adapter) reportPrincipal(ctx context.Context, s octobusiness.ReportSche
 		Status int    `json:"status"`
 	}
 	if err = a.api.request(ctx, http.MethodGet, endpoint, nil, &current); err != nil || current.Group != scope.GroupID || current.Thread != scope.SubareaID || current.Status != 1 {
-		return p, im.ErrScopeDenied
+		return p, octobusiness.ReportAccessError("scope_live")
 	}
 	if s.RecipientType == "private" {
 		dm, policyErr := im.ReadOctoPrivatePolicy(&channel, config)
@@ -62,7 +63,7 @@ func (a *Adapter) reportPrincipal(ctx context.Context, s octobusiness.ReportSche
 			dm.AudienceDecision(s.RecipientUID, connection.VerifiedOwnerUID(a.uid), func() (bool, error) {
 				return octointegration.CheckDMFriend(ctx, a.api.token, s.RecipientUID, a.api.http)
 			}) != "allowed" {
-			return p, im.ErrScopeDenied
+			return p, octobusiness.ReportAccessError("recipient_policy")
 		}
 		memberPaths := []string{"/v1/bot/groups/" + scope.GroupID + "/members"}
 		if scope.SubareaID != "" {
@@ -73,7 +74,7 @@ func (a *Adapter) reportPrincipal(ctx context.Context, s octobusiness.ReportSche
 				UID string `json:"uid"`
 			}
 			if a.api.request(ctx, http.MethodGet, memberPath, nil, &members) != nil {
-				return p, im.ErrScopeDenied
+				return p, octobusiness.ReportAccessError("recipient_membership")
 			}
 			found := false
 			for _, m := range members {
@@ -82,15 +83,15 @@ func (a *Adapter) reportPrincipal(ctx context.Context, s octobusiness.ReportSche
 				}
 			}
 			if !found {
-				return p, im.ErrScopeDenied
+				return p, octobusiness.ReportAccessError("recipient_membership")
 			}
 		}
 	} else if s.RecipientType != "source" {
-		return p, im.ErrScopeDenied
+		return p, octobusiness.ReportAccessError("recipient_policy")
 	}
 	bindings, err := octointegration.NewStore(a.db).Effective(ctx, s.TenantID, scope.ID)
 	if err != nil || len(bindings) == 0 {
-		return p, im.ErrScopeDenied
+		return p, octobusiness.ReportAccessError("binding")
 	}
 	p = octobusiness.Principal{TenantID: s.TenantID, AccountID: account, ChannelID: s.ChannelID, ScopeID: scope.ID, ScopeName: scope.DisplayName, GroupID: scope.GroupID, SubareaID: scope.SubareaID, UserID: "scheduled:" + s.ID, ReadIssueScopeIDs: []string{scope.ID}}
 	for _, binding := range bindings {

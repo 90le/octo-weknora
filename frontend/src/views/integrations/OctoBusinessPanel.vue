@@ -29,15 +29,28 @@
         <p>共 <strong>{{ total }}</strong> 个登记问题 <span>点击问题标题查看来源与处理记录</span></p>
         <t-button variant="text" :loading="loading" @click="loadIssues">刷新列表</t-button>
       </div>
+      <div class="row">
+        <t-radio-group v-model="visibility" variant="default-filled" @change="search">
+          <t-radio-button value="active">处理中与已结案</t-radio-button>
+          <t-radio-button value="archive">归档</t-radio-button>
+          <t-radio-button value="trash">回收站</t-radio-button>
+        </t-radio-group>
+        <t-checkbox v-model="unassigned" @change="search">仅未分派</t-checkbox>
+        <t-button variant="outline" :disabled="!selectedKeys.length" @click="openBatch">
+          批量操作 {{ selectedKeys.length || '' }}
+        </t-button>
+      </div>
+      <t-alert v-if="batchResult" theme="info" class="panel-alert">{{ batchResult }}</t-alert>
       <t-alert v-if="error" theme="error" class="panel-alert">
         {{ error }} <t-button variant="text" @click="loadIssues">重试</t-button>
       </t-alert>
       <div class="issue-table-scroll">
-        <t-table class="issue-table" :data="issues" :columns="columns" row-key="id" table-layout="fixed"
+        <t-table v-model:selected-row-keys="selectedKeys" class="issue-table" :data="issues" :columns="columns" row-key="id" table-layout="fixed"
           :loading="loading" :empty="error ? '读取失败，不能视为没有问题' : '暂无符合条件的登记问题'">
           <template #title="{ row }">
             <t-button variant="text" class="issue-title" :title="row.title" @click="openIssue(row.id)">{{ row.title }}</t-button>
             <div class="issue-type"><t-tag size="small" variant="light">{{ issueKindLabels[row.kind] || row.kind }}</t-tag></div>
+            <OctoMarkdown :text="row.description" compact />
           </template>
           <template #scope="{ row }">
             <span class="wrap-text">{{ sourceLabel(row) }}</span>
@@ -46,10 +59,24 @@
           <template #knowledge_base="{ row }"><span class="wrap-text">{{ kbName(row.knowledge_base_id) }}</span></template>
           <template #reporter="{ row }">{{ personName(row.reporter_name, row.reporter_uid) }}</template>
           <template #owner="{ row }">{{ personName(row.owner_name, row.owner_uid, '未指定') }}</template>
-          <template #status="{ row }"><t-tag size="small" :theme="statusTheme(row.status)">{{ issueStatusLabels[row.status] || row.status }}</t-tag></template>
+          <template #status="{ row }">
+            <t-select v-if="!row.archive_state" size="small" :value="row.status" :options="statusOptions"
+              :disabled="batchBusy" @change="(value: unknown) => changeRowStatus(row, String(value))" />
+            <t-tag v-else size="small" :theme="statusTheme(row.status)">{{ issueStatusLabels[row.status] || row.status }}</t-tag>
+          </template>
           <template #created_at="{ row }"><span class="date-cell">{{ time(row.created_at) }}</span></template>
         </t-table>
       </div>
+      <t-dialog v-model:visible="batchOpen" header="批量处理" :confirm-loading="batchBusy" @confirm="applyBatch">
+        <p>已选 {{ batchRows.length }} 条记录。操作会逐条核对权限和记录版本。</p>
+        <label>操作<t-select v-model="batchAction" :options="batchOptions" /></label>
+        <label v-if="batchAction==='status'">处理状态<t-select v-model="batchStatus" :options="statusOptions" /></label>
+        <label v-if="batchAction==='assign'">联系人
+          <t-select v-model="batchContact" :options="batchContacts" placeholder="选择同一知识库的联系人" />
+        </label>
+        <label>处理说明<t-input v-model="batchNote" :maxlength="500" /></label>
+        <t-alert v-if="batchError" theme="error">{{ batchError }}</t-alert>
+      </t-dialog>
       <div class="list-footer">
         <p class="hint">仅统计已登记的问题；关闭问题不代表知识已更新。</p>
         <t-pagination v-if="total" v-model="page" :total="total" :page-size="20" :show-page-size="false" @change="loadIssues" />
@@ -138,15 +165,15 @@
             <dl class="source-facts">
               <dt>来源区域</dt><dd>{{ sourceLabel(selected) }}</dd>
               <dt>关联知识库</dt><dd><router-link :to="{ name: 'knowledgeBaseDetail', params: { kbId: selected.knowledge_base_id } }">{{ kbName(selected.knowledge_base_id) }}</router-link></dd>
-              <dt>提问人</dt><dd>{{ displayPerson(selected.reporter_name, selected.reporter_uid) }}<small v-if="selected.reporter_uid">原生 UID：{{ selected.reporter_uid }}</small></dd>
+              <dt>反馈提交者</dt><dd>{{ displayPerson(selected.reporter_name, selected.reporter_uid) }}<small v-if="selected.reporter_uid">原生 UID：{{ selected.reporter_uid }}</small></dd>
               <dt>负责人</dt><dd>{{ displayPerson(selected.owner_name, selected.owner_uid) }}<small v-if="selected.owner_uid">原生 UID：{{ selected.owner_uid }}</small></dd>
               <dt>来源消息</dt><dd><code>{{ selected.message_id || '无消息编号' }}</code></dd>
               <dt>记录编号</dt><dd><code>{{ selected.id }}</code></dd>
             </dl>
-            <h5>问题描述</h5><p class="prewrap">{{ selected.description }}</p>
-            <template v-if="selected.steps"><h5>复现步骤</h5><p class="prewrap">{{ selected.steps }}</p></template>
-            <template v-if="selected.expected"><h5>预期结果</h5><p class="prewrap">{{ selected.expected }}</p></template>
-            <h5>登记消息</h5><blockquote class="prewrap">{{ selected.original_message || '未保存登记消息' }}</blockquote>
+            <h5>问题描述</h5><OctoMarkdown :text="selected.description" />
+            <template v-if="selected.steps"><h5>复现步骤</h5><OctoMarkdown :text="selected.steps" /></template>
+            <template v-if="selected.expected"><h5>预期结果</h5><OctoMarkdown :text="selected.expected" /></template>
+            <h5>登记消息</h5><OctoMarkdown :text="selected.original_message" empty="未保存登记消息" />
             <ul v-if="selected.attachments?.length" class="attachments"><li v-for="(attachment, index) in selected.attachments" :key="index">
               <a v-if="safeAttachmentURL(attachment.url)" :href="safeAttachmentURL(attachment.url)!" target="_blank" rel="noopener noreferrer">{{ attachment.name || '附件' }}</a>
               <span v-else>{{ attachment.name || '附件（链接不可用）' }}</span>
@@ -156,9 +183,9 @@
             <h4>原问与答复</h4>
             <template v-if="issueEvidence?.answer || issueEvidence?.question">
               <h5>原问题</h5>
-              <blockquote class="prewrap">{{ issueEvidence.question || '未保留可核对的原问题' }}</blockquote>
+              <OctoMarkdown :text="issueEvidence.question" empty="未保留可核对的原问题" />
               <h5>当时的 Bot 答复</h5>
-              <blockquote class="prewrap">{{ issueEvidence.answer || '未保留答复正文' }}</blockquote>
+              <OctoMarkdown :text="issueEvidence.answer" empty="未保留答复正文" />
             </template>
             <p v-else class="hint">这条登记没有可追溯的原问与答复。</p>
             <template v-if="issueEvidence?.question">
@@ -167,13 +194,14 @@
               <t-alert v-if="retestError" theme="error">{{ retestError }}</t-alert>
               <div v-if="retestResult">
                 <h5>本次复测答复</h5>
-                <blockquote class="prewrap">{{ retestResult.answer }}</blockquote>
+                <OctoMarkdown :text="retestResult.answer" />
                 <p v-if="retestResult.sources.length" class="hint">本次查阅了 {{ retestResult.sources.join('、') }}</p>
                 <p class="hint">请核对原答复和资料，在处理说明里保存复测结论。</p>
               </div>
             </template>
           </section>
-          <section class="detail-section">
+          <OctoIssueReply v-if="!selected.is_direct" :key="selected.id" :issue="selected" />
+          <section v-if="!selected.archive_state" class="detail-section">
             <h4>更新处理</h4>
             <div class="two-col">
               <label>处理状态<t-select v-model="issueEdit.status" :options="statusOptions" /></label>
@@ -193,7 +221,7 @@
             <t-empty v-if="!events.length" description="暂无后续处理记录，原始提问见上方来源" />
             <ol v-else class="history"><li v-for="(event, index) in events" :key="index">
               <div class="row"><t-tag size="small" :theme="statusTheme(event.status)">{{ issueStatusLabels[event.status] || event.status }}</t-tag><strong :title="`原生 UID：${event.actor_uid}`">{{ eventActor(event) }}</strong><time>{{ time(event.created_at) }}</time></div>
-              <p class="prewrap">{{ event.note || '更新了处理状态或负责人，未补充说明' }}</p>
+              <OctoMarkdown :text="event.note" empty="更新了处理状态或负责人" />
             </li></ol>
           </section>
         </div>
@@ -221,7 +249,7 @@ import { useRoute } from 'vue-router'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import { listScopes, type OctoScope } from '@/api/octo'
 import {
-  listIssues, issueDetail, updateIssue, retestIssue, listContacts, saveContact, deleteContact, issueReport,
+  listIssues, issueDetail, updateIssue, batchIssues, retestIssue, listContacts, saveContact, deleteContact, issueReport,
   type OctoIssue, type OctoContact, type IssueEvent, type IssueStatus, type IssueFilter, type IssueEvidence, type IssueRetest,
 } from '@/api/octo-business'
 import { useAuthStore } from '@/stores/auth'
@@ -229,6 +257,8 @@ import { issueKindLabels, issueStatusLabels, displayPerson, csvCell, safeAttachm
 import { resolveBusinessView, scopedIssueFilter, issueFilterKey, scopePath, issueSourceLabel, issueBelongsToContext, type OctoBusinessView } from './octoBusinessView'
 import OctoBusinessFilters from './OctoBusinessFilters.vue'
 import OctoReportSchedules from './OctoReportSchedules.vue'
+import OctoMarkdown from './OctoMarkdown.vue'
+import OctoIssueReply from './OctoIssueReply.vue'
 
 const props = defineProps<{ view?: OctoBusinessView; knowledgeBaseId?: string }>()
 const auth = useAuthStore()
@@ -260,6 +290,7 @@ const eventActor = (event: { actor_name?: string; actor_uid: string }) =>
 const statusTheme = (status: string): 'success' | 'default' | 'warning' | 'primary' =>
   status === 'resolved' ? 'success' : status === 'closed' ? 'default' : status === 'inprogress' ? 'primary' : 'warning'
 const columns = [
+  { colKey: 'select', type: 'multiple' as const, width: 48 },
   { colKey: 'title', title: '问题／类型', minWidth: 230 },
   { colKey: 'scope', title: '来源群聊／子区', minWidth: 170 },
   { colKey: 'knowledge_base', title: '知识库', minWidth: 150 },
@@ -268,6 +299,84 @@ const columns = [
   { colKey: 'status', title: '状态', width: 85 },
   { colKey: 'created_at', title: '登记时间', width: 160 },
 ]
+const visibility = ref('active')
+const unassigned = ref(false)
+const selectedKeys = ref<Array<string | number>>([])
+const batchRows = ref<OctoIssue[]>([])
+const batchOpen = ref(false)
+const batchBusy = ref(false)
+const batchAction = ref('')
+const batchStatus = ref<IssueStatus>('inprogress')
+const batchNote = ref('')
+const batchContact = ref('')
+const batchContacts = ref<Array<{label:string;value:string}>>([])
+const batchResult = ref('')
+const batchError = ref('')
+const batchOptions = computed(() => {
+  if (visibility.value === 'trash') return [{ label: '恢复至问题列表', value: 'restore' }]
+  if (visibility.value === 'archive') return [
+    { label: '恢复至问题列表', value: 'restore' }, { label: '移至回收站', value: 'trash' },
+  ]
+  return [
+    { label: '更新状态', value: 'status' },
+    ...(batchContacts.value.length ? [{ label: '指定联系人', value: 'assign' }] : []),
+    { label: '归档', value: 'archive' }, { label: '移至回收站', value: 'trash' },
+  ]
+})
+
+async function openBatch() {
+  batchRows.value = issues.value.filter(row => selectedKeys.value.includes(row.id))
+  if (!batchRows.value.length) return
+  batchContacts.value = []
+  batchContact.value = ''
+  batchNote.value = ''
+  batchError.value = ''
+  batchAction.value = batchOptions.value[0].value
+  batchOpen.value = true
+  const kb = batchRows.value[0].knowledge_base_id
+  if (batchRows.value.some(row => row.knowledge_base_id !== kb)) return
+  try {
+    const response = await listContacts(kb)
+    if (batchOpen.value && batchRows.value[0]?.knowledge_base_id === kb) {
+      batchContacts.value = response.data.map(contact => ({value: contact.id, label: contact.name}))
+    }
+  } catch { /* Status changes remain available. */ }
+}
+
+async function executeBatch(rows:OctoIssue[], action:string, status:string, contact_id='', note='') {
+  const context = contextVersion
+  batchBusy.value = true
+  batchError.value = ''
+  try {
+    const response = await batchIssues({targets:rows.map(({id,updated_at})=>({id,updated_at})), action, status, contact_id, note})
+    if (context !== contextVersion) return
+    const updated = response.data.filter(row => row.state === 'updated').length
+    const messages:Record<string,string> = {unavailable:'权限或资料变化', changed:'记录已更新', invalid:'操作无效', failed:'执行失败'}
+    const skipped = response.data.filter(row => row.state !== 'updated')
+    batchResult.value = `成功 ${updated}/${rows.length}` + skipped.map(item =>
+      ` · ${rows.find(row => row.id === item.id)?.title || item.id}（${messages[item.state] || item.state}）`,
+    ).join('')
+    batchOpen.value = false
+    await loadIssues()
+  } catch {
+    if (context === contextVersion) {
+      batchError.value = '提交处理失败，请刷新后重试。'
+      if (!batchOpen.value) batchResult.value = batchError.value
+    }
+  } finally { batchBusy.value = false }
+}
+
+function applyBatch() {
+  if (batchBusy.value || !batchRows.value.length) return
+  if (batchAction.value === 'assign' && !batchContact.value) {
+    batchError.value = '请选择负责人。'
+    return
+  }
+  void executeBatch(batchRows.value, batchAction.value, batchStatus.value, batchContact.value, batchNote.value)
+}
+function changeRowStatus(row:OctoIssue, value:string) {
+  if (value !== row.status && !batchBusy.value) void executeBatch([row], 'status', value)
+}
 
 let listVersion = 0, metadataVersion = 0, detailVersion = 0, contactVersion = 0, reportVersion = 0, contextVersion = 0
 function query() { return scopedIssueFilter(filter.value, props.knowledgeBaseId, fromDay.value, toDay.value) }
@@ -297,10 +406,12 @@ async function loadIssues() {
   loading.value = true
   error.value = ''
   try {
-    const result = await listIssues({ ...query(), page: page.value, page_size: 20 })
+    const result = await listIssues({ ...query(), page: page.value, page_size: 20,
+      visibility: visibility.value, owner_uid: unassigned.value ? 'unassigned' : undefined })
     if (version === listVersion) {
       issues.value = result.data.items
       total.value = result.data.total
+      selectedKeys.value = []
     }
   } catch (cause) {
     if (version === listVersion) {

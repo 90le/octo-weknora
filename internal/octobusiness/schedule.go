@@ -19,9 +19,12 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const TypeReportSend = "octo:report_send"
-const reportTaskTimeout = 2 * time.Minute
-const reportRecoveryGrace = time.Minute
+const (
+	// TypeReportSend is the internal queue event for a due report schedule.
+	TypeReportSend      = "octo:report_send"
+	reportTaskTimeout   = 2 * time.Minute
+	reportRecoveryGrace = time.Minute
+)
 
 var errReportScheduleChanged = errors.New("report schedule changed or disabled")
 
@@ -47,18 +50,39 @@ type ReportSchedule struct {
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 	RunKey        string     `json:"-" gorm:"-"`
+	Template      string     `json:"template"`
+	Frequency     string     `json:"frequency"`
+	Period        string     `json:"period"`
+	Mode          string     `json:"mode"`
+	Lookback      int        `json:"lookback"`
+	IntervalDays  int        `json:"interval_days"`
+	MonthDay      int        `json:"month_day"`
+	Threshold     int        `json:"threshold"`
+	MinimumUsers  int        `json:"minimum_users"`
+	OnlyChanges   bool       `json:"only_changes"`
+	Instruction   string     `json:"instruction"`
+	Manual        bool       `json:"-" gorm:"-"`
 }
 
 func (ReportSchedule) TableName() string { return "octo_report_schedules" }
 
 type ReportRun struct {
-	ID         string `gorm:"primaryKey"`
-	TenantID   uint64
-	ScheduleID string
-	DueAt      time.Time
-	Status     string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID          string     `json:"id" gorm:"primaryKey"`
+	TenantID    uint64     `json:"-"`
+	ScheduleID  string     `json:"schedule_id"`
+	DueAt       time.Time  `json:"due_at"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	FromAt      *time.Time `json:"from"`
+	ToAt        *time.Time `json:"to"`
+	Target      string     `json:"target"`
+	Snapshot    string     `json:"-"`
+	Fingerprint string     `json:"-"`
+	Authority   string     `json:"-"`
+	Revision    *time.Time `json:"-"`
+	ErrorCode   string     `json:"error_code"`
+	Summary     string     `json:"summary" gorm:"-"`
 }
 
 func (ReportRun) TableName() string { return "octo_report_runs" }
@@ -88,6 +112,7 @@ func nextWeekly(s ReportSchedule, after time.Time) (time.Time, error) {
 	}
 	return time.Time{}, ErrInvalid
 }
+
 func (s *Service) ListReportSchedules(ctx context.Context) ([]ReportSchedule, error) {
 	p, err := currentPrincipal(ctx)
 	if err != nil || !p.Console {
@@ -97,30 +122,13 @@ func (s *Service) ListReportSchedules(ctx context.Context) ([]ReportSchedule, er
 	err = s.db.WithContext(ctx).Where("tenant_id = ?", p.TenantID).Order("name, id").Limit(200).Find(&rows).Error
 	return rows, err
 }
+
 func (s *Service) PutReportSchedule(ctx context.Context, input ReportSchedule) (*ReportSchedule, error) {
 	p, err := currentPrincipal(ctx)
 	if err != nil || !p.Console {
 		return nil, ErrDenied
 	}
-	if !validText(input.Name, 256) || !validText(input.ChannelID, 128) || !validText(input.ScopeID, 128) {
-		return nil, ErrInvalid
-	}
-	if input.RecipientType != "source" && input.RecipientType != "private" {
-		return nil, ErrInvalid
-	}
-	if input.RecipientType == "private" && !validText(input.RecipientUID, 128) {
-		return nil, ErrInvalid
-	}
-	if input.RecipientType == "source" {
-		input.RecipientUID = ""
-	}
-	if input.Format != "text" && input.Format != "markdown" && input.Format != "html" && input.Format != "csv" {
-		return nil, ErrInvalid
-	}
-	if input.Timezone == "" {
-		input.Timezone = "Asia/Shanghai"
-	}
-	next, err := nextWeekly(input, time.Now())
+	next, err := normalizeReportSchedule(&input, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -130,9 +138,9 @@ func (s *Service) PutReportSchedule(ctx context.Context, input ReportSchedule) (
 		if s.ReportPrincipal == nil {
 			return nil, ErrDenied
 		}
-		checked, e := s.ReportPrincipal(ctx, input)
+		checked, e := s.ReportPrincipal(ctx, input.validationSource())
 		if e != nil {
-			return nil, ErrDenied
+			return nil, e
 		}
 		if _, e = currentPrincipal(checked); e != nil {
 			return nil, e
@@ -165,6 +173,7 @@ func (s *Service) PutReportSchedule(ctx context.Context, input ReportSchedule) (
 	})
 	return &input, err
 }
+
 func (s *Service) DeleteReportSchedule(ctx context.Context, id string) error {
 	p, err := currentPrincipal(ctx)
 	if err != nil || !p.Console {
@@ -184,7 +193,7 @@ func (s *Service) DeleteReportSchedule(ctx context.Context, id string) error {
 
 // StartReports reuses the native cron and task-queue libraries in this process.
 // Persistent due times and deterministic queue IDs prevent multi-instance sends.
-func (s *Service) StartReports(ctx context.Context, queue interfaces.TaskEnqueuer) error {
+func (s *Service) StartReports(ctx context.Context, queue interfaces.TaskEnqueuer, models qualityModelResolver) error {
 	if queue == nil || s.reportCron != nil {
 		return ErrInvalid
 	}
@@ -196,22 +205,36 @@ func (s *Service) StartReports(ctx context.Context, queue interfaces.TaskEnqueue
 	}); err != nil {
 		return err
 	}
+	if models != nil {
+		s.reportModels = models
+		if _, err := scheduler.AddFunc("* * * * *", func() {
+			work, cancel := context.WithTimeout(ctx, 4*time.Minute)
+			defer cancel()
+			_ = s.runQualityReviews(work, models)
+		}); err != nil {
+			return err
+		}
+	}
 	s.reportCron = scheduler
 	scheduler.Start()
 	return nil
 }
+
 func (s *Service) StopReports() {
 	if s.reportCron != nil {
 		stopped := s.reportCron.Stop()
 		<-stopped.Done()
 	}
 }
+
 func (s *Service) EnqueueDueReports(ctx context.Context, queue interfaces.TaskEnqueuer, now time.Time) error {
 	if err := s.recoverInterruptedReports(ctx, now); err != nil {
 		return err
 	}
 	var schedules []ReportSchedule
-	if err := s.db.WithContext(ctx).Where("enabled = ? AND next_run_at <= ?", true, now).Order("next_run_at, id").Limit(100).Find(&schedules).Error; err != nil {
+	source := s.db.WithContext(ctx).Where("enabled = ? AND frequency <> 'manual' AND next_run_at <= ?", true, now).
+		Order("next_run_at, id").Limit(100)
+	if err := source.Find(&schedules).Error; err != nil {
 		return err
 	}
 	for _, schedule := range schedules {
@@ -225,7 +248,7 @@ func (s *Service) EnqueueDueReports(ctx context.Context, queue interfaces.TaskEn
 			_ = s.db.WithContext(ctx).Model(&ReportSchedule{}).Where("id = ? AND updated_at = ?", schedule.ID, schedule.UpdatedAt).UpdateColumns(map[string]any{"last_status": "queue_failed", "last_error": "Unable to enqueue report; the scheduler will retry"}).Error
 			continue
 		}
-		next, err := nextWeekly(schedule, now)
+		next, err := nextReportTime(schedule, now)
 		if err != nil {
 			return err
 		}
@@ -235,6 +258,7 @@ func (s *Service) EnqueueDueReports(ctx context.Context, queue interfaces.TaskEn
 	}
 	return nil
 }
+
 func (s *Service) ProcessReportTask(ctx context.Context, task *asynq.Task) error {
 	// The native in-process queue does not apply asynq timeout options.
 	// Bound the handler itself so interrupted-run recovery has the same deadline
@@ -258,7 +282,10 @@ func (s *Service) ProcessReportTask(ctx context.Context, task *asynq.Task) error
 	}
 	key := digest("report", fmtTenant(schedule.TenantID), schedule.ID, input.DueAt.UTC().Format(time.RFC3339Nano))
 	schedule.RunKey = key
-	run := ReportRun{ID: key, TenantID: schedule.TenantID, ScheduleID: schedule.ID, DueAt: input.DueAt, Status: "sending"}
+	run := ReportRun{
+		ID: key, TenantID: schedule.TenantID, ScheduleID: schedule.ID, DueAt: input.DueAt,
+		Status: "sending", Revision: &schedule.UpdatedAt,
+	}
 	claim := s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&run)
 	if claim.Error != nil {
 		return claim.Error
@@ -268,13 +295,14 @@ func (s *Service) ProcessReportTask(ctx context.Context, task *asynq.Task) error
 	}
 	now := time.Now().UTC()
 	_ = s.db.WithContext(ctx).Model(&ReportSchedule{}).Where("id = ?", schedule.ID).UpdateColumns(map[string]any{"last_status": "sending", "last_error": "", "last_run_at": now}).Error
+	status, message := "sent", ""
 	sendErr := func() error {
-		if s.ReportPrincipal == nil || s.ReportDelivery == nil {
+		if s.ReportPrincipal == nil {
 			return ErrDenied
 		}
-		reportCtx, e := s.ReportPrincipal(ctx, schedule)
+		reportCtx, e := s.ReportPrincipal(ctx, schedule.validationSource())
 		if e != nil {
-			return ErrDenied
+			return e
 		}
 		reportCtx, e = s.guardReportSchedule(reportCtx, schedule)
 		if e != nil {
@@ -284,15 +312,23 @@ func (s *Service) ProcessReportTask(ctx context.Context, task *asynq.Task) error
 		if e != nil {
 			return ErrDenied
 		}
-		loc, e := time.LoadLocation(schedule.Timezone)
-		if e != nil {
-			return ErrInvalid
-		}
-		from := input.DueAt.In(loc).AddDate(0, 0, -7).UTC()
-		to := input.DueAt
-		report, e := s.Report(reportCtx, IssueFilter{From: &from, To: &to})
+		report, e := s.prepareReport(reportCtx, originalPrincipal, schedule, &run, nil, nil)
 		if e != nil {
 			return e
+		}
+		if s.reportShouldSkip(ctx, schedule, report, run) {
+			status = "skipped"
+			return nil
+		}
+		if schedule.Mode == "generate" || schedule.Mode == "approval" {
+			status = "generated"
+			if schedule.Mode == "approval" {
+				status = "pending"
+			}
+			return nil
+		}
+		if s.ReportDelivery == nil {
+			return ErrDenied
 		}
 		var file *ReportArtifact
 		if schedule.Format != "text" {
@@ -315,19 +351,24 @@ func (s *Service) ProcessReportTask(ctx context.Context, task *asynq.Task) error
 		}
 		return s.ReportDelivery(WithReportAuthority(reportCtx, originalPrincipal), schedule, report, file)
 	}()
-	status := "sent"
-	message := ""
 	if sendErr != nil {
 		status = "failed"
-		message = "Report was not confirmed delivered. Check the channel, scope and recipient before sending again."
+		message = "报告未确认送达。请核对渠道、来源与接收目标，再决定是否补发。"
 		if errors.Is(sendErr, errReportScheduleChanged) {
-			message = "Report cancelled before delivery because its schedule was changed or disabled."
+			message = "订阅已修改或停用，本期报告已停止发送。"
 		}
 	}
-	if err = s.db.WithContext(ctx).Model(&ReportRun{}).Where("id = ?", key).Updates(map[string]any{"status": status, "updated_at": time.Now()}).Error; err != nil {
+	write, writeCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer writeCancel()
+	runPatch := map[string]any{"status": status, "updated_at": time.Now(), "error_code": reportErrorCode(sendErr)}
+	if err = s.db.WithContext(write).Model(&ReportRun{}).Where("id = ? AND status = 'sending'", key).
+		Updates(runPatch).Error; err != nil {
 		return err
 	}
-	if err = s.db.WithContext(ctx).Model(&ReportSchedule{}).Where("id = ? AND tenant_id = ?", schedule.ID, schedule.TenantID).UpdateColumns(map[string]any{"last_status": status, "last_error": message, "last_run_at": now}).Error; err != nil {
+	planPatch := map[string]any{"last_status": status, "last_error": message, "last_run_at": now}
+	if err = s.db.WithContext(write).Model(&ReportSchedule{}).
+		Where("id = ? AND tenant_id = ? AND updated_at = ?", schedule.ID, schedule.TenantID, schedule.UpdatedAt).
+		UpdateColumns(planPatch).Error; err != nil {
 		return err
 	}
 	if sendErr != nil {
@@ -349,7 +390,12 @@ func reportAuthority(p Principal) string {
 // Do not silently deliver a report prepared for an older recipient or settings.
 func (s *Service) ensureReportScheduleCurrent(ctx context.Context, schedule ReportSchedule) error {
 	var count int64
-	if err := s.db.WithContext(ctx).Model(&ReportSchedule{}).Where("id = ? AND tenant_id = ? AND enabled = ? AND updated_at = ?", schedule.ID, schedule.TenantID, true, schedule.UpdatedAt).Count(&count).Error; err != nil {
+	query := s.db.WithContext(ctx).Model(&ReportSchedule{}).
+		Where("id = ? AND tenant_id = ? AND updated_at = ?", schedule.ID, schedule.TenantID, schedule.UpdatedAt)
+	if !schedule.Manual {
+		query = query.Where("enabled = ?", true)
+	}
+	if err := query.Count(&count).Error; err != nil {
 		return err
 	}
 	if count != 1 {

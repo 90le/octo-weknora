@@ -5,52 +5,119 @@
         <t-select v-model="scopeID" :options="scopeOptions" :loading="scopesLoading" filterable
           placeholder="选择要复核的区域" />
       </label>
-      <label>问题筛选
+      <label>筛选
         <t-select v-model="filter" :options="filters" />
       </label>
-      <t-button variant="outline" :loading="loading" :disabled="!scopeID" @click="reload">刷新问答</t-button>
+      <label>知识库<t-select v-model="filterLibrary" :options="libraryOptions" clearable /></label>
+      <label>从<t-input v-model="from" type="date" /></label>
+      <label>到<t-input v-model="to" type="date" /></label>
+      <label>关键词<t-input v-model="keyword" clearable @enter="applyFilters" /></label>
+      <label>主题<t-input v-model="topic" clearable @enter="applyFilters" /></label>
+      <t-button variant="outline" :loading="loading" :disabled="!scopeID" @click="applyFilters">应用筛选</t-button>
+      <t-button variant="outline" @click="openSettings">后台复核设置</t-button>
     </div>
     <p v-if="sample" class="hint">
-      最近 14 天 · 已读取 {{ sample.sample_size }} 条文字问答
-      <span v-if="sample.truncated"> · 仅统计最新 250 条候选记录</span>
+      {{ day(sample.since) }} 至 {{ day(sample.until) }} · 此筛选下 {{ sample.total }} 条文字问答
+      <span v-if="sample.truncated"> · 窗口超出读取上限，可缩短日期以核对完整数据</span>
+      <t-button v-if="group" size="small" variant="text" @click="group = ''; applyFilters()">清除问题组</t-button>
     </p>
     <t-alert v-if="error" theme="error">{{ error }}</t-alert>
-    <t-loading :loading="loading">
+    <div v-if="overview && sample" class="metrics">
+      <section v-for="metric in metrics" :key="metric.label" class="turn">
+        <span class="hint">{{ metric.label }}</span><strong>{{ metric.value }}</strong>
+        <router-link :to="drillDown(metric.filter)">查看对应问答</router-link>
+      </section>
+      <section class="turn"><h3>每日提问</h3>
+        <div v-for="bucket in sample.stats.days" :key="bucket.label" class="trend">
+          <span>{{ bucket.label }}</span><meter :value="bucket.count" :max="trendMax" /><span>{{ bucket.count }}</span>
+        </div>
+      </section>
+      <section class="turn"><h3>业务主题</h3>
+        <router-link v-for="bucket in sample.stats.topics.slice(0, 12)" :key="bucket.label" :to="drillDown('all', '', bucket.label)">{{ bucket.label }} · {{ bucket.count }} 条</router-link>
+      </section>
+      <section class="turn"><h3>高频问题</h3>
+        <router-link v-for="bucket in sample.stats.groups.slice(0, 12)" :key="bucket.id" :to="drillDown('all', bucket.id)">{{ bucket.question }} · {{ bucket.count }} 次 / {{ bucket.users }} 人<span v-if="bucket.gaps"> · 疑似未答 {{ bucket.gaps }} 次</span></router-link>
+      </section>
+      <section v-if="sample.stats.similar?.length" class="turn">
+        <h3>相似问法待核对</h3>
+        <div v-for="pair in sample.stats.similar.slice(0, 6)" :key="pair.a.id + pair.b.id" class="turn">
+          <router-link :to="drillDown('all',pair.a.id)">{{ pair.a.question }} · {{ pair.a.count }} 次</router-link>
+          <router-link :to="{...drillDown('all',pair.b.id),query:{...drillDown('all',pair.b.id).query,merge:pair.a.example_id,mergeLabel:pair.a.question}}">
+            {{ pair.b.question }} · {{ pair.b.count }} 次
+          </router-link>
+        </div>
+      </section>
+    </div>
+    <t-loading v-if="!overview" :loading="loading">
+      <div v-if="visibleRows.length" class="row">
+        <t-checkbox :checked="checked.length === visibleRows.length" @change="checkPage">选择本页</t-checkbox>
+        <t-button size="small" variant="outline" :disabled="!checked.length" @click="openBatch">批量操作 {{ checked.length || '' }}</t-button>
+      </div>
       <t-empty v-if="!visibleRows.length" :description="scopeID ? '暂无符合筛选的问答' : '选择一个 Octo 区域查看问答'" />
       <article v-for="row in visibleRows" :key="row.id" class="turn">
         <div class="row">
+          <t-checkbox :checked="checked.includes(row.id)" aria-label="选择问答" @change="toggleRow(row.id)" />
           <t-tag size="small" variant="light" :theme="row.outcome === 'answered' ? 'default' : 'warning'">
             {{ outcomes[row.outcome] || row.outcome }}
           </t-tag>
           <span v-if="row.unanswered_repeats > 1">同一问法疑似未答 {{ row.unanswered_repeats }} 次</span>
           <span v-if="row.unavailable_sources">{{ row.unavailable_sources }} 条资料线索当前不可读取</span>
           <span>{{ new Date(row.created_at).toLocaleString() }}</span>
+          <t-tag v-if="row.review?.suggestion" size="small" variant="light">{{ suggestions[row.review.suggestion] }}</t-tag>
+          <span v-if="row.review?.disposition">{{ dispositions[row.review.disposition] }}</span>
+          <span v-if="row.review?.topic">{{ row.review.topic }}</span>
+          <span v-if="row.review?.issue_id">已关联问题</span>
         </div>
         <h3>{{ row.question }}</h3>
-        <p class="excerpt">{{ row.answer || '没有送达的 Bot 答复' }}</p>
+        <OctoMarkdown :text="row.answer" compact empty="没有送达的 Bot 答复" />
+        <p v-if="row.review?.reason" class="hint">{{ row.review.reason }}</p>
         <div class="row">
           <span class="hint">{{ row.sources?.length ? `${row.sources.length} 条可核查资料线索` : '无结构化资料记录' }}</span>
           <t-button size="small" variant="outline" @click="openRow(row)">查看和复核</t-button>
         </div>
       </article>
-      <t-pagination v-if="filteredRows.length > pageSize" v-model:current="page" :total="filteredRows.length"
+      <t-pagination v-if="(sample?.total ?? 0) > pageSize" v-model:current="page" :total="sample?.total ?? 0"
         :page-size="pageSize" :show-page-size="false" />
     </t-loading>
+
+    <t-dialog v-model:visible="batchOpen" header="批量处理问答" :confirm-btn="{content:'应用',loading:batchBusy}" @confirm="runBatch">
+      <div class="review">
+        <p>已选 {{ checked.length }} 条问答。</p>
+        <t-select v-model="batchAction" :options="batchActions" />
+        <t-select v-if="batchAction === 'review'" v-model="batchValue" :options="libraryOptions" placeholder="选择证据所属知识库" />
+        <t-select v-if="batchAction === 'disposition'" v-model="batchValue" :options="dispositionOptions" />
+        <t-select v-if="batchAction === 'link'" v-model="batchValue" :options="issueOptions" filterable />
+        <t-select v-if="batchAction === 'merge'" v-model="batchValue" :options="mergeOptions" filterable />
+        <t-input v-if="batchAction === 'topic'" v-model="batchValue" placeholder="业务主题" :maxlength="48" />
+        <p v-if="batchMessage" role="status">{{ batchMessage }}</p>
+      </div>
+    </t-dialog>
+    <t-dialog v-model:visible="settingsOpen" header="后台复核设置" :confirm-btn="{content:'保存',loading:settingsBusy}" @confirm="persistSettings">
+      <div v-if="settings" class="review">
+        <label>自动复核<t-switch v-model="settings.enabled" /></label>
+        <label>复核模型<t-select v-model="settings.model_id" :options="modelOptions" clearable placeholder="沿用对应渠道的模型" /></label>
+        <label>每批上限<t-input-number v-model="settings.per_run" :min="1" :max="12" /></label>
+        <label>每日上限<t-input-number v-model="settings.daily_limit" :min="1" :max="500" /></label>
+        <label>普通答复抽检百分比<t-input-number v-model="settings.sample_percent" :min="0" :max="100" /></label>
+      </div>
+      <p v-if="settingsError" role="status">{{ settingsError }}</p>
+    </t-dialog>
 
     <t-drawer v-model:visible="drawer" attach="body" header="问答复核" size="min(750px, 100vw)" :footer="false">
       <div v-if="selected" class="review">
         <section>
           <h3>用户提问</h3>
-          <p>{{ selected.question }}</p>
+          <OctoMarkdown :text="selected.question" />
           <h3>Bot 答复</h3>
-          <p>{{ selected.answer || '没有送达的 Bot 答复' }}</p>
+          <OctoMarkdown :text="selected.answer" empty="没有送达的 Bot 答复" />
         </section>
         <label>负责核查的知识库
           <t-select v-model="libraryID" :options="libraryOptions" :disabled="analyzing || confirming"
             placeholder="选择该问题对应的库" />
         </label>
         <div class="row">
-          <t-button :loading="analyzing" :disabled="!libraryID || confirming" @click="analyze">用 AI 复核</t-button>
+          <t-button v-if="selected.review?.state === 'done'" :disabled="!libraryID || analyzing" @click="analyze(true)">查看已复核证据</t-button>
+          <t-button :loading="analyzing" :disabled="!libraryID || confirming" @click="analyze(false)">用 AI 复核</t-button>
           <span v-if="selected.unanswered_repeats > 1" class="hint">同时核对最多 6 条同问法的疑似未答记录。</span>
         </div>
         <t-alert v-if="reviewError" theme="error">{{ reviewError }}</t-alert>
@@ -91,13 +158,20 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { listScopes, type OctoScope } from '@/api/octo'
+import { listModels } from '@/api/model'
 import { scopePath } from './octoBusinessView'
+import OctoMarkdown from './OctoMarkdown.vue'
 import {
-  analyzeQuality, confirmQuality, listContacts, listQuality,
+  analyzeQuality, batchQuality, confirmQuality, listContacts, listIssues, listQuality, qualitySettings, saveQualitySettings,
   type OctoContact, type OctoIssue, type QualityDraft, type QualityPage, type QualityRow,
+  type QualitySettings,
 } from '@/api/octo-business'
 
+const props = defineProps<{overview?:boolean}>()
+const route = useRoute()
+const param = (key: string) => typeof route.query[key] === 'string' ? String(route.query[key]) : ''
 const outcomes: Record<string, string> = {
   answered: '有答复', suspected_gap: '疑似未答', failed: '处理失败', retrieval_warning: '检索遇到异常',
 }
@@ -106,12 +180,22 @@ const categories: Record<string, string> = {
   technical: '技术或检索问题', adequate: '现有答复可用', uncertain: '证据不足',
 }
 const filters = [
-  { value: 'all', label: '全部问答' }, { value: 'repeated', label: '反复疑似未答' },
+  { value: 'attention', label: '待关注' }, { value: 'all', label: '全部问答' }, { value: 'repeated', label: '反复疑似未答' },
   { value: 'failed', label: '处理或检索异常' }, { value: 'unavailable', label: '资料当前不可读取' },
-  { value: 'sources', label: '带资料线索' },
+  { value: 'sources', label: '带资料线索' }, { value: 'linked', label: '已关联问题' },
+  { value: 'reviewed', label: '已复核' },
 ]
-const scopeID = ref('')
-const filter = ref('all')
+const suggestions: Record<string, string> = {process:'建议处理',watch:'建议观察',dismiss:'建议无需处理',uncertain:'证据不足'}
+filters.push(...Object.entries(suggestions).map(([value,label]) => ({value,label})))
+const dispositions: Record<string, string> = {seen:'已阅',watch:'观察',dismiss:'无需处理'}
+const scopeID = ref(param('scope'))
+const filter = ref(param('filter') || (props.overview ? 'all' : 'attention'))
+const filterLibrary = ref(param('library'))
+const keyword = ref(param('keyword'))
+const topic = ref(param('topic'))
+const group = ref(param('group'))
+const from = ref(param('from'))
+const to = ref(param('to'))
 const scopes = ref<OctoScope[]>([])
 const scopesLoading = ref(false)
 const sample = ref<QualityPage | null>(null)
@@ -123,14 +207,94 @@ const error = ref('')
 const loading = ref(false)
 const page = ref(1)
 const pageSize = 15
-const filteredRows = computed(() => (sample.value?.rows ?? []).filter(row => {
-  if (filter.value === 'repeated') return row.unanswered_repeats > 1 && row.outcome === 'suspected_gap'
-  if (filter.value === 'failed') return row.outcome === 'failed' || row.outcome === 'retrieval_warning'
-  if (filter.value === 'unavailable') return row.unavailable_sources > 0
-  if (filter.value === 'sources') return Boolean(row.sources?.length)
-  return true
-}))
-const visibleRows = computed(() => filteredRows.value.slice((page.value - 1) * pageSize, page.value * pageSize))
+const visibleRows = computed(() => sample.value?.rows ?? [])
+const day = (s: string) => new Date(s).toLocaleDateString('zh-CN', {timeZone:'Asia/Shanghai'})
+const trendMax = computed(() => Math.max(1, ...(sample.value?.stats.days ?? []).map(b => b.count)))
+const metrics = computed(() => {
+  const stats = sample.value?.stats
+  return stats ? [
+    {label:'提问量',value:stats.questions,filter:'all'}, {label:'提问人数',value:stats.users,filter:'all'},
+    {label:'待关注',value:stats.needs_review,filter:'attention'}, {label:'已复核',value:stats.reviewed,filter:'reviewed'},
+    {label:'资料不可用',value:stats.unavailable,filter:'unavailable'}, {label:'处理或检索异常',value:stats.failed,filter:'failed'},
+  ] : []
+})
+const drillDown = (outcome:string, id = '', label = topic.value) => ({
+  name:'knowledgeQuality',
+  query:{scope:scopeID.value,filter:outcome,library:filterLibrary.value,keyword:keyword.value,topic:label,group:id,from:from.value,to:to.value},
+})
+const checked = ref<string[]>([])
+const batchOpen = ref(false)
+const batchBusy = ref(false)
+const batchAction = ref('disposition')
+const batchValue = ref('')
+const batchMessage = ref('')
+const issueOptions = ref<{value:string;label:string}[]>([])
+const mergeOptions = computed(() => [
+  ...(param('merge') ? [{value:param('merge'),label:param('mergeLabel')}] : []),
+  ...visibleRows.value.map(row => ({value:row.id,label:row.question})),
+])
+const dispositionOptions = [...Object.entries(dispositions).map(([value,label]) => ({value,label})), {value:'',label:'恢复未处置'}]
+const batchActions = [
+  {value:'disposition',label:'人工处置'},{value:'review',label:'加入复核队列'},{value:'topic',label:'设置主题'},
+  {value:'link',label:'关联已有问题'},{value:'merge',label:'合并到所选问答的组'},{value:'split',label:'拆为新组'},
+]
+const settingsOpen = ref(false)
+const settingsBusy = ref(false)
+const settings = ref<QualitySettings>()
+const settingsError = ref('')
+const modelOptions = ref<{value:string;label:string}[]>([])
+function toggleRow(id: string) {
+  checked.value = checked.value.includes(id) ? checked.value.filter(item => item !== id) : [...checked.value, id]
+}
+function checkPage() {
+  checked.value = checked.value.length === visibleRows.value.length ? [] : visibleRows.value.map(row => row.id)
+}
+async function openBatch() {
+  batchMessage.value = ''
+  batchAction.value = 'disposition'
+  batchValue.value = 'seen'
+  issueOptions.value = []
+  batchOpen.value = true
+  try {
+    const response = await listIssues({scope_id:scopeID.value,page_size:100})
+    if (batchOpen.value) issueOptions.value = response.data.items.map(issue => ({value:issue.id,label:issue.title}))
+  } catch { /* The other batch actions remain available. */ }
+}
+async function runBatch() {
+  if (batchBusy.value || !checked.value.length || (['review','link','merge'].includes(batchAction.value) && !batchValue.value)) return
+  batchBusy.value = true
+  try {
+    const response = await batchQuality({
+      scope_id:scopeID.value, message_ids:checked.value, action:batchAction.value, value:batchValue.value,
+      library_id:batchAction.value === 'review' ? batchValue.value : undefined,
+    })
+    const accepted = response.data.filter(item => item.state === 'updated').length
+    if (accepted === response.data.length) batchOpen.value = false
+    else batchMessage.value = `成功 ${accepted} 条，另有 ${response.data.length - accepted} 条需要核对证据或权限。`
+    await reload()
+  } catch { batchMessage.value = '操作无法完成，请检查所选证据和访问权限。' }
+  finally { batchBusy.value = false }
+}
+async function openSettings() {
+  settingsOpen.value = true
+  settingsBusy.value = true
+  settingsError.value = ''
+  try {
+    const [response, models] = await Promise.all([qualitySettings(),listModels('KnowledgeQA')])
+    settings.value = response.data
+    modelOptions.value = models.flatMap(model => model.id ? [{value:model.id,label:model.display_name || model.name}] : [])
+  } catch { settingsError.value = '配置读取失败。' }
+  finally { settingsBusy.value = false }
+}
+async function persistSettings() {
+  if (!settings.value || settingsBusy.value) return
+  settingsBusy.value = true
+  try {
+    await saveQualitySettings({...settings.value,model_id:settings.value.model_id || ''})
+    settingsOpen.value = false
+  } catch { settingsError.value = '保存失败。请检查已配置的模型、每批上限及每日预算。' }
+  finally { settingsBusy.value = false }
+}
 
 const drawer = ref(false)
 const selected = ref<QualityRow | null>(null)
@@ -156,13 +320,21 @@ async function reload() {
   loading.value = true
   error.value = ''
   try {
-    const response = await listQuality(scopeID.value)
-    if (version === listVersion) sample.value = response.data
+    const stop = to.value ? new Date(new Date(`${to.value}T00:00:00+08:00`).getTime() + 86400000).toISOString() : undefined
+    const response = await listQuality(scopeID.value,{
+      filter:filter.value, keyword:keyword.value, topic:topic.value, group:group.value, library_id:filterLibrary.value,
+      from:from.value ? `${from.value}T00:00:00+08:00` : undefined, to:stop, page:page.value, page_size:pageSize,
+    })
+    if (version === listVersion) { sample.value = response.data; checked.value = [] }
   } catch {
     if (version === listVersion) error.value = '读取问答失败，请检查区域和访问权限。'
   } finally {
     if (version === listVersion) loading.value = false
   }
+}
+function applyFilters() {
+  if (page.value === 1) void reload()
+  else page.value = 1
 }
 function clearDraft() {
   reviewVersion++
@@ -177,7 +349,7 @@ function clearDraft() {
 function openRow(row: QualityRow) {
   clearDraft()
   selected.value = row
-  libraryID.value = libraryOptions.value.length === 1 ? libraryOptions.value[0].value : ''
+  libraryID.value = row.review?.library_id || (libraryOptions.value.length === 1 ? libraryOptions.value[0].value : '')
   drawer.value = true
 }
 async function loadOwnerContacts(kb: string) {
@@ -192,7 +364,7 @@ async function loadOwnerContacts(kb: string) {
     if (version === contactsVersion) contactsError.value = true
   }
 }
-async function analyze() {
+async function analyze(useReview: boolean) {
   const row = selected.value
   if (!row || !libraryID.value || analyzing.value || confirming.value) return
   clearDraft()
@@ -202,7 +374,8 @@ async function analyze() {
   analyzing.value = true
   try {
     const response = await analyzeQuality({
-      scope_id: scopeID.value, library_id: libraryID.value, message_ids: [row.id, ...similar.slice(0, 5).map(r => r.id)],
+      scope_id: scopeID.value, library_id: libraryID.value,
+      message_ids: useReview ? [row.id] : [row.id, ...similar.slice(0, 5).map(r => r.id)], use_review:useReview,
     })
     if (version === reviewVersion) {
       draft.value = response.data
@@ -232,14 +405,19 @@ async function confirm() {
 watch(scopeID, () => {
   drawer.value = false
   sample.value = null
-  page.value = 1
-  void reload()
+  checked.value = []
+  filterLibrary.value = ''
+  group.value = ''
+  applyFilters()
 })
-watch(filter, () => { page.value = 1 })
+watch(filter, applyFilters)
+watch(page, reload)
+watch(batchAction, action => { batchValue.value = action === 'disposition' ? 'seen' : action === 'merge' ? param('merge') : '' })
 watch(libraryID, value => { clearDraft(); void loadOwnerContacts(value) })
 watch(drawer, value => { if (!value) clearDraft() })
 onBeforeUnmount(() => { listVersion++; reviewVersion++; contactsVersion++ })
 onMounted(async () => {
+  if (scopeID.value) void reload()
   scopesLoading.value = true
   try {
     for (let offset = 0; ; offset += 100) {
@@ -266,12 +444,10 @@ label, .review section { display: grid; gap: 8px; }
 h3, p, blockquote { margin: 0; }
 .turn { display: grid; gap: 8px; }
 .hint, small { color: var(--td-text-color-secondary); }
-.excerpt {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  overflow: hidden;
-}
+.metrics { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:12px; }
+.metrics strong { font-size:24px; }
+.trend { display:grid; grid-template-columns:90px 1fr auto; gap:8px; align-items:center; }
+.trend meter { width:100%; }
 .review p, h3 { white-space: pre-wrap; overflow-wrap: anywhere; }
 blockquote { border-left: 2px solid var(--td-component-border); padding-left: 12px; }
 :deep(.t-drawer__body) { overflow-y: auto; }
