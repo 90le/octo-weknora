@@ -1,11 +1,51 @@
 package octobusiness
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestRetestKeepsOneActiveAttemptAndSeparatesReviewFromIssueStatus(t *testing.T) {
+	s := testService(t)
+	ctx := consoleTestContext()
+	p, err := currentPrincipal(ctx)
+	require.NoError(t, err)
+	issue, err := s.CreateIssue(principalContext(testPrincipal()), gapInput())
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	old, err := s.beginIssueRetest(ctx, p, issue, "123", now.Add(-3*time.Minute))
+	require.NoError(t, err)
+	run, err := s.beginIssueRetest(ctx, p, issue, "123", now)
+	require.NoError(t, err)
+	_, err = s.beginIssueRetest(ctx, p, issue, "123", now)
+	require.ErrorIs(t, err, ErrConflict)
+	result := &issueRetest{Answer: "New answer", ModelID: "qa-model", Sources: []string{"Guide"}}
+	require.ErrorIs(t, s.finishIssueRetest(ctx, issue, old, result, nil), ErrConflict)
+	require.NoError(t, s.finishIssueRetest(ctx, issue, run, result, nil))
+	input := retestReview{State: "verified", Note: "Compared with the guidance"}
+	reviewed, err := s.reviewIssueRetest(ctx, p, issue, run.ID, input)
+	require.NoError(t, err)
+	require.Equal(t, result.Sources, reviewed.Sources)
+	require.Equal(t, result.Answer, reviewed.Answer)
+	_, err = s.reviewIssueRetest(ctx, p, issue, run.ID, input)
+	require.NoError(t, err)
+	_, err = s.reviewIssueRetest(ctx, p, issue, run.ID, retestReview{State: "unresolved", Note: "New conclusion"})
+	require.ErrorIs(t, err, ErrConflict)
+	current, _, err := s.GetIssue(ctx, issue.ID)
+	require.NoError(t, err)
+	require.Equal(t, "open", current.Status)
+	metrics := map[string]int64{}
+	ids := s.db.Model(&Issue{}).Select("id").Where("id = ?", issue.ID)
+	require.NoError(t, s.addReportRetests(context.Background(), ids, p.TenantID,
+		now.Add(-time.Minute), now.Add(time.Minute), metrics))
+	require.EqualValues(t, 1, metrics["retest_completed"])
+	require.EqualValues(t, 1, metrics["retest_verified"])
+	require.EqualValues(t, 1, metrics["retest_failed"])
+}
 
 func TestIssueEvidenceUsesTheAdmittedQuestionInTheSameScope(t *testing.T) {
 	s := testService(t)

@@ -5,10 +5,19 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { safeMarkdownToHTML } from '@/utils/security'
+import { Marked } from 'marked'
+import { escapeHTML, sanitizeHTML } from '@/utils/security'
+
+const markdown = new Marked({
+  breaks: true,
+  renderer: {
+    html: ({ text }) => escapeHTML(text),
+    image: ({ text }) => escapeHTML(text),
+  },
+})
 
 const props = defineProps<{ text?: string; compact?: boolean; empty?: string }>()
-const html = computed(() => safeMarkdownToHTML(props.text || ''))
+const html = computed(() => sanitizeHTML(markdown.parse(props.text || '', { async: false })))
 </script>
 
 <style scoped>

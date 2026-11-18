@@ -232,6 +232,9 @@ func (s *Service) StopReports() {
 }
 
 func (s *Service) EnqueueDueReports(ctx context.Context, queue interfaces.TaskEnqueuer, now time.Time) error {
+	if err := expireIssueRetests(s.db.WithContext(ctx).Model(&retestRecord{}), now); err != nil {
+		return err
+	}
 	if err := s.recoverInterruptedReports(ctx, now); err != nil {
 		return err
 	}
