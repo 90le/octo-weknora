@@ -104,9 +104,9 @@ type evidenceInbox struct {
 }
 
 type evidenceMessage struct {
-	MessageType, UserID, Content string
-	Extra                        map[string]string
-	Quote                        *struct {
+	MessageType, UserID, UserName, Content string
+	Extra                                  map[string]string
+	Quote                                  *struct {
 		MessageID, SenderID, Content string
 		IsBotMessage                 bool
 	}
@@ -128,6 +128,14 @@ func (r evidenceInbox) message(issue *Issue) *evidenceMessage {
 }
 
 func (m evidenceMessage) originalQuestionID() string {
+	id, user := m.originalQuestionAnchor()
+	if user != m.UserID {
+		return ""
+	}
+	return id
+}
+
+func (m evidenceMessage) originalQuestionAnchor() (string, string) {
 	var payload struct {
 		Reply struct {
 			ID      json.RawMessage `json:"message_id"`
@@ -140,10 +148,10 @@ func (m evidenceMessage) originalQuestionID() string {
 		} `json:"reply"`
 	}
 	if m.Quote == nil || json.Unmarshal([]byte(m.Extra["octo_original_payload"]), &payload) != nil ||
-		decimalNativeID(payload.Reply.ID) != m.Quote.MessageID || payload.Reply.Payload.Reply.User != m.UserID {
-		return ""
+		decimalNativeID(payload.Reply.ID) != m.Quote.MessageID {
+		return "", ""
 	}
-	return decimalNativeID(payload.Reply.Payload.Reply.ID)
+	return decimalNativeID(payload.Reply.Payload.Reply.ID), payload.Reply.Payload.Reply.User
 }
 
 func decimalNativeID(raw json.RawMessage) string {

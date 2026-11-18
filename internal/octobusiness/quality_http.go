@@ -1,6 +1,11 @@
 package octobusiness
 
-import "github.com/gin-gonic/gin"
+import (
+	"strconv"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
 
 // QualityReview reads retained group or subarea question-answer evidence.
 func (h *Handler) QualityReview(c *gin.Context) {
@@ -9,7 +14,27 @@ func (h *Handler) QualityReview(c *gin.Context) {
 		respond(c, nil, err)
 		return
 	}
-	page, err := h.service.listQuality(ctx, c.Query("scope_id"))
+	filter := qualityFilter{
+		LibraryID: c.Query("library_id"), Keyword: c.Query("keyword"), Outcome: c.Query("filter"),
+		Topic: c.Query("topic"), Group: c.Query("group"),
+	}
+	if filter.Page, err = strconv.Atoi(c.DefaultQuery("page", "1")); err != nil {
+		respond(c, nil, ErrInvalid)
+		return
+	}
+	if filter.PageSize, err = strconv.Atoi(c.DefaultQuery("page_size", "20")); err != nil {
+		respond(c, nil, ErrInvalid)
+		return
+	}
+	for key, dst := range map[string]*time.Time{"from": &filter.From, "to": &filter.To} {
+		if raw := c.Query(key); raw != "" {
+			if *dst, err = time.Parse(time.RFC3339, raw); err != nil {
+				respond(c, nil, ErrInvalid)
+				return
+			}
+		}
+	}
+	page, err := h.service.queryQuality(ctx, c.Query("scope_id"), filter)
 	respond(c, page, err)
 }
 

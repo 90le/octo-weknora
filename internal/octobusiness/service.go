@@ -23,10 +23,12 @@ type Service struct {
 	knowledge interfaces.KnowledgeService
 	// Management validates and executes additional native operations (e.g. KB
 	// creation/bindings). It must authorize on both preview and confirmation.
-	Management      ManagementExecutor
-	ReportPrincipal func(context.Context, ReportSchedule) (context.Context, error)
-	ReportDelivery  func(context.Context, ReportSchedule, *Report, *ReportArtifact) error
-	reportCron      *cron.Cron
+	Management          ManagementExecutor
+	ReportPrincipal     func(context.Context, ReportSchedule) (context.Context, error)
+	ReportDelivery      func(context.Context, ReportSchedule, *Report, *ReportArtifact) error
+	ManualReplyDelivery func(context.Context, ManualReplyTarget, string, string) (string, error)
+	reportCron          *cron.Cron
+	reportModels        qualityModelResolver
 }
 
 func NewService(db *gorm.DB, kb interfaces.KnowledgeBaseService, knowledge interfaces.KnowledgeService) *Service {
@@ -231,6 +233,9 @@ func insertIssue(tx *gorm.DB, p Principal, row *Issue) error {
 
 type IssueFilter struct {
 	ScopeID, KnowledgeBaseID, Kind, Status, Keyword string
+	OwnerUID, Visibility                            string
+	exactChannelID                                  string
+	exactLibraries                                  []string
 	From, To                                        *time.Time
 	Page, PageSize                                  int
 }
@@ -261,6 +266,9 @@ func (s *Service) issueQuery(ctx context.Context, p Principal, f IssueFilter) *g
 	if f.ScopeID != "" {
 		q = q.Where("scope_id = ?", f.ScopeID)
 	}
+	if f.exactChannelID != "" {
+		q = q.Where("channel_id = ? AND knowledge_base_id IN ?", f.exactChannelID, f.exactLibraries)
+	}
 	if f.KnowledgeBaseID != "" {
 		q = q.Where("knowledge_base_id = ?", f.KnowledgeBaseID)
 	}
@@ -269,6 +277,24 @@ func (s *Service) issueQuery(ctx context.Context, p Principal, f IssueFilter) *g
 	}
 	if f.Status != "" {
 		q = q.Where("status = ?", f.Status)
+	}
+	if f.OwnerUID == "unassigned" {
+		q = q.Where("owner_uid = ''")
+	} else if f.OwnerUID != "" {
+		q = q.Where("owner_uid = ?", f.OwnerUID)
+	}
+	switch f.Visibility {
+	case "archive", "trash":
+		state := f.Visibility
+		if state == "archive" {
+			state = "archived"
+		}
+		q = q.Where("archive_state = ?", state)
+	case "all":
+		q = q.Where("archive_state <> 'trash'")
+	case "detail":
+	default:
+		q = q.Where("archive_state = ''")
 	}
 	if f.Keyword != "" {
 		q = q.Where("LOWER(title) LIKE ? OR LOWER(description) LIKE ?", "%"+strings.ToLower(f.Keyword)+"%", "%"+strings.ToLower(f.Keyword)+"%")
@@ -314,7 +340,11 @@ func (s *Service) GetIssue(ctx context.Context, id string) (*Issue, []IssueEvent
 		return nil, nil, err
 	}
 	var row Issue
-	if err = s.issueQuery(ctx, p, IssueFilter{}).Where("id = ?", id).First(&row).Error; err != nil {
+	filter := IssueFilter{}
+	if p.Console {
+		filter.Visibility = "detail"
+	}
+	if err = s.issueQuery(ctx, p, filter).Where("id = ?", id).First(&row).Error; err != nil {
 		return nil, nil, err
 	}
 	events := []IssueEvent{}

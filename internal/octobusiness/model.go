@@ -106,6 +106,7 @@ type Issue struct {
 	OwnerUID        string     `json:"owner_uid"`
 	OwnerName       string     `json:"owner_name"`
 	Status          string     `json:"status"`
+	ArchiveState    string     `json:"archive_state"`
 	IdempotencyKey  string     `json:"-" gorm:"uniqueIndex"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`

@@ -53,7 +53,7 @@ func respond(c *gin.Context, data any, err error) {
 	case errors.Is(err, ErrInvalid), errors.Is(err, ErrClarify):
 		status = http.StatusBadRequest
 		message = err.Error()
-	case errors.Is(err, errRetestUnavailable):
+	case errors.Is(err, errRetestUnavailable), errors.Is(err, errReplySource):
 		status, message = http.StatusConflict, err.Error()
 	case errors.Is(err, errRetestIncomplete):
 		status, message = http.StatusBadGateway, err.Error()
@@ -71,6 +71,10 @@ func respond(c *gin.Context, data any, err error) {
 
 func httpFilter(c *gin.Context) (IssueFilter, error) {
 	f := IssueFilter{ScopeID: c.Query("scope_id"), KnowledgeBaseID: c.Query("knowledge_base_id"), Kind: c.Query("kind"), Status: c.Query("status"), Keyword: c.Query("keyword")}
+	f.OwnerUID, f.Visibility = c.Query("owner_uid"), c.Query("visibility")
+	if !contains([]string{"", "active", "archive", "trash", "all"}, f.Visibility) || len(f.OwnerUID) > 128 {
+		return f, ErrInvalid
+	}
 	var err error
 	if f.Page, err = strconv.Atoi(c.DefaultQuery("page", "1")); err != nil {
 		return f, ErrInvalid

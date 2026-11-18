@@ -94,6 +94,15 @@ func (s *Service) confirmQuality(
 		if err != nil {
 			return err
 		}
+		for _, evidence := range rows {
+			review := qualityReview{
+				TenantID: p.TenantID, ChannelID: scope.ChannelID, ScopeID: scope.ID,
+				MessageID: evidence.ID, IssueID: row.ID, UpdatedAt: time.Now().UTC(),
+			}
+			if err := snapshot.writeQualityReview(ctx, review, []string{"issue_id", "updated_at"}); err != nil {
+				return err
+			}
+		}
 		result, _ := json.Marshal(struct{ IssueID string }{row.ID})
 		return tx.Model(&locked).Updates(map[string]any{
 			"status": "completed", "result": string(result), "updated_at": time.Now(),

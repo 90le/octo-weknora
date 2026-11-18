@@ -74,26 +74,30 @@ func (s *Service) qualityScope(ctx context.Context, scopeID string) (*qualitySco
 }
 
 type qualityRow struct {
-	ID                 string          `json:"id"`
-	Question           string          `json:"question"`
-	Answer             string          `json:"answer"`
-	Outcome            string          `json:"outcome"`
-	CreatedAt          time.Time       `json:"created_at"`
-	Repeats            int             `json:"unanswered_repeats"`
-	GroupKey           string          `json:"group_key"`
-	Sources            []QualitySource `json:"sources,omitempty"`
-	UnavailableSources int             `json:"unavailable_sources"`
+	ID                 string             `json:"id"`
+	Question           string             `json:"question"`
+	Answer             string             `json:"answer"`
+	Outcome            string             `json:"outcome"`
+	CreatedAt          time.Time          `json:"created_at"`
+	Repeats            int                `json:"unanswered_repeats"`
+	GroupKey           string             `json:"group_key"`
+	Sources            []QualitySource    `json:"sources,omitempty"`
+	UnavailableSources int                `json:"unavailable_sources"`
+	Review             *qualityReviewView `json:"review,omitempty"`
 	userID             string
 	name               string
 	libraries          []string
 }
 
 type qualityPage struct {
-	Rows       []qualityRow     `json:"rows"`
-	Libraries  []qualityLibrary `json:"libraries"`
-	SampleSize int              `json:"sample_size"`
-	Truncated  bool             `json:"truncated"`
-	Since      time.Time        `json:"since"`
+	Rows       []qualityRow      `json:"rows"`
+	Libraries  []qualityLibrary  `json:"libraries"`
+	SampleSize int               `json:"sample_size"`
+	Truncated  bool              `json:"truncated"`
+	Since      time.Time         `json:"since"`
+	Until      time.Time         `json:"until"`
+	Total      int               `json:"total"`
+	Stats      qualityStatistics `json:"stats"`
 }
 
 type qualityInbox struct {
@@ -191,43 +195,8 @@ func (s *Service) qualityInbox(ctx context.Context, scope *qualityScope) *gorm.D
 		Where("state IN ?", []string{"delivered", "failed"})
 }
 
-const qualitySampleLimit = 250
-
 func (s *Service) listQuality(ctx context.Context, scopeID string) (*qualityPage, error) {
-	scope, err := s.qualityScope(ctx, scopeID)
-	if err != nil {
-		return nil, err
-	}
-	page := &qualityPage{Rows: []qualityRow{}, Libraries: scope.Libraries, Since: time.Now().AddDate(0, 0, -14)}
-	var entries []qualityInbox
-	// The LIKE clause narrows candidates. Structured authority is checked again before exposing any payload.
-	pattern := `%"ScopeID":"` + scope.ID + `"%`
-	err = s.qualityInbox(ctx, scope).
-		Where("created_at >= ? AND authority LIKE ?", page.Since, pattern).
-		Order("created_at DESC, message_id DESC").Limit(qualitySampleLimit + 1).Find(&entries).Error
-	if err != nil {
-		return nil, err
-	}
-	page.Truncated = len(entries) > qualitySampleLimit
-	counts := map[string]int{}
-	for _, entry := range entries[:min(len(entries), qualitySampleLimit)] {
-		if row, ok := entry.row(scope); ok {
-			page.Rows = append(page.Rows, row)
-			if row.Outcome == "suspected_gap" {
-				counts[qualityQuestionKey(row.Question)]++
-			}
-		}
-	}
-	for i := range page.Rows {
-		key := qualityQuestionKey(page.Rows[i].Question)
-		page.Rows[i].Repeats = counts[key]
-		page.Rows[i].GroupKey = digest("quality-question", key)
-	}
-	if err := s.markUnavailableQualitySources(ctx, scope.TenantID, page.Rows); err != nil {
-		return nil, err
-	}
-	page.SampleSize = len(page.Rows)
-	return page, nil
+	return s.queryQuality(ctx, scopeID, qualityFilter{})
 }
 
 func (s *Service) markUnavailableQualitySources(ctx context.Context, tenant uint64, rows []qualityRow) error {

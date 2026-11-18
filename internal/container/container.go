@@ -1850,7 +1850,7 @@ func registerWebSearchProviders(registry *infra_web_search.Registry) {
 func registerIMService(
 	imService *imPkg.Service, cleaner interfaces.ResourceCleaner, db *gorm.DB,
 	business *octobusiness.Service, queue interfaces.TaskEnqueuer,
-	artifacts *service.ArtifactCollector, systemHandler *handler.SystemHandler,
+	artifacts *service.ArtifactCollector, systemHandler *handler.SystemHandler, models interfaces.ModelService,
 ) {
 	systemHandler.SetIMRuntime(imService)
 	imService.ConfigureArtifactCollector(artifacts)
@@ -1873,7 +1873,7 @@ func registerIMService(
 	}
 
 	imService.ConfigureOctoReports(business)
-	if err := business.StartReports(context.Background(), queue); err != nil {
+	if err := business.StartReports(context.Background(), queue, models); err != nil {
 		logger.Errorf(context.Background(), "Octo reports unavailable: %v", err)
 	}
 	cleaner.RegisterWithName("IMService", func() error {
