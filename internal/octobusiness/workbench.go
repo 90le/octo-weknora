@@ -164,6 +164,7 @@ func decimalNativeID(raw json.RawMessage) string {
 }
 
 type issueRetest struct {
+	ID      string   `json:"id"`
 	Answer  string   `json:"answer"`
 	ModelID string   `json:"model_id"`
 	Sources []string `json:"sources"`
@@ -212,7 +213,7 @@ func (s *Service) retestAgent(ctx context.Context, issue *Issue) (*types.CustomA
 func (s *Service) retestIssue(
 	ctx context.Context, sessions interfaces.SessionService, id string,
 ) (*issueRetest, error) {
-	issue, _, err := s.GetIssue(ctx, id)
+	p, issue, err := s.retestAdminIssue(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +228,25 @@ func (s *Service) retestIssue(
 	if err != nil {
 		return nil, err
 	}
+	run, err := s.beginIssueRetest(ctx, p, issue, evidence.QuestionMessageID, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	result, executionErr := s.executeIssueRetest(ctx, sessions, issue, evidence, agent)
+	if err = s.finishIssueRetest(ctx, issue, run, result, executionErr); err != nil {
+		return nil, err
+	}
+	if executionErr != nil {
+		return nil, executionErr
+	}
+	result.ID = run.ID
+	return result, nil
+}
 
+func (s *Service) executeIssueRetest(
+	ctx context.Context, sessions interfaces.SessionService, issue *Issue,
+	evidence *issueEvidence, agent *types.CustomAgent,
+) (*issueRetest, error) {
 	// Reuse live model settings with an explicit read-only scope and a fresh
 	// transient conversation. No message is sent and no role is impersonated.
 	agent.Config.KBSelectionMode = "selected"
@@ -305,12 +324,12 @@ func (s *Service) retestIssue(
 	if err := sessions.AgentQA(ctx, request, bus); err != nil || incomplete || strings.TrimSpace(result.Answer) == "" {
 		return nil, errRetestIncomplete
 	}
-	if _, err = s.retestAgent(ctx, issue); err != nil {
+	if _, err := s.retestAgent(ctx, issue); err != nil {
 		return nil, err
 	}
 	if len(wikiSlugs) > 0 {
 		var titles []string
-		if err = s.db.WithContext(ctx).Model(&types.WikiPage{}).
+		if err := s.db.WithContext(ctx).Model(&types.WikiPage{}).
 			Where("tenant_id = ? AND knowledge_base_id = ? AND status = ? AND slug IN ?",
 				issue.TenantID, issue.KnowledgeBaseID, types.WikiPageStatusPublished, wikiSlugs).
 			Order("title").Distinct("title").Pluck("title", &titles).Error; err != nil {

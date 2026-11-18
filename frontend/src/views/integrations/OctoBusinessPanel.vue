@@ -188,18 +188,8 @@
               <OctoMarkdown :text="issueEvidence.answer" empty="未保留答复正文" />
             </template>
             <p v-else class="hint">这条登记没有可追溯的原问与答复。</p>
-            <template v-if="issueEvidence?.question">
-              <p class="hint">在独立会话中用当前智能体和关联知识库复测。多轮问题请在判断结果时考虑先前上下文。</p>
-              <t-button variant="outline" :loading="retestLoading" :disabled="issueSaving" @click="runRetest">复测原问题</t-button>
-              <t-alert v-if="retestError" theme="error">{{ retestError }}</t-alert>
-              <div v-if="retestResult">
-                <h5>本次复测答复</h5>
-                <OctoMarkdown :text="retestResult.answer" />
-                <p v-if="retestResult.sources.length" class="hint">本次查阅了 {{ retestResult.sources.join('、') }}</p>
-                <p class="hint">请核对原答复和资料，在处理说明里保存复测结论。</p>
-              </div>
-            </template>
           </section>
+          <OctoIssueRetests :key="selected.id" :issue-id="selected.id" :can-run="Boolean(issueEvidence?.question)" />
           <OctoIssueReply :key="selected.id" :issue="selected" />
           <section v-if="!selected.archive_state" class="detail-section">
             <h4>更新处理</h4>
@@ -249,8 +239,8 @@ import { useRoute } from 'vue-router'
 import { listKnowledgeBases } from '@/api/knowledge-base'
 import { listScopes, type OctoScope } from '@/api/octo'
 import {
-  listIssues, issueDetail, updateIssue, batchIssues, retestIssue, listContacts, saveContact, deleteContact, issueReport,
-  type OctoIssue, type OctoContact, type IssueEvent, type IssueStatus, type IssueFilter, type IssueEvidence, type IssueRetest,
+  listIssues, issueDetail, updateIssue, batchIssues, listContacts, saveContact, deleteContact, issueReport,
+  type OctoIssue, type OctoContact, type IssueEvent, type IssueStatus, type IssueFilter, type IssueEvidence,
 } from '@/api/octo-business'
 import { useAuthStore } from '@/stores/auth'
 import { issueKindLabels, issueStatusLabels, displayPerson, csvCell, safeAttachmentURL } from './octoBusinessDisplay'
@@ -259,6 +249,7 @@ import OctoBusinessFilters from './OctoBusinessFilters.vue'
 import OctoReportSchedules from './OctoReportSchedules.vue'
 import OctoMarkdown from './OctoMarkdown.vue'
 import OctoIssueReply from './OctoIssueReply.vue'
+import OctoIssueRetests from './OctoIssueRetests.vue'
 
 const props = defineProps<{ view?: OctoBusinessView; knowledgeBaseId?: string }>()
 const auth = useAuthStore()
@@ -438,9 +429,6 @@ const detailLoading = ref(false)
 const detailError = ref('')
 const issueSaving = ref(false)
 const issueEvidence = ref<IssueEvidence | null>(null)
-const retestResult = ref<IssueRetest | null>(null)
-const retestLoading = ref(false)
-const retestError = ref('')
 const ownerContacts = ref<OctoContact[]>([])
 const ownerContactsLoading = ref(false)
 const ownerContactsError = ref('')
@@ -459,9 +447,6 @@ async function openIssue(id: string) {
   selected.value = null
   events.value = []
   issueEvidence.value = null
-  retestResult.value = null
-  retestError.value = ''
-  retestLoading.value = false
   ownerContacts.value = []
   ownerContactsLoading.value = false
   ownerContactID.value = ''
@@ -490,19 +475,6 @@ async function loadOwnerContacts(kb: string, version: number) {
   } catch {
     if (version === detailVersion) ownerContactsError.value = '联系人读取失败，可以先手动填写。'
   } finally { if (version === detailVersion) ownerContactsLoading.value = false }
-}
-async function runRetest() {
-  if (!selected.value || retestLoading.value || !issueEvidence.value?.question) return
-  const version = detailVersion
-  retestLoading.value = true
-  retestResult.value = null
-  retestError.value = ''
-  try {
-    const response = await retestIssue(selected.value.id)
-    if (version === detailVersion) retestResult.value = response.data
-  } catch {
-    if (version === detailVersion) retestError.value = '复测未完成，请检查 Bot、知识库绑定和模型状态。'
-  } finally { if (version === detailVersion) retestLoading.value = false }
 }
 async function saveIssue() {
   if (!selected.value || issueSaving.value) return

@@ -15,7 +15,14 @@ export const issueQuery=(filter:IssueFilter)=>new URLSearchParams(Object.entries
 export const listIssues=(filter:IssueFilter)=>get(`${root}/issues?${issueQuery(filter)}`) as unknown as Promise<Envelope<{items:OctoIssue[];total:number}>>
 export interface IssueEvent {actor_uid:string;actor_name:string;status:IssueStatus;note:string;created_at:string}
 export interface IssueEvidence {question?:string;question_message_id?:string;answer?:string;answer_message_id?:string}
-export interface IssueRetest {answer:string;model_id:string;sources:string[]}
+export interface IssueRetest {id:string;answer:string;model_id:string;sources:string[]}
+export interface IssueRetestRecord extends IssueRetest {
+  state:string;error_code:string;review_state:string;review_note:string;created_at:string;reviewed_at?:string
+}
+const issueRetestPath=(id:string)=>`${root}/issues/${encodeURIComponent(id)}/retests`
+export const issueRetests=(id:string)=>get<Envelope<IssueRetestRecord[]>>(issueRetestPath(id))
+export const reviewIssueRetest=(id:string,run:string,state:string,note:string)=>
+  post<Envelope<IssueRetestRecord>>(`${issueRetestPath(id)}/${encodeURIComponent(run)}/review`,{state,note})
 export const issueDetail=(id:string)=>get(`${root}/issues/${encodeURIComponent(id)}`) as unknown as Promise<Envelope<{issue:OctoIssue;events:IssueEvent[];evidence?:IssueEvidence|null}>>
 export const updateIssue=(id:string, data:{status:IssueStatus;owner_uid?:string;owner_name?:string;owner_contact_id?:string;note:string})=>patch(`${root}/issues/${encodeURIComponent(id)}`,data)
 export const retestIssue=(id:string)=>post<Envelope<IssueRetest>>(`${root}/issues/${encodeURIComponent(id)}/retest`, {}, { timeout:95000 })

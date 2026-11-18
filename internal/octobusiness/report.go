@@ -88,6 +88,9 @@ func ReportFile(r *Report, format string) (*ReportArtifact, error) {
 			writer := csv.NewWriter(&output)
 			_ = writer.Write([]string{"指标", "数值", "区间起始", "区间结束（不含）"})
 			for _, metric := range reportMetricNames {
+				if _, ok := r.Operations.Metrics[metric.key]; !ok && strings.HasPrefix(metric.key, "retest_") {
+					continue
+				}
 				_ = writer.Write([]string{
 					metric.label, fmt.Sprint(r.Operations.Metrics[metric.key]),
 					r.From.Format(time.RFC3339), r.To.Format(time.RFC3339),

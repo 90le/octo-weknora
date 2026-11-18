@@ -188,6 +188,11 @@ var reportMetricNames = []struct{ key, label string }{
 	{"resolved", "期内标记解决"},
 	{"backlog", "期末未解决"},
 	{"unassigned", "待分派问题（当前）"},
+	{"retest_completed", "完成复测次数"},
+	{"retest_failed", "失败或中断复测次数"},
+	{"retest_verified", "人工核验通过次数"},
+	{"retest_unresolved", "人工确认未修复次数"},
+	{"retest_insufficient", "人工确认依据不足次数"},
 }
 
 func (s *Service) prepareReport(
@@ -325,6 +330,9 @@ func (s *Service) summarizeOperations(
 		return nil, err
 	}
 	out.Metrics["resolved"], out.Metrics["backlog"], out.Metrics["unassigned"] = resolved, backlog, unassigned
+	if err := s.addReportRetests(ctx, issueIDs, p.TenantID, from, to, out.Metrics); err != nil {
+		return nil, err
+	}
 	if plan.Template == "quality" && !limited {
 		previous, incomplete, err := s.collectQuality(ctx, q, from.Add(-to.Sub(from)), from)
 		if err != nil {
@@ -485,11 +493,17 @@ func (r *operationalReport) markdown(report *Report) string {
 		names[r.Template], report.Scope, report.From.In(time.FixedZone("CST", 8*3600)).Format("2006-01-02 15:04"),
 		report.To.In(time.FixedZone("CST", 8*3600)).Format("2006-01-02 15:04"))
 	order := map[string][]string{
-		"maintenance": {"backlog", "unassigned", "opened", "resolved", "repeated", "unavailable"},
-		"anomaly":     {"attention", "attention_people", "repeated", "failed", "unavailable"},
-		"topic":       {"questions", "people", "attention", "repeated", "reviewed"},
+		"maintenance": {
+			"backlog", "unassigned", "opened", "resolved", "repeated", "unavailable", "retest_completed",
+			"retest_failed", "retest_verified", "retest_unresolved", "retest_insufficient",
+		},
+		"anomaly": {"attention", "attention_people", "repeated", "failed", "unavailable"},
+		"topic":   {"questions", "people", "attention", "repeated", "reviewed"},
 	}
 	for _, metric := range reportMetricNames {
+		if _, ok := r.Metrics[metric.key]; !ok && strings.HasPrefix(metric.key, "retest_") {
+			continue
+		}
 		if keys := order[r.Template]; len(keys) != 0 && !contains(keys, metric.key) {
 			continue
 		}
