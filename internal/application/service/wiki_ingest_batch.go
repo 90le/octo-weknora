@@ -1543,7 +1543,9 @@ func (s *wikiIngestService) mapOneDocument(
 			"CustomInstructions": batchCtx.ContentInstructions,
 			"InstructionScope":   "wiki_content",
 		}
-		summaryContent, summaryErr = s.generateWithTemplate(summaryCtx, chatModel, agent.WikiSummaryPrompt, summaryInput)
+		summaryContent, summaryErr = s.generateWithTemplate(
+			summaryCtx, chatModel, agent.WikiSummaryPrompt, summaryInput,
+		)
 		if summaryErr != nil {
 			s.tracker().FailSpan(ctx, summarySpan, "SUMMARY_FAILED", summaryErr.Error(), summaryErr)
 		} else {
