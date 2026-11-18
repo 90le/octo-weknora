@@ -22,8 +22,8 @@ const (
 )
 
 const issueDescription = "Review feedback and manage registered issues in this conversation. " +
-	"In Octo, action=create prepares a preview only. Use it when asked or when the user accepts an offer to register. " +
-	"Summarize confirmed facts from the user's description and quoted reply. Ask only for facts that change the issue. " +
+	"In Octo, create previews an issue. Prepare one when the user requests or accepts registration. " +
+	"Use confirmed facts from the user's description and quoted reply. Ask only for facts that change the issue. " +
 	"Show the preview and the exact confirmation_command and cancellation_command. " +
 	"A missing issue requires a completed relevant search with no answer. " +
 	"A service error or unresolved input is not a missing issue. Resolve issue IDs with list."
@@ -85,7 +85,7 @@ func NewTools(service *Service) []types.Tool {
 		}, []string{"action"}, map[string]any{
 			"action": map[string]any{
 				"type": "string", "enum": []string{"create", "list", "get", "update"},
-				"description": "Required. create previews an issue using kind, title, description and knowledge_base_id " +
+				"description": "create previews an issue using kind, title, description and knowledge_base_id " +
 					"(defaults for one readable KB). A bug also needs steps and expected behavior. " +
 					"get/update require issue_id. update also needs status.",
 			},
