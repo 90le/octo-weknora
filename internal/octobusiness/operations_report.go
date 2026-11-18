@@ -56,9 +56,11 @@ func normalizeReportSchedule(s *ReportSchedule, now time.Time) (time.Time, error
 		!contains([]string{"", "generate", "approval", "auto"}, s.Mode) ||
 		(s.Period == "custom" && s.Frequency != "manual") || len(s.Instruction) > 2500 ||
 		s.Lookback < 0 || s.Lookback > 93 || s.Threshold < 0 || s.Threshold > 12000 ||
-		s.MinimumUsers < 0 || s.MinimumUsers > 12000 {
+		s.MinimumUsers < 0 || s.MinimumUsers > 12000 || s.CooldownHours < 0 || s.CooldownHours > 720 ||
+		s.QuietStart < 0 || s.QuietStart > 23 || s.QuietEnd < 0 || s.QuietEnd > 23 || len(s.Topic) > 160 {
 		return time.Time{}, ErrInvalid
 	}
+	s.Topic = strings.TrimSpace(s.Topic)
 	if s.RecipientType == "source" {
 		s.RecipientUID = ""
 	}
@@ -144,6 +146,9 @@ func reportWindow(s ReportSchedule, due time.Time, start, end *time.Time) (time.
 func (s *Service) reportPeriod(
 	ctx context.Context, plan ReportSchedule, due time.Time, start, end *time.Time,
 ) (time.Time, time.Time, error) {
+	if start != nil || end != nil {
+		plan.Period = "custom"
+	}
 	from, to, err := reportWindow(plan, due, start, end)
 	if err != nil || plan.Period != "since_last" {
 		return from, to, err
@@ -258,6 +263,15 @@ func (s *Service) summarizeOperations(
 	}
 	if err = s.enrichQuality(ctx, q, rows); err != nil {
 		return nil, err
+	}
+	if plan.Template == "topic" && plan.Topic != "" {
+		filtered := rows[:0]
+		for _, row := range rows {
+			if row.Review != nil && row.Review.Topic == plan.Topic {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
 	}
 	repeats := map[string]int{}
 	for _, row := range rows {
@@ -398,26 +412,70 @@ func (s *Service) reportAdvice(ctx context.Context, tenant uint64, out *operatio
 	out.Analysis, out.Advice = "ready", advice
 }
 
-func (s *Service) reportShouldSkip(ctx context.Context, plan ReportSchedule, report *Report, run ReportRun) bool {
+func (s *Service) reportShouldSkip(
+	ctx context.Context, plan ReportSchedule, report *Report, run ReportRun,
+) (string, error) {
 	if report.Operations == nil {
-		return false
+		return "", nil
 	}
 	m := report.Operations.Metrics
-	if plan.Template == "anomaly" && (m["attention"] < int64(max(1, plan.Threshold)) ||
-		m["attention_people"] < int64(max(1, plan.MinimumUsers))) {
-		return true
+	if plan.Template == "anomaly" {
+		if report.Operations.Limited {
+			return "incomplete_sample", nil
+		}
+		if m["attention"] < int64(max(1, plan.Threshold)) ||
+			m["attention_people"] < int64(max(1, plan.MinimumUsers)) {
+			return "threshold_not_met", nil
+		}
+		loc, err := time.LoadLocation(plan.Timezone)
+		if err != nil {
+			return "", err
+		}
+		if inReportQuietHours(run.DueAt.In(loc).Hour(), plan.QuietStart, plan.QuietEnd) {
+			return "quiet_hours", nil
+		}
+		if plan.CooldownHours > 0 {
+			start := run.DueAt.Add(-time.Duration(plan.CooldownHours) * time.Hour)
+			var count int64
+			err = s.db.WithContext(ctx).Model(&ReportRun{}).
+				Where("tenant_id = ? AND schedule_id = ? AND due_at >= ? AND due_at < ?",
+					run.TenantID, run.ScheduleID, start, run.DueAt).
+				Where("status IN ?", []string{"sent", "generated", "pending", "uncertain"}).Count(&count).Error
+			if err != nil || count > 0 {
+				return "cooldown", err
+			}
+		}
 	}
 	if !plan.OnlyChanges {
-		return false
+		return "", nil
 	}
 	if m["questions"] == 0 && m["opened"] == 0 && m["backlog"] == 0 {
-		return true
+		return "no_activity", nil
 	}
 	var previous ReportRun
 	err := s.db.WithContext(ctx).Where("tenant_id = ? AND schedule_id = ? AND id <> ? AND status IN ?",
 		run.TenantID, run.ScheduleID, run.ID, []string{"sent", "generated", "pending"}).
 		Order("due_at DESC").Take(&previous).Error
-	return err == nil && previous.Fingerprint == run.Fingerprint
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if previous.Fingerprint == run.Fingerprint {
+		return "unchanged", nil
+	}
+	return "", nil
+}
+
+func inReportQuietHours(hour, starts, ends int) bool {
+	if starts == ends {
+		return false
+	}
+	if starts < ends {
+		return hour >= starts && hour < ends
+	}
+	return hour >= starts || hour < ends
 }
 
 func (r *operationalReport) markdown(report *Report) string {

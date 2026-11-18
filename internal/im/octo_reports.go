@@ -12,6 +12,7 @@ type reportSender interface {
 }
 
 type manualReplySender interface {
+	CheckManualReply(context.Context, octobusiness.ManualReplyTarget) error
 	DeliverManualReply(context.Context, octobusiness.ManualReplyTarget, string, string) (string, error)
 }
 
@@ -41,16 +42,30 @@ func (s *Service) ConfigureOctoReports(business *octobusiness.Service) {
 		}
 		return r.DeliverReport(ctx, schedule, report, file)
 	}
-	business.ManualReplyDelivery = func(
-		ctx context.Context, target octobusiness.ManualReplyTarget, id, body string,
-	) (string, error) {
+	findManualSender := func(target octobusiness.ManualReplyTarget) (manualReplySender, error) {
 		a, ch, ok := s.GetChannelAdapter(target.ChannelID)
 		if !ok || ch.TenantID != target.TenantID || ch.Platform != "octo" || !ch.Enabled {
-			return "", octobusiness.ErrDenied
+			return nil, octobusiness.ErrDenied
 		}
 		sender, ok := a.(manualReplySender)
 		if !ok {
-			return "", octobusiness.ErrDenied
+			return nil, octobusiness.ErrDenied
+		}
+		return sender, nil
+	}
+	business.ManualReplyCheck = func(ctx context.Context, target octobusiness.ManualReplyTarget) error {
+		sender, err := findManualSender(target)
+		if err != nil {
+			return err
+		}
+		return sender.CheckManualReply(ctx, target)
+	}
+	business.ManualReplyDelivery = func(
+		ctx context.Context, target octobusiness.ManualReplyTarget, id, body string,
+	) (string, error) {
+		sender, err := findManualSender(target)
+		if err != nil {
+			return "", err
 		}
 		return sender.DeliverManualReply(ctx, target, id, body)
 	}

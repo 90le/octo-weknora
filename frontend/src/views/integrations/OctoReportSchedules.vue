@@ -57,8 +57,13 @@
           </template>
           <template v-if="draft.template==='anomaly'">
             <label>最少待关注次数<t-input-number v-model="draft.threshold" :min="1" /></label>
-            <label>最少提问人数<t-input-number v-model="draft.minimum_users" :min="1" /></label>
+            <label>最少待关注提问人数<t-input-number v-model="draft.minimum_users" :min="1" /></label>
+            <label>提醒冷却小时数<t-input-number v-model="draft.cooldown_hours" :min="0" :max="720" /></label>
+            <label>静默起始小时<t-input-number v-model="draft.quiet_start" :min="0" :max="23" /></label>
+            <label>静默结束小时<t-input-number v-model="draft.quiet_end" :min="0" :max="23" /></label>
+            <small>静默时间可跨午夜。起止相同表示全天可提醒。</small>
           </template>
+          <label v-if="draft.template==='topic'">限定业务主题<t-input v-model="draft.topic" :maxlength="48" placeholder="留空查看全部主题" /></label>
         </div>
         <label v-if="draft.template">补充分析指令<t-textarea v-model="draft.instruction" :maxlength="750"
           placeholder="例如优先核对引用异常，建议按维护优先次序排序" />
@@ -78,10 +83,13 @@
 
     <t-drawer v-model:visible="historyVisible" size="min(760px, 100vw)" :footer="false" :header="historyPlan?.name || '报告历史'">
       <div v-if="historyPlan" class="editor">
-        <div v-if="historyPlan.period==='custom'" class="fields">
-          <label>起始日期<t-input v-model="runFrom" type="date" /></label>
-          <label>结束日期<t-input v-model="runTo" type="date" /></label>
-        </div>
+        <details :open="historyPlan.period==='custom'">
+          <summary>指定日期重新生成</summary>
+          <div class="fields">
+            <label>起始日期<t-input v-model="runFrom" type="date" /></label>
+            <label>结束日期（含）<t-input v-model="runTo" type="date" /></label>
+          </div>
+        </details>
         <div class="row">
           <t-button :loading="generating" @click="generate">手动生成</t-button>
           <t-button variant="outline" :loading="runsLoading" @click="loadRuns">刷新历史</t-button>
@@ -157,6 +165,11 @@ const diagnostics:Record<string,string> = {
   binding:'这个区域没有可用的知识绑定。',recipient_policy:'接收人没有明确的报告私聊授权，或被当前私聊策略拒绝。',
   recipient_membership:'无法核验这位接收人仍属于来源群或子区。',plan_changed:'订阅配置已经变更，需要按新配置生成。',
   delivery_unconfirmed:'平台送达未获确认，请先核对目标会话。',authorization:'渠道、来源或接收权限已变更。',
+  threshold_not_met:'待关注次数或人数未达到提醒阈值。',incomplete_sample:'报告样本不完整，已跳过提醒。',
+  quiet_hours:'计划运行时间处于静默时段。',cooldown:'最近已生成提醒，仍在冷却期。',
+  no_activity:'本期没有新活动或待处理积压。',unchanged:'统计指标和主题与上一期相同。',
+  generation_failed:'统计结果生成失败，可以使用原日期重新生成。',
+  generation_interrupted:'报告生成时服务中断，可以使用原日期重新生成。',
 }
 const diagnosis = (key:string) => diagnostics[key] || '请核对当前配置和权限。'
 const statusLabel = (s?:string) => states[s || ''] || s || '尚无结果'
@@ -165,6 +178,7 @@ const blank = ():ReportSchedule => ({
   id:'',name:'',channel_id:'',scope_id:'',recipient_type:'source',recipient_uid:'',weekday:1,hour:9,minute:0,
   timezone:'Asia/Shanghai',format:'text',enabled:false,template:'quality',frequency:'weekly',period:'previous_week',
   mode:'generate',lookback:7,interval_days:7,month_day:1,threshold:3,minimum_users:2,only_changes:false,instruction:'',
+  topic:'',quiet_start:0,quiet_end:0,cooldown_hours:0,
 })
 const draft = ref(blank())
 const channelOptions = computed(() => channels.value.map(c => ({value:c.id,label:(c.name || c.bot_identity) + (c.enabled?'':'（已停用）')})))
@@ -262,7 +276,10 @@ async function loadRuns() {
 async function generate() {
   const plan=historyPlan.value
   if(!plan||generating.value) return
-  if(plan.period==='custom' && (!runFrom.value || !runTo.value)) {runError.value='请选择需补生成的日期区间。';return}
+  if((plan.period==='custom' || runFrom.value || runTo.value) && (!runFrom.value || !runTo.value)) {
+    runError.value='请选择完整的日期区间。'
+    return
+  }
   generating.value=true;runError.value=''
   try {
     const result=await generateReportRun(plan.id,dates(runFrom.value,runTo.value))

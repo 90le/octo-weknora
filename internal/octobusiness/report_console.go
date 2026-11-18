@@ -144,8 +144,18 @@ func (s *Service) generateConsoleReport(
 		return nil, claim.Error
 	}
 	if claim.RowsAffected != 1 {
-		err := s.reportRunQuery(ctx, plan, id).Take(&run).Error
-		return &run, err
+		if err := s.reportRunQuery(ctx, plan, id).Take(&run).Error; err != nil {
+			return nil, err
+		}
+		// Failed generation performs no delivery and can be reclaimed. A
+		// retained snapshot or an uncertain delivery keeps its original claim.
+		retry := s.reportRunQuery(ctx, plan, id).
+			Where("status = 'failed' AND snapshot = ''").
+			Updates(map[string]any{"status": "generating", "error_code": "", "due_at": due})
+		if retry.Error != nil || retry.RowsAffected != 1 {
+			return &run, retry.Error
+		}
+		run.Status, run.ErrorCode, run.DueAt = "generating", "", due
 	}
 	report, processErr := s.prepareReport(reportCtx, p, plan, &run, input.From, input.To)
 	run.Status = "generated"
@@ -158,6 +168,9 @@ func (s *Service) generateConsoleReport(
 		}
 	} else {
 		run.Status, run.ErrorCode = "failed", reportErrorCode(processErr)
+		if run.ErrorCode == "delivery_unconfirmed" {
+			run.ErrorCode = "generation_failed"
+		}
 	}
 	write, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancelWrite()

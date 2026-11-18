@@ -16,6 +16,7 @@ type ManualReplyTarget struct {
 	TenantID                                 uint64
 	ChannelID, ScopeID, AccountID, LibraryID string
 	InboxID, SourceDigest                    string
+	IsDirect                                 bool
 }
 
 type manualReply struct {
@@ -45,11 +46,13 @@ func (s *Service) manualReplyTarget(
 	ctx context.Context, issue *Issue, target string,
 ) (ManualReplyTarget, *evidenceMessage, error) {
 	var result ManualReplyTarget
-	if issue.IsDirect || issue.ArchiveState != "" || !validText(issue.MessageID, 255) || issue.GroupID == "" {
+	if issue.ArchiveState != "" || !validText(issue.MessageID, 255) || (!issue.IsDirect && issue.GroupID == "") {
 		return result, nil, errReplySource
 	}
-	if _, err := s.retestAgent(ctx, issue); err != nil {
-		return result, nil, errReplySource
+	if !issue.IsDirect {
+		if _, err := s.retestAgent(ctx, issue); err != nil {
+			return result, nil, errReplySource
+		}
 	}
 	lookup := func(id string) (evidenceInbox, error) {
 		var entry evidenceInbox
@@ -88,9 +91,13 @@ func (s *Service) manualReplyTarget(
 	if msg.Extra["octo_card_event_key"] != "" || decimalNativeID([]byte(msg.Extra["octo_message_id"])) == "" {
 		return result, nil, errReplySource
 	}
+	if issue.IsDirect && (msg.UserID != issue.ReporterUID || issue.ScopeID != "dm:"+msg.UserID) {
+		return result, nil, errReplySource
+	}
 	result = ManualReplyTarget{
 		TenantID: issue.TenantID, ChannelID: issue.ChannelID, ScopeID: issue.ScopeID, AccountID: issue.AccountID,
 		LibraryID: issue.KnowledgeBaseID, InboxID: inboxID, SourceDigest: digest(row.Input, row.Authority),
+		IsDirect: issue.IsDirect,
 	}
 	return result, msg, nil
 }
@@ -124,6 +131,12 @@ func (h *Handler) PreviewIssueReply(c *gin.Context) {
 	if err != nil {
 		respond(c, nil, err)
 		return
+	}
+	if h.service.ManualReplyCheck != nil {
+		if err := h.service.ManualReplyCheck(ctx, target); err != nil {
+			respond(c, nil, errReplySource)
+			return
+		}
 	}
 	reply := manualReply{
 		ID: uuid.NewString(), TenantID: p.TenantID, IssueID: issue.ID, ActorUID: p.UserID,

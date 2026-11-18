@@ -75,6 +75,7 @@ export interface ReportSchedule {
   next_run_at?:string;last_run_at?:string;last_status?:string;last_error?:string
   template:string;frequency:string;period:string;mode:string;lookback:number;interval_days:number;month_day:number
   threshold:number;minimum_users:number;only_changes:boolean;instruction:string
+  topic:string;quiet_start:number;quiet_end:number;cooldown_hours:number
 }
 export const listReportSchedules=()=>get(`${root}/report-schedules`) as unknown as Promise<Envelope<ReportSchedule[]>>
 export const saveReportSchedule=(data:ReportSchedule)=>data.id?put(`${root}/report-schedules/${encodeURIComponent(data.id)}`,data):post(`${root}/report-schedules`,data)
