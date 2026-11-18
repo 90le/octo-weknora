@@ -344,6 +344,27 @@ export function getWikiStats(kbId: string) {
   return get(`/api/v1/knowledgebase/${kbId}/wiki/stats`);
 }
 
+export interface WikiGenerationTask {
+  knowledge_id: string;
+  title: string;
+  status: 'failed' | 'queued' | 'running' | 'published' | 'unavailable';
+  error_code?: string;
+  failed_at?: string;
+  attempts: number;
+}
+
+export function listWikiGenerationTasks(kbId: string, cursor: string) {
+  return get<{ data: { tasks: WikiGenerationTask[]; next_cursor?: string } }>(
+    `/api/v1/knowledgebase/${kbId}/wiki/generation/tasks`, { params: { cursor } },
+  );
+}
+
+export function retryWikiGenerationTasks(kbId: string, knowledgeIds: string[]) {
+  return post<{ data: { queued: string[]; skipped: number; dispatch_pending?: boolean } }>(
+    `/api/v1/knowledgebase/${kbId}/wiki/generation/retry`, { knowledge_ids: knowledgeIds },
+  );
+}
+
 export function searchWikiPages(kbId: string, q: string, limit?: number) {
   const params = new URLSearchParams({ q });
   if (limit) params.set('limit', String(limit));

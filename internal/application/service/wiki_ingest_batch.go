@@ -385,13 +385,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		return s.releaseIngestForUnavailableWiki(ctx, kb.ID, "wiki disabled")
 	}
 
-	var synthesisModelID string
-	if kb.WikiConfig != nil {
-		synthesisModelID = kb.WikiConfig.SynthesisModelID
-	}
-	if synthesisModelID == "" {
-		synthesisModelID = kb.SummaryModelID
-	}
+	synthesisModelID := wikiSynthesisModelID(kb)
 	if synthesisModelID == "" {
 		exitStatus = "missing_synthesis_model"
 		return s.releaseIngestForUnavailableWiki(ctx, kb.ID, "no synthesis model configured")
@@ -629,7 +623,8 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 				mapMu.Lock()
 				ingestFailed++
 				failedOps = append(failedOps, op)
-				if isLikelyRateLimitError(err) {
+				failureCode := wikiGenerationIssue(err.Error(), "")
+				if isLikelyRateLimitError(err) || (op.ManualRetry && (failureCode == "gateway_unavailable" || failureCode == "gateway_timeout")) {
 					rateLimited = true
 				}
 				mapMu.Unlock()
@@ -667,7 +662,9 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 				// "finalizing" until the housekeeping sweep marks it
 				// failed. The matching +1 was seeded by
 				// KnowledgePostProcess.SetFinalizing.
-				s.finalizeWikiSubtask(mapCtx, op.KnowledgeID, op.Attempt)
+				if !op.ManualRetry {
+					s.finalizeWikiSubtask(mapCtx, op.KnowledgeID, op.Attempt)
+				}
 			}
 			return nil
 		})
@@ -910,6 +907,10 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	// failed).
 	failedAdditionSlugCount := len(failedAdditionSlugs)
 	spanCtx, spanCancel := wikiIngestCleanupContext(ctx)
+	manualRetries := make(map[string]bool, len(pendingOps))
+	for _, op := range pendingOps {
+		manualRetries[op.KnowledgeID] = op.ManualRetry
+	}
 	for _, r := range docResults {
 		if r == nil {
 			continue
@@ -925,7 +926,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		// error): those are re-queued below, so keep their finalizing slot
 		// held — the retry (or the dead-letter drain in requeueFailedOps)
 		// releases it once the op reaches a real terminal state.
-		if _, unapplied := unappliedSlugKIDs[r.KnowledgeID]; !unapplied {
+		if _, unapplied := unappliedSlugKIDs[r.KnowledgeID]; !unapplied && !manualRetries[r.KnowledgeID] {
 			s.finalizeWikiSubtask(ctx, r.KnowledgeID, opAttempts[r.KnowledgeID])
 		}
 		if r.WikiSpan == nil {
@@ -1356,6 +1357,18 @@ func (s *wikiIngestService) mapOneDocument(
 		logger.Infof(ctx, "wiki ingest: knowledge %s has been deleted, skip map", knowledgeID)
 		s.tracker().SkipSpan(ctx, wikiSpan, "knowledge_deleted")
 		return nil, nil, nil
+	}
+	if op.ManualRetry {
+		kn, err := s.knowledgeSvc.GetKnowledgeByIDOnly(ctx, knowledgeID)
+		if err != nil && !errors.Is(err, apprepo.ErrKnowledgeNotFound) {
+			s.tracker().FailSpan(ctx, wikiSpan, "KNOWLEDGE_LOOKUP_FAILED", err.Error(), err)
+			return nil, nil, err
+		}
+		if kn == nil || kn.TenantID != payload.TenantID || kn.KnowledgeBaseID != payload.KnowledgeBaseID ||
+			kn.EnableStatus != "enabled" || kn.ParseStatus != types.ParseStatusCompleted {
+			s.tracker().SkipSpan(ctx, wikiSpan, "knowledge_unavailable")
+			return nil, nil, nil
+		}
 	}
 
 	chunks, err := s.chunkRepo.ListChunksByKnowledgeID(ctx, payload.TenantID, knowledgeID)

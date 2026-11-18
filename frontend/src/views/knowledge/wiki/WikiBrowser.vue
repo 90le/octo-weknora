@@ -302,6 +302,10 @@
             @enter="doSearch" @clear="searchResults = null">
             <template #prefixIcon><t-icon name="search" /></template>
           </t-input>
+          <t-button v-if="props.canEdit" block variant="outline" @click="showGenerationDrawer = true">
+            <template #icon><t-icon name="time" /></template>
+            {{ $t('knowledgeEditor.wikiBrowser.generation.title') }}
+          </t-button>
         </div>
 
         <div class="wiki-page-list" ref="pageListRef">
@@ -846,6 +850,9 @@
     <WikiRevisionDrawer v-model:visible="showRevisionDrawer" :kb-id="props.knowledgeBaseId"
       :slug="selectedPage?.slug || ''" :current-page="selectedPage" :can-edit="props.canEdit"
       @reverted="onPageReverted" />
+    <WikiGenerationDrawer v-if="props.canEdit" v-model:visible="showGenerationDrawer"
+      :kb-id="props.knowledgeBaseId" @queued="loadStats"
+      @published="() => { loadPages(); refreshSelectedPage() }" />
 
     <!-- Create page dialog -->
     <t-dialog v-model:visible="showCreatePageDialog" :header="$t('knowledgeEditor.wikiBrowser.newPageTitle')"
@@ -922,6 +929,7 @@ import type { ProtectedFileAccessContext } from '@/utils/protectedFileAccess'
 import picturePreview from '@/components/picture-preview.vue'
 import WikiFolderActions from './WikiFolderActions.vue'
 import WikiRevisionDrawer from './WikiRevisionDrawer.vue'
+import WikiGenerationDrawer from './WikiGenerationDrawer.vue'
 import {
   expandedWikiDirectoryPaths,
   expandWikiDirectoryPath,
@@ -3170,6 +3178,7 @@ const editBaseVersion = ref(0)
 const editConflictVersion = ref<number | null>(null)
 
 const showRevisionDrawer = ref(false)
+const showGenerationDrawer = ref(false)
 
 const showCreatePageDialog = ref(false)
 const creatingPage = ref(false)

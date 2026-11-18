@@ -26,6 +26,7 @@ type WikiPageHandler struct {
 	lintService   *service.WikiLintService
 	auditService  interfaces.AuditLogService
 	memoryService interfaces.MemoryService
+	generation    *service.WikiGenerationService
 }
 
 // NewWikiPageHandler creates a new wiki page handler
@@ -35,6 +36,7 @@ func NewWikiPageHandler(
 	lintService *service.WikiLintService,
 	auditService interfaces.AuditLogService,
 	memoryService interfaces.MemoryService,
+	generation *service.WikiGenerationService,
 ) *WikiPageHandler {
 	return &WikiPageHandler{
 		wikiService:   wikiService,
@@ -42,6 +44,7 @@ func NewWikiPageHandler(
 		lintService:   lintService,
 		auditService:  auditService,
 		memoryService: memoryService,
+		generation:    generation,
 	}
 }
 

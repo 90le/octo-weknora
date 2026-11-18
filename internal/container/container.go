@@ -600,6 +600,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewOctoBusiness))
 	must(container.Provide(octobusiness.NewHandler))
 	// Wiki page handler
+	must(container.Provide(service.NewWikiGenerationService))
 	must(container.Provide(handler.NewWikiPageHandler))
 	// IM integration
 	logger.Debugf(ctx, "[Container] Registering IM integration...")
