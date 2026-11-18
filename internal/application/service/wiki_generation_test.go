@@ -29,7 +29,7 @@ func (m *wikiRetrySummaryModel) Chat(
 	context.Context, []chat.Message, *chat.ChatOptions,
 ) (*types.ChatResponse, error) {
 	m.buffered++
-	return nil, errors.New("model gateway HTTP 504")
+	return nil, errors.New("API request failed with status 504")
 }
 
 func (m *wikiRetrySummaryModel) ChatStream(
