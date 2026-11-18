@@ -55,6 +55,9 @@ func (s *Service) businessContext(ctx context.Context, req *qaRequest, scope *Ex
 		if req.msg.FileKey != "" {
 			p.Attachments = []octobusiness.Attachment{{Name: req.msg.FileName, URL: req.msg.FileKey, Type: string(req.msg.MessageType)}}
 		}
+		if quote := req.msg.Quote; quote != nil && quote.IsBotMessage {
+			p.QuotedReplyID = quote.MessageID
+		}
 		return p
 	}
 	p := principal(scope)

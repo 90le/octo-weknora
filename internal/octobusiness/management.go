@@ -143,10 +143,27 @@ func (s *Service) Propose(ctx context.Context, in ManagementInput) (*Proposal, e
 	if revision, ok := preview["revision"].(string); ok {
 		in.ExpectedRevision = revision
 	}
-	payload, _ := json.Marshal(in)
-	result, _ := json.Marshal(preview)
+	return s.saveProposal(ctx, p, in.Action, in.KnowledgeBaseID, in, preview)
+}
+
+func (s *Service) saveProposal(
+	ctx context.Context, p Principal, action, kbID string, input any, preview map[string]any,
+) (*Proposal, error) {
+	payload, err := json.Marshal(input)
+	if err != nil {
+		return nil, err
+	}
+	result, err := json.Marshal(preview)
+	if err != nil {
+		return nil, err
+	}
 	key := digest("proposal", fmtTenant(p.TenantID), p.AccountID, p.ChannelID, p.ScopeID, p.UserID, p.MessageID, string(payload))
-	row := Proposal{ID: "OP-" + uuid.NewString(), TenantID: p.TenantID, AccountID: p.AccountID, ChannelID: p.ChannelID, ScopeID: p.ScopeID, UserID: p.UserID, Action: in.Action, KnowledgeBaseID: in.KnowledgeBaseID, Payload: types.JSON(payload), Result: types.JSON(result), Status: "pending", SourceMessageID: p.MessageID, IdempotencyKey: key, ExpiresAt: time.Now().Add(15 * time.Minute)}
+	row := Proposal{
+		ID: "OP-" + uuid.NewString(), TenantID: p.TenantID, AccountID: p.AccountID,
+		ChannelID: p.ChannelID, ScopeID: p.ScopeID, UserID: p.UserID, Action: action, KnowledgeBaseID: kbID,
+		Payload: types.JSON(payload), Result: types.JSON(result), Status: "pending", SourceMessageID: p.MessageID,
+		IdempotencyKey: key, ExpiresAt: time.Now().Add(15 * time.Minute),
+	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		r := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "idempotency_key"}}, DoNothing: true}).Create(&row)
 		if r.Error != nil {
@@ -156,7 +173,8 @@ func (s *Service) Propose(ctx context.Context, in ManagementInput) (*Proposal, e
 			row = Proposal{}
 			return tx.Where("idempotency_key = ?", key).First(&row).Error
 		}
-		return audit(tx, p, "octo.knowledge.proposed", row.ID, map[string]string{"action": in.Action, "knowledge_base_id": in.KnowledgeBaseID})
+		details := map[string]string{"action": action, "knowledge_base_id": kbID}
+		return audit(tx, p, "octo.knowledge.proposed", row.ID, details)
 	})
 	if err == nil && row.Status == "pending" {
 		row.ConfirmationCommand = "确认 " + row.ID
@@ -198,6 +216,11 @@ func (s *Service) Confirm(ctx context.Context, id string, cancel bool) (*Proposa
 			}
 			return nil, argumentError("尚未执行。请由当前操作人在本会话原样发送：" + command + "。仅回复“确认创建”“确认保存”或“取消”不能执行此操作。")
 		}
+	}
+	if row.Action == IssueProposalAction {
+		err = s.confirmIssue(ctx, p, &row, cancel)
+		row.Payload = nil
+		return &row, err
 	}
 	if row.Status == "completed" || row.Status == "cancelled" {
 		return &row, nil

@@ -156,48 +156,72 @@ func (s *Service) CreateIssue(ctx context.Context, in IssueInput) (*Issue, error
 	if err != nil {
 		return nil, err
 	}
-	if p.MessageID == "" || p.MessageText == "" || (!p.IsDirect && p.ScopeID == "") {
-		return nil, ErrDenied
-	}
-	if _, err = s.checkKB(ctx, p, in.KnowledgeBaseID, false); err != nil {
+	row, _, err := s.prepareIssue(ctx, p, in)
+	if err != nil {
 		return nil, err
 	}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return insertIssue(tx, p, row)
+	})
+	return row, err
+}
+
+func (s *Service) prepareIssue(ctx context.Context, p Principal, in IssueInput) (*Issue, string, error) {
+	if p.MessageID == "" || p.MessageText == "" || (!p.IsDirect && p.ScopeID == "") {
+		return nil, "", ErrDenied
+	}
+	kb, err := s.checkKB(ctx, p, in.KnowledgeBaseID, false)
+	if err != nil {
+		return nil, "", err
+	}
 	if in.Kind != "missing" && in.Kind != "bug" && in.Kind != "suggestion" {
-		return nil, ErrInvalid
+		return nil, "", ErrInvalid
 	}
 	if len(in.MissingFields) > 0 || !validText(in.Title, 300) || !validText(in.Description, 12000) {
-		return nil, ErrClarify
+		return nil, "", ErrClarify
 	}
 	if in.Kind == "missing" && (in.RetrievalStatus != "no_answer" || !retrievalReady(ctx) || !answerevidence.AllowsMissingIssue(ctx)) {
-		return nil, ErrInvalid
+		return nil, "", ErrInvalid
 	}
 	if in.Kind == "bug" && (!validText(in.Expected, 4000) || !validText(in.Steps, 6000)) {
-		return nil, ErrClarify
+		return nil, "", ErrClarify
 	}
 	attachments, _ := json.Marshal(p.Attachments)
 	if p.Attachments == nil {
 		attachments = []byte("[]")
 	}
-	key := digest("issue", fmtTenant(p.TenantID), p.AccountID, p.ChannelID, p.ScopeID, p.UserID, p.MessageID, in.Kind)
-	row := Issue{ID: uuid.NewString(), TenantID: p.TenantID, AccountID: p.AccountID, ChannelID: p.ChannelID, ScopeID: p.ScopeID, ScopeName: p.ScopeName, GroupID: p.GroupID, SubareaID: p.SubareaID, IsDirect: p.IsDirect, KnowledgeBaseID: in.KnowledgeBaseID, Kind: in.Kind, Title: strings.TrimSpace(in.Title), Description: strings.TrimSpace(in.Description), Expected: in.Expected, Steps: in.Steps, ReporterUID: p.UserID, ReporterName: p.UserName, MessageID: p.MessageID, OriginalMessage: p.MessageText, Attachments: types.JSON(attachments), Status: "open", IdempotencyKey: key}
+	row := &Issue{
+		TenantID: p.TenantID, AccountID: p.AccountID, ChannelID: p.ChannelID,
+		ScopeID: p.ScopeID, ScopeName: p.ScopeName, GroupID: p.GroupID, SubareaID: p.SubareaID, IsDirect: p.IsDirect,
+		KnowledgeBaseID: kb.ID, Kind: in.Kind, Title: strings.TrimSpace(in.Title),
+		Description: strings.TrimSpace(in.Description), Expected: in.Expected, Steps: in.Steps,
+		ReporterUID: p.UserID, ReporterName: p.UserName, MessageID: p.MessageID,
+		OriginalMessage: p.MessageText, Attachments: types.JSON(attachments), Status: "open",
+	}
 	// A single configured default is a routing hint, never an automatic message.
 	var contact Contact
 	if s.db.WithContext(ctx).Where("tenant_id = ? AND knowledge_base_id = ? AND is_default = ?", p.TenantID, in.KnowledgeBaseID, true).Order("id").First(&contact).Error == nil {
 		row.OwnerUID = contact.UID
 		row.OwnerName = contact.Name
 	}
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		result := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "idempotency_key"}}, DoNothing: true}).Create(&row)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			row = Issue{}
-			return tx.Where("idempotency_key = ?", key).First(&row).Error
-		}
-		return audit(tx, p, "octo.issue.created", row.ID, map[string]string{"kind": row.Kind, "scope_id": row.ScopeID})
-	})
-	return &row, err
+	return row, kb.Name, nil
+}
+
+func insertIssue(tx *gorm.DB, p Principal, row *Issue) error {
+	key := digest("issue", fmtTenant(p.TenantID), p.AccountID, p.ChannelID, p.ScopeID,
+		p.UserID, row.MessageID, row.Kind)
+	row.ID = uuid.NewString()
+	row.IdempotencyKey = key
+	conflict := clause.OnConflict{Columns: []clause.Column{{Name: "idempotency_key"}}, DoNothing: true}
+	result := tx.Clauses(conflict).Create(row)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		*row = Issue{}
+		return tx.Where("idempotency_key = ?", key).First(row).Error
+	}
+	return audit(tx, p, "octo.issue.created", row.ID, map[string]string{"kind": row.Kind, "scope_id": row.ScopeID})
 }
 
 type IssueFilter struct {

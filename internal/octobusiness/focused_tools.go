@@ -21,6 +21,13 @@ const (
 	ToolReport             = "octo_report"
 )
 
+const issueDescription = "Review feedback and manage registered issues in this conversation. " +
+	"In Octo, create previews an issue. Prepare one when the user requests or accepts registration. " +
+	"Use confirmed facts from the user's description and quoted reply. Ask only for facts that change the issue. " +
+	"Show the preview and the exact confirmation_command and cancellation_command. " +
+	"A missing issue requires a completed relevant search with no answer. " +
+	"A service error or unresolved input is not a missing issue. Resolve issue IDs with list."
+
 const knowledgePreviewDescription = "Preview a knowledge change; action is required. To create a library " +
 	"use action=create_kb and name. An optional creation template needs read permission, not management " +
 	"permission; the server's preview decides current creation authorization. Do not infer denial from " +
@@ -72,8 +79,16 @@ func NewTools(service *Service) []types.Tool {
 		newKnowledgeDocumentsTool(service),
 		makeTool(ToolConfiguration, "Read the current verified Octo scope, readable/manageable knowledge bases and creation capability. Takes no arguments. Use the returned IDs to resolve the user's target; never ask users for backend IDs. An empty manageable list alone does not decide creation permission.", nil, []string{}, nil),
 		makeTool(ToolContacts, "Find responsible contacts for the currently authorized knowledge bases. Optional knowledge_base_id narrows the result. Display returned native contacts; do not notify or message them.", []string{"knowledge_base_id"}, []string{}, nil),
-		makeTool(ToolIssues, "Collect and manage registered knowledge gaps, bugs and suggestions in this conversation. Select action=create/list/get/update. For create, describe verified user facts in description (not content). input_clarifications_needed lists only ambiguities in the user's request/report, never the answer missing from the knowledge base. Clarify those ambiguities first. A clear unanswered question needs an empty list; record a knowledge gap only after successful retrieval returned no answer. Lookup issue IDs with list, do not ask users for internal IDs. Creating a record does not update or publish knowledge.", []string{"knowledge_base_id", "issue_id", "kind", "title", "description", "expected", "steps", "retrieval_status", "status", "note", "keyword", "from", "to", "page", "page_size"}, []string{"action"}, map[string]any{
-			"action":                      map[string]any{"type": "string", "enum": []string{"create", "list", "get", "update"}, "description": "Required. create: kind+title+description and an authorized knowledge_base_id (defaults only with one readable KB); bug also needs steps+expected. get/update: issue_id; update also needs status. list supports optional filters."},
+		makeTool(ToolIssues, issueDescription, []string{
+			"knowledge_base_id", "issue_id", "kind", "title", "description", "expected", "steps",
+			"retrieval_status", "status", "note", "keyword", "from", "to", "page", "page_size",
+		}, []string{"action"}, map[string]any{
+			"action": map[string]any{
+				"type": "string", "enum": []string{"create", "list", "get", "update"},
+				"description": "create previews an issue using kind, title, description and knowledge_base_id " +
+					"(defaults for one readable KB). A bug also needs steps and expected behavior. " +
+					"get/update require issue_id. update also needs status.",
+			},
 			"input_clarifications_needed": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Only facts unclear in the user's own input, e.g. which product or reproduction steps. NOT the unknown answer. A clear question such as asking the price has no input ambiguity even when no price exists in the knowledge base; use [] and record the missing answer as kind=missing after verified retrieval."},
 		}),
 		makeTool(ToolKnowledgePreview, knowledgePreviewDescription,
@@ -191,12 +206,13 @@ func (t *focusedTool) Execute(ctx context.Context, args json.RawMessage) (*types
 		return nil, err
 	}
 	result, err := t.legacy.Execute(ctx, payload)
-	if err == nil && result != nil && result.Success && (t.name == ToolKnowledgePreview || t.name == ToolKnowledgeConfirm) {
+	isPreview := t.name == ToolKnowledgePreview || operation == "create_issue"
+	if err == nil && result != nil && result.Success && (isPreview || t.name == ToolKnowledgeConfirm) {
 		var row map[string]any
 		if json.Unmarshal([]byte(result.Output), &row) == nil {
 			if id, ok := row["id"].(string); ok && strings.HasPrefix(id, "OP-") {
 				row["proposal_id"] = id
-				if t.name == ToolKnowledgePreview {
+				if isPreview {
 					if expiry, ok := row["expires_at"].(string); ok {
 						if at, parseErr := time.Parse(time.RFC3339Nano, expiry); parseErr == nil {
 							local := at.In(time.FixedZone("北京时间", 8*60*60))

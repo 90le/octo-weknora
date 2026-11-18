@@ -20,6 +20,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/modelcontext"
 	"github.com/Tencent/WeKnora/internal/models/chat"
+	"github.com/Tencent/WeKnora/internal/octobusiness"
 	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -206,6 +207,9 @@ func (e *AgentEngine) buildSystemPrompt(ctx context.Context) string {
 	prompt := renderSystemPromptSections(sections)
 	if contract := answerevidence.Prompt(ctx); contract != "" {
 		prompt += "\n\n" + contract
+	}
+	if principal, ok := octobusiness.PrincipalFromContext(ctx); ok && !principal.Console {
+		prompt += "\n\n" + octobusiness.DialogueGuidance
 	}
 	return prompt
 }
