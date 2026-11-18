@@ -358,6 +358,8 @@ type WikiPendingOp struct {
 	// slot. An op that outlived a reparse must not release a slot of the
 	// newer attempt. Zero on ops queued before this field existed.
 	Attempt int `json:"attempt,omitempty"`
+	// ManualRetry ingests already-parsed chunks and owns no finalizing slot.
+	ManualRetry bool `json:"manual_retry,omitempty"`
 	// Retract fields
 	DocTitle   string   `json:"doc_title,omitempty"`
 	DocSummary string   `json:"doc_summary,omitempty"`
@@ -1363,9 +1365,6 @@ func (s *wikiIngestService) requeueFailedOps(ctx context.Context, payload WikiIn
 		// knowledge's finalizing counter (ingest ops only; retracts are
 		// for deleted knowledge that has no counter to drain). The
 		// matching +1 was seeded by KnowledgePostProcess.SetFinalizing.
-		if op.Op == WikiOpIngest {
-			s.finalizeWikiSubtask(ctx, op.KnowledgeID, op.Attempt)
-		}
 		logger.Warnf(ctx, "wiki ingest: dropping op %s (%s) after %d failures (limit %d)", op.KnowledgeID, op.DocTitle, count, wikiMaxFailRetries)
 		if s.deadLetterRepo != nil {
 			payloadBytes, _ := json.Marshal(op)
@@ -1378,14 +1377,23 @@ func (s *wikiIngestService) requeueFailedOps(ctx context.Context, payload WikiIn
 				Payload:   payloadBytes,
 				LastError: fmt.Sprintf("exceeded wikiMaxFailRetries=%d (in-batch retries)", wikiMaxFailRetries),
 				FailCount: count,
+				FailedAt:  time.Now(),
 			}); dlErr != nil {
 				logger.Warnf(ctx, "wiki ingest: failed to archive op %s to dead letters: %v", op.KnowledgeID, dlErr)
 				settleErrs = append(settleErrs, fmt.Errorf("archive dead letter id=%d: %w", op.dbID, dlErr))
+				if releaseErr := s.pendingRepo.ReleaseByIDs(ctx, []int64{op.dbID}); releaseErr != nil {
+					settleErrs = append(settleErrs, releaseErr)
+				}
+				continue
 			}
 		}
 		if err := s.pendingRepo.DeleteByIDs(ctx, []int64{op.dbID}); err != nil {
 			logger.Warnf(ctx, "wiki ingest: failed to drop dead-lettered row id=%d: %v", op.dbID, err)
 			settleErrs = append(settleErrs, fmt.Errorf("drop dead-lettered row id=%d: %w", op.dbID, err))
+			continue
+		}
+		if op.Op == WikiOpIngest && !op.ManualRetry {
+			s.finalizeWikiSubtask(ctx, op.KnowledgeID, op.Attempt)
 		}
 	}
 	return errors.Join(settleErrs...)
@@ -2757,10 +2765,12 @@ func (s *wikiIngestService) generateWithTemplateResult(
 	ctx = types.WithLLMCallMetadata(ctx, purpose, prefixFingerprint)
 
 	tenantID, tenantScoped := types.TenantIDFromContext(ctx)
+	retryStream, _ := ctx.Value(wikiRetryStreamKey{}).(bool)
 	requestJSON, _ := json.Marshal(struct {
-		Messages []chat.Message    `json:"messages"`
-		Options  *chat.ChatOptions `json:"options"`
-	}{Messages: messages, Options: opts})
+		Messages    []chat.Message    `json:"messages"`
+		Options     *chat.ChatOptions `json:"options"`
+		RetryStream bool              `json:"retry_stream,omitempty"`
+	}{Messages: messages, Options: opts, RetryStream: retryStream})
 	requestKey := chat.BuildPromptCacheKey(
 		tenantID, chatModel.GetModelID(), "wiki_exact_request",
 		chat.FingerprintPromptPrefix(string(requestJSON)),
@@ -2783,7 +2793,14 @@ func (s *wikiIngestService) generateWithTemplateResult(
 		call := func(msgs []chat.Message) (*types.ChatResponse, error) {
 			var lastErr error
 			for attempt := 1; attempt <= wikiLLMMaxAttempts; attempt++ {
-				response, callErr := chatModel.Chat(ctx, msgs, opts)
+				var response *types.ChatResponse
+				var callErr error
+				streamAttempt := retryStream && attempt == 1
+				if streamAttempt {
+					response, callErr = collectWikiRetryStream(ctx, chatModel, msgs, opts)
+				} else {
+					response, callErr = chatModel.Chat(ctx, msgs, opts)
+				}
 				if callErr == nil && response != nil {
 					return response, nil
 				}
@@ -2792,7 +2809,10 @@ func (s *wikiIngestService) generateWithTemplateResult(
 				}
 				lastErr = callErr
 
-				if !isTransientLLMError(ctx, callErr) {
+				// A provider that rejects streaming or returns a partial answer
+				// still gets a bounded attempt using the usual buffered path.
+				canRetry := (streamAttempt && ctx.Err() == nil) || isTransientLLMError(ctx, callErr)
+				if !canRetry {
 					return nil, fmt.Errorf("LLM call failed: %w", callErr)
 				}
 				if attempt == wikiLLMMaxAttempts {

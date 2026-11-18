@@ -361,6 +361,9 @@ func RegisterWikiPageRoutes(r *gin.RouterGroup, wikiHandler *handler.WikiPageHan
 		// Search and maintenance
 		wikiRead.GET("/search", g.Viewer(), g.KBAccessRead("kb_id"), wikiHandler.SearchPages)
 		wiki.POST("/rebuild-links", g.OwnedWikiKBOrAdmin(), g.KBAccessWrite("kb_id"), wikiHandler.RebuildLinks)
+		wiki.GET("/generation/tasks", g.OwnedWikiKBOrAdmin(), g.KBAccessWrite("kb_id"), wikiHandler.ListGenerationTasks)
+		wiki.POST("/generation/retry", g.OwnedWikiKBOrAdmin(), g.KBAccessWrite("kb_id"),
+			wikiHandler.RetryGenerationTasks)
 		wikiRead.GET("/lint", g.Viewer(), g.KBAccessRead("kb_id"), wikiHandler.Lint)
 		wiki.POST("/auto-fix", g.OwnedWikiKBOrAdmin(), g.KBAccessWrite("kb_id"), wikiHandler.AutoFix)
 

@@ -385,13 +385,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		return s.releaseIngestForUnavailableWiki(ctx, kb.ID, "wiki disabled")
 	}
 
-	var synthesisModelID string
-	if kb.WikiConfig != nil {
-		synthesisModelID = kb.WikiConfig.SynthesisModelID
-	}
-	if synthesisModelID == "" {
-		synthesisModelID = kb.SummaryModelID
-	}
+	synthesisModelID := wikiSynthesisModelID(kb)
 	if synthesisModelID == "" {
 		exitStatus = "missing_synthesis_model"
 		return s.releaseIngestForUnavailableWiki(ctx, kb.ID, "no synthesis model configured")
@@ -490,28 +484,47 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		}
 	}
 
-	// Crash/abort safety net (standard/claim mode only). If this batch exits
+	// Lite holds the KB lock already. Persist the state of manually retried
+	// rows so progress survives the cleanup of the original parse spans.
+	claimedIDs := peekedIDs
+	if s.redisClient == nil {
+		claimedIDs = nil
+		if marker, ok := s.pendingRepo.(interfaces.TaskPendingOpsProcessingMarker); ok {
+			for _, op := range pendingOps {
+				if op.ManualRetry && op.dbID > 0 {
+					claimedIDs = append(claimedIDs, op.dbID)
+				}
+			}
+			if err := marker.MarkClaimedByIDs(ctx, claimedIDs); err != nil {
+				exitStatus = "mark_retry_running_failed"
+				return fmt.Errorf("wiki ingest: record running retry: %w", err)
+			}
+		}
+	}
+
+	// Crash/abort safety net for durable claims. If this batch exits
 	// abnormally — panic, ctx timeout, or an early error return — BEFORE it
 	// settles its claimed rows (trim + requeueFailedOps), release the claims
 	// so the next trigger can re-claim within seconds instead of waiting out
 	// wikiClaimStaleAfter (~90m). On the normal path claimsSettled flips true
 	// once the rows reach their terminal state, making this a no-op. Uses a
 	// bounded detached cleanup context because ctx may already be cancelled on
-	// the timeout path. Lite mode peeks without claiming, so there is nothing
-	// to release.
+	// the timeout path.
 	claimsSettled := false
-	if s.redisClient != nil && len(peekedIDs) > 0 {
+	if len(claimedIDs) > 0 {
 		defer func() {
 			if claimsSettled {
 				return
 			}
 			releaseCtx, releaseCancel := wikiIngestCleanupContext(ctx)
 			defer releaseCancel()
-			if err := s.pendingRepo.ReleaseByIDs(releaseCtx, peekedIDs); err != nil {
-				logger.Warnf(ctx, "wiki ingest: failed to release %d claims on abnormal exit for KB %s: %v", len(peekedIDs), payload.KnowledgeBaseID, err)
+			if err := s.pendingRepo.ReleaseByIDs(releaseCtx, claimedIDs); err != nil {
+				logger.Warnf(ctx, "wiki ingest: failed to release %d claims on abnormal exit for KB %s: %v",
+					len(claimedIDs), payload.KnowledgeBaseID, err)
 				return
 			}
-			logger.Warnf(ctx, "wiki ingest: released %d claimed rows on abnormal exit for KB %s (re-claimable immediately)", len(peekedIDs), payload.KnowledgeBaseID)
+			logger.Warnf(ctx, "wiki ingest: released %d claimed rows on abnormal exit for KB %s",
+				len(claimedIDs), payload.KnowledgeBaseID)
 		}()
 	}
 
@@ -629,7 +642,9 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 				mapMu.Lock()
 				ingestFailed++
 				failedOps = append(failedOps, op)
-				if isLikelyRateLimitError(err) {
+				failureCode := wikiGenerationIssue(err.Error(), "")
+				transientGateway := failureCode == "gateway_unavailable" || failureCode == "gateway_timeout"
+				if isLikelyRateLimitError(err) || (op.ManualRetry && transientGateway) {
 					rateLimited = true
 				}
 				mapMu.Unlock()
@@ -667,7 +682,9 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 				// "finalizing" until the housekeeping sweep marks it
 				// failed. The matching +1 was seeded by
 				// KnowledgePostProcess.SetFinalizing.
-				s.finalizeWikiSubtask(mapCtx, op.KnowledgeID, op.Attempt)
+				if !op.ManualRetry {
+					s.finalizeWikiSubtask(mapCtx, op.KnowledgeID, op.Attempt)
+				}
 			}
 			return nil
 		})
@@ -910,6 +927,10 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 	// failed).
 	failedAdditionSlugCount := len(failedAdditionSlugs)
 	spanCtx, spanCancel := wikiIngestCleanupContext(ctx)
+	manualRetries := make(map[string]bool, len(pendingOps))
+	for _, op := range pendingOps {
+		manualRetries[op.KnowledgeID] = op.ManualRetry
+	}
 	for _, r := range docResults {
 		if r == nil {
 			continue
@@ -925,7 +946,7 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		// error): those are re-queued below, so keep their finalizing slot
 		// held — the retry (or the dead-letter drain in requeueFailedOps)
 		// releases it once the op reaches a real terminal state.
-		if _, unapplied := unappliedSlugKIDs[r.KnowledgeID]; !unapplied {
+		if _, unapplied := unappliedSlugKIDs[r.KnowledgeID]; !unapplied && !manualRetries[r.KnowledgeID] {
 			s.finalizeWikiSubtask(ctx, r.KnowledgeID, opAttempts[r.KnowledgeID])
 		}
 		if r.WikiSpan == nil {
@@ -1357,6 +1378,19 @@ func (s *wikiIngestService) mapOneDocument(
 		s.tracker().SkipSpan(ctx, wikiSpan, "knowledge_deleted")
 		return nil, nil, nil
 	}
+	if op.ManualRetry {
+		kn, err := s.knowledgeSvc.GetKnowledgeByIDOnly(ctx, knowledgeID)
+		if err != nil && !errors.Is(err, apprepo.ErrKnowledgeNotFound) {
+			s.tracker().FailSpan(ctx, wikiSpan, "KNOWLEDGE_LOOKUP_FAILED", err.Error(), err)
+			return nil, nil, err
+		}
+		if kn == nil || kn.TenantID != payload.TenantID || kn.KnowledgeBaseID != payload.KnowledgeBaseID ||
+			kn.EnableStatus != "enabled" || kn.ParseStatus != types.ParseStatusCompleted {
+			s.tracker().SkipSpan(ctx, wikiSpan, "knowledge_unavailable")
+			return nil, nil, nil
+		}
+		ctx = context.WithValue(ctx, wikiRetryStreamKey{}, true)
+	}
 
 	chunks, err := s.chunkRepo.ListChunksByKnowledgeID(ctx, payload.TenantID, knowledgeID)
 	if err != nil {
@@ -1499,13 +1533,16 @@ func (s *wikiIngestService) mapOneDocument(
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		summaryContent, summaryErr = s.generateWithTemplate(ctx, chatModel, agent.WikiSummaryPrompt, map[string]string{
+		summaryInput := map[string]string{
 			"Content":            content,
 			"Language":           lang,
 			"ExtractedSlugs":     slugListing,
 			"CustomInstructions": batchCtx.ContentInstructions,
 			"InstructionScope":   "wiki_content",
-		})
+		}
+		summaryContent, summaryErr = s.generateWithTemplate(
+			ctx, chatModel, agent.WikiSummaryPrompt, summaryInput,
+		)
 		if summaryErr != nil {
 			s.tracker().FailSpan(ctx, summarySpan, "SUMMARY_FAILED", summaryErr.Error(), summaryErr)
 		} else {
