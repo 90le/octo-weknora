@@ -35,7 +35,9 @@ func testService(t *testing.T) *Service {
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(string(migration)).Error)
 	fixtures := []string{
-		"000042_octo_message_inbox.up.sql", "000053_octo_operations.up.sql", "000054_octo_report_delivery_controls.up.sql",
+		"000042_octo_message_inbox.up.sql",
+		"000053_octo_operations.up.sql",
+		"000054_octo_report_delivery_controls.up.sql",
 	}
 	for _, name := range fixtures {
 		migration, err = os.ReadFile("../../migrations/sqlite/" + name)
