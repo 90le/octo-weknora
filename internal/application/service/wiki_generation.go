@@ -23,11 +23,11 @@ const wikiGenerationPageSize = 50
 // WikiGenerationRetryLimit is the maximum number of documents per request.
 const WikiGenerationRetryLimit = 20
 
-type wikiRetrySummaryKey struct{}
+type wikiRetryStreamKey struct{}
 
-// collectWikiRetrySummary buffers the stream and accepts only a complete
-// answer. A dropped connection must not publish an incomplete summary.
-func collectWikiRetrySummary(
+// collectWikiRetryStream buffers the stream and accepts only a complete
+// answer. A dropped connection must not publish incomplete Wiki content.
+func collectWikiRetryStream(
 	ctx context.Context, model chat.Chat, messages []chat.Message, opts *chat.ChatOptions,
 ) (*types.ChatResponse, error) {
 	streamCtx, cancel := context.WithCancel(ctx)
@@ -40,7 +40,7 @@ func collectWikiRetrySummary(
 	for event := range stream {
 		switch event.ResponseType {
 		case types.ResponseTypeError:
-			return nil, fmt.Errorf("wiki summary stream: %s", event.Content)
+			return nil, fmt.Errorf("wiki generation stream: %s", event.Content)
 		case types.ResponseTypeAnswer:
 			content.WriteString(event.Content)
 			if event.Done && event.FinishReason != "" && event.FinishReason != types.FinishReasonIncomplete &&

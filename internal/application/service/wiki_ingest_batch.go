@@ -1389,6 +1389,7 @@ func (s *wikiIngestService) mapOneDocument(
 			s.tracker().SkipSpan(ctx, wikiSpan, "knowledge_unavailable")
 			return nil, nil, nil
 		}
+		ctx = context.WithValue(ctx, wikiRetryStreamKey{}, true)
 	}
 
 	chunks, err := s.chunkRepo.ListChunksByKnowledgeID(ctx, payload.TenantID, knowledgeID)
@@ -1532,10 +1533,6 @@ func (s *wikiIngestService) mapOneDocument(
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		summaryCtx := ctx
-		if op.ManualRetry {
-			summaryCtx = context.WithValue(ctx, wikiRetrySummaryKey{}, true)
-		}
 		summaryInput := map[string]string{
 			"Content":            content,
 			"Language":           lang,
@@ -1544,7 +1541,7 @@ func (s *wikiIngestService) mapOneDocument(
 			"InstructionScope":   "wiki_content",
 		}
 		summaryContent, summaryErr = s.generateWithTemplate(
-			summaryCtx, chatModel, agent.WikiSummaryPrompt, summaryInput,
+			ctx, chatModel, agent.WikiSummaryPrompt, summaryInput,
 		)
 		if summaryErr != nil {
 			s.tracker().FailSpan(ctx, summarySpan, "SUMMARY_FAILED", summaryErr.Error(), summaryErr)

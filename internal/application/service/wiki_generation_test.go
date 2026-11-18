@@ -17,9 +17,10 @@ import (
 )
 
 type wikiRetrySummaryModel struct {
-	finishReason string
-	buffered     int
-	streamed     int
+	finishReason     string
+	bufferedResponse string
+	buffered         int
+	streamed         int
 }
 
 func (*wikiRetrySummaryModel) GetModelID() string   { return "wiki-summary-test" }
@@ -29,6 +30,9 @@ func (m *wikiRetrySummaryModel) Chat(
 	context.Context, []chat.Message, *chat.ChatOptions,
 ) (*types.ChatResponse, error) {
 	m.buffered++
+	if m.bufferedResponse != "" {
+		return &types.ChatResponse{Content: m.bufferedResponse, FinishReason: "stop"}, nil
+	}
 	return nil, errors.New("API request failed with status 504")
 }
 
@@ -43,8 +47,8 @@ func (m *wikiRetrySummaryModel) ChatStream(
 	return stream, nil
 }
 
-func TestWikiGenerationRetrySummaryUsesCompleteStreamAfterTimeout(t *testing.T) {
-	ctx := context.WithValue(context.Background(), wikiRetrySummaryKey{}, true)
+func TestWikiGenerationRetryUsesCompleteStreams(t *testing.T) {
+	ctx := context.WithValue(context.Background(), wikiRetryStreamKey{}, true)
 	worker := &wikiIngestService{}
 	model := &wikiRetrySummaryModel{finishReason: "stop"}
 	result, err := worker.generateWithTemplateResult(ctx, model, agent.WikiSummaryPrompt, map[string]string{
@@ -52,15 +56,27 @@ func TestWikiGenerationRetrySummaryUsesCompleteStreamAfterTimeout(t *testing.T) 
 	})
 	require.NoError(t, err)
 	require.Equal(t, "SUMMARY: Fixture", result.Content)
-	require.Equal(t, 1, model.buffered)
+	require.Zero(t, model.buffered)
 	require.Equal(t, 1, model.streamed)
 
 	for _, reason := range []string{"", "length", types.FinishReasonIncomplete} {
 		model.finishReason = reason
-		partial, err := collectWikiRetrySummary(ctx, model, nil, nil)
+		partial, err := collectWikiRetryStream(ctx, model, nil, nil)
 		require.Error(t, err)
 		require.Nil(t, partial)
 	}
+
+	fallback := &wikiRetrySummaryModel{
+		finishReason:     types.FinishReasonIncomplete,
+		bufferedResponse: "SUMMARY: Buffered",
+	}
+	result, err = worker.generateWithTemplateResult(ctx, fallback, agent.WikiSummaryPrompt, map[string]string{
+		"Content": "A synthetic fallback document.",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "SUMMARY: Buffered", result.Content)
+	require.Equal(t, 1, fallback.streamed)
+	require.Equal(t, 1, fallback.buffered)
 }
 
 func TestWikiGenerationRecoversArchivedDocumentFailures(t *testing.T) {

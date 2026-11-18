@@ -2765,12 +2765,12 @@ func (s *wikiIngestService) generateWithTemplateResult(
 	ctx = types.WithLLMCallMetadata(ctx, purpose, prefixFingerprint)
 
 	tenantID, tenantScoped := types.TenantIDFromContext(ctx)
-	retrySummary, _ := ctx.Value(wikiRetrySummaryKey{}).(bool)
+	retryStream, _ := ctx.Value(wikiRetryStreamKey{}).(bool)
 	requestJSON, _ := json.Marshal(struct {
-		Messages     []chat.Message    `json:"messages"`
-		Options      *chat.ChatOptions `json:"options"`
-		RetrySummary bool              `json:"retry_summary,omitempty"`
-	}{Messages: messages, Options: opts, RetrySummary: retrySummary})
+		Messages    []chat.Message    `json:"messages"`
+		Options     *chat.ChatOptions `json:"options"`
+		RetryStream bool              `json:"retry_stream,omitempty"`
+	}{Messages: messages, Options: opts, RetryStream: retryStream})
 	requestKey := chat.BuildPromptCacheKey(
 		tenantID, chatModel.GetModelID(), "wiki_exact_request",
 		chat.FingerprintPromptPrefix(string(requestJSON)),
@@ -2795,11 +2795,9 @@ func (s *wikiIngestService) generateWithTemplateResult(
 			for attempt := 1; attempt <= wikiLLMMaxAttempts; attempt++ {
 				var response *types.ChatResponse
 				var callErr error
-				if retrySummary && attempt == 2 && wikiGenerationIssue(lastErr.Error(), "") == "gateway_timeout" {
-					response, callErr = collectWikiRetrySummary(ctx, chatModel, msgs, opts)
-					if callErr != nil {
-						callErr = errors.Join(lastErr, callErr)
-					}
+				streamAttempt := retryStream && attempt == 1
+				if streamAttempt {
+					response, callErr = collectWikiRetryStream(ctx, chatModel, msgs, opts)
 				} else {
 					response, callErr = chatModel.Chat(ctx, msgs, opts)
 				}
@@ -2811,7 +2809,9 @@ func (s *wikiIngestService) generateWithTemplateResult(
 				}
 				lastErr = callErr
 
-				if !isTransientLLMError(ctx, callErr) {
+				// A provider that rejects streaming or returns a partial answer
+				// still gets a bounded attempt using the usual buffered path.
+				if !(streamAttempt && ctx.Err() == nil) && !isTransientLLMError(ctx, callErr) {
 					return nil, fmt.Errorf("LLM call failed: %w", callErr)
 				}
 				if attempt == wikiLLMMaxAttempts {
