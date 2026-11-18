@@ -55,12 +55,18 @@ type WikiGenerationService struct {
 	kb    interfaces.KnowledgeBaseService
 }
 
-func NewWikiGenerationService(db *gorm.DB, queue interfaces.TaskEnqueuer, model interfaces.ModelService, kb interfaces.KnowledgeBaseService) *WikiGenerationService {
+func NewWikiGenerationService(
+	db *gorm.DB, queue interfaces.TaskEnqueuer, model interfaces.ModelService, kb interfaces.KnowledgeBaseService,
+) *WikiGenerationService {
 	return &WikiGenerationService{db: db, queue: queue, model: model, kb: kb}
 }
 
-func (s *WikiGenerationService) List(ctx context.Context, tenantID uint64, kbID, cursor string) (WikiGenerationPage, error) {
-	rows, err := repository.ListWikiGenerationRows(s.db.WithContext(ctx), tenantID, kbID, wikiTaskType, cursor, nil, wikiGenerationPageSize+1)
+func (s *WikiGenerationService) List(
+	ctx context.Context, tenantID uint64, kbID, cursor string,
+) (WikiGenerationPage, error) {
+	rows, err := repository.ListWikiGenerationRows(
+		s.db.WithContext(ctx), tenantID, kbID, wikiTaskType, cursor, nil, wikiGenerationPageSize+1,
+	)
 	if err != nil {
 		return WikiGenerationPage{}, err
 	}
@@ -114,7 +120,9 @@ func wikiGenerationTask(row repository.WikiGenerationRow, now time.Time) WikiGen
 func wikiGenerationIssue(message, code string) string {
 	message = strings.ToLower(message)
 	switch {
-	case strings.Contains(message, "504") || strings.Contains(message, "deadline exceeded") || strings.Contains(message, "timeout"):
+	case strings.Contains(message, "504"),
+		strings.Contains(message, "deadline exceeded"),
+		strings.Contains(message, "timeout"):
 		return "gateway_timeout"
 	case strings.Contains(message, "503"):
 		return "gateway_unavailable"
@@ -136,7 +144,9 @@ func wikiSynthesisModelID(kb *types.KnowledgeBase) string {
 	return kb.SummaryModelID
 }
 
-func (s *WikiGenerationService) Retry(ctx context.Context, tenantID uint64, kbID string, ids []string) (WikiGenerationRetryResult, error) {
+func (s *WikiGenerationService) Retry(
+	ctx context.Context, tenantID uint64, kbID string, ids []string,
+) (WikiGenerationRetryResult, error) {
 	result := WikiGenerationRetryResult{Queued: make([]string, 0, len(ids))}
 	ids = slices.Clone(ids)
 	slices.Sort(ids)

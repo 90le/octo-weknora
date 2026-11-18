@@ -20,12 +20,15 @@ func TestWikiGenerationRecoversArchivedDocumentFailures(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
-	require.NoError(t, db.Exec(`CREATE TABLE knowledge_bases (id TEXT PRIMARY KEY, tenant_id INTEGER, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE knowledge_bases (
+		id TEXT PRIMARY KEY, tenant_id INTEGER, deleted_at DATETIME)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE knowledges (id TEXT PRIMARY KEY, tenant_id INTEGER, knowledge_base_id TEXT,
 		title TEXT, parse_status TEXT, enable_status TEXT, deleted_at DATETIME)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE wiki_pages (tenant_id INTEGER, knowledge_base_id TEXT,
 		status TEXT, page_type TEXT, source_refs JSON)`).Error)
-	require.NoError(t, db.AutoMigrate(&types.TaskPendingOp{}, &types.TaskDeadLetter{}, &types.KnowledgeProcessingSpan{}))
+	require.NoError(t, db.AutoMigrate(
+		&types.TaskPendingOp{}, &types.TaskDeadLetter{}, &types.KnowledgeProcessingSpan{},
+	))
 	require.NoError(t, db.Exec(`INSERT INTO knowledge_bases (id, tenant_id) VALUES ('kb-1', 7), ('kb-2', 8)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO knowledges VALUES
 		('a', 7, 'kb-1', 'Source A', 'completed', 'enabled', NULL),
@@ -100,7 +103,9 @@ func TestWikiGenerationRecoversArchivedDocumentFailures(t *testing.T) {
 	worker := &wikiIngestService{pendingRepo: repository.NewTaskPendingOpsRepository(db), deadLetterRepo: archive}
 	op.dbID = pending[0].ID
 	for attempt := 0; attempt <= wikiMaxFailRetries; attempt++ {
-		require.NoError(t, worker.requeueFailedOps(ctx, WikiIngestPayload{TenantID: 7, KnowledgeBaseID: "kb-1"}, []WikiPendingOp{op}))
+		require.NoError(t, worker.requeueFailedOps(ctx,
+			WikiIngestPayload{TenantID: 7, KnowledgeBaseID: "kb-1"}, []WikiPendingOp{op},
+		))
 	}
 	page, err = svc.List(ctx, 7, "kb-1", "")
 	require.NoError(t, err)

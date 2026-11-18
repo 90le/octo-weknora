@@ -29,7 +29,10 @@ type WikiGenerationRow struct {
 	SpanError    string
 }
 
-func ListWikiGenerationRows(db *gorm.DB, tenantID uint64, kbID string, taskType string, after string, ids []string, limit int) ([]WikiGenerationRow, error) {
+// ListWikiGenerationRows joins retry candidates and status within one knowledge base.
+func ListWikiGenerationRows(
+	db *gorm.DB, tenantID uint64, kbID, taskType, after string, ids []string, limit int,
+) ([]WikiGenerationRow, error) {
 	scope := db.Session(&gorm.Session{NewDB: true})
 	// Both supported databases return a scalar from ->>. Scope filtering
 	// excludes queue-level snapshots and retract failures.

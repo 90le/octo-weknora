@@ -624,7 +624,8 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 				ingestFailed++
 				failedOps = append(failedOps, op)
 				failureCode := wikiGenerationIssue(err.Error(), "")
-				if isLikelyRateLimitError(err) || (op.ManualRetry && (failureCode == "gateway_unavailable" || failureCode == "gateway_timeout")) {
+				transientGateway := failureCode == "gateway_unavailable" || failureCode == "gateway_timeout"
+				if isLikelyRateLimitError(err) || (op.ManualRetry && transientGateway) {
 					rateLimited = true
 				}
 				mapMu.Unlock()
