@@ -36,6 +36,11 @@ type Inbox struct {
 func (Inbox) TableName() string { return "octo_message_inbox" }
 
 func (a *Adapter) accept(ctx context.Context, msg *im.IncomingMessage, handler func(context.Context, *im.IncomingMessage) error) error {
+	// Acknowledge an unaddressed group message without retaining it or
+	// looking up membership. Quotes are only context for an admitted turn.
+	if a.ignoresGroupMessage(msg) {
+		return nil
+	}
 	if a.db == nil {
 		return handler(ctx, msg)
 	}
@@ -69,6 +74,16 @@ func (a *Adapter) accept(ctx context.Context, msg *im.IncomingMessage, handler f
 
 func (a *Adapter) inboxQuery(ctx context.Context, id string) *gorm.DB {
 	return a.db.WithContext(ctx).Model(&Inbox{}).Where("tenant_id = ? AND channel_id = ? AND message_id = ?", a.tenantID, a.channelID, id)
+}
+
+func (a *Adapter) ignoreUnmentionedInbox(ctx context.Context, msg *im.IncomingMessage) error {
+	if a.db == nil {
+		return nil
+	}
+	return a.inboxQuery(ctx, msg.MessageID).Where("state IN ?", []string{"queued", "processing", "reply_pending"}).
+		Updates(map[string]any{
+			"state": "ignored", "error_code": "native_mention_required", "updated_at": time.Now(),
+		}).Error
 }
 
 // Mark new-version processing in the existing inbox row, atomically with its
@@ -206,6 +221,10 @@ func (a *Adapter) recoverInbox(ctx context.Context, handler func(context.Context
 			var msg im.IncomingMessage
 			if json.Unmarshal([]byte(row.Input), &msg) != nil || msg.MessageID != row.MessageID {
 				_ = a.inboxQuery(ctx, row.MessageID).Updates(map[string]any{"state": "failed", "error_code": "invalid_stored_input", "updated_at": time.Now()}).Error
+				continue
+			}
+			if a.ignoresGroupMessage(&msg) {
+				_ = a.ignoreUnmentionedInbox(ctx, &msg)
 				continue
 			}
 			if row.State == "reply_pending" {

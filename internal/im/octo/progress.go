@@ -118,7 +118,7 @@ func (a *Adapter) StartProcessingProgress(
 		return nil
 	}
 	if msg.ChatType != im.ChatTypeDirect && (msg.ChatType != im.ChatTypeGroup ||
-		(msg.Extra["octo_addressed"] != "true" && (msg.Quote == nil || !msg.Quote.IsBotMessage))) {
+		msg.Extra["octo_addressed"] != "true") {
 		return nil
 	}
 	if _, _, ok := a.typingTarget(msg); !ok {

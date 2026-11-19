@@ -230,14 +230,6 @@ func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint6
 		if !admitted {
 			return nil, im.ErrScopeDenied
 		}
-		if msg.Extra["octo_addressed"] != "true" && (msg.Quote == nil || !msg.Quote.IsBotMessage) {
-			var pref struct {
-				Effective json.RawMessage `json:"effective"`
-			}
-			if a.api.request(ctx, http.MethodGet, "/v1/bot/groups/"+scope.Group+"/mention_pref", nil, &pref) != nil || !flag(pref.Effective) {
-				return nil, im.ErrScopeDenied
-			}
-		}
 		managed := []string{}
 		if canManage {
 			managed, err = octointegration.NewStore(db).ManagedKnowledgeBases(ctx, tenant, stored.ID)
