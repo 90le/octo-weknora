@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,6 +69,52 @@ func TestArchiveBatchKeepsHistoryAndRejectsStaleRow(t *testing.T) {
 	active, err := s.ListIssues(c, IssueFilter{})
 	require.NoError(t, err)
 	require.Empty(t, active.Items)
+}
+
+func TestWorkspaceAdminCanOrganizeIssuesAfterLibraryDeletion(t *testing.T) {
+	s := testService(t)
+	member := principalContext(testPrincipal())
+	issue, err := s.CreateIssue(member, gapInput())
+	require.NoError(t, err)
+	require.NoError(t, s.db.Exec("UPDATE knowledge_bases SET deleted_at = ? WHERE id = ?", time.Now(), "kb-a").Error)
+	admin := consoleTestContext()
+	target := issueBatchTarget{ID: issue.ID, UpdatedAt: issue.UpdatedAt}
+	input := issueBatchInput{Targets: []issueBatchTarget{target}, Action: "archive"}
+
+	_, err = s.batchIssues(member, input)
+	require.ErrorIs(t, err, ErrDenied)
+	foreign := testPrincipal()
+	foreign.TenantID, foreign.Console = 2, true
+	keyAdmin := types.WithTenantAPIKeyScope(admin, types.TenantAPIKeyScope{KnowledgeBaseIDs: types.StringArray{"kb-b"}})
+	for _, unauthorized := range []context.Context{principalContext(foreign), keyAdmin} {
+		result, err := s.batchIssues(unauthorized, input)
+		require.NoError(t, err)
+		require.Equal(t, "unavailable", result[0].State)
+	}
+
+	for _, step := range []struct{ action, state, result string }{
+		{"status", "", "unavailable"},
+		{"archive", "archived", "updated"},
+		{"trash", "trash", "updated"},
+		{"restore", "", "updated"},
+	} {
+		input.Action, input.Status = step.action, "resolved"
+		result, err := s.batchIssues(admin, input)
+		require.NoError(t, err)
+		require.Equal(t, step.result, result[0].State)
+		updated, _, err := s.GetIssue(admin, issue.ID)
+		require.NoError(t, err)
+		require.Equal(t, step.state, updated.ArchiveState)
+		require.Equal(t, issue.Status, updated.Status)
+		require.Equal(t, issue.KnowledgeBaseID, updated.KnowledgeBaseID)
+		input.Targets[0].UpdatedAt = updated.UpdatedAt
+	}
+	_, events, err := s.GetIssue(admin, issue.ID)
+	require.NoError(t, err)
+	require.Len(t, events, 3)
+	require.Equal(t, "archive ", events[0].Note)
+	require.Equal(t, "trash ", events[1].Note)
+	require.Equal(t, "restore ", events[2].Note)
 }
 
 func TestSimilarQuestionSuggestionsRespectHistoricLibraries(t *testing.T) {
