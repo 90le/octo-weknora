@@ -111,10 +111,10 @@ func TestWorkspaceAdminCanOrganizeIssuesAfterLibraryDeletion(t *testing.T) {
 	}
 	_, events, err := s.GetIssue(admin, issue.ID)
 	require.NoError(t, err)
-	require.Len(t, events, 4)
-	require.Equal(t, "archive ", events[1].Note)
-	require.Equal(t, "trash ", events[2].Note)
-	require.Equal(t, "restore ", events[3].Note)
+	require.Len(t, events, 3)
+	require.Equal(t, "archive ", events[0].Note)
+	require.Equal(t, "trash ", events[1].Note)
+	require.Equal(t, "restore ", events[2].Note)
 }
 
 func TestSimilarQuestionSuggestionsRespectHistoricLibraries(t *testing.T) {
