@@ -30,6 +30,7 @@ type ScopeACL struct {
 type ScopeConfiguration struct {
 	ScopeACL
 	InheritParent          *bool `json:"inherit_parent"`
+	MemberQuestionsEnabled *bool `json:"member_questions_enabled"`
 	AllowKnowledgeCreation bool  `json:"allow_knowledge_creation"`
 	AggregateChildIssues   bool  `json:"aggregate_child_issues"`
 	AllowPublicWeb         bool  `json:"allow_public_web"`
@@ -204,6 +205,9 @@ func normalizeConfiguration(cfg ScopeConfiguration, scope *Scope) (ScopeConfigur
 	}
 	cfg.QueryIDs = unionIDs(cfg.QueryIDs, nil)
 	cfg.ManageIDs = unionIDs(cfg.ManageIDs, nil)
+	if cfg.MemberQuestionsEnabled == nil {
+		cfg.MemberQuestionsEnabled = &scope.MemberQuestionsEnabled
+	}
 	return cfg, nil
 }
 
@@ -350,6 +354,7 @@ func (s *Store) changeConfiguration(
 		}
 		settings := map[string]any{
 			"inherit_parent":           *cfg.InheritParent,
+			"member_questions_enabled": *cfg.MemberQuestionsEnabled,
 			"allow_knowledge_creation": cfg.AllowKnowledgeCreation,
 			"aggregate_child_issues":   cfg.AggregateChildIssues,
 			"allow_public_web":         cfg.AllowPublicWeb,
@@ -359,6 +364,7 @@ func (s *Store) changeConfiguration(
 		}
 		return audit(tx, ctx, tenant, id, "octo.scope.configured", map[string]any{
 			"before": f.ScopeACL, "after": cfg, "prior_inherit_parent": f.Scope.InheritParent,
+			"prior_member_questions_enabled": f.Scope.MemberQuestionsEnabled,
 			"prior_allow_knowledge_creation": f.Scope.AllowKnowledgeCreation,
 			"prior_aggregate_child_issues":   f.Scope.AggregateChildIssues,
 			"prior_allow_public_web":         f.Scope.AllowPublicWeb,

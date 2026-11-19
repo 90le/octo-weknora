@@ -304,9 +304,9 @@
                 <summary>群和子区 · 高级设置</summary>
                 <p class="form-desc">这些能力只在群／子区权限允许时生效。私聊另有独立配置。</p>
               <div class="form-item">
-                <label class="form-label">额外允许提问的 Bot UID</label>
+                <label class="form-label">群聊提问 Bot UID 白名单</label>
                 <t-tag-input v-model="formData.credentials.allowed_bot_uids" placeholder="可选；仍须属于对应群和子区" />
-                <p class="form-desc">仅允许参与问答，不赋予知识维护权限。已验证的管理员 Bot 可参与问答，普通 Bot 默认忽略。</p>
+                <p class="form-desc">群聊和子区内，所有提问的 Bot 都必须在此名单中，包括 Octo 管理员 Bot。知识维护使用单独的授权。</p>
               </div>
               <div class="form-item">
                 <label class="form-label">允许维护的测试 Bot UID（可选）</label>

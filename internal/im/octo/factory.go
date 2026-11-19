@@ -92,6 +92,7 @@ func NewFactory(db *gorm.DB, services ...*octobusiness.Service) im.AdapterFactor
 				}
 			}()
 			go adapter.retryDeliveries(runCtx)
+			go adapter.runGroupQuestionSync(runCtx, account, routedHandler)
 			err := adapter.Run(runCtx, func(_ context.Context, msg *im.IncomingMessage) error {
 				// A transient socket reconnect must not cancel already admitted QA.
 				// The channel lifecycle still cancels work when the channel stops.
@@ -175,7 +176,8 @@ func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint6
 		if db.WithContext(ctx).Where("tenant_id = ? AND account_id = ? AND group_id = ? AND subarea_id = ?", tenant, account, scope.Group, scope.Subarea).First(&stored).Error != nil {
 			return nil, im.ErrScopeDenied
 		}
-		if stored.VerifiedAt == nil || stored.NameSource != "octo" || stored.SyncStatus != "verified" {
+		if stored.VerifiedAt == nil || stored.NameSource != "octo" || stored.SyncStatus != "verified" ||
+			!stored.MemberQuestionsEnabled {
 			return nil, im.ErrScopeDenied
 		}
 		var members []struct {
@@ -214,18 +216,15 @@ func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint6
 				continue
 			}
 			senderName = safeDisplayName(member.Name)
-			if (string(member.Robot) == "0" || string(member.Robot) == "false") && (string(member.Role) == "1" || string(member.Role) == "2") {
-				canManage = true
-			}
-			if flag(member.Robot) && (flag(member.BotAdmin) || (configuredUID(config, "management_bot_uids", member.UID) && configuredUID(config, "allowed_bot_uids", member.UID))) {
-				canManage = true
-			}
-			if string(member.Robot) == "0" || string(member.Robot) == "false" {
+			switch {
+			case string(member.Robot) == "0" || string(member.Robot) == "false":
 				admitted = true
-			}
-			if flag(member.Robot) && (flag(member.BotAdmin) || configuredUID(config, "allowed_bot_uids", member.UID)) {
+				canManage = string(member.Role) == "1" || string(member.Role) == "2"
+			case flag(member.Robot) && configuredUID(config, "allowed_bot_uids", member.UID):
 				admitted = true
+				canManage = flag(member.BotAdmin) || configuredUID(config, "management_bot_uids", member.UID)
 			}
+			break
 		}
 		if !admitted {
 			return nil, im.ErrScopeDenied

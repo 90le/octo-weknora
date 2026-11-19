@@ -15,6 +15,7 @@ export interface OctoScope {
   allow_knowledge_creation: boolean
   aggregate_child_issues: boolean
   allow_public_web: boolean
+  member_questions_enabled?: boolean
 }
 export interface EffectiveBinding {
   knowledge_base_id: string
@@ -71,6 +72,7 @@ export interface OctoScopeConfiguration {
   allow_knowledge_creation: boolean
   aggregate_child_issues: boolean
   allow_public_web: boolean
+  member_questions_enabled: boolean
 }
 export interface OctoConfigurationSnapshot {
   scope: OctoScope

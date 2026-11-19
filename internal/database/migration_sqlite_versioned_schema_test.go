@@ -52,8 +52,8 @@ var versionedSQLiteTables = []string{
 // versionedSQLiteColumns maps each existing table to the columns that the
 // versioned migrations add and the SQLite baseline was missing.
 var versionedSQLiteColumns = map[string][]string{
-	"model_catalog_configs": {"version", "overlay", "history", "updated_by", "updated_at"},        // 000031
-	"octo_scopes":           {"allow_public_web"},                                                 // 000048
+	"model_catalog_configs": {"version", "overlay", "history", "updated_by", "updated_at"}, // 000031
+	"octo_scopes":           {"allow_public_web", "member_questions_enabled"},
 	"octo_connections":      {"verified_identity"},                                                // 000045
 	"octo_card_events":      {"event_key", "event_id", "state"},                                   // 000050
 	"memory_subjects":       {"extraction_state"},                                                 // 000094
@@ -86,7 +86,7 @@ var versionedSQLiteColumns = map[string][]string{
 	}, // 000028
 }
 
-const expectedSQLiteMigrationVersion = 55
+const expectedSQLiteMigrationVersion = 56
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

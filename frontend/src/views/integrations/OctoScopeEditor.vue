@@ -51,6 +51,11 @@
 
       <div class="section-heading"><h3>区域规则</h3></div>
       <div v-if="shown" class="rules">
+        <div class="member-questions">
+          <label><input type="checkbox" :checked="shown.member_questions_enabled" :disabled="!draft || busy" @change="togglePolicy('member_questions_enabled')"> 本区成员可提问</label>
+          <p>普通成员原生 @ 此 Bot 即可提问，无需加好友。其他 Bot 须在提问 UID 白名单中。</p>
+          <p v-if="shown.member_questions_enabled && !queryCount" role="status">本区暂无可查询知识库。绑定知识库后，成员才能进行知识问答。</p>
+        </div>
         <label v-if="!snapshot.scope.subarea_id"><input type="checkbox" :checked="shown.aggregate_child_issues" :disabled="!draft || busy" @change="togglePolicy('aggregate_child_issues')"> 汇总子区问题</label>
         <label><input type="checkbox" :checked="shown.allow_knowledge_creation" :disabled="!draft || busy" @change="togglePolicy('allow_knowledge_creation')"> 允许本区管理者建库</label>
         <label><input type="checkbox" :checked="shown.allow_public_web" :disabled="!draft || busy" @change="togglePolicy('allow_public_web')"> 允许本区公网搜索</label>
@@ -132,6 +137,7 @@ const baseline = computed<OctoScopeConfiguration | null>(() => {
     query_ids: [...s.query_ids], manage_ids: [...s.manage_ids], inherit_parent: s.scope.inherit_parent,
     allow_knowledge_creation: s.scope.allow_knowledge_creation, aggregate_child_issues: s.scope.aggregate_child_issues,
     allow_public_web: s.scope.allow_public_web,
+    member_questions_enabled: s.scope.member_questions_enabled ?? true,
   }
 })
 const shown = computed(() => draft.value || baseline.value)
@@ -151,6 +157,7 @@ const rows = computed(() => {
 const flags = {
   inherit_parent: '继承主群查询', allow_knowledge_creation: '允许本区管理者建库',
   aggregate_child_issues: '汇总子区问题', allow_public_web: '允许本区公网搜索',
+  member_questions_enabled: '本区成员可提问',
 } as const
 type Flag = keyof typeof flags
 const policyChanges = computed(() => {
@@ -272,6 +279,8 @@ tr:last-child td { border-bottom: 0; }
 small { display: block; }
 .kb-search { max-width: 420px; margin-bottom: 10px; }
 .rules { display: flex; flex-wrap: wrap; gap: 12px 18px; }
+.member-questions { flex-basis: 100%; }
+.member-questions p { color: var(--td-text-color-secondary); margin: 6px 0 0; }
 label { cursor: pointer; }
 input { accent-color: var(--td-brand-color); }
 .diagnostics { margin-top: 22px; }

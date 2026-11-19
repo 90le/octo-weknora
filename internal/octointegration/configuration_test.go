@@ -20,6 +20,7 @@ func adminCaller(tenant uint64) types.Caller {
 func configurationFor(s ConfigurationSnapshot) ScopeConfiguration {
 	return ScopeConfiguration{
 		ScopeACL: s.ScopeACL, InheritParent: &s.Scope.InheritParent,
+		MemberQuestionsEnabled: &s.Scope.MemberQuestionsEnabled,
 		AllowKnowledgeCreation: s.Scope.AllowKnowledgeCreation,
 		AggregateChildIssues:   s.Scope.AggregateChildIssues,
 		AllowPublicWeb:         s.Scope.AllowPublicWeb,
@@ -50,7 +51,7 @@ func managementStore(t *testing.T) *Store {
 	)`).Error)
 	for _, file := range []string{
 		"000119_octo_scopes", "000120_octo_connections", "000125_octo_knowledge_grants",
-		"000127_octo_verified_identity", "000130_octo_scope_public_web",
+		"000127_octo_verified_identity", "000130_octo_scope_public_web", "000138_octo_member_questions",
 	} {
 		sql, err := os.ReadFile("../../migrations/versioned/" + file + ".up.sql")
 		require.NoError(t, err)
@@ -58,6 +59,46 @@ func managementStore(t *testing.T) *Store {
 	}
 	require.NoError(t, db.Exec("INSERT INTO knowledge_bases(id, tenant_id) VALUES ('kb-a', 1), ('kb-b', 2)").Error)
 	return NewStore(db)
+}
+
+func TestConfigurationReviewsAndPreservesMemberQuestionSwitch(t *testing.T) {
+	ctx, s := context.Background(), managementStore(t)
+	main := createScope(t, s, 1, "bot", "group", "", false)
+	child := createScope(t, s, 1, "bot", "group", "123", true)
+	require.False(t, main.MemberQuestionsEnabled)
+	require.False(t, child.MemberQuestionsEnabled)
+	require.NoError(t, s.SetBinding(ctx, 1, main.ID, "kb-a", true))
+	admin := adminCaller(1)
+	current, err := s.configuration(ctx, 1, main.ID)
+	require.NoError(t, err)
+	draft := configurationFor(current)
+	enabled, disabled := true, false
+	draft.MemberQuestionsEnabled = &enabled
+	preview, err := s.changeConfiguration(ctx, admin, 1, main.ID, current.Revision, "", draft, false)
+	require.NoError(t, err)
+	draft.MemberQuestionsEnabled = &disabled
+	_, err = s.changeConfiguration(ctx, admin, 1, main.ID, current.Revision, preview.Token, draft, true)
+	require.ErrorIs(t, err, errStalePreview)
+	draft.MemberQuestionsEnabled = &enabled
+	_, err = s.changeConfiguration(ctx, admin, 1, main.ID, current.Revision, preview.Token, draft, true)
+	require.NoError(t, err)
+	current, err = s.configuration(ctx, 1, main.ID)
+	require.NoError(t, err)
+	require.True(t, current.Scope.MemberQuestionsEnabled)
+	inherited, err := s.configuration(ctx, 1, child.ID)
+	require.NoError(t, err)
+	require.False(t, inherited.Scope.MemberQuestionsEnabled)
+	require.Equal(t, []string{"kb-a"}, inherited.ParentQueryIDs)
+
+	draft = configurationFor(current)
+	draft.MemberQuestionsEnabled = nil // a client predating the switch
+	preview, err = s.changeConfiguration(ctx, admin, 1, main.ID, current.Revision, "", draft, false)
+	require.NoError(t, err)
+	_, err = s.changeConfiguration(ctx, admin, 1, main.ID, current.Revision, preview.Token, draft, true)
+	require.NoError(t, err)
+	saved, err := s.Get(ctx, 1, main.ID)
+	require.NoError(t, err)
+	require.True(t, saved.MemberQuestionsEnabled)
 }
 
 func TestConfigurationPreviewIncludesOnlyAffectedSubareasOfSameBot(t *testing.T) {
