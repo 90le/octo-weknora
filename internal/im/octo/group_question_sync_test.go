@@ -73,7 +73,9 @@ func TestGroupSyncRecoversOnlyFreshNativeMentionsWithoutDuplicatingRealtime(t *t
 	}))
 	t.Cleanup(server.Close)
 	a.api.base = server.URL
-	scope := octointegration.Scope{GroupID: realtime.Extra["octo_group_id"], SubareaID: realtime.Extra["octo_subarea_id"]}
+	scope := octointegration.Scope{
+		GroupID: realtime.Extra["octo_group_id"], SubareaID: realtime.Extra["octo_subarea_id"],
+	}
 	cursor, err := a.syncGroupQuestions(ctx, scope, 0, cutoff, route)
 	require.NoError(t, err)
 	require.EqualValues(t, 6, cursor)

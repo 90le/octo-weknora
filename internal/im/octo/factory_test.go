@@ -55,15 +55,15 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/bot/user/info":
-			fmt.Fprint(w, `{"uid":"owner","name":"验收用户"}`)
+			_, _ = fmt.Fprint(w, `{"uid":"owner","name":"验收用户"}`)
 		case "/api/v1/bot/messages/sync":
 			friendChecks.Add(1)
 			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprint(w, `{"error":{"code":"err.server.bot_api.not_friend"}}`)
+			_, _ = fmt.Fprint(w, `{"error":{"code":"err.server.bot_api.not_friend"}}`)
 		case "/v1/bot/groups/group/threads/123/members":
-			fmt.Fprint(w, `[{"uid":"human"},{"uid":"admin_bot"},{"uid":"untrusted_bot"}]`)
+			_, _ = fmt.Fprint(w, `[{"uid":"human"},{"uid":"admin_bot"},{"uid":"untrusted_bot"}]`)
 		default:
-			fmt.Fprint(w, `[{"uid":"human","robot":0,"role":0},{"uid":"untrusted_bot","robot":1},`+
+			_, _ = fmt.Fprint(w, `[{"uid":"human","robot":0,"role":0},{"uid":"untrusted_bot","robot":1},`+
 				`{"uid":"admin_bot","robot":1,"bot_admin":1}]`)
 		}
 	}))
