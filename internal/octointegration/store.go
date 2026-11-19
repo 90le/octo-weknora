@@ -30,6 +30,7 @@ type Scope struct {
 	CheckedAt              *time.Time `json:"checked_at"`
 	VerifiedAt             *time.Time `json:"verified_at"`
 	InheritParent          bool       `json:"inherit_parent"`
+	MemberQuestionsEnabled bool       `json:"member_questions_enabled"`
 	AllowKnowledgeCreation bool       `json:"allow_knowledge_creation"`
 	AggregateChildIssues   bool       `json:"aggregate_child_issues"`
 	// Public web access is an explicit capability of this exact group or
@@ -113,6 +114,7 @@ func (s *Store) Create(ctx context.Context, scope Scope) (*Scope, error) {
 	scope.ID = uuid.NewString()
 	scope.NameSource = "configured"
 	scope.SyncStatus = "unverified"
+	scope.MemberQuestionsEnabled = false
 	// Scope creation cannot authorize external retrieval, including when an
 	// internal caller supplies a populated Scope rather than the HTTP DTO.
 	scope.AllowPublicWeb = false

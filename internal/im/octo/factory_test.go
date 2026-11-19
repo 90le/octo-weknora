@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,7 +38,10 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 		}
 	}
 	now := time.Now()
-	scope := octointegration.Scope{ID: "scope", TenantID: 1, AccountID: "account", GroupID: "group", DisplayName: "group", NameSource: "octo", SyncStatus: "verified", VerifiedAt: &now}
+	scope := octointegration.Scope{
+		ID: "scope", TenantID: 1, AccountID: "account", GroupID: "group", DisplayName: "group",
+		NameSource: "octo", SyncStatus: "verified", VerifiedAt: &now, MemberQuestionsEnabled: true,
+	}
 	if err = db.Create(&scope).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -46,16 +51,34 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 	if err = db.Create(&octointegration.Binding{TenantID: 1, ScopeID: scope.ID, KnowledgeBaseID: "kb"}).Error; err != nil {
 		t.Fatal(err)
 	}
+	var friendChecks atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/bot/user/info" {
-			fmt.Fprint(w, `{"uid":"owner","name":"验收用户"}`)
-			return
+		switch r.URL.Path {
+		case "/v1/bot/user/info":
+			_, _ = fmt.Fprint(w, `{"uid":"owner","name":"验收用户"}`)
+		case "/api/v1/bot/messages/sync":
+			friendChecks.Add(1)
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, `{"error":{"code":"err.server.bot_api.not_friend"}}`)
+		case "/v1/bot/groups/group/threads/123/members":
+			_, _ = fmt.Fprint(w, `[{"uid":"human"},{"uid":"admin_bot"},{"uid":"untrusted_bot"}]`)
+		default:
+			_, _ = fmt.Fprint(w, `[{"uid":"human","robot":0,"role":0},{"uid":"untrusted_bot","robot":1},`+
+				`{"uid":"admin_bot","robot":1,"bot_admin":1}]`)
 		}
-		fmt.Fprint(w, `[{"uid":"human","robot":0},{"uid":"untrusted_bot","robot":1}]`)
 	}))
 	defer server.Close()
 	a, _ := NewAdapter("bf_test", "bot")
 	a.api.base = server.URL
+	testURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.api.http.Transport = privateFriendRoundTrip(func(req *http.Request) (*http.Response, error) {
+		request := req.Clone(req.Context())
+		request.URL.Scheme, request.URL.Host = testURL.Scheme, testURL.Host
+		return server.Client().Transport.RoundTrip(request)
+	})
 	a.policy = runtimePolicy(db, a, "channel", 1, "account", "snapshot")
 	msg := &im.IncomingMessage{Platform: Platform, UserID: "human", ChatType: im.ChatTypeGroup, ChatID: "group", Extra: map[string]string{"octo_channel_id": "group", "octo_group_id": "group", "octo_addressed": "true"}}
 	got, err := a.AuthorizeExecution(context.Background(), nil, msg)
@@ -160,7 +183,10 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 	if err != nil || !webEnabled.AllowPublicWeb || im.ExecutionScopeFingerprint(got) == im.ExecutionScopeFingerprint(webEnabled) {
 		t.Fatalf("policy grant did not reauthorize: %+v %v", webEnabled, err)
 	}
-	child := octointegration.Scope{ID: "child", TenantID: 1, AccountID: "account", GroupID: "group", SubareaID: "123", DisplayName: "child", NameSource: "octo", SyncStatus: "verified", VerifiedAt: &now, InheritParent: true}
+	child := octointegration.Scope{
+		ID: "child", TenantID: 1, AccountID: "account", GroupID: "group", SubareaID: "123", DisplayName: "child",
+		NameSource: "octo", SyncStatus: "verified", VerifiedAt: &now, InheritParent: true, MemberQuestionsEnabled: true,
+	}
 	if err = db.Create(&child).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -171,6 +197,62 @@ func TestRuntimePolicyEnforcesMembersBindingsAndRotation(t *testing.T) {
 	if err != nil || childScope.AllowPublicWeb || len(childScope.KnowledgeBaseIDs) != 1 {
 		t.Fatalf("child inherited parent's web grant or lost KB read inheritance: %+v %v", childScope, err)
 	}
+	t.Run("independent area switches, nonfriend humans and Bot UID allowlist", func(t *testing.T) {
+		ctx := context.Background()
+		defer func() {
+			if err := db.Exec("UPDATE im_channels SET credentials=?", fileConfig).Error; err != nil {
+				t.Error(err)
+			}
+		}()
+		config := `{"account_id":"account","bot_uid":"bot","dm_access_mode":"creator_and_friends",` +
+			`"allowed_bot_uids":["untrusted_bot"]}`
+		if err := db.Exec("UPDATE im_channels SET credentials=?", config).Error; err != nil {
+			t.Fatal(err)
+		}
+		dm := &im.IncomingMessage{Platform: Platform, ChatType: im.ChatTypeDirect, UserID: "human"}
+		if _, err := a.AuthorizeExecution(ctx, nil, dm); err != im.ErrScopeDenied || friendChecks.Load() != 1 {
+			t.Fatalf("expected this UID to fail the actual friend check: %v, %d", err, friendChecks.Load())
+		}
+		for _, in := range []*im.IncomingMessage{msg, &childMsg} {
+			for _, check := range []struct {
+				uid string
+				ok  bool
+			}{{"human", true}, {"untrusted_bot", true}, {"admin_bot", false}, {"not_a_member", false}} {
+				turn := *in
+				turn.UserID = check.uid
+				if scope, err := a.AuthorizeExecution(ctx, nil, &turn); (err == nil && scope != nil) != check.ok {
+					t.Fatalf("unexpected authorization in %s for %s: %v", turn.ChatID, check.uid, err)
+				}
+			}
+		}
+		if friendChecks.Load() != 1 {
+			t.Fatal("group questions made a private friend check")
+		}
+		set := func(id string, enabled bool) {
+			t.Helper()
+			err := db.Model(&octointegration.Scope{}).Where("id = ?", id).
+				Update("member_questions_enabled", enabled).Error
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		set(scope.ID, false)
+		if _, err := a.AuthorizeExecution(ctx, nil, msg); err != im.ErrScopeDenied {
+			t.Fatalf("closed main group admitted a human: %v", err)
+		}
+		if _, err := a.AuthorizeExecution(ctx, nil, &childMsg); err != nil {
+			t.Fatalf("parent switch changed the child or its granted KBs: %v", err)
+		}
+		set(scope.ID, true)
+		set(child.ID, false)
+		if _, err := a.AuthorizeExecution(ctx, nil, &childMsg); err != im.ErrScopeDenied {
+			t.Fatalf("closed subarea admitted a human: %v", err)
+		}
+		if _, err := a.AuthorizeExecution(ctx, nil, msg); err != nil {
+			t.Fatalf("child switch affected the main group: %v", err)
+		}
+		set(child.ID, true)
+	})
 	if err = db.Model(&octointegration.Scope{}).Where("id = ?", child.ID).Update("allow_public_web", true).Error; err != nil {
 		t.Fatal(err)
 	}

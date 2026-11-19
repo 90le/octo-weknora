@@ -64,6 +64,13 @@ func testStore(t *testing.T) *Store {
 	if err = db.Exec(string(publicWeb)).Error; err != nil {
 		t.Fatal(err)
 	}
+	memberQuestions, err := os.ReadFile("../../migrations/sqlite/000056_octo_member_questions.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Exec(string(memberQuestions)).Error; err != nil {
+		t.Fatal(err)
+	}
 	return NewStore(db)
 }
 

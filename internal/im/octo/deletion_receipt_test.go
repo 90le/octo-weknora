@@ -36,7 +36,10 @@ func deletionFixture(t *testing.T) (*Adapter, *im.IncomingMessage, *bool, *bool,
 		}
 	}
 	now := time.Now()
-	if err := a.db.Create(&octointegration.Scope{ID: "scope", TenantID: 1, AccountID: "account", GroupID: "group", NameSource: "octo", SyncStatus: "verified", VerifiedAt: &now}).Error; err != nil {
+	if err := a.db.Create(&octointegration.Scope{
+		ID: "scope", TenantID: 1, AccountID: "account", GroupID: "group", NameSource: "octo",
+		SyncStatus: "verified", VerifiedAt: &now, MemberQuestionsEnabled: true,
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := a.db.Create(&octointegration.Connection{TenantID: 1, AccountID: "account", Token: "snapshot"}).Error; err != nil {
