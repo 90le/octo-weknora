@@ -131,6 +131,22 @@ func confirmationFixture(t *testing.T) (*Adapter, octobusiness.Proposal, *atomic
 func TestCardConfirmationBindsIdentityAndNeverReplays(t *testing.T) {
 	a, p, calls := confirmationFixture(t)
 	ctx := context.Background()
+	// A previously sent card remains usable by its owner even if its original
+	// question was admitted under the old quote-only trigger rule.
+	source := inboxRow(t, a, p.SourceMessageID)
+	var original im.IncomingMessage
+	if err := json.Unmarshal([]byte(source.Input), &original); err != nil {
+		t.Fatal(err)
+	}
+	original.Extra["octo_addressed"] = "false"
+	original.Quote = &im.QuotedMessage{IsBotMessage: true}
+	data, err := json.Marshal(&original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.inboxQuery(ctx, p.SourceMessageID).Update("input", string(data)).Error; err != nil {
+		t.Fatal(err)
+	}
 	route := a.confirmationHandler(
 		func(context.Context, *im.IncomingMessage) error { t.Error("card went to model"); return nil },
 	)
@@ -152,10 +168,21 @@ func TestCardConfirmationBindsIdentityAndNeverReplays(t *testing.T) {
 	if ok, err := a.acceptConfirmationEvent(ctx, event, route); !ok || err != nil {
 		t.Fatalf("other operator: %v %v", ok, err)
 	}
-	if calls.Load() != 0 {
-		t.Fatal("other operator executed change")
+	event.EventID = 5
+	event.ActionID = "knowledge_cancel"
+	event.EventKey = fixtureEventKey(event)
+	if err := a.db.Create(&event).Error; err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := a.acceptConfirmationEvent(ctx, event, route); !ok || err != nil {
+		t.Fatalf("other operator cancel: %v %v", ok, err)
+	}
+	var pending octobusiness.Proposal
+	if err := a.db.First(&pending, "id = ?", p.ID).Error; err != nil || pending.Status != "pending" || calls.Load() != 0 {
+		t.Fatalf("other operator changed proposal: %s %v", pending.Status, err)
 	}
 	event.EventID = 2
+	event.ActionID = "knowledge_confirm"
 	event.OperatorUID = p.UserID
 	event.TargetID = "wrong"
 	event.EventKey = fixtureEventKey(event)

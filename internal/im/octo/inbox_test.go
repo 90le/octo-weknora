@@ -36,12 +36,103 @@ func durableAdapter(t *testing.T) (*Adapter, *im.IncomingMessage) {
 	a.policy = func(context.Context, *im.IMChannel, *im.IncomingMessage) (*im.ExecutionScope, error) {
 		return &im.ExecutionScope{KnowledgeBaseIDs: []string{"kb"}}, nil
 	}
-	msg, err := a.Normalize(&wire.Message{ID: "2098355867442221056", Sender: "user", Channel: "group____2098355867442221056", ChannelType: 5, Payload: json.RawMessage(`{"type":1,"content":"Original question"}`)})
+	msg, err := a.Normalize(&wire.Message{ID: "2098355867442221056", Sender: "user", Channel: "group____2098355867442221056", ChannelType: 5, Payload: json.RawMessage(`{"type":1,"content":"Original question","mention":{"uids":["bot"]}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	msg.UserName = "Question owner"
 	return a, msg
+}
+
+func TestInboxRequiresCurrentBotMentionForGroupAndSubarea(t *testing.T) {
+	a, _ := durableAdapter(t)
+	ctx := context.Background()
+	for _, target := range []struct {
+		id   string
+		kind byte
+	}{{"group", 2}, {"group____123", 5}} {
+		t.Run(target.id, func(t *testing.T) {
+			raw := wire.Message{
+				ID: fmt.Sprint(100 + target.kind), Sender: "user", Channel: target.id, ChannelType: target.kind,
+				Payload: json.RawMessage(`{"type":1,"content":"@Coworker earlier answer?","mention":{"uids":["coworker"]},"reply":{"message_id":"99","from_uid":"bot","payload":{"type":1,"content":"Previous answer"}}}`),
+			}
+			msg, err := a.Normalize(&raw)
+			if err != nil || msg == nil || msg.Quote == nil || !msg.Quote.IsBotMessage {
+				t.Fatalf("expected a normalized Bot quote, got %v: %v", msg, err)
+			}
+			calls := 0
+			handler := func(_ context.Context, in *im.IncomingMessage) error {
+				calls++
+				if in.Quote == nil || in.Quote.Content != "Previous answer" {
+					t.Fatal("quoted context was lost")
+				}
+				return nil
+			}
+			if err := a.accept(ctx, msg, handler); err != nil || calls != 0 {
+				t.Fatalf("unmentioned message reached dispatcher: %d, %v", calls, err)
+			}
+			var count int64
+			if err := a.inboxQuery(ctx, msg.MessageID).Count(&count).Error; err != nil || count != 0 {
+				t.Fatalf("unmentioned message reached inbox: %d, %v", count, err)
+			}
+			raw.Payload = json.RawMessage(`{"type":1,"content":"@Bot earlier answer?","mention":{"entities":[{"uid":"bot","offset":0,"length":4}]},"reply":{"message_id":"99","from_uid":"bot","payload":{"type":1,"content":"Previous answer"}}}`)
+			msg, err = a.Normalize(&raw)
+			if err != nil || msg == nil {
+				t.Fatalf("normalize native mention: %v", err)
+			}
+			if err := a.accept(ctx, msg, handler); err != nil || calls != 1 {
+				t.Fatalf("native mention did not reach dispatcher once: %d, %v", calls, err)
+			}
+			inboxRow(t, a, msg.MessageID)
+		})
+	}
+}
+
+func TestInboxDiscardsLegacyUnmentionedWorkOnRecoveryAndRedelivery(t *testing.T) {
+	a, msg := durableAdapter(t)
+	msg.Extra["octo_addressed"] = "false"
+	msg.Quote = &im.QuotedMessage{IsBotMessage: true}
+	ctx := context.Background()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("legacy unmentioned input attempted Octo request %s", r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+	a.api.base = server.URL
+	for idx, state := range []string{"queued", "processing", "reply_pending", "reply_pending", "delivered"} {
+		msg.MessageID = fmt.Sprintf("octo:bot:%d", 110+idx)
+		data, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row := Inbox{ChannelID: a.channelID, TenantID: a.tenantID, MessageID: msg.MessageID, Input: string(data), State: state, Reply: "old answer", Attempts: 1}
+		if err := a.db.Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+		if idx >= 3 {
+			// The periodic delivery path and the finalizer both use SendReply.
+			if err := a.SendReply(ctx, msg, &im.ReplyMessage{Content: row.Reply, IsFinal: true}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	a = restartAdapterForTest(t, a)
+	a.recoverInbox(ctx, func(context.Context, *im.IncomingMessage) error {
+		t.Error("recovery dispatched legacy unmentioned work")
+		return nil
+	})
+	for id := 110; id <= 114; id++ {
+		row := inboxRow(t, a, fmt.Sprintf("octo:bot:%d", id))
+		if id == 114 {
+			if row.State != "delivered" || row.Attempts != 1 {
+				t.Fatalf("already delivered row changed: %s %d", row.State, row.Attempts)
+			}
+			continue
+		}
+		if row.State != "ignored" || row.ErrorCode != "native_mention_required" || row.Attempts != 1 {
+			t.Fatalf("legacy row %d not retired: %s %s %d", id, row.State, row.ErrorCode, row.Attempts)
+		}
+	}
 }
 
 // A process restart preserves persisted configuration, never a live mutex.

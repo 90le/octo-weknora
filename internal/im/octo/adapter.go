@@ -71,6 +71,17 @@ func NewAdapter(botToken, botUID string) (*Adapter, error) {
 }
 func (a *Adapter) Platform() im.Platform { return Platform }
 
+// The normalizer derives the mention from the current native message. The
+// only group input exempt from it is a server-created confirmation action,
+// which the confirmation handler verifies against its stored card binding.
+func (a *Adapter) ignoresGroupMessage(msg *im.IncomingMessage) bool {
+	if msg == nil || msg.ChatType != im.ChatTypeGroup || msg.Extra["octo_addressed"] == "true" {
+		return false
+	}
+	key := msg.Extra["octo_card_event_key"]
+	return len(key) != 64 || msg.MessageID != "octo:"+a.uid+":card:"+key
+}
+
 // DurableIntake tells the native dispatcher that the authenticated receiver has
 // already persisted and claimed this input; a volatile dedup cache must not
 // discard recovery after a process restart.
@@ -162,8 +173,7 @@ func (a *Adapter) Normalize(raw *wire.Message) (*im.IncomingMessage, error) {
 	case 4, 5:
 		// A direct user or an explicitly addressed group message deserves an
 		// honest capability response rather than being silently discarded.
-		if m.ChatType == im.ChatTypeGroup && m.Extra["octo_addressed"] != "true" &&
-			(p.Reply == nil || p.Reply.Sender != a.uid) {
+		if a.ignoresGroupMessage(m) {
 			return nil, nil
 		}
 		m.Content = ""
@@ -210,6 +220,9 @@ func leadingNativeCommandText(text string, entities []wire.Entity, uid string) (
 }
 
 func (a *Adapter) SendReply(ctx context.Context, in *im.IncomingMessage, reply *im.ReplyMessage) error {
+	if a.ignoresGroupMessage(in) {
+		return a.ignoreUnmentionedInbox(ctx, in)
+	}
 	receiptScope := a.deletionReceipt(ctx, in)
 	if receiptScope != nil {
 		reply = &im.ReplyMessage{Content: deletionReceiptText, IsFinal: true}

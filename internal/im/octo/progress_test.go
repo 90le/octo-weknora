@@ -140,22 +140,13 @@ func TestProgressCardUsesFixedStagesAndScopedTarget(t *testing.T) {
 
 func TestProgressCardIgnoresUnaddressedGroups(t *testing.T) {
 	a, msg := durableAdapter(t)
+	msg.Extra["octo_addressed"] = "false"
 	if a.StartProcessingProgress(context.Background(), msg) != nil {
 		t.Fatal("group progress must not turn silent group messages into visible replies")
 	}
-	server := httptest.NewServer(http.NotFoundHandler())
-	defer server.Close()
-	a.api.base = server.URL
 	msg.Quote = &im.QuotedMessage{IsBotMessage: true}
-	progress := a.StartProcessingProgress(context.Background(), msg)
-	if progress == nil {
-		t.Fatal("a reply to the bot should permit a progress attempt")
-	}
-	progress.Finish(im.ProcessingFailed)
-	select {
-	case <-progress.(*progressCard).done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("progress capability fallback did not finish")
+	if a.StartProcessingProgress(context.Background(), msg) != nil {
+		t.Fatal("a quote without a native mention must remain silent")
 	}
 }
 
