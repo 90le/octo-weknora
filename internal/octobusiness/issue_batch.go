@@ -83,7 +83,14 @@ func (s *Service) applyIssueBatch(
 		return err
 	}
 	if _, err := s.checkKB(ctx, p, row.KnowledgeBaseID, false); err != nil {
-		return err
+		changesVisibility := in.Action == "archive" || in.Action == "trash" || in.Action == "restore"
+		if !changesVisibility || !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		// Workspace administrators can organize historical issues even when their linked KB is gone.
+		if err := types.AuthorizeTenantAPIKeyKnowledgeBases(ctx, row.KnowledgeBaseID); err != nil {
+			return ErrDenied
+		}
 	}
 	if !row.UpdatedAt.Equal(item.UpdatedAt) {
 		return ErrConflict
