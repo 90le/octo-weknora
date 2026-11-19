@@ -98,7 +98,10 @@ func TestReplyUsesOriginalTargetQuoteAndUTF16Mention(t *testing.T) {
 	defer server.Close()
 	a, _ := NewAdapter("bf_test", "bot")
 	a.api.base = server.URL
-	m, err := a.Normalize(&wire.Message{ID: "2098355867442221056", Sender: "user", Channel: "group____2098355867442221056", ChannelType: 5, Payload: json.RawMessage(`{"type":1,"content":"原问题","mention":{"uids":["bot"]}}`)})
+	m, err := a.Normalize(&wire.Message{
+		ID: "2098355867442221056", Sender: "user", Channel: "group____2098355867442221056",
+		ChannelType: 5, Payload: json.RawMessage(`{"type":1,"content":"原问题","mention":{"uids":["bot"]}}`),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

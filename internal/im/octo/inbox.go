@@ -81,7 +81,9 @@ func (a *Adapter) ignoreUnmentionedInbox(ctx context.Context, msg *im.IncomingMe
 		return nil
 	}
 	return a.inboxQuery(ctx, msg.MessageID).Where("state IN ?", []string{"queued", "processing", "reply_pending"}).
-		Updates(map[string]any{"state": "ignored", "error_code": "native_mention_required", "updated_at": time.Now()}).Error
+		Updates(map[string]any{
+			"state": "ignored", "error_code": "native_mention_required", "updated_at": time.Now(),
+		}).Error
 }
 
 // Mark new-version processing in the existing inbox row, atomically with its

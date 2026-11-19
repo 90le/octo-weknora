@@ -178,7 +178,8 @@ func TestCardConfirmationBindsIdentityAndNeverReplays(t *testing.T) {
 		t.Fatalf("other operator cancel: %v %v", ok, err)
 	}
 	var pending octobusiness.Proposal
-	if err := a.db.First(&pending, "id = ?", p.ID).Error; err != nil || pending.Status != "pending" || calls.Load() != 0 {
+	if err := a.db.First(&pending, "id = ?", p.ID).Error; err != nil ||
+		pending.Status != "pending" || calls.Load() != 0 {
 		t.Fatalf("other operator changed proposal: %s %v", pending.Status, err)
 	}
 	event.EventID = 2
