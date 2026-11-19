@@ -72,6 +72,7 @@ function change(key: keyof IssueFilter, value: unknown) {
 .filter-fields { display: grid; grid-template-columns: minmax(210px, 1.5fr) repeat(4, minmax(130px, 1fr)); gap: 16px; }
 .filter-fields.knowledge-locked { grid-template-columns: minmax(230px, 1.5fr) repeat(3, minmax(140px, 1fr)); }
 label { display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: 13px; color: var(--td-text-color-primary); }
+.filter-fields :deep(.t-select__wrap), .filter-fields :deep(.t-input__wrap) { width: 100%; min-width: 0; }
 .filter-actions { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
 .filter-actions summary { cursor: pointer; padding-block: var(--td-comp-margin-s); }
 .date-fields { display: flex; gap: var(--td-comp-margin-m); flex-wrap: wrap; }

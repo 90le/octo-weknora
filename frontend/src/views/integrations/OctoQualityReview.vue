@@ -480,6 +480,7 @@ onMounted(async () => {
 .row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--td-comp-margin-m); }
 .toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: var(--td-comp-margin-m); }
 .toolbar > label { flex: 1 1 10rem; min-width: 0; }
+.toolbar > label > :deep(.t-select__wrap), .toolbar > label > :deep(.t-input__wrap) { width: 100%; min-width: 0; }
 .toolbar > label:first-child { flex-grow: 1.65; }
 .toolbar > label, .review > label, .review section > label, .review section { display: grid; gap: var(--td-comp-margin-s); }
 .filters, .extra-filters { display: grid; gap: var(--td-comp-margin-m); }
@@ -545,6 +546,7 @@ blockquote { border-left: 2px solid var(--td-component-border); padding-left: 12
 }
 @media(max-width: 720px) {
   .overview-panels, .similar-pair { grid-template-columns: minmax(0, 1fr); }
+  .toolbar > label { flex-basis: 100%; }
   .queue-row { grid-template-columns: auto minmax(0, 1fr); }
   .queue-status, .queue-meta { grid-column: 2; }
   .queue-meta { display: flex; flex-wrap: wrap; }
