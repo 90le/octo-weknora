@@ -1,81 +1,103 @@
 <template>
   <section class="quality">
-    <div class="toolbar">
-      <label>Octo 群或子区
-        <t-select v-model="scopeID" :options="scopeOptions" :loading="scopesLoading" filterable
-          placeholder="选择要复核的区域" />
-      </label>
-      <label>筛选
-        <t-select v-model="filter" :options="filters" />
-      </label>
-      <label>知识库<t-select v-model="filterLibrary" :options="libraryOptions" clearable /></label>
-      <label>从<t-input v-model="from" type="date" /></label>
-      <label>到<t-input v-model="to" type="date" /></label>
-      <label>关键词<t-input v-model="keyword" clearable @enter="applyFilters" /></label>
-      <label>主题<t-input v-model="topic" clearable @enter="applyFilters" /></label>
-      <t-button variant="outline" :loading="loading" :disabled="!scopeID" @click="applyFilters">应用筛选</t-button>
-      <t-button variant="outline" @click="openSettings">后台复核设置</t-button>
-    </div>
+    <form class="filters" @submit.prevent="applyFilters()">
+      <div class="toolbar">
+        <label>Octo 群或子区
+          <t-select v-model="scopeID" :options="scopeOptions" :loading="scopesLoading" filterable
+            placeholder="选择要复核的区域" />
+        </label>
+        <label>问答范围
+          <t-select v-model="filter" :options="filters" />
+        </label>
+        <label>知识库<t-select v-model="filterLibrary" :options="libraryOptions" placeholder="全部授权库" clearable /></label>
+        <div class="row filter-actions">
+          <t-button type="submit" :loading="loading" :disabled="!scopeID">应用筛选</t-button>
+          <t-button v-if="!overview" variant="text" @click="openSettings">后台复核设置</t-button>
+        </div>
+      </div>
+      <details class="extra-filters" :open="Boolean(param('from') || param('to') || param('keyword') || param('topic'))">
+        <summary>日期、关键词和主题</summary>
+        <div class="toolbar advanced">
+          <label>开始日期<t-input v-model="from" type="date" /></label>
+          <label>结束日期<t-input v-model="to" type="date" /></label>
+          <label>关键词<t-input v-model="keyword" clearable /></label>
+          <label>主题<t-input v-model="topic" clearable /></label>
+        </div>
+      </details>
+    </form>
     <p v-if="sample" class="hint">
       {{ day(sample.since) }} 至 {{ day(sample.until) }} · 此筛选下 {{ sample.total }} 条文字问答
       <span v-if="sample.truncated"> · 窗口超出读取上限，可缩短日期以核对完整数据</span>
       <t-button v-if="group" size="small" variant="text" @click="group = ''; applyFilters()">清除问题组</t-button>
     </p>
     <t-alert v-if="error" theme="error">{{ error }}</t-alert>
-    <div v-if="overview && sample" class="metrics">
-      <section v-for="metric in metrics" :key="metric.label" class="turn">
-        <span class="hint">{{ metric.label }}</span><strong>{{ metric.value }}</strong>
-        <router-link :to="drillDown(metric.filter)">查看对应问答</router-link>
-      </section>
-      <section class="turn"><h3>每日提问</h3>
-        <div v-for="bucket in sample.stats.days" :key="bucket.label" class="trend">
-          <span>{{ bucket.label }}</span><meter :value="bucket.count" :max="trendMax" /><span>{{ bucket.count }}</span>
-        </div>
-      </section>
-      <section class="turn"><h3>业务主题</h3>
-        <router-link v-for="bucket in sample.stats.topics.slice(0, 12)" :key="bucket.label" :to="drillDown('all', '', bucket.label)">{{ bucket.label }} · {{ bucket.count }} 条</router-link>
-      </section>
-      <section class="turn"><h3>高频问题</h3>
-        <router-link v-for="bucket in sample.stats.groups.slice(0, 12)" :key="bucket.id" :to="drillDown('all', bucket.id)">{{ bucket.question }} · {{ bucket.count }} 次 / {{ bucket.users }} 人<span v-if="bucket.gaps"> · 疑似未答 {{ bucket.gaps }} 次</span></router-link>
-      </section>
-      <section v-if="sample.stats.similar?.length" class="turn">
-        <h3>相似问法待核对</h3>
-        <div v-for="pair in sample.stats.similar.slice(0, 6)" :key="pair.a.id + pair.b.id" class="turn">
+    <template v-if="overview && sample">
+      <div class="metrics">
+        <router-link v-for="metric in metrics" :key="metric.label" class="metric" :to="drillDown(metric.filter)">
+          <span>{{ metric.label }}</span><strong>{{ metric.value }}</strong>
+        </router-link>
+      </div>
+      <div class="overview-panels">
+        <section class="turn"><h3>每日提问</h3>
+          <div v-for="bucket in sample.stats.days" :key="bucket.label" class="trend">
+            <span>{{ bucket.label }}</span><meter :value="bucket.count" :max="trendMax" :aria-label="`${bucket.label} 提问 ${bucket.count} 条`" /><span>{{ bucket.count }}</span>
+          </div>
+          <p v-if="!sample.stats.days.length" class="hint">所选日期内暂无问答。</p>
+        </section>
+        <section class="turn"><h3>高频问题</h3>
+          <router-link v-for="bucket in frequentGroups" :key="bucket.id" class="ranking" :to="drillDown('all', bucket.id)">
+            <span>{{ bucket.question }}<small v-if="bucket.gaps">疑似未答 {{ bucket.gaps }} 次</small></span>
+            <span class="hint">{{ bucket.count }} 次 · {{ bucket.users }} 人</span>
+          </router-link>
+          <p v-if="!frequentGroups.length" class="hint">所选范围内暂无重复提问。</p>
+        </section>
+        <section class="turn"><h3>业务主题</h3>
+          <router-link v-for="bucket in sample.stats.topics.slice(0, 8)" :key="bucket.label" class="ranking" :to="drillDown('all', '', bucket.label)"><span>{{ bucket.label }}</span><span class="hint">{{ bucket.count }} 条</span></router-link>
+          <p v-if="!sample.stats.topics.length" class="hint">所选问答暂无主题标签。</p>
+        </section>
+      </div>
+      <details v-if="sample.stats.similar?.length" class="turn similar">
+        <summary>相似问法待核对 · {{ sample.stats.similar.length }} 组</summary>
+        <div v-for="pair in sample.stats.similar" :key="pair.a.id + pair.b.id" class="similar-pair">
           <router-link :to="drillDown('all',pair.a.id)">{{ pair.a.question }} · {{ pair.a.count }} 次</router-link>
           <router-link :to="{...drillDown('all',pair.b.id),query:{...drillDown('all',pair.b.id).query,merge:pair.a.example_id,mergeLabel:pair.a.question}}">
             {{ pair.b.question }} · {{ pair.b.count }} 次
           </router-link>
         </div>
-      </section>
-    </div>
+      </details>
+    </template>
+    <t-empty v-else-if="overview && !loading && !error" description="选择一个 Octo 群或子区查看总览" />
     <t-loading v-if="!overview" :loading="loading">
-      <div v-if="visibleRows.length" class="row">
-        <t-checkbox :checked="checked.length === visibleRows.length" @change="checkPage">选择本页</t-checkbox>
-        <t-button size="small" variant="outline" :disabled="!checked.length" @click="openBatch">批量操作 {{ checked.length || '' }}</t-button>
+      <div v-if="visibleRows.length" class="row selection">
+        <t-checkbox :checked="checked.length === visibleRows.length" :indeterminate="checked.length > 0 && checked.length < visibleRows.length" @change="checkPage">选择本页</t-checkbox>
+        <t-button v-if="checked.length" size="small" variant="outline" @click="openBatch">批量操作 · {{ checked.length }} 条</t-button>
       </div>
       <t-empty v-if="!visibleRows.length" :description="scopeID ? '暂无符合筛选的问答' : '选择一个 Octo 区域查看问答'" />
-      <article v-for="row in visibleRows" :key="row.id" class="turn">
-        <div class="row">
-          <t-checkbox :checked="checked.includes(row.id)" aria-label="选择问答" @change="toggleRow(row.id)" />
-          <t-tag size="small" variant="light" :theme="row.outcome === 'answered' ? 'default' : 'warning'">
-            {{ outcomes[row.outcome] || row.outcome }}
-          </t-tag>
-          <span v-if="row.unanswered_repeats > 1">同一问法疑似未答 {{ row.unanswered_repeats }} 次</span>
-          <span v-if="row.unavailable_sources">{{ row.unavailable_sources }} 条资料线索当前不可读取</span>
-          <span>{{ new Date(row.created_at).toLocaleString() }}</span>
-          <t-tag v-if="row.review?.suggestion" size="small" variant="light">{{ suggestions[row.review.suggestion] }}</t-tag>
-          <span v-if="row.review?.disposition">{{ dispositions[row.review.disposition] }}</span>
-          <span v-if="row.review?.topic">{{ row.review.topic }}</span>
-          <span v-if="row.review?.issue_id">已关联问题</span>
-        </div>
-        <h3>{{ row.question }}</h3>
-        <OctoMarkdown :text="row.answer" compact empty="没有送达的 Bot 答复" />
-        <p v-if="row.review?.reason" class="hint">{{ row.review.reason }}</p>
-        <div class="row">
-          <span class="hint">{{ row.sources?.length ? `${row.sources.length} 条可核查资料线索` : '无结构化资料记录' }}</span>
-          <t-button size="small" variant="outline" @click="openRow(row)">查看和复核</t-button>
-        </div>
-      </article>
+      <div v-if="visibleRows.length" class="queue">
+        <article v-for="row in visibleRows" :key="row.id" class="queue-row">
+          <t-checkbox :checked="checked.includes(row.id)" :aria-label="`选择问答 ${row.question}`" @change="toggleRow(row.id)" />
+          <div class="queue-message">
+            <button class="question-title" type="button" @click="openRow(row)">{{ row.question }}</button>
+            <OctoMarkdown :text="row.answer" compact empty="没有送达的 Bot 答复" />
+            <p v-if="row.review?.reason" class="hint review-reason">{{ row.review.reason }}</p>
+          </div>
+          <div class="row queue-status">
+            <t-tag size="small" variant="light" :theme="row.outcome === 'answered' ? 'default' : 'warning'">
+              {{ outcomes[row.outcome] || row.outcome }}
+            </t-tag>
+            <span v-if="row.unanswered_repeats > 1">同一问法疑似未答 {{ row.unanswered_repeats }} 次</span>
+            <span v-if="row.unavailable_sources">{{ row.unavailable_sources }} 条资料线索当前不可读取</span>
+            <t-tag v-if="row.review?.suggestion" size="small" variant="light">{{ suggestions[row.review.suggestion] }}</t-tag>
+            <span v-if="row.review?.disposition">{{ dispositions[row.review.disposition] }}</span>
+            <span v-if="row.review?.topic">{{ row.review.topic }}</span>
+            <span v-if="row.review?.issue_id">已关联问题</span>
+          </div>
+          <div class="queue-meta hint">
+            <time :datetime="row.created_at">{{ new Date(row.created_at).toLocaleString() }}</time>
+            <span>{{ row.sources?.length ? `${row.sources.length} 条资料线索` : '未留存资料线索' }}</span>
+          </div>
+        </article>
+      </div>
       <t-pagination v-if="(sample?.total ?? 0) > pageSize" v-model:current="page" :total="sample?.total ?? 0"
         :page-size="pageSize" :show-page-size="false" />
     </t-loading>
@@ -103,13 +125,17 @@
       <p v-if="settingsError" role="status">{{ settingsError }}</p>
     </t-dialog>
 
-    <t-drawer v-model:visible="drawer" attach="body" header="问答复核" size="min(750px, 100vw)" :footer="false">
+    <t-drawer v-model:visible="drawer" attach="body" header="问答复核" size="min(750px, 100vw)" :footer="false"
+      :close-btn="true" :close-on-esc-keydown="true">
       <div v-if="selected" class="review">
-        <section>
-          <h3>用户提问</h3>
+        <section class="review-intro">
+          <div class="row">
+            <t-tag size="small" variant="light">{{ outcomes[selected.outcome] || selected.outcome }}</t-tag>
+            <t-tag v-if="selected.review?.suggestion" size="small" variant="light">{{ suggestions[selected.review.suggestion] }}</t-tag>
+            <span class="hint">{{ selected.sources?.length ? `${selected.sources.length} 条资料线索` : '本次问答未留存结构化资料线索' }}</span>
+          </div>
           <OctoMarkdown :text="selected.question" />
-          <h3>Bot 答复</h3>
-          <OctoMarkdown :text="selected.answer" empty="没有送达的 Bot 答复" />
+          <p v-if="selected.review?.reason" class="hint">{{ selected.review.reason }}</p>
         </section>
         <label>负责核查的知识库
           <t-select v-model="libraryID" :options="libraryOptions" :disabled="analyzing || confirming"
@@ -118,8 +144,13 @@
         <div class="row">
           <t-button v-if="selected.review?.state === 'done'" :disabled="!libraryID || analyzing" @click="analyze(true)">查看已复核证据</t-button>
           <t-button :loading="analyzing" :disabled="!libraryID || confirming" @click="analyze(false)">用 AI 复核</t-button>
-          <span v-if="selected.unanswered_repeats > 1" class="hint">同时核对最多 6 条同问法的疑似未答记录。</span>
+          <span v-if="!libraryID" class="hint">{{ libraryOptions.length ? '请选择知识库后运行复核。' : '当前范围暂无可用于复核的知识库。' }}</span>
+          <span v-else-if="selected.unanswered_repeats > 1" class="hint">同时核对最多 6 条同问法的疑似未答记录。</span>
         </div>
+        <details :key="selected.id" class="answer-original">
+          <summary>查看 Bot 原答</summary>
+          <OctoMarkdown :text="selected.answer" empty="没有送达的 Bot 答复" />
+        </details>
         <t-alert v-if="reviewError" theme="error">{{ reviewError }}</t-alert>
         <section v-if="draft">
           <div class="row"><t-tag variant="light">{{ categories[draft.finding.category] }}</t-tag><h3>{{ draft.finding.title }}</h3></div>
@@ -196,6 +227,11 @@ const topic = ref(param('topic'))
 const group = ref(param('group'))
 const from = ref(param('from'))
 const to = ref(param('to'))
+const readFilters = () => ({
+  filter:filter.value, library:filterLibrary.value, keyword:keyword.value,
+  topic:topic.value, group:group.value, from:from.value, to:to.value,
+})
+const applied = ref(readFilters())
 const scopes = ref<OctoScope[]>([])
 const scopesLoading = ref(false)
 const sample = ref<QualityPage | null>(null)
@@ -208,19 +244,23 @@ const loading = ref(false)
 const page = ref(1)
 const pageSize = 15
 const visibleRows = computed(() => sample.value?.rows ?? [])
+const frequentGroups = computed(() => (sample.value?.stats.groups ?? []).filter(group => group.count > 1).slice(0, 8))
 const day = (s: string) => new Date(s).toLocaleDateString('zh-CN', {timeZone:'Asia/Shanghai'})
 const trendMax = computed(() => Math.max(1, ...(sample.value?.stats.days ?? []).map(b => b.count)))
 const metrics = computed(() => {
   const stats = sample.value?.stats
   return stats ? [
-    {label:'提问量',value:stats.questions,filter:'all'}, {label:'提问人数',value:stats.users,filter:'all'},
-    {label:'待关注',value:stats.needs_review,filter:'attention'}, {label:'已复核',value:stats.reviewed,filter:'reviewed'},
-    {label:'资料不可用',value:stats.unavailable,filter:'unavailable'}, {label:'处理或检索异常',value:stats.failed,filter:'failed'},
+    {label:'待关注',value:stats.needs_review,filter:'attention'},
+    {label:'资料不可用',value:stats.unavailable,filter:'unavailable'},
+    {label:'处理或检索异常',value:stats.failed,filter:'failed'},
+    {label:'提问量',value:stats.questions,filter:'all'},
+    {label:'提问人数',value:stats.users,filter:'all'},
+    {label:'AI 复核覆盖',value:`${stats.reviewed} / ${stats.questions}`,filter:'reviewed'},
   ] : []
 })
-const drillDown = (outcome:string, id = '', label = topic.value) => ({
+const drillDown = (outcome:string, id = applied.value.group, label = applied.value.topic) => ({
   name:'knowledgeQuality',
-  query:{scope:scopeID.value,filter:outcome,library:filterLibrary.value,keyword:keyword.value,topic:label,group:id,from:from.value,to:to.value},
+  query:{...applied.value, scope:scopeID.value, filter:outcome, topic:label, group:id},
 })
 const checked = ref<string[]>([])
 const batchOpen = ref(false)
@@ -316,14 +356,15 @@ let contactsVersion = 0
 
 async function reload() {
   const version = ++listVersion
-  if (!scopeID.value) return
+  if (!scopeID.value) { loading.value = false; return }
   loading.value = true
   error.value = ''
   try {
-    const stop = to.value ? new Date(new Date(`${to.value}T00:00:00+08:00`).getTime() + 86400000).toISOString() : undefined
+    const params = applied.value
+    const stop = params.to ? new Date(new Date(`${params.to}T00:00:00+08:00`).getTime() + 86400000).toISOString() : undefined
     const response = await listQuality(scopeID.value,{
-      filter:filter.value, keyword:keyword.value, topic:topic.value, group:group.value, library_id:filterLibrary.value,
-      from:from.value ? `${from.value}T00:00:00+08:00` : undefined, to:stop, page:page.value, page_size:pageSize,
+      filter:params.filter, keyword:params.keyword, topic:params.topic, group:params.group, library_id:params.library,
+      from:params.from ? `${params.from}T00:00:00+08:00` : undefined, to:stop, page:page.value, page_size:pageSize,
     })
     if (version === listVersion) { sample.value = response.data; checked.value = [] }
   } catch {
@@ -333,6 +374,11 @@ async function reload() {
   }
 }
 function applyFilters() {
+  if (from.value && to.value && from.value > to.value) {
+    error.value = '结束日期须晚于或等于开始日期。'
+    return
+  }
+  applied.value = readFilters()
   if (page.value === 1) void reload()
   else page.value = 1
 }
@@ -410,7 +456,6 @@ watch(scopeID, () => {
   group.value = ''
   applyFilters()
 })
-watch(filter, applyFilters)
 watch(page, reload)
 watch(batchAction, action => { batchValue.value = action === 'disposition' ? 'seen' : action === 'merge' ? param('merge') : '' })
 watch(libraryID, value => { clearDraft(); void loadOwnerContacts(value) })
@@ -431,24 +476,77 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.quality, .review { display: grid; gap: 16px; }
-.toolbar, .row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
-.toolbar label { min-width: 240px; }
-.toolbar { align-items: end; }
-label, .review section { display: grid; gap: 8px; }
-.turn, .review section {
+.quality, .review { display: grid; min-width: 0; gap: var(--td-comp-margin-xl); }
+.row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--td-comp-margin-m); }
+.toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: var(--td-comp-margin-m); }
+.toolbar > label { flex: 1 1 10rem; min-width: 0; }
+.toolbar > label:first-child { flex-grow: 1.65; }
+.toolbar > label, .review > label, .review section > label, .review section { display: grid; gap: var(--td-comp-margin-s); }
+.filters, .extra-filters { display: grid; gap: var(--td-comp-margin-m); }
+.extra-filters summary, .answer-original summary, .similar summary { cursor: pointer; font-weight: 500; }
+.advanced { margin-top: var(--td-comp-margin-m); }
+.turn, .review section, .queue, .answer-original, .metric {
+  min-width: 0;
   padding: 16px;
   border: 1px solid var(--td-component-border);
   border-radius: var(--app-radius-md);
 }
+.queue { padding: 0; }
+.queue-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(7rem, .28fr) minmax(8rem, auto);
+  gap: var(--td-comp-margin-m);
+  align-items: start;
+  padding: 14px 16px;
+}
+.queue-row + .queue-row { border-top: 1px solid var(--td-component-border); }
+.queue-row:hover { background: var(--td-bg-color-container-hover); }
+.queue-message, .queue-meta { display: grid; min-width: 0; gap: var(--td-comp-margin-xs); }
+.queue-meta, .selection, .queue-status, .extra-filters { font-size: var(--td-font-size-body-medium); }
+.selection { margin-bottom: var(--td-comp-margin-m); }
+.queue-status, .review-reason { overflow-wrap: anywhere; }
+.question-title {
+  justify-self: start;
+  max-width: 100%;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--td-text-color-primary);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.question-title:hover, .ranking:hover, .similar-pair a:hover { color: var(--td-brand-color); }
+.queue + .t-pagination { margin-top: var(--td-comp-margin-m); }
 h3, p, blockquote { margin: 0; }
-.turn { display: grid; gap: 8px; }
+.turn { display: grid; gap: var(--td-comp-margin-m); }
+.turn h3 { font-size: var(--td-font-size-title-medium); }
 .hint, small { color: var(--td-text-color-secondary); }
-.metrics { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:12px; }
-.metrics strong { font-size:24px; }
+.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: var(--td-comp-margin-m); }
+.metric { display: grid; gap: var(--td-comp-margin-s); text-decoration: none; color: var(--td-text-color-secondary); }
+.metric:hover { border-color: var(--td-brand-color); color: var(--td-brand-color); }
+.metric strong { color: var(--td-text-color-primary); font-size: var(--td-font-size-headline-small); font-variant-numeric: tabular-nums; }
+.overview-panels { display: grid; grid-template-columns: 1fr 1.35fr .85fr; gap: var(--td-comp-margin-m); align-items: start; }
+.overview-panels > section { min-width: 0; }
+.ranking, .similar-pair { display: grid; align-items: start; gap: var(--td-comp-margin-m); border-top: 1px solid var(--td-component-border); padding-top: var(--td-comp-margin-m); }
+.ranking { grid-template-columns: minmax(0, 1fr) auto; overflow-wrap: anywhere; text-decoration: none; color: var(--td-text-color-primary); }
+.ranking small { display: block; }
+.similar-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: var(--td-comp-margin-m); padding-bottom: var(--td-comp-margin-m); }
+.similar-pair a { color: var(--td-text-color-primary); overflow-wrap: anywhere; }
 .trend { display:grid; grid-template-columns:90px 1fr auto; gap:8px; align-items:center; }
-.trend meter { width:100%; }
+.trend meter { width:100%; min-width:0; accent-color: var(--td-brand-color); }
 .review p, h3 { white-space: pre-wrap; overflow-wrap: anywhere; }
+.answer-original > .octo-markdown, .answer-original > .octo-markdown-empty { margin-top: var(--td-comp-margin-m); }
 blockquote { border-left: 2px solid var(--td-component-border); padding-left: 12px; }
-:deep(.t-drawer__body) { overflow-y: auto; }
+@media(max-width: 1060px) {
+  .overview-panels { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media(max-width: 720px) {
+  .overview-panels, .similar-pair { grid-template-columns: minmax(0, 1fr); }
+  .queue-row { grid-template-columns: auto minmax(0, 1fr); }
+  .queue-status, .queue-meta { grid-column: 2; }
+  .queue-meta { display: flex; flex-wrap: wrap; }
+}
 </style>

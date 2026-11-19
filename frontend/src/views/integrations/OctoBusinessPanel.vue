@@ -24,28 +24,32 @@
     <template v-if="activeView === 'issues'">
       <OctoBusinessFilters v-model="filter" v-model:from-day="fromDay" v-model:to-day="toDay"
         :knowledge-locked="Boolean(knowledgeBaseId)" :scope-options="scopeOptions" :kb-options="kbOptions"
-        :loading="loading" @search="search" @reset="resetFilters" />
+        :loading="loading" :auto-search="false" @search="search" @reset="resetFilters" />
       <div class="list-heading">
-        <p>共 <strong>{{ total }}</strong> 个登记问题 <span>点击问题标题查看来源与处理记录</span></p>
-        <t-button variant="text" :loading="loading" @click="loadIssues">刷新列表</t-button>
-      </div>
-      <div class="row">
-        <t-radio-group v-model="visibility" variant="default-filled" @change="search">
-          <t-radio-button value="active">处理中与已结案</t-radio-button>
-          <t-radio-button value="archive">归档</t-radio-button>
-          <t-radio-button value="trash">回收站</t-radio-button>
-        </t-radio-group>
-        <t-checkbox v-model="unassigned" @change="search">仅未分派</t-checkbox>
-        <t-button variant="outline" :disabled="!selectedKeys.length" @click="openBatch">
-          批量操作 {{ selectedKeys.length || '' }}
-        </t-button>
+        <div class="row">
+          <div class="issue-views" role="group" aria-label="问题视图">
+            <t-button v-for="item in visibilityOptions" :key="item.value" size="small"
+              :variant="visibility === item.value ? 'base' : 'text'" :theme="visibility === item.value ? 'primary' : 'default'"
+              :aria-pressed="visibility === item.value" @click="setVisibility(item.value)">
+              {{ item.label }}
+            </t-button>
+          </div>
+          <t-checkbox v-if="visibility === 'active'" v-model="unassigned" @change="search">仅未分派</t-checkbox>
+          <t-button v-if="selectedKeys.length" variant="outline" size="small" @click="openBatch">
+            批量操作 · {{ selectedKeys.length }} 条
+          </t-button>
+        </div>
+        <div class="row">
+          <p v-if="!error"><strong>{{ total }}</strong> 个问题</p>
+          <t-button variant="text" size="small" :loading="loading" @click="loadIssues">刷新列表</t-button>
+        </div>
       </div>
       <t-alert v-if="batchResult" theme="info" class="panel-alert">{{ batchResult }}</t-alert>
       <t-alert v-if="error" theme="error" class="panel-alert">
         {{ error }} <t-button variant="text" @click="loadIssues">重试</t-button>
       </t-alert>
       <div class="issue-table-scroll">
-        <t-table v-model:selected-row-keys="selectedKeys" class="issue-table" :data="issues" :columns="columns" row-key="id" table-layout="fixed"
+        <t-table v-model:selected-row-keys="selectedKeys" class="issue-table" size="small" :data="issues" :columns="columns" row-key="id" table-layout="fixed"
           :loading="loading" :empty="error ? '读取失败，不能视为没有问题' : '暂无符合条件的登记问题'">
           <template #title="{ row }">
             <t-button variant="text" class="issue-title" :title="row.title" @click="openIssue(row.id)">{{ row.title }}</t-button>
@@ -53,14 +57,13 @@
             <OctoMarkdown :text="row.description" compact />
           </template>
           <template #scope="{ row }">
-            <span class="wrap-text">{{ sourceLabel(row) }}</span>
-            <small>{{ row.is_direct ? '私聊' : row.subarea_id ? '群聊子区' : '群聊主区' }}</small>
+            <span class="issue-source" :title="sourceLabel(row)">{{ sourceLabel(row) }}</span>
+            <small>{{ kbName(row.knowledge_base_id) }}</small>
           </template>
-          <template #knowledge_base="{ row }"><span class="wrap-text">{{ kbName(row.knowledge_base_id) }}</span></template>
-          <template #reporter="{ row }">{{ personName(row.reporter_name, row.reporter_uid) }}</template>
           <template #owner="{ row }">{{ personName(row.owner_name, row.owner_uid, '未指定') }}</template>
           <template #status="{ row }">
-            <t-select v-if="!row.archive_state" size="small" :value="row.status" :options="statusOptions"
+            <t-select v-if="!row.archive_state" class="issue-status" size="small" :value="row.status" :options="statusOptions"
+              :aria-label="`更新问题状态 ${row.title}`"
               :disabled="batchBusy" @change="(value: unknown) => changeRowStatus(row, String(value))" />
             <t-tag v-else size="small" :theme="statusTheme(row.status)">{{ issueStatusLabels[row.status] || row.status }}</t-tag>
           </template>
@@ -281,16 +284,25 @@ const eventActor = (event: { actor_name?: string; actor_uid: string }) =>
 const statusTheme = (status: string): 'success' | 'default' | 'warning' | 'primary' =>
   status === 'resolved' ? 'success' : status === 'closed' ? 'default' : status === 'inprogress' ? 'primary' : 'warning'
 const columns = [
-  { colKey: 'select', type: 'multiple' as const, width: 48 },
-  { colKey: 'title', title: '问题／类型', minWidth: 230 },
-  { colKey: 'scope', title: '来源群聊／子区', minWidth: 170 },
-  { colKey: 'knowledge_base', title: '知识库', minWidth: 150 },
-  { colKey: 'reporter', title: '提问人', minWidth: 100 },
-  { colKey: 'owner', title: '负责人', minWidth: 100 },
-  { colKey: 'status', title: '状态', width: 85 },
-  { colKey: 'created_at', title: '登记时间', width: 160 },
+  { colKey: 'select', type: 'multiple' as const, width: 40 },
+  { colKey: 'title', title: '问题／类型' },
+  { colKey: 'scope', title: '来源／知识库', width: '24%' },
+  { colKey: 'status', title: '状态', width: 132 },
+  { colKey: 'owner', title: '负责人', width: 108 },
+  { colKey: 'created_at', title: '登记时间', width: 152 },
 ]
 const visibility = ref('active')
+const visibilityOptions = [
+  { value:'active', label:'当前问题' },
+  { value:'archive', label:'归档' },
+  { value:'trash', label:'回收站' },
+]
+function setVisibility(value: string) {
+  if (visibility.value === value) return
+  visibility.value = value
+  unassigned.value = false
+  search()
+}
 const unassigned = ref(false)
 const selectedKeys = ref<Array<string | number>>([])
 const batchRows = ref<OctoIssue[]>([])
@@ -637,18 +649,18 @@ onBeforeUnmount(invalidate)
 .list-heading, .list-footer, .contact-heading, .report-preview-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
 .list-heading { margin: 18px 0 12px; }
 .list-heading p { margin: 0; font-size: 14px; }
-.list-heading p>span { margin-left: 14px; color: var(--td-text-color-secondary); font-size: 12px; }
+.issue-views { display: flex; gap: var(--td-comp-margin-xs); align-items: center; }
 .list-footer { margin-top: 18px; }
 .list-footer .hint { margin: 0; }
 .issue-table-scroll { min-width: 0; width: 100%; max-width: 100%; overflow-x: auto; border: 1px solid var(--td-component-border); border-radius: var(--td-radius-large, 8px); }
-.issue-table { min-width: 995px; }
-.issue-type { margin-top:6px; }
-.issue-table :deep(.t-table__content) { overflow-x: auto; }
+.issue-table { min-width: 770px; }
+.issue-type { margin-block: var(--td-comp-margin-xs); }
 .issue-table :deep(th) { font-weight: 500; color: var(--td-text-color-secondary); }
 .issue-table :deep(td) { vertical-align: top; }
 .issue-title { max-width: 100%; height: auto; min-height: 24px; padding: 0; white-space: normal; text-align: left; justify-content: flex-start; line-height: 1.65; }
 .issue-title :deep(.t-button__text) { white-space: normal; overflow-wrap: anywhere; text-align: left; }
-.wrap-text { overflow-wrap: anywhere; line-height: 1.65; }
+.issue-source { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.issue-status { width: 100%; min-width: 92px; }
 .date-cell { font-size: 12px; white-space: normal; line-height: 1.65; }
 small { display: block; margin-top: 5px; color: var(--td-text-color-secondary); font-size: 12px; overflow-wrap: anywhere; }
 .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -689,7 +701,7 @@ small { display: block; margin-top: 5px; color: var(--td-text-color-secondary); 
 .prewrap { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; font-size: 14px; margin: 8px 0; }
 blockquote { margin: 8px 0; border-left: 3px solid var(--td-component-border); padding: 12px 16px; background: var(--td-bg-color-secondarycontainer); }
 .attachments { padding-left: 20px; }
-label { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; font-size: 13px; }
+label:not(.t-checkbox):not(.t-radio-button) { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; font-size: 13px; }
 label.row { flex-direction: row; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
 .two-col label { margin-top: 0; }
@@ -698,6 +710,6 @@ label.row { flex-direction: row; }
 .history time { color: var(--td-text-color-secondary); font-size: 12px; }
 .history p { margin-bottom: 0; }
 .contact-form { max-height: 65vh; overflow-y: auto; padding-right: 4px; }
-@media(max-width:800px) { .stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .list-heading p>span { display: block; margin: 6px 0 0; } .list-footer { justify-content: flex-start; } }
+@media(max-width:800px) { .stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .list-footer { justify-content: flex-start; } }
 @media(max-width:520px) { .two-col { grid-template-columns: minmax(0, 1fr); } .two-col>div:empty { display: none; } .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .report-preview { padding: 16px; } .source-facts { grid-template-columns: 75px minmax(0, 1fr); } .context-note { flex-wrap: wrap; } }
 </style>
