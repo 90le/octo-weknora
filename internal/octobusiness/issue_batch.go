@@ -38,6 +38,8 @@ func operationState(err error) string {
 		return "unavailable"
 	case errors.Is(err, ErrConflict):
 		return "changed"
+	case errors.Is(err, errRemediationChanged), errors.Is(err, errRetestUnavailable):
+		return "verification_required"
 	case errors.Is(err, ErrInvalid):
 		return "invalid"
 	default:

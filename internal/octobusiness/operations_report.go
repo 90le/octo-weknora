@@ -193,6 +193,8 @@ var reportMetricNames = []struct{ key, label string }{
 	{"retest_verified", "人工核验通过次数"},
 	{"retest_unresolved", "人工确认未修复次数"},
 	{"retest_insufficient", "人工确认依据不足次数"},
+	{"repair_tested_issues", "期内完成修订复测的问题数"},
+	{"repair_needing_work", "期内核验未修复或依据不足的问题数"},
 }
 
 func (s *Service) prepareReport(
@@ -495,13 +497,13 @@ func (r *operationalReport) markdown(report *Report) string {
 	order := map[string][]string{
 		"maintenance": {
 			"backlog", "unassigned", "opened", "resolved", "repeated", "unavailable", "retest_completed",
-			"retest_failed", "retest_verified", "retest_unresolved", "retest_insufficient",
+			"retest_failed", "retest_verified", "retest_unresolved", "retest_insufficient", "repair_tested_issues", "repair_needing_work",
 		},
 		"anomaly": {"attention", "attention_people", "repeated", "failed", "unavailable"},
 		"topic":   {"questions", "people", "attention", "repeated", "reviewed"},
 	}
 	for _, metric := range reportMetricNames {
-		if _, ok := r.Metrics[metric.key]; !ok && strings.HasPrefix(metric.key, "retest_") {
+		if _, ok := r.Metrics[metric.key]; !ok && (strings.HasPrefix(metric.key, "retest_") || strings.HasPrefix(metric.key, "repair_")) {
 			continue
 		}
 		if keys := order[r.Template]; len(keys) != 0 && !contains(keys, metric.key) {

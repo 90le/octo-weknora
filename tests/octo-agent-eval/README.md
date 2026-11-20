@@ -1,5 +1,9 @@
 # Octo Agent 离线验收评分器
 
+## 业务修订试点
+
+`pilot-cases.jsonl` 提供 30 道开发题，`pilot-reserve.jsonl` 另存 10 道留出题。用 `fixtures/media.md` 与 `fixtures/geo.md` 在隔离环境构建两份独立的可见范围。带 M 的问题只授权 M，带 G 的问题只授权 G。题目、价格和合同条件均为虚构。按下方同一条 `score.py validate` 或 `score.py score` 命令换入对应题库即可。只把问题交给被测 Agent，参考结论与留出题用于独立评审。生产业务正确率仍需资料负责人标注真实脱敏题，并核验当时的正式版本。
+
 此工具只读取本地 JSONL，不连接 WeKnora、Octo、GitHub 或模型，不创建知识库。它与 WeKnora 原生 Evaluation 的 RAG 语料评测不同，面向 Octo Agent 的多来源回答和投递验收。真实群消息、模型事件和授权来源要由独立的受控验收流程采集；不要把生产对话、凭据、私有文档、源码快照或完整事件流提交到仓库。
 
 建议将公开固定提交或虚构资料组成的**新问题**写入 `cases.jsonl`，将本次观察写入 `observations.jsonl`。每行一个 JSON 对象，ID 必须唯一。不要重复使用曾驱动修复的线上问题作为独立验收题；动态“最新版本”问题应单独记录查询时间和当时官方 Release，不假装拥有永久不变的答案。

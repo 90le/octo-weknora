@@ -21,6 +21,12 @@ type retestRecord struct {
 	IssueID           string     `json:"-"`
 	ActorUID          string     `json:"actor_uid"`
 	QuestionMessageID string     `json:"question_message_id"`
+	Scenario          string     `json:"scenario"`
+	Question          string     `json:"question"`
+	PlanRevision      int        `json:"plan_revision"`
+	DocumentID        string     `json:"document_id"`
+	SourceVersion     string     `json:"source_version"`
+	DocumentCited     bool       `json:"document_cited"`
 	State             string     `json:"state"`
 	Answer            string     `json:"answer"`
 	ModelID           string     `json:"model_id"`
@@ -55,12 +61,10 @@ func (s *Service) retestAdminIssue(ctx context.Context, id string) (Principal, *
 }
 
 func (s *Service) beginIssueRetest(
-	ctx context.Context, p Principal, issue *Issue, questionID string, now time.Time,
+	ctx context.Context, p Principal, issue *Issue, questionID string, now time.Time, run *retestRecord,
 ) (*retestRecord, error) {
-	run := &retestRecord{
-		ID: uuid.NewString(), TenantID: p.TenantID, IssueID: issue.ID, ActorUID: p.UserID,
-		State: "running", CreatedAt: now, QuestionMessageID: questionID, Sources: []string{},
-	}
+	run.ID, run.TenantID, run.IssueID, run.ActorUID = uuid.NewString(), p.TenantID, issue.ID, p.UserID
+	run.State, run.CreatedAt, run.QuestionMessageID, run.Sources = "running", now, questionID, []string{}
 	if err := expireIssueRetests(s.retestRows(ctx, issue), now); err != nil {
 		return nil, err
 	}
@@ -86,19 +90,20 @@ func (s *Service) finishIssueRetest(
 	run.FinishedAt, run.State = &now, "completed"
 	if runErr == nil {
 		run.Answer, run.ModelID, run.Sources = result.Answer, result.ModelID, result.Sources
+		run.DocumentCited = run.DocumentID != "" && contains(result.citedDocuments, run.DocumentID)
 	} else {
 		run.State, run.ErrorCode = "failed", "execution"
 		switch {
 		case errors.Is(runErr, context.Canceled), errors.Is(ctx.Err(), context.Canceled):
 			run.State, run.ErrorCode = "interrupted", "interrupted"
-		case errors.Is(runErr, errRetestUnavailable):
+		case errors.Is(runErr, errRetestUnavailable), errors.Is(runErr, errRemediationChanged):
 			run.ErrorCode = "source_changed"
 		}
 	}
 	write, cancel := context.WithTimeout(context.WithoutCancel(ctx), 6*time.Second)
 	defer cancel()
 	query := s.retestRows(write, issue).Where("id = ? AND state = 'running'", run.ID).
-		Select("state", "answer", "model_id", "sources", "error_code", "finished_at").Updates(run)
+		Select("state", "answer", "model_id", "sources", "document_cited", "error_code", "finished_at").Updates(run)
 	if query.Error != nil {
 		return query.Error
 	}
@@ -163,6 +168,19 @@ func (s *Service) reviewIssueRetest(
 			}
 			return ErrConflict
 		}
+		if input.State == "verified" && run.PlanRevision > 0 {
+			if run.DocumentID != "" && !run.DocumentCited && run.Scenario != "counterexample" {
+				return ErrConflict
+			}
+			store := *s
+			store.db = tx
+			if _, err := store.retestAgent(ctx, issue); err != nil {
+				return err
+			}
+			if err := store.validateRunVersion(ctx, issue, &run); err != nil {
+				return err
+			}
+		}
 		return audit(tx, p, "octo.issue.retest_reviewed", issue.ID,
 			map[string]string{"retest_id": id, "review_state": input.State})
 	})
@@ -197,6 +215,16 @@ func (s *Service) addReportRetests(
 	for _, review := range reviews {
 		metrics["retest_"+review.Key] = review.Count
 	}
+	tested := base.Session(&gorm.Session{}).Where("plan_revision > 0 AND state = 'completed' AND finished_at >= ? AND finished_at < ?", from, to)
+	var issuesTested, issuesNeedingWork int64
+	if err := tested.Distinct("issue_id").Count(&issuesTested).Error; err != nil {
+		return err
+	}
+	reviewed := base.Session(&gorm.Session{}).Where("plan_revision > 0 AND review_state IN ? AND reviewed_at >= ? AND reviewed_at < ?", []string{"unresolved", "insufficient"}, from, to)
+	if err := reviewed.Distinct("issue_id").Count(&issuesNeedingWork).Error; err != nil {
+		return err
+	}
+	metrics["repair_tested_issues"], metrics["repair_needing_work"] = issuesTested, issuesNeedingWork
 	return nil
 }
 
