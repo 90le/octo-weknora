@@ -429,7 +429,10 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		// Indexing below dereferences the engine; a nil one would panic.
 		logger.Errorf(ctx, "processChunks resolve vector store for KB %s failed: %v", kb.ID, err)
 		if errors.Is(err, retriever.ErrVectorStoreUnavailable) {
-			// The lookup failed, not the store: retry rather than fail.
+			// The configured store may recover before the next worker attempt.
+			s.beginStage(ctx, knowledge.ID, types.StageEmbedding, nil)
+			s.failStage(ctx, knowledge.ID, types.StageEmbedding, werrors.ErrCodeVectorStoreWriteFailed,
+				"vector store unavailable; retry pending", err)
 			return fmt.Errorf("resolve vector store: %w", err)
 		}
 		return s.failKnowledgeAtEmbedding(ctx, kb, knowledge, werrors.ErrCodeVectorStoreWriteFailed,
@@ -766,8 +769,11 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 			// Map vector store / embedding rate-limit errors to a
 			// stable code so the UI can offer "retry later" hints.
 			code := werrors.ErrCodeVectorStoreWriteFailed
+			var embeddingErr *retriever.BatchEmbeddingError
 			if isLikelyRateLimitError(err) {
 				code = werrors.ErrCodeEmbeddingRateLimit
+			} else if errors.As(err, &embeddingErr) {
+				code = werrors.ErrCodeEmbeddingProviderFail
 			}
 			s.failStage(ctx, knowledge.ID, types.StageEmbedding,
 				code, "batch index failed", err)

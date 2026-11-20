@@ -74,6 +74,14 @@ func (s *DataSourceService) ingestPreparedFile(ctx context.Context, ds *types.Da
 	if err != nil {
 		return old != nil, err
 	}
+	if candidate != nil && candidate.ParseStatus == types.ParseStatusDeleting {
+		// A previous import can have reached deletion before the vector store
+		// went away. Finish cleanup of that exact candidate before retrying it.
+		if err := s.deletePreparedCandidate(ctx, ds.TenantID, candidate.ID); err != nil {
+			return old != nil, s.preparedFileFailure(ctx, candidate.ID, err)
+		}
+		candidate = nil
+	}
 	metadata := map[string]string{}
 	for k, v := range item.Metadata {
 		metadata[k] = v
@@ -133,17 +141,18 @@ func (s *DataSourceService) ingestPreparedFile(ctx context.Context, ds *types.Da
 			return old != nil, fmt.Errorf("staged document is unavailable")
 		}
 		if candidate.ParseStatus == types.ParseStatusFailed || candidate.ParseStatus == types.ParseStatusCancelled {
-			if err := s.knowledgeService.DeleteKnowledge(ctx, candidate.ID); err == nil {
-				_ = repo.HardDeleteKnowledge(ctx, ds.TenantID, candidate.ID)
+			failure := s.preparedFileFailure(ctx, candidate.ID, errPreparedFileIngestFailed)
+			if err := s.deletePreparedCandidate(ctx, ds.TenantID, candidate.ID); err != nil {
+				return old != nil, errors.Join(failure, err)
 			}
-			return old != nil, fmt.Errorf("new document parsing failed; previous version preserved")
+			return old != nil, failure
 		}
 		if indexedForSync(candidate) {
 			break
 		}
 		select {
 		case <-waitCtx.Done():
-			return old != nil, fmt.Errorf("document indexing is not ready; previous version preserved: %w", waitCtx.Err())
+			return old != nil, s.preparedFileFailure(ctx, candidate.ID, fmt.Errorf("document indexing is not ready; previous version preserved: %w", waitCtx.Err()))
 		case <-time.After(2 * time.Second):
 		}
 	}
@@ -159,6 +168,13 @@ func (s *DataSourceService) ingestPreparedFile(ctx context.Context, ds *types.Da
 		return old != nil, fmt.Errorf("repository document candidate cannot be published: %s", outcome)
 	}
 	return old != nil, nil
+}
+
+func (s *DataSourceService) deletePreparedCandidate(ctx context.Context, tenantID uint64, knowledgeID string) error {
+	if err := s.knowledgeService.DeleteKnowledge(ctx, knowledgeID); err != nil {
+		return fmt.Errorf("delete failed candidate: %w", err)
+	}
+	return s.knowledgeService.GetRepository().HardDeleteKnowledge(ctx, tenantID, knowledgeID)
 }
 
 type preparedCandidateFinalizeOutcome string

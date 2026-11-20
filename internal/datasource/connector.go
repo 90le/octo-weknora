@@ -94,7 +94,7 @@ type StreamHandler interface {
 // reports transport/guard errors only and does not expose per-item failures.
 type OutcomeStreamHandler interface {
 	StreamHandler
-	EmitWithOutcome(context.Context, types.FetchedItem) (bool, error)
+	EmitWithOutcome(context.Context, types.FetchedItem) (accepted bool, reason string, err error)
 	IsCurrent(context.Context, string, string) (bool, error)
 	DeletionsEnabled() bool
 	RecordState(context.Context, types.LocalSourceFileState) error

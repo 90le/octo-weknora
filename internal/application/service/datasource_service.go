@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/access"
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/datasource"
 	githubConnector "github.com/Tencent/WeKnora/internal/datasource/connector/github"
 	"github.com/Tencent/WeKnora/internal/datasource/connector/localfolder"
@@ -33,6 +34,7 @@ type DataSourceService struct {
 	dsRepo            interfaces.DataSourceRepository
 	syncLogRepo       interfaces.SyncLogRepository
 	knowledgeService  interfaces.KnowledgeService
+	processingSpans   repository.KnowledgeSpanRepository
 	kbService         interfaces.KnowledgeBaseService
 	taskEnqueuer      interfaces.TaskEnqueuer
 	connectorRegistry *datasource.ConnectorRegistry
@@ -67,11 +69,13 @@ func NewDataSourceService(
 	tenantRepo interfaces.TenantRepository,
 	tagService interfaces.KnowledgeTagService,
 	audit interfaces.AuditLogService,
+	processingSpans repository.KnowledgeSpanRepository,
 ) interfaces.DataSourceService {
 	return &DataSourceService{
 		dsRepo:            dsRepo,
 		syncLogRepo:       syncLogRepo,
 		knowledgeService:  knowledgeService,
+		processingSpans:   processingSpans,
 		kbService:         kbService,
 		taskEnqueuer:      taskEnqueuer,
 		connectorRegistry: connectorRegistry,
@@ -1119,16 +1123,16 @@ func fetchFailureSyncError(item *types.FetchedItem, rawMsg string) types.SyncIte
 func (s *DataSourceService) applyFetchedItem(
 	ctx context.Context, ds *types.DataSource, item *types.FetchedItem,
 	tagIDs []string, result *types.SyncResult,
-) {
+) string {
 	if item.IsDeleted {
 		if !ds.SyncDeletions {
 			// Sync deletion disabled: neither count nor delete.
-			return
+			return ""
 		}
 		if item.ExternalID == "" {
 			logger.Warnf(ctx, "skipping deletion for item %q: empty external_id", item.Title)
 			result.Skipped++
-			return
+			return ""
 		}
 		// Perform real KB deletion, scoped to items owned by this data source
 		// so identical external IDs from different data sources cannot collide.
@@ -1146,13 +1150,13 @@ func (s *DataSourceService) applyFetchedItem(
 				Code:    "deletion_lookup_failed",
 				Message: "Failed to look up the item before deletion; see server logs",
 			})
-			return
+			return "deletion_lookup_failed"
 		}
 		if existing == nil {
 			// Deletion is idempotent: the source item may already have been
 			// removed manually or by an earlier sync.
 			result.Skipped++
-			return
+			return ""
 		}
 		if deleteErr := s.knowledgeService.DeleteKnowledge(ctx, existing.ID); deleteErr != nil {
 			// The cursor is already past this item, so a failed deletion normally
@@ -1167,7 +1171,7 @@ func (s *DataSourceService) applyFetchedItem(
 				Code:    "deletion_failed",
 				Message: "Deletion failed; see server logs",
 			})
-			return
+			return "deletion_failed"
 		}
 		if herr := repo.HardDeleteKnowledge(ctx, ds.TenantID, existing.ID); herr != nil {
 			result.Failed++
@@ -1179,10 +1183,10 @@ func (s *DataSourceService) applyFetchedItem(
 				Code:    "deletion_failed",
 				Message: "Deletion failed; see server logs",
 			})
-			return
+			return "deletion_failed"
 		}
 		result.Deleted++
-		return
+		return ""
 	}
 
 	if len(item.Content) == 0 && item.ContentStream == nil && item.URL == "" {
@@ -1190,12 +1194,14 @@ func (s *DataSourceService) applyFetchedItem(
 		if errMsg, hasErr := item.Metadata["error"]; hasErr {
 			logger.Warnf(ctx, "item %q (external_id=%s) fetch failed: %s", item.Title, item.ExternalID, errMsg)
 			result.Failed++
-			recordSyncError(result, fetchFailureSyncError(item, errMsg))
+			failure := fetchFailureSyncError(item, errMsg)
+			recordSyncError(result, failure)
+			return failure.Code
 		} else {
 			logger.Infof(ctx, "skipping item %q (external_id=%s): no content or URL", item.Title, item.ExternalID)
 			result.Skipped++
 		}
-		return
+		return ""
 	}
 
 	isUpdate, err := s.ingestItem(ctx, ds, item, tagIDs)
@@ -1211,11 +1217,13 @@ func (s *DataSourceService) applyFetchedItem(
 			recordDeterministicSyncError(result, types.SyncItemError{
 				Title: item.Title, Code: "unsupported_file_type", Message: "Document file type is not supported",
 			})
+			return "unsupported_file_type"
 		case errors.Is(err, errPreparedFileOwnedByAnotherSource):
 			result.Failed++
 			recordDeterministicSyncError(result, types.SyncItemError{
 				Title: item.Title, Code: "duplicate_other_source", Message: "Identical content belongs to another source; existing document was preserved",
 			})
+			return "duplicate_other_source"
 		case item.Metadata["embedded_image"] == "true":
 			// An image extracted from a document for OCR is a best-effort
 			// enrichment, not the document itself. If the KB cannot ingest it
@@ -1229,17 +1237,24 @@ func (s *DataSourceService) applyFetchedItem(
 		default:
 			logger.Warnf(ctx, "failed to ingest item %q (external_id=%s): %v", item.Title, item.ExternalID, err)
 			result.Failed++
-			recordSyncError(result, types.SyncItemError{
+			failure := types.SyncItemError{
 				Title:   item.Title,
 				Code:    "ingest_failed",
 				Message: "Ingest failed; see server logs",
-			})
+			}
+			var stageFailure *sourceIngestFailure
+			if errors.As(err, &stageFailure) {
+				failure.Code, failure.Message = stageFailure.code, stageFailure.message
+			}
+			recordSyncError(result, failure)
+			return failure.Code
 		}
 	} else if isUpdate {
 		result.Updated++
 	} else {
 		result.Created++
 	}
+	return ""
 }
 
 // streamStartCursor decides which cursor a streaming fetch should resume from.
@@ -1272,26 +1287,31 @@ type streamSyncHandler struct {
 // do NOT abort (matching the batch loop, which never fails the whole sync for
 // one bad document).
 func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) error {
+	_, err := h.emit(ctx, item)
+	return err
+}
+
+func (h *streamSyncHandler) emit(ctx context.Context, item types.FetchedItem) (string, error) {
 	if h.runGuard != nil {
 		if err := h.runGuard.beforeItem(ctx, h.result.Total); err != nil {
 			if errors.Is(err, errSyncRunTerminated) {
-				return stopSyncAfterRunTermination(err)
+				return "", stopSyncAfterRunTermination(err)
 			}
-			return err
+			return "", err
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return "", err
 	}
 	if h.guard != nil {
 		if err := h.guard.beforeItem(ctx, h.result.Total); err != nil {
-			return err
+			return "", err
 		}
 	}
 	h.result.Total++
 	if h.ds.Type == localfolder.Type && item.Metadata["local_unchanged"] == "true" {
 		h.result.Skipped++
-		return nil
+		return "", nil
 	}
 	if h.ds.Type == localfolder.Type && item.Metadata["local_unsupported"] == "true" {
 		h.result.Skipped++
@@ -1299,10 +1319,9 @@ func (h *streamSyncHandler) Emit(ctx context.Context, item types.FetchedItem) er
 		if len(h.result.UnsupportedSamples) < maxSyncResultErrors {
 			h.result.UnsupportedSamples = append(h.result.UnsupportedSamples, item.Title)
 		}
-		return nil
+		return "", nil
 	}
-	h.svc.applyFetchedItem(withKBActivitySuppressed(ctx), h.ds, &item, h.tagIDs, h.result)
-	return nil
+	return h.svc.applyFetchedItem(withKBActivitySuppressed(ctx), h.ds, &item, h.tagIDs, h.result), nil
 }
 
 func (h *streamSyncHandler) IsCurrent(ctx context.Context, externalID, version string) (bool, error) {
@@ -1403,20 +1422,21 @@ func (s *DataSourceService) ListLocalFileStates(
 	return local.ListFileStates(ctx, tenant, ds.ID, snapshot.Selection(config), status, offset)
 }
 
-func (h *streamSyncHandler) EmitWithOutcome(ctx context.Context, item types.FetchedItem) (bool, error) {
+func (h *streamSyncHandler) EmitWithOutcome(ctx context.Context, item types.FetchedItem) (bool, string, error) {
 	before := h.result.Failed
 	beforeSkipped := h.result.Skipped
-	if err := h.Emit(ctx, item); err != nil {
-		return false, err
+	reason, err := h.emit(ctx, item)
+	if err != nil {
+		return false, "", err
 	}
 	// Keep a deletion candidate in the cursor while deletion is disabled, so
 	// turning it on later does not silently lose the source-side change.
 	if item.IsDeleted && !h.ds.SyncDeletions {
 		h.result.Skipped++
-		return false, nil
+		return false, "", nil
 	}
 	if h.result.Failed != before {
-		return false, nil
+		return false, reason, nil
 	}
 	if h.ds.Type == localfolder.Type && !item.IsDeleted && h.result.Skipped > beforeSkipped {
 		// A duplicate may mean an idempotent retry, but conflict_strategy=skip
@@ -1424,10 +1444,10 @@ func (h *streamSyncHandler) EmitWithOutcome(ctx context.Context, item types.Fetc
 		// if the canonical record really has it and is searchable.
 		current, err := h.IsCurrent(ctx, item.ExternalID, sourceItemVersion(item.Metadata))
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
 		if current {
-			return true, nil
+			return true, "", nil
 		}
 		h.result.Skipped--
 		h.result.Failed++
@@ -1439,9 +1459,9 @@ func (h *streamSyncHandler) EmitWithOutcome(ctx context.Context, item types.Fetc
 				Message: "Previous version retained; the changed source was not published",
 			},
 		)
-		return false, nil
+		return false, "conflict_preserved", nil
 	}
-	return true, nil
+	return true, "", nil
 }
 
 // Checkpoint persists the connector cursor onto the data source and mirrors the

@@ -83,6 +83,12 @@ func (v *KeywordsVectorHybridRetrieveEngineService) Index(ctx context.Context,
 	return v.indexRepository.Save(ctx, indexInfo, params)
 }
 
+// BatchEmbeddingError identifies a provider failure before any index write.
+type BatchEmbeddingError struct{ Cause error }
+
+func (e *BatchEmbeddingError) Error() string { return e.Cause.Error() }
+func (e *BatchEmbeddingError) Unwrap() error { return e.Cause }
+
 // BatchIndex creates embeddings for multiple content items and saves them to the repository
 // in batches for efficiency. Uses concurrent batch saving to improve performance.
 func (v *KeywordsVectorHybridRetrieveEngineService) BatchIndex(ctx context.Context,
@@ -99,7 +105,7 @@ func (v *KeywordsVectorHybridRetrieveEngineService) BatchIndex(ctx context.Conte
 		}
 		embeddings, err := batchEmbedWithBackoff(ctx, embedder, contentList)
 		if err != nil {
-			return err
+			return &BatchEmbeddingError{Cause: err}
 		}
 
 		batchSize := 40

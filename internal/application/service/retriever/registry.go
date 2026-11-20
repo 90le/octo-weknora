@@ -37,6 +37,7 @@ const rebuildCooldown = 30 * time.Second
 // Implements both interfaces.RetrieveEngineRegistry and interfaces.StoreRegistry.
 type RetrieveEngineRegistry struct {
 	byEngineType map[types.RetrieverEngineType]interfaces.RetrieveEngineService
+	envFactories map[types.RetrieverEngineType]*envEngineFactory
 	byStoreID    map[string]interfaces.RetrieveEngineService
 	mu           sync.RWMutex
 
@@ -121,9 +122,10 @@ func (r *RetrieveEngineRegistry) markBuildFailed(storeID string) {
 // optional extra so that every construction site has to say which it wants.
 func NewRetrieveEngineRegistry(
 	repo interfaces.VectorStoreRepository, factory interfaces.EngineFactory,
-) interfaces.RetrieveEngineRegistry {
+) *RetrieveEngineRegistry {
 	return &RetrieveEngineRegistry{
 		byEngineType: make(map[types.RetrieverEngineType]interfaces.RetrieveEngineService),
+		envFactories: make(map[types.RetrieverEngineType]*envEngineFactory),
 		byStoreID:    make(map[string]interfaces.RetrieveEngineService),
 		storeGen:     make(map[string]uint64),
 		failedUntil:  make(map[string]time.Time),
@@ -140,7 +142,7 @@ func (r *RetrieveEngineRegistry) Register(repo interfaces.RetrieveEngineService)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, exists := r.byEngineType[repo.EngineType()]; exists {
+	if r.byEngineType[repo.EngineType()] != nil || r.envFactories[repo.EngineType()] != nil {
 		return fmt.Errorf("repository type %s already registered", repo.EngineType())
 	}
 
@@ -148,19 +150,62 @@ func (r *RetrieveEngineRegistry) Register(repo interfaces.RetrieveEngineService)
 	return nil
 }
 
-// GetRetrieveEngineService retrieves a retrieval engine service by type.
-// Only searches the byEngineType map (env stores).
+type envEngineFactory struct {
+	build     func(context.Context) (interfaces.RetrieveEngineService, error)
+	mu        sync.Mutex
+	nextRetry time.Time
+}
+
+// RegisterEnvFactory preserves the configured engine even if its backend is
+// unavailable when the application starts.
+func (r *RetrieveEngineRegistry) RegisterEnvFactory(kind types.RetrieverEngineType,
+	build func(context.Context) (interfaces.RetrieveEngineService, error),
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.byEngineType[kind] != nil || r.envFactories[kind] != nil {
+		return fmt.Errorf("repository type %s already registered", kind)
+	}
+	r.envFactories[kind] = &envEngineFactory{build: build}
+	return nil
+}
+
+// GetRetrieveEngineService resolves an environment-configured engine.
 func (r *RetrieveEngineRegistry) GetRetrieveEngineService(repoType types.RetrieverEngineType) (
 	interfaces.RetrieveEngineService, error,
 ) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	repo, exists := r.byEngineType[repoType]
-	if !exists {
+	repo, factory := r.byEngineType[repoType], r.envFactories[repoType]
+	r.mu.RUnlock()
+	if repo != nil {
+		return repo, nil
+	}
+	if factory == nil {
 		return nil, fmt.Errorf("repository of type %s not found", repoType)
 	}
-
+	// Join concurrent connection attempts without blocking other engines.
+	factory.mu.Lock()
+	defer factory.mu.Unlock()
+	r.mu.RLock()
+	repo = r.byEngineType[repoType]
+	r.mu.RUnlock()
+	if repo != nil {
+		return repo, nil
+	}
+	if time.Now().Before(factory.nextRetry) {
+		return nil, ErrVectorStoreUnavailable
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), EngineBuildTimeout)
+	defer cancel()
+	repo, err := factory.build(ctx)
+	if err != nil {
+		factory.nextRetry = time.Now().Add(rebuildCooldown)
+		logger.Warnf(ctx, "Could not connect configured %s retriever: %v", repoType, err)
+		return nil, ErrVectorStoreUnavailable
+	}
+	r.mu.Lock()
+	r.byEngineType[repoType] = repo
+	r.mu.Unlock()
 	return repo, nil
 }
 

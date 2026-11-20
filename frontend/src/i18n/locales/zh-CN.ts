@@ -8,7 +8,14 @@ export default {
     fileStatusEmpty: '还没有扫描结果，或此分类没有文件。',
     fileAll: '全部', retrySync: '重新同步并重试失败文件', previousPreserved: '已有版本已保留。',
     fileStatuses: { indexed: '已入库', processing: '处理中', failed: '失败', ignored: '已忽略', missing_retained: '来源缺失，保留旧版', pending_delete: '待核对删除', removed: '来源中已移除' },
-    fileReasons: { local_unsafe_file: '符号链接或特殊文件不会读取。', local_size: '文件为空或超过大小限制。', local_read: '无法读取文件。', local_changed: '文件读取时发生变化。', local_deletion_guard: '请核对待删除清单。', unsupported_file_type: '此文件类型不支持入库。', ingest_failed: '解析或入库失败，请查看同步记录。', deletion_failed: '移除入库内容失败，稍后重试。' },
+    fileReasons: {
+      local_unsafe_file: '符号链接或特殊文件不会读取。', local_size: '文件为空或超过大小限制。', local_read: '无法读取文件。', local_changed: '文件读取时发生变化。', local_deletion_guard: '请核对待删除清单。', unsupported_file_type: '此文件类型不支持入库。', ingest_failed: '解析或入库失败，请查看同步记录。', deletion_failed: '移除入库内容失败，稍后重试。',
+      office_lock_file: 'Office 临时锁文件，无需入库。',
+      vector_index_failed: '向量索引写入失败。请检查向量库健康状态后重试。',
+      embedding_failed: '文档向量化失败。请检查向量模型配置或限流状态后重试。',
+      document_parse_failed: '文档解析或分块失败。请检查文件和解析服务后重试。',
+      conflict_preserved: '已按当前冲突策略保留旧版本。',
+    },
 
     hostMountRemove: '卸载',
     hostMountRemoveHint: '只有没有资料空间引用的挂载才能卸载。卸载不会删除服务器原始文件或知识库内容。',
@@ -46,6 +53,9 @@ export default {
     ignoredCount: '已忽略 {count} 个不支持入库的文件',
     ignoredMore: '仅显示部分文件；可在数据源设置中排除不需要的目录。',
     syncErrors: {
+      vector_index_failed: '向量索引写入失败。请检查向量库健康状态后重试。',
+      embedding_failed: '文档向量化失败。请检查向量模型配置或限流状态后重试。',
+      document_parse_failed: '文档解析或分块失败。请检查文件和解析服务后重试。',
       local_deletion_guard: '检测到目录内容大量消失，已暂停删除。请先检查挂载，再审核待删除项目。',
       local_unsafe_file: '符号链接或特殊文件不会读取；本轮未执行删除判断。',
       local_size: '文件为空或超过 {code} MiB 上限；请检查文件及大小设置。',

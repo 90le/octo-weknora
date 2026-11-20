@@ -1506,7 +1506,7 @@ func initRetrieveEngineRegistry(
 	}
 	if slices.Contains(retrieveDriver, "milvus") {
 		milvusCfg := milvusclient.ClientConfig{
-			DialOptions: []grpc.DialOption{grpc.WithTimeout(5 * time.Second)},
+			DialOptions: []grpc.DialOption{grpc.WithBlock(), grpc.WithTimeout(5 * time.Second)},
 		}
 		milvusAddress := os.Getenv("MILVUS_ADDRESS")
 		if milvusAddress == "" {
@@ -1525,20 +1525,20 @@ func initRetrieveEngineRegistry(
 		if milvusDBName != "" {
 			milvusCfg.DBName = milvusDBName
 		}
-		milvusCli, err := newEnvMilvusClient(context.Background(), &milvusCfg)
-		if err != nil {
-			log.Errorf("Create milvus client failed: %v", err)
-		} else {
-			milvusRepository := milvusRepo.NewMilvusRetrieveEngineRepository(milvusCli, nil)
-			if err := registry.Register(
-				retriever.NewKVHybridRetrieveEngine(
-					milvusRepository, types.MilvusRetrieverEngineType,
-				),
-			); err != nil {
-				log.Errorf("Register milvus retrieve engine failed: %v", err)
-			} else {
-				log.Infof("Register milvus retrieve engine success")
+		kind := types.MilvusRetrieverEngineType
+		if err := registry.RegisterEnvFactory(kind, func(ctx context.Context) (interfaces.RetrieveEngineService, error) {
+			cfg := milvusCfg
+			cli, err := newEnvMilvusClient(ctx, &cfg)
+			if err != nil {
+				return nil, err
 			}
+			return retriever.NewKVHybridRetrieveEngine(milvusRepo.NewMilvusRetrieveEngineRepository(cli, nil), kind), nil
+		}); err != nil {
+			log.Errorf("Register milvus retrieve engine factory failed: %v", err)
+		} else if _, err := registry.GetRetrieveEngineService(kind); err != nil {
+			log.Warn("Milvus unavailable at startup; future requests will retry")
+		} else {
+			log.Info("Register milvus retrieve engine success")
 		}
 	}
 	if slices.Contains(retrieveDriver, "doris") {
@@ -1620,9 +1620,7 @@ func initRetrieveEngineRegistry(
 		}
 	}
 	// ─── DB store registration (byStoreID) ───
-	if storeReg, ok := registry.(*retriever.RetrieveEngineRegistry); ok {
-		loadDBStoresIntoRegistry(storeReg, db, cfg, auditSink)
-	}
+	loadDBStoresIntoRegistry(registry, db, cfg, auditSink)
 
 	return registry, nil
 }
