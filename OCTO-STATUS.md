@@ -6,7 +6,7 @@
 - 11 月 20 日使用原生产卷启动 Milvus，保留向量数据。etcd 和 Milvus 的运行容器均已启用 `unless-stopped`，生产 Compose 已保存 Milvus 的重启策略和健康检查。etcd 元数据快照保存在 `recovery/milvus-20261120T082254Z/etcd.db`。
 - [PR #170](https://github.com/90le/octo-weknora/pull/170) 合并为 `dbf88b7ec202`，六项仓库检查通过。Milvus 注册与首次连接分离，暂时不可用的连接按冷却时间重试。隔离 Docker 验证同一个应用进程在 Milvus 后启动时恢复连接并成功列出集合。应用启动时处理单实例内存队列遗留的运行记录，独立于自动迁移开关。
 - 北京时间 16:53 启用生产后端 `milvus-recovery-startup-20261120`。启动日志记录关闭 3 条中断的同步记录。18080、后端和 Milvus 健康检查通过。前端已使用 `milvus-recovery-final-20261120`。增量同步保留旧版，按版本回收未完成清理的候选。文件状态可区分解析、向量模型与索引故障，并忽略 Office 锁文件。
-- 17:00 的 Media Studio 增量任务恢复向量写入。Milvus 读回新版报价表 63 条、新版答疑手册 543 条向量。两个候选在这一轮超过了同步的 10 分钟等待时间。答疑手册于 17:34 完成后处理，等待来源同步发布。报价表的 Wiki 抽取收到上游模型网关 HTTP 504，正在按既有策略续跑。
+- 17:00 的 Media Studio 增量任务恢复向量写入。截至 17:54，Milvus 已读回新版报价表 63 条、新版答疑手册 543 条、差异说明 PPT 11 条向量，与当前源文件版本一致。报价表和答疑手册的候选版本等待来源同步发布。报价表的 Wiki 生成经历网关 HTTP 504，耗尽重试后进入 Wiki 失败列表。PPT 还在处理多模态内容。三份候选均未发布。
 - [PR #171](https://github.com/90le/octo-weknora/pull/171) 合并为 `dd452b63b471`，三项仓库检查通过。修复扫描期间目录项消失导致整轮中断的问题。Linux 回归测试验证同轮继续处理其余文档，同时保留已入库内容。生产同步中止记录为 `source changed during scan`，具体目录项未确认。候选镜像 `milvus-source-race-20261120` 已构建，当前同步和内存后处理完成后切换。
 - 首次后端与前端回退配置保存在 `recovery/compose.before-milvus-startup-20261120T085352Z.json` 和 `recovery/compose.before-milvus-final-20261120T085010Z.json`。
 
