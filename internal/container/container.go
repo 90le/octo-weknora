@@ -1506,7 +1506,9 @@ func initRetrieveEngineRegistry(
 	}
 	if slices.Contains(retrieveDriver, "milvus") {
 		milvusCfg := milvusclient.ClientConfig{
-			DialOptions: []grpc.DialOption{grpc.WithBlock(), grpc.WithTimeout(5 * time.Second)},
+			// The Milvus SDK still uses DialContext. Bound the transport dial
+			// before its application handshake when no server is listening.
+			DialOptions: []grpc.DialOption{grpc.WithBlock(), grpc.WithTimeout(5 * time.Second)}, //nolint:staticcheck
 		}
 		milvusAddress := os.Getenv("MILVUS_ADDRESS")
 		if milvusAddress == "" {
@@ -1526,14 +1528,16 @@ func initRetrieveEngineRegistry(
 			milvusCfg.DBName = milvusDBName
 		}
 		kind := types.MilvusRetrieverEngineType
-		if err := registry.RegisterEnvFactory(kind, func(ctx context.Context) (interfaces.RetrieveEngineService, error) {
+		buildMilvus := func(ctx context.Context) (interfaces.RetrieveEngineService, error) {
 			cfg := milvusCfg
 			cli, err := newEnvMilvusClient(ctx, &cfg)
 			if err != nil {
 				return nil, err
 			}
-			return retriever.NewKVHybridRetrieveEngine(milvusRepo.NewMilvusRetrieveEngineRepository(cli, nil), kind), nil
-		}); err != nil {
+			repository := milvusRepo.NewMilvusRetrieveEngineRepository(cli, nil)
+			return retriever.NewKVHybridRetrieveEngine(repository, kind), nil
+		}
+		if err := registry.RegisterEnvFactory(kind, buildMilvus); err != nil {
 			log.Errorf("Register milvus retrieve engine factory failed: %v", err)
 		} else if _, err := registry.GetRetrieveEngineService(kind); err != nil {
 			log.Warn("Milvus unavailable at startup; future requests will retry")

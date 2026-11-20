@@ -17,6 +17,7 @@ type sourceIngestFailure struct {
 }
 
 func (e *sourceIngestFailure) Error() string { return e.message }
+
 func (e *sourceIngestFailure) Unwrap() error { return e.cause }
 
 func (s *DataSourceService) preparedFileFailure(ctx context.Context, knowledgeID string, cause error) error {
@@ -37,11 +38,24 @@ func (s *DataSourceService) preparedFileFailure(ctx context.Context, knowledgeID
 		}
 		switch span.ErrorCode {
 		case werrors.ErrCodeVectorStoreWriteFailed:
-			return &sourceIngestFailure{"vector_index_failed", "Vector index unavailable or write failed. Retry when the vector store is healthy.", cause}
+			return &sourceIngestFailure{
+				code:    "vector_index_failed",
+				message: "Vector index unavailable or write failed. Retry when the vector store is healthy.",
+				cause:   cause,
+			}
 		case werrors.ErrCodeEmbeddingProviderFail, werrors.ErrCodeEmbeddingRateLimit:
-			return &sourceIngestFailure{"embedding_failed", "Embedding failed. Check the configured model and retry.", cause}
-		case werrors.ErrCodeDocReaderParseFailed, werrors.ErrCodeDocReaderTimeout, werrors.ErrCodeDocReaderUnavailable, werrors.ErrCodeChunkingFailed:
-			return &sourceIngestFailure{"document_parse_failed", "Document parsing or chunking failed. Check the file and parser, then retry.", cause}
+			return &sourceIngestFailure{
+				code:    "embedding_failed",
+				message: "Embedding failed. Check the configured model and retry.",
+				cause:   cause,
+			}
+		case werrors.ErrCodeDocReaderParseFailed, werrors.ErrCodeDocReaderTimeout,
+			werrors.ErrCodeDocReaderUnavailable, werrors.ErrCodeChunkingFailed:
+			return &sourceIngestFailure{
+				code:    "document_parse_failed",
+				message: "Document parsing or chunking failed. Check the file and parser, then retry.",
+				cause:   cause,
+			}
 		}
 	}
 	return cause

@@ -152,7 +152,8 @@ func (s *DataSourceService) ingestPreparedFile(ctx context.Context, ds *types.Da
 		}
 		select {
 		case <-waitCtx.Done():
-			return old != nil, s.preparedFileFailure(ctx, candidate.ID, fmt.Errorf("document indexing is not ready; previous version preserved: %w", waitCtx.Err()))
+			cause := fmt.Errorf("document indexing is not ready; previous version preserved: %w", waitCtx.Err())
+			return old != nil, s.preparedFileFailure(ctx, candidate.ID, cause)
 		case <-time.After(2 * time.Second):
 		}
 	}
