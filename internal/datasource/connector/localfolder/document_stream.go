@@ -199,7 +199,19 @@ func (c *Connector) streamDocuments(
 			if snapshot.Excluded(p, snapshot.Excludes(cfg)) {
 				continue
 			}
+			officeLock := strings.HasPrefix(entry.Name(), "~$") && snapshot.DocumentPath(p)
 			before, err := dir.Lstat(entry.Name())
+			if errors.Is(err, os.ErrNotExist) {
+				// Office can remove its lock between listing and opening a document.
+				// A disappearing source entry, however, makes deletion unsafe this run.
+				seen[p] = true
+				if !officeLock || !entry.Type().IsRegular() {
+					if err := failed(p, "local_changed", "source entry disappeared during scan"); err != nil {
+						return err
+					}
+				}
+				continue
+			}
 			if err != nil {
 				return errors.New("source changed during scan")
 			}
@@ -228,7 +240,7 @@ func (c *Connector) streamDocuments(
 				continue
 			}
 			seen[p] = true
-			if strings.HasPrefix(entry.Name(), "~$") && snapshot.DocumentPath(p) {
+			if officeLock {
 				if err := record(p, "ignored", "office_lock_file", before.Size(), "", files[p] != ""); err != nil {
 					return err
 				}

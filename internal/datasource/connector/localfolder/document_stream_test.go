@@ -22,6 +22,7 @@ type localStreamRecorder struct {
 	missingCurrent bool
 	states         []types.LocalSourceFileState
 	known          []types.LocalSourceFileState
+	afterEmit      func(types.FetchedItem)
 }
 
 func TestDocumentStreamAcceptsAnydocFormats(t *testing.T) {
@@ -104,6 +105,9 @@ func (h *localStreamRecorder) EmitWithOutcome(_ context.Context, item types.Fetc
 		item.ContentStream = nil
 	}
 	h.items = append(h.items, item)
+	if h.afterEmit != nil {
+		h.afterEmit(item)
+	}
 	if item.IsDeleted {
 		return h.allowDeletions, "", nil
 	}
@@ -111,6 +115,41 @@ func (h *localStreamRecorder) EmitWithOutcome(_ context.Context, item types.Fetc
 		return false, "vector_index_failed", nil
 	}
 	return true, "", nil
+}
+
+func TestDocumentStreamContinuesWhenListedEntryDisappears(t *testing.T) {
+	ctx, root, cfg, connector := localFixture(t)
+	cfg.Settings["mode"] = "documents"
+	oldFile := filepath.Join(root, "previous.pdf")
+	require.NoError(t, os.WriteFile(oldFile, []byte("old"), 0o600))
+	previous, err := connector.FetchStream(ctx, cfg, nil, &localStreamRecorder{})
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(oldFile))
+	for _, name := range []string{"a.pdf", "b.pdf", "c.pdf"} {
+		require.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(name), 0o600))
+	}
+	dir, err := os.Open(root)
+	require.NoError(t, err)
+	entries, err := dir.ReadDir(-1)
+	require.NoError(t, err)
+	require.NoError(t, dir.Close())
+	require.Len(t, entries, 3)
+	first, disappearing, last := entries[0].Name(), entries[1].Name(), entries[2].Name()
+	h := &localStreamRecorder{allowDeletions: true, afterEmit: func(item types.FetchedItem) {
+		if item.Title == first {
+			require.NoError(t, os.Remove(filepath.Join(root, disappearing)))
+		}
+	}}
+	cursor, err := connector.FetchStream(ctx, cfg, previous, h)
+	require.NoError(t, err)
+	versions := cursor.ConnectorCursor["files"].(map[string]string)
+	require.Contains(t, versions, "previous.pdf")
+	require.Contains(t, versions, last)
+	require.NotContains(t, versions, disappearing)
+	require.True(t, slices.ContainsFunc(h.states, func(state types.LocalSourceFileState) bool {
+		return state.Path == disappearing && state.Status == "failed" && state.Reason == "local_changed"
+	}))
+	require.False(t, slices.ContainsFunc(h.items, func(item types.FetchedItem) bool { return item.IsDeleted }))
 }
 
 func (h *localStreamRecorder) Checkpoint(_ context.Context, cursor *types.SyncCursor) error {
