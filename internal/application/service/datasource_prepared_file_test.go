@@ -146,6 +146,7 @@ func TestPreparedSyncRecoversCandidateLeftDeleting(t *testing.T) {
 	require.True(t, updated)
 	require.Equal(t, []string{"delete:stalled", "create:new", "read:new", "delete:old", "adopt:new"}, ks.r.events)
 }
+
 func TestPreparedSyncCancellationKeepsOld(t *testing.T) {
 	s, ks, ds, item := preparedFixture()
 	ks.pending = true
