@@ -8,7 +8,14 @@ export default {
     fileStatusEmpty: 'No files have been observed in this category.',
     fileAll: 'All', retrySync: 'Sync and retry failures', previousPreserved: 'The previous version was preserved.',
     fileStatuses: { indexed: 'Indexed', processing: 'Processing', failed: 'Failed', ignored: 'Ignored', missing_retained: 'Missing; previous version retained', pending_delete: 'Deletion review needed', removed: 'Removed from source' },
-    fileReasons: { local_unsafe_file: 'Symbolic links and special files are not read.', local_size: 'The file is empty or exceeds the size limit.', local_read: 'The file could not be read.', local_changed: 'The file changed while reading.', local_deletion_guard: 'Review the missing-file list.', unsupported_file_type: 'This file type is not supported for import.', ingest_failed: 'Parsing or import failed. Check sync history.', deletion_failed: 'Removing indexed content failed; retry later.' },
+    fileReasons: {
+      local_unsafe_file: 'Symbolic links and special files are not read.', local_size: 'The file is empty or exceeds the size limit.', local_read: 'The file could not be read.', local_changed: 'The file changed while reading.', local_deletion_guard: 'Review the missing-file list.', unsupported_file_type: 'This file type is not supported for import.', ingest_failed: 'Parsing or import failed. Check sync history.', deletion_failed: 'Removing indexed content failed; retry later.',
+      office_lock_file: 'Office 임시 잠금 파일입니다.',
+      vector_index_failed: '벡터 인덱스에 연결할 수 없거나 쓰기에 실패했습니다. 벡터 저장소를 확인한 후 다시 시도하세요.',
+      embedding_failed: '임베딩 생성에 실패했습니다. 모델 설정 또는 요청 제한을 확인하세요.',
+      document_parse_failed: '문서 구문 분석 또는 분할에 실패했습니다. 파일과 분석 서비스를 확인하세요.',
+      conflict_preserved: '충돌 정책에 따라 이전 버전을 유지했습니다.',
+    },
 
     hostMountRemove: 'Unmount',
     hostMountRemoveHint: 'A mount can be removed only when no space references it. Source files and knowledge-base content remain unchanged.',
@@ -46,6 +53,9 @@ export default {
     ignoredCount: '{count} unsupported files ignored',
     ignoredMore: 'Only a sample is shown. Exclude unwanted directories in the source settings.',
     syncErrors: {
+      vector_index_failed: '벡터 인덱스에 연결할 수 없거나 쓰기에 실패했습니다. 벡터 저장소를 확인한 후 다시 시도하세요.',
+      embedding_failed: '임베딩 생성에 실패했습니다. 모델 설정 또는 요청 제한을 확인하세요.',
+      document_parse_failed: '문서 구문 분석 또는 분할에 실패했습니다. 파일과 분석 서비스를 확인하세요.',
       local_deletion_guard: 'Many indexed files are missing. Deletion was stopped; check the mount and review the missing items.',
       local_unsafe_file: 'Symbolic links and special files are not read; deletion reconciliation was skipped.',
       local_size: 'The file is empty or exceeds the {code} MiB limit.',

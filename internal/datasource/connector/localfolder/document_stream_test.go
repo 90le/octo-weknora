@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -43,7 +44,7 @@ func (h *localStreamRecorder) Emit(ctx context.Context, item types.FetchedItem) 
 		h.items = append(h.items, item)
 		return nil
 	}
-	_, err := h.EmitWithOutcome(ctx, item)
+	_, _, err := h.EmitWithOutcome(ctx, item)
 	return err
 }
 
@@ -65,6 +66,7 @@ func TestDocumentStreamReportsUnsupportedAndRepairsMissingIndexedEntry(t *testin
 	cfg.Settings["mode"] = "documents"
 	require.NoError(t, os.WriteFile(filepath.Join(root, "guide.mhtml"), []byte("synthetic"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "archive.zip"), []byte("ignored"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "~$draft.pptx"), []byte("lock file"), 0o600))
 	first := &localStreamRecorder{}
 	cursor, err := connector.FetchStream(ctx, cfg, nil, first)
 	require.NoError(t, err)
@@ -72,6 +74,10 @@ func TestDocumentStreamReportsUnsupportedAndRepairsMissingIndexedEntry(t *testin
 	versions := cursor.ConnectorCursor["files"].(map[string]string)
 	require.Contains(t, versions, "guide.mhtml")
 	require.NotContains(t, versions, "archive.zip")
+	require.NotContains(t, versions, "~$draft.pptx")
+	require.True(t, slices.ContainsFunc(first.states, func(state types.LocalSourceFileState) bool {
+		return state.Path == "~$draft.pptx" && state.Status == "ignored" && state.Reason == "office_lock_file"
+	}))
 	for _, state := range first.states {
 		if state.Path == "archive.zip" {
 			require.Equal(t, "ignored", state.Status)
@@ -89,22 +95,22 @@ func TestDocumentStreamReportsUnsupportedAndRepairsMissingIndexedEntry(t *testin
 	t.Fatal("missing indexed document was not retried")
 }
 
-func (h *localStreamRecorder) EmitWithOutcome(_ context.Context, item types.FetchedItem) (bool, error) {
+func (h *localStreamRecorder) EmitWithOutcome(_ context.Context, item types.FetchedItem) (bool, string, error) {
 	if item.ContentStream != nil {
 		_, err := io.Copy(io.Discard, item.ContentStream)
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
 		item.ContentStream = nil
 	}
 	h.items = append(h.items, item)
 	if item.IsDeleted {
-		return h.allowDeletions, nil
+		return h.allowDeletions, "", nil
 	}
 	if item.Metadata["error"] != "" || item.Title == h.failTitle {
-		return false, nil
+		return false, "vector_index_failed", nil
 	}
-	return true, nil
+	return true, "", nil
 }
 
 func (h *localStreamRecorder) Checkpoint(_ context.Context, cursor *types.SyncCursor) error {

@@ -133,6 +133,20 @@ func TestPreparedSyncRetiresOnlyAfterReady(t *testing.T) {
 	require.Equal(t, "doc", metadata["external_id"])
 	require.Empty(t, metadata["sync_target_external_id"], "published candidates must no longer be hidden from answers")
 }
+
+func TestPreparedSyncRecoversCandidateLeftDeleting(t *testing.T) {
+	s, ks, ds, item := preparedFixture()
+	metadata, err := json.Marshal(map[string]string{"datasource_id": "ds", "external_id": "doc:pending:new"})
+	require.NoError(t, err)
+	ks.r.rows["stalled"] = &types.Knowledge{
+		ID: "stalled", TenantID: 7, KnowledgeBaseID: "kb", Metadata: metadata, ParseStatus: types.ParseStatusDeleting,
+	}
+	updated, err := s.ingestItem(context.Background(), ds, item, nil)
+	require.NoError(t, err)
+	require.True(t, updated)
+	require.Equal(t, []string{"delete:stalled", "create:new", "read:new", "delete:old", "adopt:new"}, ks.r.events)
+}
+
 func TestPreparedSyncCancellationKeepsOld(t *testing.T) {
 	s, ks, ds, item := preparedFixture()
 	ks.pending = true

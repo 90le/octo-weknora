@@ -8537,7 +8537,14 @@ export default {
     fileStatusEmpty: 'No files have been observed in this category.',
     fileAll: 'All', retrySync: 'Sync and retry failures', previousPreserved: 'The previous version was preserved.',
     fileStatuses: { indexed: 'Indexed', processing: 'Processing', failed: 'Failed', ignored: 'Ignored', missing_retained: 'Missing; previous version retained', pending_delete: 'Deletion review needed', removed: 'Removed from source' },
-    fileReasons: { local_unsafe_file: 'Symbolic links and special files are not read.', local_size: 'The file is empty or exceeds the size limit.', local_read: 'The file could not be read.', local_changed: 'The file changed while reading.', local_deletion_guard: 'Review the missing-file list.', unsupported_file_type: 'This file type is not supported for import.', ingest_failed: 'Parsing or import failed. Check sync history.', deletion_failed: 'Removing indexed content failed; retry later.' },
+    fileReasons: {
+      local_unsafe_file: 'Symbolic links and special files are not read.', local_size: 'The file is empty or exceeds the size limit.', local_read: 'The file could not be read.', local_changed: 'The file changed while reading.', local_deletion_guard: 'Review the missing-file list.', unsupported_file_type: 'This file type is not supported for import.', ingest_failed: 'Parsing or import failed. Check sync history.', deletion_failed: 'Removing indexed content failed; retry later.',
+      office_lock_file: 'Office 暫存鎖定檔，無須匯入。',
+      vector_index_failed: '向量索引無法使用或寫入失敗。請確認向量資料庫正常後重試。',
+      embedding_failed: '文件向量化失敗。請檢查向量模型設定或限流狀態。',
+      document_parse_failed: '文件解析或分段失敗。請檢查檔案和解析服務後重試。',
+      conflict_preserved: '已依目前的衝突策略保留舊版本。',
+    },
 
     hostMountRemove: 'Unmount',
     hostMountRemoveHint: 'A mount can be removed only when no space references it. Source files and knowledge-base content remain unchanged.',
@@ -8575,6 +8582,9 @@ export default {
     ignoredCount: '{count} unsupported files ignored',
     ignoredMore: 'Only a sample is shown. Exclude unwanted directories in the source settings.',
     syncErrors: {
+      vector_index_failed: '向量索引無法使用或寫入失敗。請確認向量資料庫正常後重試。',
+      embedding_failed: '文件向量化失敗。請檢查向量模型設定或限流狀態。',
+      document_parse_failed: '文件解析或分段失敗。請檢查檔案和解析服務後重試。',
       local_deletion_guard: 'Many indexed files are missing. Deletion was stopped; check the mount and review the missing items.',
       local_unsafe_file: 'Symbolic links and special files are not read; deletion reconciliation was skipped.',
       local_size: 'The file is empty or exceeds the {code} MiB limit.',

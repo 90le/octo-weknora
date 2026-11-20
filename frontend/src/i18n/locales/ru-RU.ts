@@ -8,7 +8,14 @@ export default {
     fileStatusEmpty: 'No files have been observed in this category.',
     fileAll: 'All', retrySync: 'Sync and retry failures', previousPreserved: 'The previous version was preserved.',
     fileStatuses: { indexed: 'Indexed', processing: 'Processing', failed: 'Failed', ignored: 'Ignored', missing_retained: 'Missing; previous version retained', pending_delete: 'Deletion review needed', removed: 'Removed from source' },
-    fileReasons: { local_unsafe_file: 'Symbolic links and special files are not read.', local_size: 'The file is empty or exceeds the size limit.', local_read: 'The file could not be read.', local_changed: 'The file changed while reading.', local_deletion_guard: 'Review the missing-file list.', unsupported_file_type: 'This file type is not supported for import.', ingest_failed: 'Parsing or import failed. Check sync history.', deletion_failed: 'Removing indexed content failed; retry later.' },
+    fileReasons: {
+      local_unsafe_file: 'Symbolic links and special files are not read.', local_size: 'The file is empty or exceeds the size limit.', local_read: 'The file could not be read.', local_changed: 'The file changed while reading.', local_deletion_guard: 'Review the missing-file list.', unsupported_file_type: 'This file type is not supported for import.', ingest_failed: 'Parsing or import failed. Check sync history.', deletion_failed: 'Removing indexed content failed; retry later.',
+      office_lock_file: 'Временный файл блокировки Office.',
+      vector_index_failed: 'Векторный индекс недоступен или запись не удалась. Проверьте хранилище и повторите попытку.',
+      embedding_failed: 'Не удалось создать эмбеддинги. Проверьте настройки модели и ограничения частоты запросов.',
+      document_parse_failed: 'Не удалось обработать или разбить документ на части. Проверьте файл и службу обработки.',
+      conflict_preserved: 'Предыдущая версия сохранена согласно политике конфликтов.',
+    },
 
     hostMountRemove: 'Unmount',
     hostMountRemoveHint: 'A mount can be removed only when no space references it. Source files and knowledge-base content remain unchanged.',
@@ -46,6 +53,9 @@ export default {
     ignoredCount: '{count} unsupported files ignored',
     ignoredMore: 'Only a sample is shown. Exclude unwanted directories in the source settings.',
     syncErrors: {
+      vector_index_failed: 'Векторный индекс недоступен или запись не удалась. Проверьте хранилище и повторите попытку.',
+      embedding_failed: 'Не удалось создать эмбеддинги. Проверьте настройки модели и ограничения частоты запросов.',
+      document_parse_failed: 'Не удалось обработать или разбить документ на части. Проверьте файл и службу обработки.',
       local_deletion_guard: 'Many indexed files are missing. Deletion was stopped; check the mount and review the missing items.',
       local_unsafe_file: 'Symbolic links and special files are not read; deletion reconciliation was skipped.',
       local_size: 'The file is empty or exceeds the {code} MiB limit.',

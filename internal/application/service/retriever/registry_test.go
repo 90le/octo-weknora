@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -27,27 +28,35 @@ func (m *mockEngineService) Support() []types.RetrieverType { return nil }
 func (m *mockEngineService) Index(_ context.Context, _ embedding.Embedder, _ *types.IndexInfo, _ []types.RetrieverType) error {
 	return nil
 }
+
 func (m *mockEngineService) BatchIndex(_ context.Context, _ embedding.Embedder, _ []*types.IndexInfo, _ []types.RetrieverType) error {
 	return nil
 }
+
 func (m *mockEngineService) EstimateStorageSize(_ context.Context, _ embedding.Embedder, _ []*types.IndexInfo, _ []types.RetrieverType) int64 {
 	return 0
 }
+
 func (m *mockEngineService) CopyIndices(_ context.Context, _ string, _ map[string]string, _ map[string]string, _ string, _ int, _ string) error {
 	return nil
 }
+
 func (m *mockEngineService) DeleteByChunkIDList(_ context.Context, _ []string, _ int, _ string) error {
 	return nil
 }
+
 func (m *mockEngineService) DeleteBySourceIDList(_ context.Context, _ []string, _ int, _ string) error {
 	return nil
 }
+
 func (m *mockEngineService) DeleteByKnowledgeIDList(_ context.Context, _ []string, _ int, _ string) error {
 	return nil
 }
+
 func (m *mockEngineService) BatchUpdateChunkEnabledStatus(_ context.Context, _ map[string]bool) error {
 	return nil
 }
+
 func (m *mockEngineService) BatchUpdateChunkTagID(_ context.Context, _ map[string]string) error {
 	return nil
 }
@@ -56,10 +65,39 @@ func newMock(engineType types.RetrieverEngineType) interfaces.RetrieveEngineServ
 	return &mockEngineService{engineType: engineType}
 }
 
+func TestConfiguredEngineRecoversAfterStartupFailure(t *testing.T) {
+	reg := NewRetrieveEngineRegistry(nil, nil)
+	kind := types.MilvusRetrieverEngineType
+	expected := newMock(kind)
+	attempts := 0
+	build := func(ctx context.Context) (interfaces.RetrieveEngineService, error) {
+		_, bounded := ctx.Deadline()
+		assert.True(t, bounded)
+		attempts++
+		if attempts == 1 {
+			return nil, fmt.Errorf("Milvus not ready")
+		}
+		return expected, nil
+	}
+	require.NoError(t, reg.RegisterEnvFactory(kind, build))
+	for range 2 {
+		_, err := reg.GetRetrieveEngineService(kind)
+		require.ErrorIs(t, err, ErrVectorStoreUnavailable)
+	}
+	require.Equal(t, 1, attempts)
+	reg.envFactories[kind].nextRetry = time.Time{}
+	for range 2 {
+		got, err := reg.GetRetrieveEngineService(kind)
+		require.NoError(t, err)
+		require.Same(t, expected, got)
+	}
+	require.Equal(t, 2, attempts)
+}
+
 // --- Register (byEngineType) tests ---
 
 func TestRegistry_Register(t *testing.T) {
-	reg := NewRetrieveEngineRegistry(nil, nil).(*RetrieveEngineRegistry)
+	reg := NewRetrieveEngineRegistry(nil, nil)
 
 	t.Run("success", func(t *testing.T) {
 		err := reg.Register(newMock(types.PostgresRetrieverEngineType))
@@ -74,7 +112,7 @@ func TestRegistry_Register(t *testing.T) {
 }
 
 func TestRegistry_GetRetrieveEngineService(t *testing.T) {
-	reg := NewRetrieveEngineRegistry(nil, nil).(*RetrieveEngineRegistry)
+	reg := NewRetrieveEngineRegistry(nil, nil)
 	_ = reg.Register(newMock(types.PostgresRetrieverEngineType))
 
 	t.Run("found", func(t *testing.T) {
@@ -91,7 +129,7 @@ func TestRegistry_GetRetrieveEngineService(t *testing.T) {
 }
 
 func TestRegistry_GetAllRetrieveEngineServices(t *testing.T) {
-	reg := NewRetrieveEngineRegistry(nil, nil).(*RetrieveEngineRegistry)
+	reg := NewRetrieveEngineRegistry(nil, nil)
 	_ = reg.Register(newMock(types.PostgresRetrieverEngineType))
 	_ = reg.Register(newMock(types.ElasticsearchRetrieverEngineType))
 
@@ -110,7 +148,7 @@ func TestRegistry_GetAllRetrieveEngineServices(t *testing.T) {
 // --- RegisterWithStoreID (byStoreID) tests ---
 
 func TestRegistry_RegisterWithStoreID(t *testing.T) {
-	reg := NewRetrieveEngineRegistry(nil, nil).(*RetrieveEngineRegistry)
+	reg := NewRetrieveEngineRegistry(nil, nil)
 
 	t.Run("success", func(t *testing.T) {
 		reg.RegisterWithStoreID("store-1", newMock(types.PostgresRetrieverEngineType))
@@ -140,7 +178,7 @@ func TestRegistry_RegisterWithStoreID(t *testing.T) {
 }
 
 func TestRegistry_GetByStoreID(t *testing.T) {
-	reg := NewRetrieveEngineRegistry(nil, nil).(*RetrieveEngineRegistry)
+	reg := NewRetrieveEngineRegistry(nil, nil)
 	reg.RegisterWithStoreID("store-1", newMock(types.PostgresRetrieverEngineType))
 
 	t.Run("found", func(t *testing.T) {
@@ -157,7 +195,7 @@ func TestRegistry_GetByStoreID(t *testing.T) {
 }
 
 func TestRegistry_UnregisterByStoreID(t *testing.T) {
-	reg := NewRetrieveEngineRegistry(nil, nil).(*RetrieveEngineRegistry)
+	reg := NewRetrieveEngineRegistry(nil, nil)
 	reg.RegisterWithStoreID("store-1", newMock(types.PostgresRetrieverEngineType))
 
 	t.Run("removes registered store", func(t *testing.T) {
@@ -174,7 +212,7 @@ func TestRegistry_UnregisterByStoreID(t *testing.T) {
 // --- Dual map isolation tests ---
 
 func TestRegistry_DualMapIsolation(t *testing.T) {
-	reg := NewRetrieveEngineRegistry(nil, nil).(*RetrieveEngineRegistry)
+	reg := NewRetrieveEngineRegistry(nil, nil)
 
 	_ = reg.Register(newMock(types.PostgresRetrieverEngineType))
 	reg.RegisterWithStoreID("store-pg", newMock(types.PostgresRetrieverEngineType))
@@ -201,7 +239,7 @@ func TestRegistry_DualMapIsolation(t *testing.T) {
 // --- Concurrency test ---
 
 func TestRegistry_ConcurrentAccess(t *testing.T) {
-	reg := NewRetrieveEngineRegistry(nil, nil).(*RetrieveEngineRegistry)
+	reg := NewRetrieveEngineRegistry(nil, nil)
 	const goroutines = 10
 
 	var wg sync.WaitGroup
@@ -229,9 +267,5 @@ func TestRegistry_ConcurrentAccess(t *testing.T) {
 // --- Interface compliance ---
 
 func TestRegistry_ImplementsStoreRegistry(t *testing.T) {
-	reg := NewRetrieveEngineRegistry(nil, nil)
-	concreteReg, ok := reg.(*RetrieveEngineRegistry)
-	require.True(t, ok)
-
-	var _ interfaces.StoreRegistry = concreteReg
+	var _ interfaces.StoreRegistry = NewRetrieveEngineRegistry(nil, nil)
 }

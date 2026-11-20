@@ -166,7 +166,7 @@ func (c *Connector) streamDocuments(
 	}
 	failed := func(p, code, message string) error {
 		complete = false
-		_, err := outcomes.EmitWithOutcome(ctx, types.FetchedItem{
+		_, _, err := outcomes.EmitWithOutcome(ctx, types.FetchedItem{
 			ExternalID: "local:" + s.RootID + ":" + p, Title: p,
 			Metadata: map[string]string{
 				"error":                   message,
@@ -228,6 +228,12 @@ func (c *Connector) streamDocuments(
 				continue
 			}
 			seen[p] = true
+			if strings.HasPrefix(entry.Name(), "~$") && snapshot.DocumentPath(p) {
+				if err := record(p, "ignored", "office_lock_file", before.Size(), "", files[p] != ""); err != nil {
+					return err
+				}
+				continue
+			}
 			if !snapshot.DocumentPath(p) {
 				// Unsupported files are intentionally ignored, rather than breaking
 				// an otherwise complete scan. A previous entry at this exact path
@@ -357,7 +363,7 @@ func (c *Connector) streamDocuments(
 				_ = os.Remove(stageName)
 				return err
 			}
-			accepted, emitErr := outcomes.EmitWithOutcome(ctx, item)
+			accepted, reason, emitErr := outcomes.EmitWithOutcome(ctx, item)
 			_ = tmp.Close()
 			_ = os.Remove(stageName)
 			if emitErr != nil {
@@ -372,7 +378,10 @@ func (c *Connector) streamDocuments(
 					return err
 				}
 			} else {
-				if err := record(p, "failed", "ingest_failed", before.Size(), version, files[p] != ""); err != nil {
+				if reason == "" {
+					reason = "ingest_failed"
+				}
+				if err := record(p, "failed", reason, before.Size(), version, files[p] != ""); err != nil {
 					return err
 				}
 				complete = false
@@ -447,7 +456,7 @@ func (c *Connector) streamDocuments(
 					break
 				}
 			}
-			accepted, err := outcomes.EmitWithOutcome(
+			accepted, _, err := outcomes.EmitWithOutcome(
 				ctx,
 				types.FetchedItem{ExternalID: "local:" + s.RootID + ":" + p, Title: p, IsDeleted: true},
 			)
