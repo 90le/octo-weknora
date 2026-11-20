@@ -982,6 +982,8 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 	}
 	sqlDB.SetConnMaxLifetime(time.Duration(10) * time.Minute)
 
+	// Startup recovery is also needed when the schema is migrated externally.
+	resetPendingTasks(db)
 	return db, nil
 }
 
@@ -1009,9 +1011,6 @@ func resolveStorageProviderPending(db *gorm.DB) {
 	// errors. The old code assigned seq_id via SELECT MAX()+1 in application
 	// code, which could push values past the DB sequence counter.
 	syncSequences(db)
-
-	// Reset any pending tasks left over from previous aborted runs (Lite App mode)
-	resetPendingTasks(db)
 }
 
 // migrateLegacyStorageBackends backfills the storage_backends table from each
