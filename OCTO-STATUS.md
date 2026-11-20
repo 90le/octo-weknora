@@ -1,5 +1,15 @@
 # 项目进度
 
+## 2026-11-20 Milvus 中断与本地文件增量恢复（生产）
+
+- 北京时间 11 月 18 日 13:34 至 13:35，etcd 多次记录 `fdatasync` 延迟，最高 2.075 秒。随后租约请求超时，Milvus 于 13:35 退出，退出码为 1。容器未配置自动重启。11 月 19 日 WeKnora 启动时连接失败，此后没有为该进程注册 Milvus 检索引擎。宿主机日志未能定位触发磁盘落盘延迟的具体活动。
+- 11 月 20 日使用原生产卷启动 Milvus，保留向量数据。etcd 和 Milvus 的运行容器均已启用 `unless-stopped`，生产 Compose 已保存 Milvus 的重启策略和健康检查。etcd 元数据快照保存在 `recovery/milvus-20261120T082254Z/etcd.db`。
+- [PR #170](https://github.com/90le/octo-weknora/pull/170) 合并为 `dbf88b7ec202`，六项仓库检查通过。Milvus 注册与首次连接分离，暂时不可用的连接按冷却时间重试。隔离 Docker 验证同一个应用进程在 Milvus 后启动时恢复连接并成功列出集合。应用启动时处理单实例内存队列遗留的运行记录，独立于自动迁移开关。
+- 北京时间 16:53 启用生产后端 `milvus-recovery-startup-20261120`。启动日志记录关闭 3 条中断的同步记录。18080、后端和 Milvus 健康检查通过。前端已使用 `milvus-recovery-final-20261120`。增量同步保留旧版，按版本回收未完成清理的候选。文件状态可区分解析、向量模型与索引故障，并忽略 Office 锁文件。
+- 17:00 的 Media Studio 增量任务恢复向量写入。Milvus 读回新版报价表 63 条、新版答疑手册 543 条向量。两个候选在这一轮超过了同步的 10 分钟等待时间。答疑手册于 17:34 完成后处理，等待来源同步发布。报价表的 Wiki 抽取收到上游模型网关 HTTP 504，正在按既有策略续跑。
+- [PR #171](https://github.com/90le/octo-weknora/pull/171) 合并为 `dd452b63b471`，三项仓库检查通过。修复扫描期间目录项消失导致整轮中断的问题。Linux 回归测试验证同轮继续处理其余文档，同时保留已入库内容。生产同步中止记录为 `source changed during scan`，具体目录项未确认。候选镜像 `milvus-source-race-20261120` 已构建，当前同步和内存后处理完成后切换。
+- 首次后端与前端回退配置保存在 `recovery/compose.before-milvus-startup-20261120T085352Z.json` 和 `recovery/compose.before-milvus-final-20261120T085010Z.json`。
+
 ## 2026-11-19 Octo 区域成员提问（生产）
 
 - [PR #168](https://github.com/90le/octo-weknora/pull/168) 合并为 `2ee6c5f12`。群主区与子区独立配置「本区成员可提问」。真人原生 @ 当前 Bot 时按区域成员和知识授权校验。所有提问 Bot 均须在 UID 白名单中。私聊仍使用原有私聊权限。
