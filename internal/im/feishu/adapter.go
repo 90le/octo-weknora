@@ -840,7 +840,7 @@ func buildStreamingCardJSON(region Region) string {
 		},
 		"header": map[string]interface{}{
 			"template": "blue",
-			"title":    map[string]string{"tag": "plain_text", "content": "WeKnora"},
+			"title":    map[string]string{"tag": "plain_text", "content": "业问"},
 		},
 		"body": map[string]interface{}{
 			"elements": []map[string]interface{}{

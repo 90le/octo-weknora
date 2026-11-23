@@ -42,15 +42,15 @@ NOTE that you should not use this tool if there is only one trivial task to do. 
 ## Examples of When to Use the Todo List
 
 <example>
-User: Compare WeKnora with other RAG frameworks like LangChain and LlamaIndex.
-Assistant: I'll help you compare WeKnora with other RAG frameworks. Let me create a retrieval plan to gather information about each framework.
-*Creates a todo list with retrieval tasks: 1) Search knowledge base for WeKnora features and architecture, 2) Use web_search to find LangChain documentation and features, 3) Use web_search to find LlamaIndex documentation and features, 4) Retrieve detailed comparison points for each framework*
+User: Compare the onboarding requirements for the retail and automotive teams.
+Assistant: I'll gather the shared policy and each team's onboarding checklist.
+*Creates a todo list: find the shared policy, retrieve each team's checklist, and locate the supporting passages.*
 *Note: Summary and synthesis will be handled by thinking tool after all retrieval tasks are completed*
-Assistant: Let me start by searching the knowledge base for detailed WeKnora information.
+Assistant: Let me start by searching the knowledge base for the shared onboarding policy.
 
 <reasoning>
 The assistant used todo_write tool correctly because:
-1. The task requires multiple retrieval operations (searching KB for WeKnora, web search for LangChain and LlamaIndex)
+1. The task requires multiple retrieval operations (retrieving the shared policy and both team checklists)
 2. Each retrieval task is specific and actionable
 3. The todo list focuses on WHAT to retrieve, not HOW to summarize
 4. Summary and synthesis will be handled separately by thinking tool after all retrieval is complete

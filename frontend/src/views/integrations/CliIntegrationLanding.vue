@@ -72,6 +72,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { docsUrl } from '@/utils/docsUrl'
 import { useApiBaseUrlDisplay } from '@/composables/useApiBaseUrlDisplay'
 import { copyWithToast } from '@/utils/clipboard'
 import IntegrationLandingLayout from './IntegrationLandingLayout.vue'
@@ -82,7 +83,7 @@ const { apiBaseUrlDisplay } = useApiBaseUrlDisplay()
 const steps = computed(() => [
   {
     key: 'install',
-    command: 'git clone https://github.com/Tencent/WeKnora.git\ncd WeKnora/cli\ngo build -o weknora .\nexport PATH="$PWD:$PATH"',
+    command: 'cd cli\ngo build -o weknora .\nexport PATH="$PWD:$PATH"',
   },
   { key: 'connect', command: buildCLIConnectCommand(apiBaseUrlDisplay.value, window.location.origin) },
   { key: 'verify', command: 'weknora doctor\nweknora kb list' },
@@ -104,6 +105,6 @@ const examples = [
 
 const copy = (command: string) => copyWithToast(command, 'integrations.cli.copied')
 const openDocs = () => {
-  window.open('https://github.com/Tencent/WeKnora/blob/main/cli/README.md', '_blank', 'noopener,noreferrer')
+  window.open(docsUrl('cli'), '_blank', 'noopener,noreferrer')
 }
 </script>

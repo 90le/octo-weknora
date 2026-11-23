@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>产品指南 · 业问</title>
+  <link rel="icon" href="/favicon.ico">
+  <style>
+    :root { color-scheme: light dark; --ink: #152743; --muted: #475569; --line: #dbe4f0; --blue: #1d4ed8; --paper: #fff; }
+    @media (prefers-color-scheme: dark) { :root { --ink:#e6edf7; --muted:#bdcce0; --line:#334155; --blue:#93c5fd; --paper:#0f172a; } }
+    * { box-sizing:border-box; }
+    body { max-width:50rem; margin:auto; padding:2rem clamp(1.2rem,5vw,3rem) 4rem; font:1rem/1.8 system-ui,"Microsoft YaHei",sans-serif; background:var(--paper); color:var(--ink); }
+    header { display:flex; align-items:center; gap:.6rem; font-weight:650; padding-bottom:1.2rem; border-bottom:1px solid var(--line); }
+    header a:last-child { margin-left:auto; } h1 { margin:2rem 0 .5rem; font-size:2rem; } h2 { margin:1.8rem 0 .4rem; font-size:1.2rem; }
+    p { margin:.25rem 0; color:var(--muted); } a { color:var(--blue); }
+    nav { display:flex; flex-wrap:wrap; gap:.35rem 1rem; padding:1rem 0; border-bottom:1px solid var(--line); }
+    code { overflow-wrap:anywhere; } footer { margin-top:2rem; border-top:1px solid var(--line); }
+  </style>
+</head>
+<body>
+<header><img src="/brand/yewen-mark.svg" width="32" height="32" alt=""><span>业问</span><a href="/">进入产品</a></header>
+<main>
+<h1>关于业问</h1>
+<p>业问是秒针面向业务团队提供的企业知识问答产品。你可以用日常语言提问，在有权访问的知识库中查找资料，并通过引用核对答案。</p>
+<nav aria-label="指南目录"><a href="#questions">知识问答</a><a href="#access">账号与权限</a><a href="#models">管理与接入</a><a href="#licenses">开源软件声明</a></nav>
+<h2 id="questions">提问与核对引用</h2><p>在知识库查看已完成解析的文档。从聊天页选择有权使用的知识库，输入业务问题。打开回答中的引用即可核对对应文档片段。没有找到依据时，可以缩小问题范围或补充资料。</p>
+<h2 id="access">账号与工作区</h2><p>使用工作区提供的入口登录。首次使用或需要访问其他知识库时，请联系工作区管理员获取邀请或授权。</p>
+<h2 id="models">模型设置</h2><p>管理员可在设置的模型管理中配置对话、向量和重排序模型。按服务商提供的模型名、服务地址和鉴权方式填写，并测试连接。</p>
+<h2 id="model-compatibility">模型协议兼容</h2><p>在模型编辑页选择与服务端一致的协议。遇到不支持的请求字段时，请核对服务商的接口说明，再调整对应的兼容选项。</p>
+<h2 id="knowledge-graph">知识图谱</h2><p>在知识库设置中配置实体和关系的提取范围。完成解析后，可从文档及相关实体查看关联材料。</p>
+<h2 id="channels">消息渠道</h2><p>在集成设置中选择渠道，按渠道要求配置机器人凭证、可访问的知识库和会话范围。先用测试会话核对身份和回答引用。</p>
+<h2 id="api">API 接入</h2><p>从集成设置的 API 信息中复制当前服务地址，使用具备相应知识库权限的凭证。网页嵌入请复制渠道生成的脚本，并将宿主网站加入该渠道的允许列表。</p>
+<h2 id="cli">命令行接入</h2><p>从产品源代码包根目录进入 <code>cli</code> 构建客户端，或使用管理员提供的可执行文件。在集成页复制连接命令。运行 <code>weknora --help</code> 查看命令，运行 <code>weknora doctor</code> 检查连接。</p>
+<h2 id="sandbox">沙箱执行环境</h2><p>在设置中选择已部署的沙箱后端并测试连接。执行代码、访问网络和文件的范围由管理员配置的权限决定。</p>
+<h2 id="migrations">数据库迁移提示</h2><p>系统信息显示迁移异常时，将页面中的版本和错误信息交给本部署的管理员。恢复或重新执行迁移前，应核对数据库备份和目标版本。</p>
+</main>
+<footer id="licenses"><h2>开源软件声明</h2><p>本产品基于 WeKnora 并使用其他开源组件。原作者的版权及许可见<a href="/assets/weknora-licenses.txt">项目及第三方许可</a>和<a href="/assets/npm-licenses.md">前端依赖许可</a>。</p></footer>
+</body></html>

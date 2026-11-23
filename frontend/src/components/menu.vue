@@ -3,7 +3,7 @@
         <!-- 展开时：Logo + 搜索/折叠按钮同行 -->
         <div class="logo_row" v-if="!uiStore.sidebarCollapsed">
             <div class="logo_box" @click="router.push('/platform/knowledge-bases')" style="cursor: pointer;">
-                <img class="logo" src="@/assets/img/weknora.png" alt="">
+                <BrandLogo class="logo" />
                 <sup v-if="isLiteEdition" class="lite-badge">Lite</sup>
             </div>
             <div class="logo_actions">
@@ -31,19 +31,10 @@
         </div>
         <!-- 折叠时：展开按钮 -->
         <t-tooltip v-else :content="t('menu.expandSidebar')" placement="right">
-            <div class="menu_item sidebar-toggle-item" @click="uiStore.toggleSidebar">
+            <div class="menu_item sidebar-toggle-item" role="button" tabindex="0" :aria-label="t('menu.expandSidebar')" @click="uiStore.toggleSidebar" @keydown.enter.prevent="uiStore.toggleSidebar" @keydown.space.prevent="uiStore.toggleSidebar">
                 <div class="menu_item-box">
                     <div class="menu_icon">
-                        <svg class="icon icon--toggle" viewBox="0 0 20 20" width="16" height="16" fill="none"
-                            xmlns="http://www.w3.org/2000/svg">
-                            <rect x="1.5" y="1.5" width="17" height="17" rx="3" stroke="currentColor"
-                                stroke-width="1.5" />
-                            <line x1="7.5" y1="1.5" x2="7.5" y2="18.5" stroke="currentColor" stroke-width="1.5" />
-                            <line x1="5" y1="10" x2="3" y2="8" stroke="currentColor" stroke-width="1.5"
-                                stroke-linecap="round" />
-                            <line x1="5" y1="10" x2="3" y2="12" stroke="currentColor" stroke-width="1.5"
-                                stroke-linecap="round" />
-                        </svg>
+                        <BrandLogo mark decorative />
                     </div>
                 </div>
             </div>
@@ -214,6 +205,7 @@
 </template>
 
 <script setup lang="ts">
+import BrandLogo from '@/components/BrandLogo.vue';
 import { storeToRefs } from 'pinia';
 import { onMounted, onUnmounted, watch, computed, ref, h, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -1392,8 +1384,8 @@ const resizeSidebar = (delta: number, keyboard: boolean) => {
         overflow: hidden;
 
         .logo {
-            width: 108px;
-            height: auto;
+            height: 24px;
+            flex-shrink: 0;
         }
 
         .lite-badge {
@@ -2007,11 +1999,6 @@ const resizeSidebar = (delta: number, keyboard: boolean) => {
 }
 </style>
 <style lang="less">
-// Dark mode: invert dark logo to light
-html[theme-mode="dark"] .aside_box .logo_box .logo {
-    filter: invert(1) hue-rotate(180deg);
-}
-
 // Dark mode: 滚动条在深色背景下需要更亮的颜色才看得见
 html[theme-mode="dark"] .aside_box .menu_top:hover {
     scrollbar-color: rgba(255, 255, 255, 0.22) transparent;

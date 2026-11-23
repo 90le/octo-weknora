@@ -28,7 +28,7 @@
   <circle cx="90" cy="172" r="5" fill="#60A5FA"/>
   <circle cx="108" cy="172" r="5" fill="#93C5FD"/>
   <circle cx="126" cy="172" r="5" fill="#BFDBFE"/>
-  <text x="400" y="177" font-family="Arial, sans-serif" font-size="12" fill="#2563EB" text-anchor="middle">WeKnora &#183; Knowledge Search</text>
+  <text x="400" y="177" font-family="Arial, sans-serif" font-size="12" fill="#2563EB" text-anchor="middle">业问 &#183; Knowledge Search</text>
 
   <g transform="translate(96, 224)">
     <rect width="608" height="52" rx="12" fill="#F8FAFC" stroke="#BFDBFE" stroke-width="1.5"/>

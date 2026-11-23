@@ -479,7 +479,7 @@ func explainSandboxCreateFailure(
 		if tpl.Status == sandbox.TemplateStatusUntagged {
 			return fmt.Sprintf(
 				"模板 %s 的构建已完成，但没有一个构建带上 %q 标签，创建沙箱时无法解析；"+
-					"请重新构建该模板（删除后由 WeKnora 重新创建即可）",
+					"请重新构建该模板（删除后由 业问重新创建即可）",
 				templateID, sandbox.DefaultE2BTemplateTag,
 			)
 		}
@@ -518,7 +518,7 @@ func dockerUnavailableCheckReason(err *sandbox.RemoteError) string {
 	return "无法连接 Docker 守护进程 " + host +
 		"。留空地址时跟随本机 docker CLI（DOCKER_HOST 或当前 docker context）。" +
 		"Colima 一般是 unix://$HOME/.colima/default/docker.sock；" +
-		"WeKnora 跑在容器里时需要把该 socket 挂进 app。"
+		"业问跑在容器里时需要把该 socket 挂进 app。"
 }
 
 func dockerHostFromUnavailableMessage(message string) string {
