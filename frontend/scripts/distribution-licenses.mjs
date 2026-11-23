@@ -8,6 +8,7 @@ const projectNoticePath = 'assets/weknora-licenses.txt'
 export const npmNoticePath = 'assets/npm-licenses.md'
 const spritePath = 'tdesign-icons/0.4.1/fonts/index.js'
 const widgetPath = 'weknora-widget.js'
+const widgetAlias = 'yewen-widget.js'
 const novncName = '@novnc/novnc'
 const novncSource = 'https://github.com/novnc/noVNC/archive/refs/tags/v1.7.0.tar.gz'
 const novncPackage = 'https://registry.npmjs.org/@novnc/novnc/-/novnc-1.7.0.tgz'
@@ -85,10 +86,10 @@ export function distributionLicenses() {
         `Licenses of bundled npm packages: /${npmNoticePath}`,
       ].join('\n\n')
       this.emitFile({ type: 'asset', fileName: projectNoticePath, source: `${projectNotices}\n` })
-      this.emitFile({
-        type: 'asset', fileName: widgetPath,
-        source: projectLicenseBanner() + readText(join(frontend, 'public', widgetPath)),
-      })
+      const widget = projectLicenseBanner() + readText(join(frontend, 'public', widgetPath))
+      for (const fileName of [widgetPath, widgetAlias]) {
+        this.emitFile({ type: 'asset', fileName, source: widget })
+      }
       this.emitFile({ type: 'asset', fileName: spritePath, source: legalComment(spriteLicense) + sprite })
     },
     writeBundle(options) {
@@ -142,6 +143,9 @@ export function verifyDistributionLicenses(directory = join(frontend, 'dist')) {
     if (!entry || !readText(resolve(directory, entry.replace(/^\//, ''))).includes(banner)) {
       throw new Error(`Missing project license in the bundled entry for ${page}`)
     }
+  }
+  if (readText(join(directory, widgetAlias)) !== readText(join(directory, widgetPath))) {
+    throw new Error('Legacy and branded embed widgets differ')
   }
   if (!readText(join(directory, widgetPath)).startsWith(banner) ||
       !readText(join(directory, spritePath)).includes('Copyright (c) 2021-present TDesign')) {

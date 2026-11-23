@@ -30,6 +30,19 @@ function resolveFrontendCommit(): string {
 
 const FRONTEND_COMMIT = resolveFrontendCommit()
 
+// Keep the original embed script address working for existing integrations.
+function brandedWidget(): Plugin {
+  return {
+    name: 'yewen-widget',
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        if (req.url?.split('?')[0] === '/yewen-widget.js') req.url = '/weknora-widget.js'
+        next()
+      })
+    },
+  }
+}
+
 /** Dev parity with nginx: serve embed.html for /embed/:channelId (not the main SPA). */
 function embedHtmlDevFallback(): Plugin {
   return {
@@ -124,6 +137,7 @@ export default defineConfig({
     vue(),
     vueJsx(),
     embedHtmlDevFallback(),
+    brandedWidget(),
     distributionLicenses(),
   ],
   resolve: {
