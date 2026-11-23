@@ -2,7 +2,7 @@ class WeknoraLite < Formula
   desc "Knowledge base management system — single-binary Lite edition"
   homepage "https://github.com/Tencent/WeKnora"
   version "0.3.6-test"
-  license "Apache-2.0"
+  license "MIT"
 
   on_macos do
     on_arm do
@@ -28,6 +28,7 @@ class WeknoraLite < Formula
 
   def install
     libexec.install "WeKnora-lite"
+    pkgshare.install "LICENSE", "THIRD_PARTY_NOTICES.md", "licenses"
     pkgshare.install "web" if File.directory?("web")
     pkgshare.install "config" if File.directory?("config")
     pkgshare.install ".env.lite.example"
@@ -114,5 +115,8 @@ class WeknoraLite < Formula
 
   test do
     assert_predicate bin/"weknora-lite", :executable?
+    assert_predicate pkgshare/"LICENSE", :file?
+    assert_predicate pkgshare/"THIRD_PARTY_NOTICES.md", :file?
+    assert_predicate pkgshare/"licenses/sources", :directory?
   end
 end

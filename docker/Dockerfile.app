@@ -173,6 +173,8 @@ COPY --from=builder /app/dataset/samples ./dataset/samples
 COPY --from=builder /root/.duckdb /home/appuser/.duckdb
 COPY --from=builder /app/WeKnora .
 COPY --from=builder /license-bundle/ ./
+RUN --mount=from=builder,source=/app,target=/license-source,readonly \
+    bash /license-source/scripts/check-license-bundle.sh --bundle /app
 
 # Copy and make entrypoint script executable
 COPY --from=builder /app/scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.sh

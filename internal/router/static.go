@@ -58,17 +58,25 @@ func serveFrontendStatic(r *gin.Engine) {
 			c.Abort()
 			return
 		}
+		if isFrontendLicenseNotice(path) {
+			setFrontendCacheHeaders(c.Writer, path)
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
 		setFrontendCacheHeaders(c.Writer, "/index.html")
 		c.File(indexPath)
 		c.Abort()
 	})
 }
 
-// setFrontendCacheHeaders sets Cache-Control headers for frontend static resources.
-// Vite 构建产物中 /assets/* 的文件名带 hash，可长期缓存；其余（index.html、config.js、favicon 等）
-// 每次都需 revalidate，避免前端升级后用户看到旧版本。
+func isFrontendLicenseNotice(path string) bool {
+	return path == "/assets/weknora-licenses.txt" || path == "/assets/npm-licenses.md"
+}
+
+// Hashed Vite assets can be cached indefinitely. Stable URLs, including notices,
+// must be revalidated after a rollout.
 func setFrontendCacheHeaders(w http.ResponseWriter, path string) {
-	if strings.HasPrefix(path, "/assets/") {
+	if strings.HasPrefix(path, "/assets/") && !isFrontendLicenseNotice(path) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		return
 	}

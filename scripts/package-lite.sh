@@ -71,6 +71,7 @@ cp WeKnora-lite "${DIST_DIR}/"
 bash ./scripts/copy-licenses.sh "${DIST_DIR}"
 if [ -d web ] && [ -f web/index.html ]; then
     cp -r web/* "${DIST_DIR}/web/"
+    node frontend/scripts/check-dist-licenses.mjs "${DIST_DIR}/web"
 fi
 cp .env.lite.example "${DIST_DIR}/"
 cp docs/LITE.md "${DIST_DIR}/README.md"
@@ -87,6 +88,7 @@ fi
 
 # ── Step 4: Create tarball ──
 echo ">> Creating tarball..."
+bash ./scripts/check-license-bundle.sh --bundle "${DIST_DIR}"
 (cd dist && tar czf "${ARCHIVE}.tar.gz" "${ARCHIVE}")
 (cd dist && shasum -a 256 "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256")
 

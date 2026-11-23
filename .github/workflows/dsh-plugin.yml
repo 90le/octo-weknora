@@ -20,10 +20,12 @@ on:
     tags:
       - "dsh-weknora-v*"
     paths:
+      - "LICENSE"
       - "packages/dsh-weknora/**"
       - ".github/workflows/dsh-plugin.yml"
   pull_request:
     paths:
+      - "LICENSE"
       - "packages/dsh-weknora/**"
       - ".github/workflows/dsh-plugin.yml"
   schedule:
@@ -91,11 +93,12 @@ jobs:
 
       - name: Pack and verify the published file list
         run: |
-          set -e
-          npm pack --dry-run --json > pack.json
+          set -eo pipefail
+          PACK_DIR="$(mktemp -d)"
+          npm pack --json --pack-destination "${PACK_DIR}" > "${PACK_DIR}/pack.json"
           node -e "
-            const files = require('./pack.json')[0].files.map(f => f.path);
-            const required = ['dist/index.js', 'dist/index.d.ts', 'cordis.patch.yml', 'README.md', 'package.json'];
+            const files = require(process.argv[1])[0].files.map(f => f.path);
+            const required = ['LICENSE', 'dist/index.js', 'dist/index.d.ts', 'cordis.patch.yml', 'README.md', 'package.json'];
             const missing = required.filter(name => !files.includes(name));
             if (missing.length > 0) {
               console.error('missing from the tarball: ' + missing.join(', '));
@@ -107,8 +110,9 @@ jobs:
               process.exit(1);
             }
             console.log('tarball contents verified: ' + files.length + ' files');
-          "
-          rm pack.json
+          " "${PACK_DIR}/pack.json"
+          PACKAGE_FILE="$(node -p 'require(process.argv[1])[0].filename' "${PACK_DIR}/pack.json")"
+          tar -xOzf "${PACK_DIR}/${PACKAGE_FILE}" package/LICENSE | cmp - ../../LICENSE
 
   e2e:
     name: End-to-end inside dsh (pinned)
@@ -263,6 +267,12 @@ jobs:
 
       - name: Publish
         if: steps.check_npm.outputs.should_publish == 'true'
-        run: npm publish --provenance --access public
+        run: |
+          set -eo pipefail
+          PACK_DIR="$(mktemp -d)"
+          npm pack --json --pack-destination "${PACK_DIR}" > "${PACK_DIR}/pack.json"
+          PACKAGE_FILE="$(node -p 'require(process.argv[1])[0].filename' "${PACK_DIR}/pack.json")"
+          tar -xOzf "${PACK_DIR}/${PACKAGE_FILE}" package/LICENSE | cmp - ../../LICENSE
+          npm publish "${PACK_DIR}/${PACKAGE_FILE}" --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

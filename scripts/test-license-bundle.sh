@@ -51,7 +51,18 @@ for pin in 'mysql v1.10.0' 'go-m1cpu v0.1.6'; do
 done
 cmp "${fixture}/LICENSE" "${fixture}/release with spaces/LICENSE"
 cmp "${fixture}/THIRD_PARTY_NOTICES.md" "${fixture}/release with spaces/THIRD_PARTY_NOTICES.md"
-bash "${fixture}/scripts/check-license-bundle.sh" "${fixture}/release with spaces/licenses/sources"
+bash "${fixture}/scripts/check-license-bundle.sh" --bundle "${fixture}/release with spaces"
+
+mv "${fixture}/release with spaces/THIRD_PARTY_NOTICES.md" "${fixture}/missing-notices.md"
+if bash "${fixture}/scripts/check-license-bundle.sh" --bundle "${fixture}/release with spaces" > "${fixture}/missing.log" 2>&1; then
+    echo 'Artifact validation accepted a missing third-party notice' >&2; exit 1
+fi
+mv "${fixture}/missing-notices.md" "${fixture}/release with spaces/THIRD_PARTY_NOTICES.md"
+
+printf 'modified notice\n' > "${fixture}/release with spaces/licenses/Wails-MIT.txt"
+if bash "${fixture}/scripts/check-license-bundle.sh" --bundle "${fixture}/release with spaces" > "${fixture}/modified.log" 2>&1; then
+    echo 'Artifact validation accepted a modified license' >&2; exit 1
+fi
 
 if LICENSE_TEST_DOWNLOAD_FAILURE=1 bash "${fixture}/scripts/copy-licenses.sh" "${fixture}/failed download"; then
     echo 'Packaging accepted a failed source download' >&2; exit 1

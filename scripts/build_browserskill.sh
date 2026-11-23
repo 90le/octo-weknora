@@ -39,7 +39,38 @@ git -C "$build_dir/source" checkout --detach "$source_commit"
   npx --yes pnpm@10.17.0 install --frozen-lockfile
   npx --yes pnpm@10.17.0 ext:build:zip
 )
-cp "$build_dir/source/apps/extension/dist/browser-skillextension-${extension_version}-chrome.zip" "$output_dir/browser-skill-weknora-${extension_version}.zip"
+extension_archive="$build_dir/source/apps/extension/dist/browser-skillextension-${extension_version}-chrome.zip"
+# The extension is also downloaded by itself, so it needs the upstream license
+# inside the archive as well as alongside the separately shipped daemon.
+python3 - "$extension_archive" "$build_dir/source/LICENSE" <<'PY'
+import sys
+from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
+
+archive_path, license_path = map(Path, sys.argv[1:])
+license_text = license_path.read_bytes()
+if not license_text.strip():
+    raise SystemExit("BrowserSkill source license is empty")
+
+with ZipFile(archive_path) as archive:
+    entries = archive.namelist()
+    if "manifest.json" not in entries:
+        raise SystemExit("BrowserSkill extension manifest is missing")
+    if "LICENSE" in entries and (
+        entries.count("LICENSE") != 1 or archive.read("LICENSE") != license_text
+    ):
+        raise SystemExit("BrowserSkill extension license differs from its source")
+
+if "LICENSE" not in entries:
+    with ZipFile(archive_path, "a", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("LICENSE", license_text)
+
+with ZipFile(archive_path) as archive:
+    bad_entry = archive.testzip()
+    if bad_entry is not None or archive.read("LICENSE") != license_text:
+        raise SystemExit(f"Could not verify the BrowserSkill extension archive: {bad_entry}")
+PY
+cp "$extension_archive" "$output_dir/browser-skill-weknora-${extension_version}.zip"
 cp "$build_dir/source/LICENSE" "$output_dir/BrowserSkill-LICENSE"
 
 # Build the daemon from the same pinned source; upstream has not published a

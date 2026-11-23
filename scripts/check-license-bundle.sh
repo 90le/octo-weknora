@@ -2,6 +2,16 @@
 set -euo pipefail
 
 license_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+bundle_dir=""
+if [[ "${1:-}" == "--bundle" ]]; then
+    if [[ "$#" != 2 || -z "$2" ]]; then
+        echo "Usage: $0 --bundle ARTIFACT_DIRECTORY" >&2
+        exit 1
+    fi
+    bundle_dir="$(cd "$2" && pwd)"
+    shift 2
+    set -- "${bundle_dir}/licenses/sources"
+fi
 source_dir="${1:-}"
 if [ -n "${source_dir}" ]; then
     source_dir="$(cd "${source_dir}" && pwd)"
@@ -41,3 +51,11 @@ for file in LICENSE THIRD_PARTY_NOTICES.md licenses/OpenCC-Apache-2.0.txt \
     licenses/Wails-MIT.txt; do
     test -s "${file}"
 done
+
+if [ -n "${bundle_dir}" ]; then
+    cmp LICENSE "${bundle_dir}/LICENSE"
+    cmp THIRD_PARTY_NOTICES.md "${bundle_dir}/THIRD_PARTY_NOTICES.md"
+    while IFS= read -r -d '' file; do
+        cmp "${file}" "${bundle_dir}/${file}"
+    done < <(find licenses -type f ! -name '*.zip' -print0)
+fi

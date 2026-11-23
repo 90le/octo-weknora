@@ -6,6 +6,7 @@ import { createRequire } from 'node:module'
 import { defineConfig, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
+import { distributionLicenses, npmNoticePath, projectLicenseBanner } from './scripts/distribution-licenses.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
@@ -68,11 +69,13 @@ function resolveVueOfficePptxEntry(): string {
 }
 
 export default defineConfig({
+  esbuild: { legalComments: 'inline' },
   define: {
     __FRONTEND_VERSION__: JSON.stringify(FRONTEND_VERSION),
     __FRONTEND_COMMIT__: JSON.stringify(FRONTEND_COMMIT),
   },
   build: {
+    license: { fileName: npmNoticePath },
     modulePreload: {
       resolveDependencies(_filename, deps, { hostId }) {
         // Embed iframe bootstraps with token exchange only; defer heavy chat chunks.
@@ -101,6 +104,7 @@ export default defineConfig({
         embed: resolve(__dirname, 'embed.html'),
       },
       output: {
+        banner: projectLicenseBanner,
         manualChunks(id) {
           if (!id.includes('node_modules')) return
           if (id.includes('mermaid') || id.includes('/dagre') || id.includes('cytoscape')) {
@@ -120,6 +124,7 @@ export default defineConfig({
     vue(),
     vueJsx(),
     embedHtmlDevFallback(),
+    distributionLicenses(),
   ],
   resolve: {
     alias: {

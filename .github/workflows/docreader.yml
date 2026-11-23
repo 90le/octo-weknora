@@ -8,6 +8,7 @@ on:
       - "go.mod"
       - "go.sum"
       - "testdata/**"
+      - "LICENSE"
       - "docker/Dockerfile.docreader"
       - "docker/Dockerfile.odl-hybrid"
       - ".github/workflows/docreader.yml"
@@ -17,6 +18,7 @@ on:
       - "go.mod"
       - "go.sum"
       - "testdata/**"
+      - "LICENSE"
       - "docker/Dockerfile.docreader"
       - "docker/Dockerfile.odl-hybrid"
       - ".github/workflows/docreader.yml"
@@ -54,6 +56,13 @@ jobs:
 
       - name: Install Python dependencies
         run: uv sync --project docreader --locked --no-dev --python ${{ env.PYTHON_VERSION }}
+
+      - name: Verify installed Python license notices
+        run: |
+          python -m docreader.scripts.fetch_python_license_sources docreader/uv.lock "$RUNNER_TEMP/docreader-python-sources"
+          uv run --project docreader --locked --no-dev --python ${{ env.PYTHON_VERSION }} \
+            python -m docreader.scripts.write_python_license_index \
+            "$RUNNER_TEMP/docreader-python-packages.json" "$RUNNER_TEMP/docreader-python-sources"
 
       - name: Compile Python sources
         run: uv run --project docreader --python ${{ env.PYTHON_VERSION }} python -m compileall -q docreader

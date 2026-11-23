@@ -77,6 +77,10 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
       - uses: actions/download-artifact@v8
         with:
           name: frontend-dist
@@ -125,6 +129,11 @@ jobs:
             cp deploy/weknora-lite.service "${ARCHIVE}/"
           fi
           tar czf "${ARCHIVE}.tar.gz" "${ARCHIVE}"
+          LICENSE_CHECK_DIR="$(mktemp -d)"
+          tar -xzf "${ARCHIVE}.tar.gz" -C "${LICENSE_CHECK_DIR}" \
+            "${ARCHIVE}/LICENSE" "${ARCHIVE}/THIRD_PARTY_NOTICES.md" "${ARCHIVE}/licenses" "${ARCHIVE}/web"
+          bash ./scripts/check-license-bundle.sh --bundle "${LICENSE_CHECK_DIR}/${ARCHIVE}"
+          node frontend/scripts/check-dist-licenses.mjs "${LICENSE_CHECK_DIR}/${ARCHIVE}/web"
           shasum -a 256 "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256"
 
       - uses: actions/upload-artifact@v7
@@ -232,6 +241,7 @@ jobs:
           fi
           if [ "${{ runner.os }}" = "Windows" ]; then
             NSIS_FLAG="-nsis"
+            bash ./scripts/copy-licenses.sh cmd/desktop/build/windows/installer/.license-bundle
           fi
 
           bash ./scripts/check-license-bundle.sh
@@ -277,6 +287,11 @@ jobs:
             -ov -format UDZO \
             "${DMG_NAME}.dmg"
 
+          LICENSE_CHECK_MOUNT="$(mktemp -d)"
+          hdiutil attach -readonly -nobrowse -mountpoint "${LICENSE_CHECK_MOUNT}" "${DMG_NAME}.dmg"
+          trap 'hdiutil detach "${LICENSE_CHECK_MOUNT}"' EXIT
+          bash ./scripts/check-license-bundle.sh --bundle "${LICENSE_CHECK_MOUNT}/${APP_BUNDLE}/Contents/Resources"
+
           shasum -a 256 "${DMG_NAME}.dmg" > "${DMG_NAME}.dmg.sha256"
 
       # ── Linux: package tarball ──
@@ -299,6 +314,10 @@ jobs:
             cp -r migrations/sqlite/* "${ARCHIVE}/migrations/sqlite/"
           fi
           tar czf "${ARCHIVE}.tar.gz" "${ARCHIVE}"
+          LICENSE_CHECK_DIR="$(mktemp -d)"
+          tar -xzf "${ARCHIVE}.tar.gz" -C "${LICENSE_CHECK_DIR}" \
+            "${ARCHIVE}/LICENSE" "${ARCHIVE}/THIRD_PARTY_NOTICES.md" "${ARCHIVE}/licenses"
+          bash ./scripts/check-license-bundle.sh --bundle "${LICENSE_CHECK_DIR}/${ARCHIVE}"
           shasum -a 256 "${ARCHIVE}.tar.gz" > "${ARCHIVE}.tar.gz.sha256"
 
       # ── Windows: NSIS installer includes licenses and corresponding source ──
@@ -311,6 +330,10 @@ jobs:
           # Do not publish a bare executable if NSIS was unavailable: the
           # installer also carries the notices/source and supports auto-update.
           test -f "$INSTALLER"
+          LICENSE_CHECK_DIR="$(mktemp -d)"
+          SEVEN_ZIP="$(cygpath -u "$PROGRAMFILES")/7-Zip/7z.exe"
+          "${SEVEN_ZIP}" x -y "-o$(cygpath -w "${LICENSE_CHECK_DIR}")" "${INSTALLER}"
+          bash ./scripts/check-license-bundle.sh --bundle "${LICENSE_CHECK_DIR}"
           cp "$INSTALLER" "${ARCHIVE}_setup.exe"
           sha256sum "${ARCHIVE}_setup.exe" > "${ARCHIVE}_setup.exe.sha256"
 
