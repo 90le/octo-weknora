@@ -832,7 +832,7 @@ onMounted(async () => {
   min-height: 100%;
   overflow: hidden;
   position: relative;
-  background: linear-gradient(225deg, #022c22 0%, #064e3b 15%, #065f46 25%, #047857 38%, #059669 50%, #07C05F 65%, #10B981 78%, #34D399 90%, #6EE7B7 100%);
+  background: var(--app-login-gradient);
 
   &::before {
     content: '';
@@ -868,7 +868,7 @@ onMounted(async () => {
   border: 2px solid rgba(255, 255, 255, 0.3);
   box-shadow:
     0 0 15px rgba(255, 255, 255, 0.35),
-    0 0 30px rgba(16, 185, 129, 0.2),
+    0 0 30px color-mix(in srgb, var(--td-brand-color) 20%, transparent),
     inset 0 0 8px rgba(255, 255, 255, 0.1);
   display: flex;
   align-items: center;
@@ -1197,6 +1197,7 @@ onMounted(async () => {
   .logo-image {
     width: 120px;
     height: auto;
+    filter: invert(1) hue-rotate(180deg) brightness(1.1);
   }
 }
 
@@ -1809,10 +1810,6 @@ onMounted(async () => {
 
 <style lang="less">
 html[theme-mode="dark"] {
-  .login-layout {
-    background: linear-gradient(225deg, #011a14 0%, #032e22 15%, #043a2c 25%, #05503d 38%, #046647 50%, #038a56 65%, #049b60 78%, #06a06a 90%, #07b074 100%);
-  }
-
   .knowledge-node {
     background: rgba(255, 255, 255, 0.1);
     border-color: rgba(255, 255, 255, 0.2);
@@ -1821,10 +1818,6 @@ html[theme-mode="dark"] {
 
   .connection-line {
     stroke: rgba(255, 255, 255, 0.25);
-  }
-
-  .header-logo .logo-image {
-    filter: invert(1) hue-rotate(180deg) brightness(1.1);
   }
 
   .header-link {
@@ -1846,7 +1839,7 @@ html[theme-mode="dark"] {
   }
 
   .language-dropdown {
-    background: rgba(36, 36, 36, 0.97) !important;
+    background: var(--td-bg-color-container) !important;
     border-color: var(--td-component-stroke) !important;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
   }
@@ -1856,12 +1849,12 @@ html[theme-mode="dark"] {
   }
 
   .form-card {
-    background: rgba(36, 36, 36, 0.97) !important;
+    background: var(--td-bg-color-container) !important;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4) !important;
   }
 
   .register-cta__divider span {
-    background: rgba(36, 36, 36, 0.97);
+    background: var(--td-bg-color-container);
   }
 
   .form-content .t-input {
@@ -1882,7 +1875,7 @@ html[theme-mode="dark"] {
   }
 
   .login-features .feature-icon {
-    background: rgba(6, 176, 77, 0.15);
+    background: var(--td-brand-color-light);
   }
 }
 </style>
