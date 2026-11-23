@@ -253,7 +253,7 @@ func (t *ReadFileTool) readSkillResource(ctx context.Context, input ReadFileInpu
 				dir = "a session directory prepared automatically from this skill package"
 			}
 			fmt.Fprintf(&b, "Execution: shell_exec(skill_name=%q, command=...). "+
-				"Use $WEKNORA_SKILL_DIR for bundled scripts (resources: %s); "+
+				"Use $YEWEN_SKILL_DIR for bundled scripts (resources: %s); "+
 				"cwd defaults to /workspace. "+
 				"Host skill resources are staged into the session automatically "+
 				"(host virtualenvs and node_modules are not copied). "+

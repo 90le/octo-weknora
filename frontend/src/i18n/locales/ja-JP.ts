@@ -2224,24 +2224,24 @@ export default {
     },
     capabilityUnavailable: 'この機能は現在のデプロイでは利用できません。利用可能なページに戻りました。',
     weknoraCloud: {
-      title: 'WeKnora Cloud · 外部サービス',
-      description: 'WeKnora CloudのAPPIDとAPPSECRETを設定します。この認証情報はモデルサービスとドキュメント解析エンジンで使用されます。',
+      title: 'クラウドモデル・文書解析 · 外部サービス',
+      description: 'クラウドモデル・文書解析のAPPIDとAPPSECRETを設定します。この認証情報はモデルサービスとドキュメント解析エンジンで使用されます。',
       viewDocs: 'ドキュメントを表示',
       unconfigured: '認証情報が未設定です。APPIDとAPPSECRETを入力してください。',
       configured: '認証情報は設定済みで、正常に動作しています。',
-      expired: 'WeKnora Cloudの認証情報が無効になりました',
+      expired: 'クラウドモデル・文書解析の認証情報が無効になりました',
       expiredDefault: 'サービス再起動後に暗号化キーが変更されました。保存済みの認証情報を復号できません。認証情報を再入力してください。',
       reconfigure: '再設定',
       appIdLabel: 'APPID',
-      appIdDesc: 'WeKnora CloudのアプリケーションID',
+      appIdDesc: 'クラウドモデル・文書解析のアプリケーションID',
       appIdPlaceholder: 'APPIDを入力',
       appSecretLabel: 'APPSECRET',
-      appSecretDesc: 'WeKnora Cloudのアプリケーションシークレット',
+      appSecretDesc: 'クラウドモデル・文書解析のアプリケーションシークレット',
       appSecretPlaceholder: 'APPSECRETを入力',
       saveHint: '認証情報は検証・暗号化されたうえで保存されます。',
       saveBtn: '認証情報を保存',
       usageTitle: '利用ガイド',
-      usageSteps: '1. APPIDとAPPSECRETを保存\\\n2. 下の「クラウドモデル」でチャット、埋め込み、リランク、vlmを登録\\\n3. 解析エンジン: ナレッジベース設定 → 解析エンジン → WeKnora Cloud',
+      usageSteps: '1. APPIDとAPPSECRETを保存\\\n2. 下の「クラウドモデル」でチャット、埋め込み、リランク、vlmを登録\\\n3. 解析エンジン: ナレッジベース設定 → 解析エンジン → クラウドモデル・文書解析',
       fillRequired: 'APPIDとAPPSECRETを入力してください',
       saveSuccess: '認証情報を保存しました',
       saveFailed: '認証情報の保存に失敗しました',
@@ -2254,7 +2254,7 @@ export default {
       modelHintDocsLink: 'APIドキュメント',
       modelsSection: {
         title: 'クラウドモデル',
-        descReady: 'チャット、検索、リランク、画像理解（VLM）の4種類のWeKnora Cloud標準モデルを登録します。',
+        descReady: 'チャット、検索、リランク、画像理解（VLM）の4種類のクラウドモデル・文書解析標準モデルを登録します。',
         descPending: 'クラウドモデルを追加する前に、上の認証情報を保存してください。',
         statusAdded: '追加済み',
         statusPending: '認証情報が必要',
@@ -6707,8 +6707,8 @@ export default {
           desc: 'PaddleOCR-VL Cloud API'
         },
         weknoracloud: {
-          name: 'WeKnora Cloud',
-          desc: 'WeKnora Cloudによるドキュメント解析'
+          name: 'クラウドモデル・文書解析',
+          desc: 'クラウドモデル・文書解析によるドキュメント解析'
         },
         markitdown: {
           name: 'MarkItDown',
@@ -8365,7 +8365,7 @@ export default {
       storeMeta: 'Chromeウェブストア · v1.0.0'
     },
     claw: {
-      title: 'WeKnora Skill',
+      title: 'ナレッジ Q&A スキル',
       subtitle: '业问 REST API経由でドキュメントをインポートし、ハイブリッド検索（ベクトル＋キーワード）を実行します。ファイルのアップロード、URLインポート、Markdownでの登録、ナレッジベース横断検索に対応します。',
       capabilitiesTitle: 'スキルの機能',
       capabilities: {
@@ -8415,7 +8415,7 @@ export default {
       copyCmdSuccess: 'インストールコマンドをコピーしました',
       ecosystemNote: 'スキルはClawHub（{\'@\'}lyingbug/weknora）でホストされています。完全なAPIドキュメントとバージョン履歴はClawHubページをご覧ください。',
       installCta: 'ClawHubを開く',
-      installCtaHint: 'WeKnora Skillをインストール · 新しいタブで開きます',
+      installCtaHint: 'ナレッジ Q&A スキルをインストール · 新しいタブで開きます',
       hubMeta: 'ClawHub · {\'@\'}lyingbug/weknora · MIT-0'
     }
   },

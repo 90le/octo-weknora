@@ -381,7 +381,7 @@ func buildSandboxAttachmentsPrompt(attachments []stagedSessionAttachment, layout
 		if workspace == "" {
 			workspace = remote.Root
 		}
-		b.WriteString(" $WEKNORA_SKILL_OUTPUT_DIR (" + escapeAttachmentXML(outputDir) + ") " +
+		b.WriteString(" " + escapeAttachmentXML(outputDir) + " " +
 			"is the only directory collected for download, so put finished deliverables there " +
 			"and keep drafts and intermediate files in any other directory under " +
 			escapeAttachmentXML(workspace) + ".")

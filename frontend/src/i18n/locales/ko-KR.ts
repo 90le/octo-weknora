@@ -70,7 +70,7 @@ export default {
     workspace: 'Current workspace: {name}',
     workflow: 'Source space setup steps',
     discover: 'Discover existing mounts',
-    discoverHint: 'This only checks directories already exposed to WeKnora. Registration does not mount disks, grant folders, create data sources or sync files.',
+    discoverHint: 'This only checks directories already exposed to Yewen. Registration does not mount disks, grant folders, create data sources or sync files.',
     stepDiscover: '1. Discover existing mounts',
     stepAuthorize: '2. Grant existing directories',
     stepSource: '3. Choose a knowledge source',
@@ -745,7 +745,7 @@ export default {
     filterByAgentWithName: '에이전트별 필터: {name}',
     filterAllAgents: '전체 에이전트',
     claw: {
-      title: 'WeKnora Skill',
+      title: '지식 Q&A 스킬',
       subtitle: '业问 REST API로 문서를 가져오고 하이브리드 검색(벡터+키워드)을 수행합니다. 파일/URL/Markdown 업로드 및 검색에 사용.',
       capabilitiesTitle: 'Skill 기능',
       stepsTitle: '구성 단계',
@@ -755,7 +755,7 @@ export default {
       copyCmdSuccess: '설치 명령이 복사되었습니다',
       ecosystemNote: 'Skill은 ClawHub({\'@\'}lyingbug/weknora)에 호스팅됩니다. 전체 API 문서는 ClawHub 페이지를 참고하세요.',
       installCta: 'ClawHub 열기',
-      installCtaHint: 'WeKnora Skill 설치 · 새 탭에서 열림',
+      installCtaHint: '지식 Q&A 스킬 설치 · 새 탭에서 열림',
       hubMeta: 'ClawHub · {\'@\'}lyingbug/weknora · MIT-0',
       steps: {
         verify: {
@@ -2446,8 +2446,8 @@ export default {
           desc: 'Microsoft MarkItDown 변환기 (PDF/Office/HTML 등)'
         },
         weknoracloud: {
-          name: 'WeKnora Cloud',
-          desc: 'WeKnora Cloud를 통한 문서 파싱'
+          name: '클라우드 모델 및 문서 파싱',
+          desc: '클라우드 모델 및 문서 파싱를 통한 문서 파싱'
         },
         paddleocr_vl_cloud: {
           name: 'PaddleOCR-VL Cloud',
@@ -3890,9 +3890,9 @@ export default {
     loadingInfo: '정보 로딩 중...',
     retry: '재시도',
     versionLabel: '앱 버전',
-    versionDescription: '애플리케이션 서비스(weknora-app)의 버전 번호',
+    versionDescription: '애플리케이션 서비스의 버전 번호',
     frontendVersionLabel: 'UI 버전',
-    frontendVersionDescription: 'UI(weknora-ui) 빌드 버전 번호',
+    frontendVersionDescription: 'UI 빌드 버전 번호',
     versionMismatch: '앱 버전과 일치하지 않음',
     buildTimeLabel: '빌드 시간',
     buildTimeDescription: '시스템이 빌드된 시간',
@@ -7372,24 +7372,24 @@ export default {
       paddleocrVlCloudTokenPlaceholder: 'PaddleOCR-VL AI Studio Token'
     },
     weknoraCloud: {
-      title: 'WeKnora Cloud · 외부 서비스',
-      description: 'WeKnora Cloud APPID 및 APPSECRET 자격 증명을 설정합니다. 자격 증명은 모델 서비스와 문서 파싱 엔진에 사용됩니다.',
+      title: '클라우드 모델 및 문서 파싱 · 외부 서비스',
+      description: '클라우드 모델 및 문서 파싱 APPID 및 APPSECRET 자격 증명을 설정합니다. 자격 증명은 모델 서비스와 문서 파싱 엔진에 사용됩니다.',
       viewDocs: '문서 보기',
       unconfigured: '자격 증명이 설정되지 않았습니다. APPID와 APPSECRET을 입력하세요.',
       configured: '자격 증명이 설정되었으며 정상 작동 중입니다.',
-      expired: 'WeKnora Cloud 자격 증명 만료',
+      expired: '클라우드 모델 및 문서 파싱 자격 증명 만료',
       expiredDefault: '서비스 재시작 후 암호화 키가 변경되어 저장된 자격 증명을 복호화할 수 없습니다. 다시 입력하세요.',
       reconfigure: '재설정',
       appIdLabel: 'APPID',
-      appIdDesc: 'WeKnora Cloud 애플리케이션 ID',
+      appIdDesc: '클라우드 모델 및 문서 파싱 애플리케이션 ID',
       appIdPlaceholder: 'APPID 입력',
       appSecretLabel: 'APPSECRET',
-      appSecretDesc: 'WeKnora Cloud 애플리케이션 비밀키',
+      appSecretDesc: '클라우드 모델 및 문서 파싱 애플리케이션 비밀키',
       appSecretPlaceholder: 'APPSECRET 입력',
       saveHint: '저장 전 서비스 연결 가능 여부를 확인하고 암호화하여 저장합니다.',
       saveBtn: '자격 증명 저장',
       usageTitle: '사용 가이드',
-      usageSteps: '1. APPID / APPSECRET 저장\n2. 아래 「클라우드 모델」에서 chat, embedding, rerank, vlm 추가\n3. 문서 파싱: 지식 베이스 설정 → 파싱 엔진 → WeKnora Cloud',
+      usageSteps: '1. APPID / APPSECRET 저장\n2. 아래 「클라우드 모델」에서 chat, embedding, rerank, vlm 추가\n3. 문서 파싱: 지식 베이스 설정 → 파싱 엔진 → 클라우드 모델 및 문서 파싱',
       fillRequired: 'APPID와 APPSECRET을 입력하세요',
       saveSuccess: '자격 증명 저장 완료',
       saveFailed: '자격 증명 저장 실패',
@@ -7412,7 +7412,7 @@ export default {
       },
       modelsSection: {
         title: '클라우드 모델',
-        descReady: 'WeKnora Cloud의 네 가지 표준 모델을 등록하여 대화, 검색, 재정렬, 비전에 사용합니다.',
+        descReady: '클라우드 모델 및 문서 파싱의 네 가지 표준 모델을 등록하여 대화, 검색, 재정렬, 비전에 사용합니다.',
         descPending: '위에서 자격 증명을 먼저 저장한 후 여기서 모델을 추가하세요.',
         statusAdded: '추가됨',
         statusPending: '자격 증명 필요',

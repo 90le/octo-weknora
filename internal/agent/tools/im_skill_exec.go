@@ -103,7 +103,7 @@ func (t *imSkillExecTool) Execute(ctx context.Context, args json.RawMessage) (*t
 	default:
 		return fail(errors.New("unsupported Skill script type"))
 	}
-	command := interpreter + ` "$WEKNORA_SKILL_DIR"/` + sandbox.ShellQuote(script)
+	command := interpreter + ` "$YEWEN_SKILL_DIR"/` + sandbox.ShellQuote(script)
 	for _, arg := range input.Args {
 		if len(arg) > 4096 || strings.ContainsRune(arg, 0) {
 			return fail(errors.New("invalid Skill argument"))

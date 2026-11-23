@@ -58,7 +58,7 @@ func TestSkillPythonPackageRecoveryInstallsWithoutPip(t *testing.T) {
 			dir := t.TempDir()
 			skillDir := filepath.Join(dir, "staged skill 中文")
 			require.NoError(t, os.MkdirAll(skillDir, 0o755))
-			env := append(os.Environ(), "WEKNORA_SKILL_DIR="+skillDir,
+			env := append(os.Environ(), "YEWEN_SKILL_DIR="+skillDir,
 				"UV_OFFLINE=1", "UV_CACHE_DIR="+filepath.Join(dir, "uv-cache"),
 				"PIP_NO_INDEX=1", "PIP_DISABLE_PIP_VERSION_CHECK=1")
 			run := func(command string) string {
@@ -115,11 +115,11 @@ func TestSkillPackageCommandsRefuseMissingDirectory(t *testing.T) {
 				strings.ReplaceAll(command, "<package>", "test-package"))
 			cmd.Env = []string{"PATH=" + dir}
 			if empty {
-				cmd.Env = append(cmd.Env, "WEKNORA_SKILL_DIR=")
+				cmd.Env = append(cmd.Env, "YEWEN_SKILL_DIR=")
 			}
 			out, err := cmd.CombinedOutput()
 			require.Error(t, err, "%s", command)
-			require.Contains(t, string(out), "WEKNORA_SKILL_DIR")
+			require.Contains(t, string(out), "YEWEN_SKILL_DIR")
 			require.NotContains(t, string(out), "tool-invoked",
 				"no package manager may run without a skill directory")
 		}
