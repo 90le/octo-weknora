@@ -53,7 +53,7 @@ func respond(c *gin.Context, data any, err error) {
 	case errors.Is(err, ErrInvalid), errors.Is(err, ErrClarify):
 		status = http.StatusBadRequest
 		message = err.Error()
-	case errors.Is(err, errRetestUnavailable), errors.Is(err, errReplySource):
+	case errors.Is(err, errRetestUnavailable), errors.Is(err, errReplySource), errors.Is(err, errRemediationChanged):
 		status, message = http.StatusConflict, err.Error()
 	case errors.Is(err, errRetestIncomplete):
 		status, message = http.StatusBadGateway, err.Error()
@@ -72,7 +72,7 @@ func respond(c *gin.Context, data any, err error) {
 func httpFilter(c *gin.Context) (IssueFilter, error) {
 	f := IssueFilter{ScopeID: c.Query("scope_id"), KnowledgeBaseID: c.Query("knowledge_base_id"), Kind: c.Query("kind"), Status: c.Query("status"), Keyword: c.Query("keyword")}
 	f.OwnerUID, f.Visibility = c.Query("owner_uid"), c.Query("visibility")
-	if !contains([]string{"", "active", "archive", "trash", "all"}, f.Visibility) || len(f.OwnerUID) > 128 {
+	if !contains([]string{"", "active", "mine", "archive", "trash", "all"}, f.Visibility) || len(f.OwnerUID) > 128 {
 		return f, ErrInvalid
 	}
 	var err error
@@ -126,6 +126,19 @@ func (h *Handler) GetIssue(c *gin.Context) {
 		return
 	}
 	evidence, err := h.service.issueEvidence(ctx, row)
+	if err == nil && evidence != nil && len(evidence.referenced) > 0 {
+		// Excerpts are resolved at read time against the current channel and library.
+		if _, scopeErr := h.service.retestAgent(ctx, row); scopeErr == nil {
+			for _, src := range evidence.referenced {
+				var item qualityExcerpt
+				item, err = h.service.qualitySource(ctx, row.TenantID, src)
+				if err != nil {
+					break
+				}
+				evidence.Materials = append(evidence.Materials, item)
+			}
+		}
+	}
 	respond(c, gin.H{"issue": row, "events": events, "evidence": evidence}, ignoreMissingEvidence(err))
 }
 
@@ -136,7 +149,15 @@ func (h *Handler) RetestIssue(c *gin.Context) {
 		respond(c, nil, err)
 		return
 	}
-	result, err := h.service.retestIssue(ctx, h.sessions, c.Param("id"))
+	var input struct {
+		Scenario string `json:"scenario"`
+		Revision int    `json:"revision"`
+	}
+	if c.Request.Body != nil && c.Request.ContentLength != 0 && c.ShouldBindJSON(&input) != nil {
+		respond(c, nil, ErrInvalid)
+		return
+	}
+	result, err := h.service.retestIssue(ctx, h.sessions, c.Param("id"), input.Scenario, input.Revision)
 	respond(c, result, err)
 }
 

@@ -14,9 +14,10 @@ const root='/api/v1/octo/business'
 export const issueQuery=(filter:IssueFilter)=>new URLSearchParams(Object.entries(filter).filter(([,v])=>v!==undefined&&v!=='').map(([k,v])=>[k,String(v)])).toString()
 export const listIssues=(filter:IssueFilter)=>get(`${root}/issues?${issueQuery(filter)}`) as unknown as Promise<Envelope<{items:OctoIssue[];total:number}>>
 export interface IssueEvent {actor_uid:string;actor_name:string;status:IssueStatus;note:string;created_at:string}
-export interface IssueEvidence {question?:string;question_message_id?:string;answer?:string;answer_message_id?:string}
+export interface IssueEvidence {question?:string;question_message_id?:string;answer?:string;answer_message_id?:string;materials?:{label:string;text?:string;status:string;path?:string;version?:string}[]}
 export interface IssueRetest {id:string;answer:string;model_id:string;sources:string[]}
 export interface IssueRetestRecord extends IssueRetest {
+  scenario?:string; question?:string; plan_revision?:number; document_id?:string; source_version?:string; document_cited?:boolean
   state:string;error_code:string;review_state:string;review_note:string;created_at:string;reviewed_at?:string
 }
 const issueRetestPath=(id:string)=>`${root}/issues/${encodeURIComponent(id)}/retests`
@@ -25,7 +26,13 @@ export const reviewIssueRetest=(id:string,run:string,state:string,note:string)=>
   post<Envelope<IssueRetestRecord>>(`${issueRetestPath(id)}/${encodeURIComponent(run)}/review`,{state,note})
 export const issueDetail=(id:string)=>get(`${root}/issues/${encodeURIComponent(id)}`) as unknown as Promise<Envelope<{issue:OctoIssue;events:IssueEvent[];evidence?:IssueEvidence|null}>>
 export const updateIssue=(id:string, data:{status:IssueStatus;owner_uid?:string;owner_name?:string;owner_contact_id?:string;note:string})=>patch(`${root}/issues/${encodeURIComponent(id)}`,data)
-export const retestIssue=(id:string)=>post<Envelope<IssueRetest>>(`${root}/issues/${encodeURIComponent(id)}/retest`, {}, { timeout:95000 })
+export const retestIssue=(id:string,scenario='original',revision=0)=>post<Envelope<IssueRetest>>(`${root}/issues/${encodeURIComponent(id)}/retest`, {scenario,revision}, { timeout:95000 })
+export interface RepairSource {document_id:string;version:string;path:string}
+export interface RepairPlan {cause:string;acceptance:string;paraphrase:string;counterexample:string;wait_for_update:boolean}
+export interface RepairView {revision:number;coordinator:string;state:string;plan:RepairPlan & {source?:RepairSource};published?:RepairSource}
+const repairPath=(id:string)=>`${root}/issues/${encodeURIComponent(id)}/remediation`
+export const issueRepair=(id:string)=>get<Envelope<RepairView>>(repairPath(id))
+export const saveIssueRepair=(id:string,plan:RepairPlan & {revision:number;document_id:string})=>put<Envelope<RepairView>>(repairPath(id),plan)
 export interface IssueReply {
   id:string;actor_uid:string;channel_id:string;scope_name:string;target:string;user_name:string;user_uid:string
   message_id:string;body:string;status:string;receipt:string;created_at:string

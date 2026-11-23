@@ -285,6 +285,9 @@ func (s *Service) issueQuery(ctx context.Context, p Principal, f IssueFilter) *g
 		q = q.Where("owner_uid = ?", f.OwnerUID)
 	}
 	switch f.Visibility {
+	case "mine":
+		q = q.Where("archive_state = '' AND status IN ?", []string{"open", "inprogress"}).
+			Where("id IN (?)", s.db.Model(&remediationRecord{}).Select("issue_id").Where("tenant_id = ? AND coordinator = ?", p.TenantID, p.UserID))
 	case "archive", "trash":
 		state := f.Visibility
 		if state == "archive" {
@@ -299,6 +302,17 @@ func (s *Service) issueQuery(ctx context.Context, p Principal, f IssueFilter) *g
 	}
 	if f.Keyword != "" {
 		q = q.Where("LOWER(title) LIKE ? OR LOWER(description) LIKE ?", "%"+strings.ToLower(f.Keyword)+"%", "%"+strings.ToLower(f.Keyword)+"%")
+	}
+	// SQLite stores timestamp offsets in text. A local timestamp and a UTC bound
+	// need chronological comparison for the operator's date filter and reports.
+	if s.db.Dialector.Name() == "sqlite" && (f.From != nil || f.To != nil) {
+		if f.From != nil {
+			q = q.Where("julianday(created_at) >= julianday(?)", *f.From)
+		}
+		if f.To != nil {
+			q = q.Where("julianday(created_at) < julianday(?)", *f.To)
+		}
+		return q
 	}
 	if f.From != nil {
 		q = q.Where("created_at >= ?", *f.From)
@@ -399,6 +413,11 @@ func (s *Service) UpdateIssue(ctx context.Context, id string, in IssueUpdate) (*
 			}
 			if existing != 0 {
 				return nil
+			}
+		}
+		if in.Status == "resolved" && row.Status != "resolved" {
+			if e := copyService.requireVerifiedRepair(ctx, &row); e != nil {
+				return e
 			}
 		}
 		if in.OwnerContactID != "" {

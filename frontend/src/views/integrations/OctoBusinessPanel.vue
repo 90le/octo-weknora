@@ -50,7 +50,7 @@
       </t-alert>
       <div class="issue-table-scroll">
         <t-table v-model:selected-row-keys="selectedKeys" class="issue-table" size="small" :data="issues" :columns="columns" row-key="id" table-layout="fixed"
-          :loading="loading" :empty="error ? '读取失败，不能视为没有问题' : '暂无符合条件的登记问题'">
+          :loading="loading" :empty="error ? '读取失败，不能视为没有问题' : visibility==='mine' ? '暂无符合条件的待办。可在「当前问题」中打开问题并认领修订任务。' : '暂无符合条件的登记问题'">
           <template #title="{ row }">
             <t-button variant="text" class="issue-title" :title="row.title" @click="openIssue(row.id)">{{ row.title }}</t-button>
             <div class="issue-type"><t-tag size="small" variant="light">{{ issueKindLabels[row.kind] || row.kind }}</t-tag></div>
@@ -157,7 +157,7 @@
     <t-drawer v-model:visible="detailVisible" attach="body" header="问题详情" size="min(760px, 100vw)" :footer="false" :close-btn="true" :close-on-esc-keydown="true">
       <t-loading :loading="detailLoading">
         <t-alert v-if="detailError" theme="error">{{ detailError }} <t-button v-if="detailID" variant="text" @click="openIssue(detailID)">重试</t-button></t-alert>
-        <div v-if="selected" class="issue-detail">
+        <div v-if="selected && detailVisible" class="issue-detail">
           <div class="detail-heading">
             <div class="row"><t-tag size="small" variant="light">{{ issueKindLabels[selected.kind] }}</t-tag><t-tag size="small" :theme="statusTheme(selected.status)">{{ issueStatusLabels[selected.status] }}</t-tag></div>
             <h3>{{ selected.title }}</h3>
@@ -189,10 +189,18 @@
               <OctoMarkdown :text="issueEvidence.question" empty="未保留可核对的原问题" />
               <h5>当时的 Bot 答复</h5>
               <OctoMarkdown :text="issueEvidence.answer" empty="未保留答复正文" />
+              <h5 v-if="issueEvidence.materials?.length">原答引用的资料</h5>
+              <details v-for="(material,index) in issueEvidence.materials" :key="index">
+                <summary>{{ material.path || material.label }} · {{ material.status==='current' ? '查看当前内容' : '当前不可查' }}</summary>
+                <p v-if="material.version" class="hint">资料版本 {{ material.version }}</p>
+                <OctoMarkdown v-if="material.text" :text="material.text" />
+              </details>
             </template>
             <p v-else class="hint">这条登记没有可追溯的原问与答复。</p>
           </section>
-          <OctoIssueRetests :key="selected.id" :issue-id="selected.id" :can-run="Boolean(issueEvidence?.question)" />
+          <OctoIssueRetests :key="selected.id" :issue-id="selected.id" :kb-id="selected.knowledge_base_id"
+            :editable="!selected.archive_state && ['open','inprogress'].includes(selected.status)"
+            :can-run="Boolean(issueEvidence?.question)" @repair-saved="loadIssues" />
           <OctoIssueReply :key="selected.id" :issue="selected" />
           <section v-if="!selected.archive_state" class="detail-section">
             <h4>更新处理</h4>
@@ -291,8 +299,9 @@ const columns = [
   { colKey: 'owner', title: '负责人', width: 108 },
   { colKey: 'created_at', title: '登记时间', width: 152 },
 ]
-const visibility = ref('active')
+const visibility = ref(props.view === 'issues' ? 'mine' : 'active')
 const visibilityOptions = [
+  { value:'mine', label:'待我处理' },
   { value:'active', label:'当前问题' },
   { value:'archive', label:'归档' },
   { value:'trash', label:'回收站' },
@@ -354,7 +363,7 @@ async function executeBatch(rows:OctoIssue[], action:string, status:string, cont
     const response = await batchIssues({targets:rows.map(({id,updated_at})=>({id,updated_at})), action, status, contact_id, note})
     if (context !== contextVersion) return
     const updated = response.data.filter(row => row.state === 'updated').length
-    const messages:Record<string,string> = {unavailable:'权限或资料变化', changed:'记录已更新', invalid:'操作无效', failed:'执行失败'}
+    const messages:Record<string,string> = {unavailable:'权限或资料变化', changed:'记录已更新', invalid:'操作无效', failed:'执行失败', verification_required:'请检查渠道授权、资料版本和三项复测结论'}
     const skipped = response.data.filter(row => row.state !== 'updated')
     batchResult.value = `成功 ${updated}/${rows.length}` + skipped.map(item =>
       ` · ${rows.find(row => row.id === item.id)?.title || item.id}（${messages[item.state] || item.state}）`,
@@ -507,7 +516,7 @@ async function saveIssue() {
     ])
     reportQuery.value = ''
     await MessagePlugin.success('处理记录已保存')
-  } catch { if (version === contextVersion) await MessagePlugin.error('保存失败，请检查权限后重试') }
+  } catch { if (version === contextVersion) await MessagePlugin.error(status === 'resolved' ? '请确认当前版本的原问、同义问法和反例均已核验通过，再刷新问题状态。' : '保存失败，请检查权限后重试') }
   finally { issueSaving.value = false }
 }
 

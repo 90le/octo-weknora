@@ -17,10 +17,12 @@ import (
 )
 
 type issueEvidence struct {
-	Question          string `json:"question,omitempty"`
-	QuestionMessageID string `json:"question_message_id,omitempty"`
-	Answer            string `json:"answer,omitempty"`
-	AnswerMessageID   string `json:"answer_message_id,omitempty"`
+	referenced        []QualitySource
+	Materials         []qualityExcerpt `json:"materials,omitempty"`
+	Question          string           `json:"question,omitempty"`
+	QuestionMessageID string           `json:"question_message_id,omitempty"`
+	Answer            string           `json:"answer,omitempty"`
+	AnswerMessageID   string           `json:"answer_message_id,omitempty"`
 }
 
 // The inbox has a durable native quote, including the Bot's own reply anchor.
@@ -54,6 +56,7 @@ func (s *Service) issueEvidence(ctx context.Context, issue *Issue) (*issueEviden
 			answer = limitQualityText(row.Reply, 8000)
 		}
 		return &issueEvidence{
+			referenced:        feedback.sourcesFor(issue.KnowledgeBaseID),
 			Question:          limitQualityText(strings.TrimSpace(question), 4000),
 			QuestionMessageID: feedback.Extra["octo_message_id"], Answer: answer,
 		}, nil
@@ -86,6 +89,7 @@ func (s *Service) issueEvidence(ctx context.Context, issue *Issue) (*issueEviden
 		return evidence, nil
 	}
 	evidence.Question, evidence.QuestionMessageID = question, originalID
+	evidence.referenced = src.sourcesFor(issue.KnowledgeBaseID)
 	if original.Reply != "" {
 		evidence.Answer = original.Reply
 	}
@@ -110,6 +114,26 @@ type evidenceMessage struct {
 		MessageID, SenderID, Content string
 		IsBotMessage                 bool
 	}
+}
+
+func (m evidenceMessage) sourcesFor(library string) []QualitySource {
+	var turn QualityTurn
+	if json.Unmarshal([]byte(m.Extra[QualityTurnKey]), &turn) != nil {
+		return nil
+	}
+	var result []QualitySource
+	seen := map[QualitySource]bool{}
+	for _, src := range turn.Sources {
+		if src.Library != library || seen[src] || (src.ChunkID == "") == (src.WikiSlug == "") {
+			continue
+		}
+		result = append(result, src)
+		seen[src] = true
+		if len(result) == 8 {
+			break
+		}
+	}
+	return result
 }
 
 func (r evidenceInbox) message(issue *Issue) *evidenceMessage {
@@ -164,10 +188,11 @@ func decimalNativeID(raw json.RawMessage) string {
 }
 
 type issueRetest struct {
-	ID      string   `json:"id"`
-	Answer  string   `json:"answer"`
-	ModelID string   `json:"model_id"`
-	Sources []string `json:"sources"`
+	citedDocuments []string
+	ID             string   `json:"id"`
+	Answer         string   `json:"answer"`
+	ModelID        string   `json:"model_id"`
+	Sources        []string `json:"sources"`
 }
 
 var (
@@ -211,7 +236,7 @@ func (s *Service) retestAgent(ctx context.Context, issue *Issue) (*types.CustomA
 }
 
 func (s *Service) retestIssue(
-	ctx context.Context, sessions interfaces.SessionService, id string,
+	ctx context.Context, sessions interfaces.SessionService, id, scenario string, revision int,
 ) (*issueRetest, error) {
 	p, issue, err := s.retestAdminIssue(ctx, id)
 	if err != nil {
@@ -228,11 +253,19 @@ func (s *Service) retestIssue(
 	if err != nil {
 		return nil, err
 	}
-	run, err := s.beginIssueRetest(ctx, p, issue, evidence.QuestionMessageID, time.Now().UTC())
+	run, err := s.prepareRun(ctx, issue, evidence.Question, scenario, revision)
+	if err != nil {
+		return nil, err
+	}
+	evidence.Question = run.Question
+	run, err = s.beginIssueRetest(ctx, p, issue, evidence.QuestionMessageID, time.Now().UTC(), run)
 	if err != nil {
 		return nil, err
 	}
 	result, executionErr := s.executeIssueRetest(ctx, sessions, issue, evidence, agent)
+	if executionErr == nil && run.PlanRevision > 0 {
+		executionErr = s.validateRunVersion(ctx, issue, run)
+	}
 	if err = s.finishIssueRetest(ctx, issue, run, result, executionErr); err != nil {
 		return nil, err
 	}
@@ -293,6 +326,9 @@ func (s *Service) executeIssueRetest(
 			result.Answer, result.ModelID = data.FinalAnswer, data.ModelID
 			for _, raw := range data.KnowledgeRefs {
 				ref, ok := raw.(*types.SearchResult)
+				if ok && ref != nil && ref.KnowledgeBaseID == issue.KnowledgeBaseID && ref.KnowledgeID != "" && !contains(result.citedDocuments, ref.KnowledgeID) {
+					result.citedDocuments = append(result.citedDocuments, ref.KnowledgeID)
+				}
 				if ok && ref != nil && ref.KnowledgeBaseID == issue.KnowledgeBaseID &&
 					ref.KnowledgeTitle != "" && !contains(result.Sources, ref.KnowledgeTitle) {
 					result.Sources = append(result.Sources, ref.KnowledgeTitle)

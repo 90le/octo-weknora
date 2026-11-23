@@ -39,6 +39,7 @@ func testService(t *testing.T) *Service {
 		"000053_octo_operations.up.sql",
 		"000054_octo_report_delivery_controls.up.sql",
 		"000055_octo_retest_history.up.sql",
+		"000057_octo_issue_remediation.up.sql",
 	}
 	for _, name := range fixtures {
 		migration, err = os.ReadFile("../../migrations/sqlite/" + name)

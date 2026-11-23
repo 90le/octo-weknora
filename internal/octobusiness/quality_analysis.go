@@ -16,10 +16,12 @@ import (
 )
 
 type qualityExcerpt struct {
-	ID     string `json:"id"`
-	Label  string `json:"label"`
-	Text   string `json:"text,omitempty"`
-	Status string `json:"status,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Version string `json:"version,omitempty"`
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Text    string `json:"text,omitempty"`
+	Status  string `json:"status,omitempty"`
 }
 
 type qualityFinding struct {
@@ -138,8 +140,8 @@ func (s *Service) qualitySource(ctx context.Context, tenant uint64, src QualityS
 		return item, nil
 	}
 	item := qualityExcerpt{Label: "文档分块 " + src.ChunkID, Status: "unavailable"}
-	var chunk struct{ Content, Title string }
-	err := s.readableQualityChunks(ctx, tenant).Select("c.content, k.title").
+	var chunk struct{ Content, Title, Path, Version string }
+	err := s.readableQualityChunks(ctx, tenant).Select("c.content, k.title, k.metadata->>'source_path' AS path, k.metadata->>'source_version' AS version").
 		Where("c.id = ? AND c.knowledge_base_id = ?", src.ChunkID, src.Library).
 		Take(&chunk).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -147,6 +149,7 @@ func (s *Service) qualitySource(ctx context.Context, tenant uint64, src QualityS
 	}
 	if err == nil {
 		item.Label, item.Status, item.Text = chunk.Title, "current", limitQualityText(chunk.Content, 2000)
+		item.Path, item.Version = chunk.Path, chunk.Version
 	}
 	return item, err
 }
@@ -156,6 +159,8 @@ func (s *Service) readableQualityChunks(ctx context.Context, tenant uint64) *gor
 		Joins("JOIN knowledges k ON k.id = c.knowledge_id AND k.tenant_id = c.tenant_id").
 		Where("c.tenant_id = ? AND k.knowledge_base_id = c.knowledge_base_id", tenant).
 		Where("k.deleted_at IS NULL AND c.deleted_at IS NULL").
+		Where("COALESCE(k.metadata->>'sync_target_external_id','') = ''").
+		Where("k.type <> ? OR k.metadata->>'status' = ?", types.KnowledgeTypeManual, types.ManualKnowledgeStatusPublish).
 		Where("c.is_enabled = ? AND k.enable_status = ? AND k.parse_status = ?",
 			true, "enabled", types.ParseStatusCompleted)
 }

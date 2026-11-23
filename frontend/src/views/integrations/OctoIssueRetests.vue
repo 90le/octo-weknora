@@ -1,10 +1,13 @@
 <template>
   <section class="retests">
+    <OctoIssueRepair :issue-id="issueId" :kb-id="kbId" :editable="editable"
+      @loaded="view => repair = view" @saved="emit('repair-saved')" />
     <div class="actions">
       <h4>复测历史</h4>
       <t-button variant="text" :loading="loading" @click="refresh">刷新</t-button>
-      <t-button v-if="canRun" variant="outline" :loading="running" :disabled="activeRun" @click="run">
-        复测原问题
+      <t-select v-if="repair?.revision && canRun" v-model="scenario" :options="scenarioOptions" aria-label="复测题目" style="width: 140px" />
+      <t-button v-if="canRun" variant="outline" :loading="running" :disabled="activeRun || !repair || !['unclaimed','ready'].includes(repair.state)" @click="run">
+        {{ repair?.revision ? '运行复测' : '复测原问题' }}
       </t-button>
     </div>
     <p v-if="canRun" class="hint">使用当前智能体和关联知识库。核验多轮问题时，请同时参考原会话。</p>
@@ -12,11 +15,13 @@
     <p v-if="!loading && !records.length && !error" class="hint">暂无复测记录</p>
     <details v-for="item in records" :key="item.id" :open="item.id === opened" @toggle="($event)=>toggle(item.id,$event)">
       <summary>
-        {{ new Date(item.created_at).toLocaleString() }} · {{ states[item.state] || item.state }}
+        {{ new Date(item.created_at).toLocaleString() }} · {{ scenarioNames[item.scenario || 'original'] }} · {{ states[item.state] || item.state }}
         <span v-if="item.state==='completed'"> · {{ decisions[item.review_state] || '待人工核验' }}</span>
       </summary>
       <p v-if="item.error_code" class="hint">{{ failures[item.error_code] || '运行失败，可重新复测。' }}</p>
       <template v-if="item.state==='completed'">
+        <p v-if="item.question"><strong>复测提问</strong> {{ item.question }}</p>
+        <p v-if="item.source_version" class="hint">资料版本 {{ item.source_version }} · {{ item.document_cited ? '答复已引用该版本' : '答复未返回该版本的文档引用' }}</p>
         <OctoMarkdown :text="item.answer" />
         <p v-if="item.model_id" class="hint">模型 {{ item.model_id }}</p>
         <p v-if="item.sources?.length" class="hint">查阅资料 {{ item.sources.join('、') }}</p>
@@ -41,10 +46,16 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { issueRetests, retestIssue, reviewIssueRetest, type IssueRetestRecord } from '@/api/octo-business'
+import { issueRetests, retestIssue, reviewIssueRetest, type IssueRetestRecord, type RepairView } from '@/api/octo-business'
+import OctoIssueRepair from './OctoIssueRepair.vue'
 import OctoMarkdown from './OctoMarkdown.vue'
 
-const props = defineProps<{issueId:string;canRun:boolean}>()
+const props = defineProps<{issueId:string;kbId:string;canRun:boolean;editable:boolean}>()
+const emit = defineEmits<{'repair-saved':[]}>()
+const repair = ref<RepairView | null>(null)
+const scenario = ref('original')
+const scenarioNames:Record<string,string> = {original:'原问题',paraphrase:'同义问法',counterexample:'条件反例'}
+const scenarioOptions = Object.entries(scenarioNames).map(([value,label])=>({value,label}))
 const records = ref<IssueRetestRecord[]>([])
 const loading = ref(false)
 const running = ref(false)
@@ -81,7 +92,7 @@ async function run() {
   if(running.value || activeRun.value) return
   running.value=true
   error.value=''
-  try { opened.value=(await retestIssue(props.issueId)).data.id }
+  try { opened.value=(await retestIssue(props.issueId,scenario.value,repair.value?.revision || 0)).data.id }
   catch { error.value='复测未完成。可刷新查看记录，或检查原问题、知识范围和模型。' }
   finally { await load(); running.value=false }
 }
