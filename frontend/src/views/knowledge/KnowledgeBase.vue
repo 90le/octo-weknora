@@ -2829,9 +2829,9 @@ const handleKBEditorSuccess = (kbIdValue: string) => {
     height: 32px;
     padding: 0 12px;
     border-radius: var(--app-radius-md);
-    background: var(--td-brand-color);
+    background: var(--app-brand-solid);
     color: var(--td-text-color-anti);
-    &:hover { background: var(--td-brand-color-hover); }
+    &:hover { background: var(--app-brand-solid-hover); }
   }
 }
 .doc-folder-path {

@@ -1,22 +1,40 @@
-:root:root,:root:root[theme-mode="light"]{    --app-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;    --app-font-family-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;    --brand-main: var(--td-brand-color-4);    --td-brand-color-light: var(--td-brand-color-1);    --td-brand-color-focus: color-mix(in srgb, var(--td-brand-color) 20%, transparent);    --td-brand-color-disabled: #8ce0af;    --td-brand-color-hover: var(--td-brand-color-3);    --td-brand-color: var(--td-brand-color-4);    --td-brand-color-active:var(--td-brand-color-5);    --td-brand-color-1: #e9f8ec;    --td-brand-color-2: #09f479;    --td-brand-color-3: #08dd6e;    --td-brand-color-4: #07c05f;    --td-brand-color-5: #06b04d;    --td-brand-color-6: #049b38;    --td-brand-color-7: #038626;    --td-brand-color-8: #027218;    --td-brand-color-9: #015e0d;     --td-brand-color-10: #004b05;    --td-warning-color-1: #fef3e6;--td-warning-color-2: #f9e0c7;--td-warning-color-3: #f7c797;--td-warning-color-4: #f2995f;--td-warning-color-5: #ed7b2f;--td-warning-color-6: #d35a21;--td-warning-color-7: #ba431b;--td-warning-color-8: #9e3610;--td-warning-color-9: #842b0b;--td-warning-color-10: #5a1907;--td-warning-color: var(--td-warning-color-5);--td-warning-color-hover: var(--td-warning-color-4);--td-warning-color-focus: var(--td-warning-color-2);--td-warning-color-active: var(--td-warning-color-6);--td-warning-color-disabled: var(--td-warning-color-3);--td-warning-color-light: var(--td-warning-color-1); --td-error-color-1: #fdecee;--td-error-color-2: #f9d7d9;--td-error-color-3: #f8b9be;--td-error-color-4: #f78d94;--td-error-color-5: #f36d78;--td-error-color-6: #e34d59;--td-error-color-7: #c9353f;--td-error-color-8: #b11f26;--td-error-color-9: #951114;--td-error-color-10: #680506;--td-error-color: var(--td-error-color-6);--td-error-color-hover: var(--td-error-color-5);--td-error-color-focus: var(--td-error-color-2);--td-error-color-active: var(--td-error-color-7);--td-error-color-disabled: var(--td-error-color-3);--td-error-color-light: var(--td-error-color-1); --td-success-color-1: #e8f8f2;--td-success-color-2: #bcebdc;--td-success-color-3: #85dbbe;--td-success-color-4: #48c79c;--td-success-color-5: #00a870;--td-success-color-6: #078d5c;--td-success-color-7: #067945;--td-success-color-8: #056334;--td-success-color-9: #044f2a;--td-success-color-10: #033017;--td-success-color: var(--td-success-color-5);--td-success-color-hover: var(--td-success-color-4);--td-success-color-focus: var(--td-success-color-2);--td-success-color-active: var(--td-success-color-6);--td-success-color-disabled: var(--td-success-color-3);--td-success-color-light: var(--td-success-color-1); --td-gray-color-1: #f3f3f3;--td-gray-color-2: #eee;--td-gray-color-3: #e7e7e7;--td-gray-color-4: #dcdcdc;--td-gray-color-5: #c5c5c5;--td-gray-color-6: #a6a6a6;--td-gray-color-7: #8b8b8b;--td-gray-color-8: #777;--td-gray-color-9: #5e5e5e;--td-gray-color-10: #4b4b4b;--td-gray-color-11: #383838;--td-gray-color-12: #2c2c2c;--td-gray-color-13: #242424;--td-gray-color-14: #181818;--td-bg-color-container: #fff;--td-bg-color-container-select: #fff;--td-bg-color-page: var(--td-gray-color-2);--td-bg-color-sidebar: #f9f9f9;--td-bg-color-settings-modal: #f9f9f9;--td-bg-color-container-hover: var(--td-gray-color-1);--td-bg-color-container-active: var(--td-gray-color-3);--td-bg-color-secondarycontainer: var(--td-gray-color-1);--td-bg-color-secondarycontainer-hover: var(--td-gray-color-2);--td-bg-color-secondarycontainer-active: var(--td-gray-color-4);--td-bg-color-component: var(--td-gray-color-3);--td-bg-color-component-hover: var(--td-gray-color-4);--td-bg-color-component-active: var(--td-gray-color-6);--td-bg-color-component-disabled: var(--td-gray-color-2);--td-component-stroke: var(--td-gray-color-3);--td-component-border: var(--td-gray-color-4); --td-font-white-1: #ffffff;--td-font-white-2: rgba(255, 255, 255, 0.55);--td-font-white-3: rgba(255, 255, 255, 0.35);--td-font-white-4: rgba(255, 255, 255, 0.22);--td-font-gray-1: rgba(0, 0, 0, 0.9);--td-font-gray-2: rgba(0, 0, 0, 0.6);--td-font-gray-3: rgba(0, 0, 0, 0.4);--td-font-gray-4: rgba(0, 0, 0, 0.26);--td-text-color-primary: var(--td-font-gray-1);--td-text-color-secondary: var(--td-font-gray-2);--td-text-color-placeholder: var(--td-font-gray-3);--td-text-color-disabled: var(--td-font-gray-4);--td-text-color-anti: #fff;--td-text-color-brand: var(--td-brand-color);--td-text-color-link: var(--td-brand-color);    /* 字体配置 */  --td-font-family: var(--app-font-family);  --td-font-family-medium: var(--app-font-family);  --td-font-family-mono: var(--app-font-family-mono);  --td-font-size-link-small: 12px;  --td-font-size-link-medium: 14px;  --td-font-size-link-large: 16px;  --td-font-size-mark-small: 12px;  --td-font-size-mark-medium: 14px;  --td-font-size-body-small: 12px;  --td-font-size-body-medium: 14px;  --td-font-size-body-large: 16px;  --td-font-size-title-small: 14px;  --td-font-size-title-medium: 16px;  --td-font-size-title-large: 20px;  --td-font-size-headline-small: 24px;  --td-font-size-headline-medium: 28px;  --td-font-size-headline-large: 36px;  --td-font-size-display-medium: 48px;  --td-font-size-display-large: 64px;  --td-line-height-common: 8px;  --td-line-height-link-small: calc(    var(--td-font-size-link-small) + var(--td-line-height-common)  );  --td-line-height-link-medium: calc(    var(--td-font-size-link-medium) + var(--td-line-height-common)  );  --td-line-height-link-large: calc(    var(--td-font-size-link-large) + var(--td-line-height-common)  );  --td-line-height-mark-small: calc(    var(--td-font-size-mark-small) + var(--td-line-height-common)  );  --td-line-height-mark-medium: calc(    var(--td-font-size-mark-medium) + var(--td-line-height-common)  );  --td-line-height-body-small: calc(    var(--td-font-size-body-small) + var(--td-line-height-common)  );  --td-line-height-body-medium: calc(    var(--td-font-size-body-medium) + var(--td-line-height-common)  );  --td-line-height-body-large: calc(    var(--td-font-size-body-large) + var(--td-line-height-common)  );  --td-line-height-title-small: calc(    var(--td-font-size-title-small) + var(--td-line-height-common)  );  --td-line-height-title-medium: calc(    var(--td-font-size-title-medium) + var(--td-line-height-common)  );  --td-line-height-title-large: calc(    var(--td-font-size-title-medium) + var(--td-line-height-common)  );  --td-line-height-headline-small: calc(    var(--td-font-size-headline-small) + var(--td-line-height-common)  );  --td-line-height-headline-medium: calc(    var(--td-font-size-headline-medium) + var(--td-line-height-common)  );  --td-line-height-headline-large: calc(    var(--td-font-size-headline-large) + var(--td-line-height-common)  );  --td-line-height-display-medium: calc(    var(--td-font-size-display-medium) + var(--td-line-height-common)  );  --td-line-height-display-large: calc(    var(--td-font-size-display-large) + var(--td-line-height-common)  );  --td-font-link-small: var(--td-font-size-link-small) /    var(--td-line-height-link-small) var(--td-font-family);  --td-font-link-medium: var(--td-font-size-link-medium) /    var(--td-line-height-link-medium) var(--td-font-family);  --td-font-link-large: var(--td-font-size-link-large) /    var(--td-line-height-link-large) var(--td-font-family);  --td-font-mark-small: 600 var(--td-font-size-mark-small) /    var(--td-line-height-mark-small) var(--td-font-family);  --td-font-mark-medium: 600 var(--td-font-size-mark-medium) /    var(--td-line-height-mark-medium) var(--td-font-family);  --td-font-body-small: var(--td-font-size-body-small) /    var(--td-line-height-body-small) var(--td-font-family);  --td-font-body-medium: var(--td-font-size-body-medium) /    var(--td-line-height-body-medium) var(--td-font-family);  --td-font-body-large: var(--td-font-size-body-large) /    var(--td-line-height-body-large) var(--td-font-family);  --td-font-title-small: var(--td-font-size-title-small) /    var(--td-line-height-title-small) var(--td-font-family);  --td-font-title-medium: var(--td-font-size-title-medium) /    var(--td-line-height-title-medium) var(--td-font-family);  --td-font-title-large: var(--td-font-size-title-large) /    var(--td-line-height-title-large) var(--td-font-family);  --td-font-headline-small: var(--td-font-size-headline-small) /    var(--td-line-height-headline-small) var(--td-font-family);  --td-font-headline-medium: var(--td-font-size-headline-medium) /    var(--td-line-height-headline-medium) var(--td-font-family);  --td-font-headline-large: var(--td-font-size-headline-large) /    var(--td-line-height-headline-large) var(--td-font-family);  --td-font-display-medium: var(--td-font-size-display-medium) /    var(--td-line-height-display-medium) var(--td-font-family);  --td-font-display-large: var(--td-font-size-display-large) /    var(--td-line-height-display-large) var(--td-font-family);  /* 字体颜色 */  --td-text-color-primary: var(--td-font-gray-1);  --td-text-color-secondary: var(--td-font-gray-2);  --td-text-color-placeholder: var(--td-font-gray-3);  --td-text-color-disabled: var(--td-font-gray-4);  --td-text-color-anti: #fff;  --td-text-color-brand: var(--td-brand-color);  --td-text-color-link: var(--td-brand-color);  /* end 字体配置 */        /* 圆角配置 */  --td-radius-small: 2px;  --td-radius-default: 3px;  --td-radius-medium: 6px;  --td-radius-large: 9px;  --td-radius-extraLarge: 12px;  --td-radius-round: 999px;  --td-radius-circle: 50%;  /* end 圆角配置 */    /* 阴影配置 */  --td-shadow-1: 0px 1px 10px rgba(0, 0, 0, 0.05),    0px 4px 5px rgba(0, 0, 0, 0.08), 0px 2px 4px -1px rgba(0, 0, 0, 0.12);  --td-shadow-2: 0px 3px 14px 2px rgba(0, 0, 0, 0.05),    0px 8px 10px 1px rgba(0, 0, 0, 0.06), 0px 5px 5px -3px rgba(0, 0, 0, 0.1);  --td-shadow-3: 0px 6px 30px 5px rgba(0, 0, 0, 0.05),    0px 16px 24px 2px rgba(0, 0, 0, 0.04), 0px 8px 10px -5px rgba(0, 0, 0, 0.08);  /* end 阴影配置 */    }
+:root:root,:root:root[theme-mode="light"]{    --app-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;    --app-font-family-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    --brand-main: var(--td-brand-color-4);
+    --td-brand-color-light: var(--td-brand-color-1);
+    --td-brand-color-focus: color-mix(in srgb, var(--td-brand-color) 20%, transparent);
+    --td-brand-color-disabled: #dbe5f4;
+    --td-brand-color-hover: var(--td-brand-color-3);
+    --td-brand-color: var(--td-brand-color-4);
+    --td-brand-color-active:var(--td-brand-color-5);
+    --td-brand-color-1: #eff6ff;
+    --td-brand-color-2: #dbeafe;
+    --td-brand-color-3: #2563eb;
+    --td-brand-color-4: #1d4ed8;
+    --td-brand-color-5: #1e40af;
+    --td-brand-color-6: #1e3a8a;
+    --td-brand-color-7: #172554;
+    --td-brand-color-8: #14204a;
+    --td-brand-color-9: #111c3b;
+    --td-brand-color-10: #0f172a;
+    --td-warning-color-1: #fef3e6;--td-warning-color-2: #f9e0c7;--td-warning-color-3: #f7c797;--td-warning-color-4: #f2995f;--td-warning-color-5: #ed7b2f;--td-warning-color-6: #d35a21;--td-warning-color-7: #ba431b;--td-warning-color-8: #9e3610;--td-warning-color-9: #842b0b;--td-warning-color-10: #5a1907;--td-warning-color: var(--td-warning-color-5);--td-warning-color-hover: var(--td-warning-color-4);--td-warning-color-focus: var(--td-warning-color-2);--td-warning-color-active: var(--td-warning-color-6);--td-warning-color-disabled: var(--td-warning-color-3);--td-warning-color-light: var(--td-warning-color-1); --td-error-color-1: #fdecee;--td-error-color-2: #f9d7d9;--td-error-color-3: #f8b9be;--td-error-color-4: #f78d94;--td-error-color-5: #f36d78;--td-error-color-6: #e34d59;--td-error-color-7: #c9353f;--td-error-color-8: #b11f26;--td-error-color-9: #951114;--td-error-color-10: #680506;--td-error-color: var(--td-error-color-6);--td-error-color-hover: var(--td-error-color-5);--td-error-color-focus: var(--td-error-color-2);--td-error-color-active: var(--td-error-color-7);--td-error-color-disabled: var(--td-error-color-3);--td-error-color-light: var(--td-error-color-1); --td-success-color-1: #e8f8f2;--td-success-color-2: #bcebdc;--td-success-color-3: #85dbbe;--td-success-color-4: #48c79c;--td-success-color-5: #00a870;--td-success-color-6: #078d5c;--td-success-color-7: #067945;--td-success-color-8: #056334;--td-success-color-9: #044f2a;--td-success-color-10: #033017;--td-success-color: var(--td-success-color-5);--td-success-color-hover: var(--td-success-color-4);--td-success-color-focus: var(--td-success-color-2);--td-success-color-active: var(--td-success-color-6);--td-success-color-disabled: var(--td-success-color-3);--td-success-color-light: var(--td-success-color-1); --td-gray-color-1: #f3f3f3;--td-gray-color-2: #eee;--td-gray-color-3: #e7e7e7;--td-gray-color-4: #dcdcdc;--td-gray-color-5: #c5c5c5;--td-gray-color-6: #a6a6a6;--td-gray-color-7: #8b8b8b;--td-gray-color-8: #777;--td-gray-color-9: #5e5e5e;--td-gray-color-10: #4b4b4b;--td-gray-color-11: #383838;--td-gray-color-12: #2c2c2c;--td-gray-color-13: #242424;--td-gray-color-14: #181818;--td-bg-color-container: #fff;--td-bg-color-container-select: #fff;--td-bg-color-page: #f8fafc;--td-bg-color-sidebar: #f1f5f9;--td-bg-color-settings-modal: #f8fafc;--td-bg-color-container-hover: #f1f5f9;--td-bg-color-container-active: var(--td-gray-color-3);--td-bg-color-secondarycontainer: #f1f5f9;--td-bg-color-secondarycontainer-hover: var(--td-gray-color-2);--td-bg-color-secondarycontainer-active: var(--td-gray-color-4);--td-bg-color-component: var(--td-gray-color-3);--td-bg-color-component-hover: var(--td-gray-color-4);--td-bg-color-component-active: var(--td-gray-color-6);--td-bg-color-component-disabled: var(--td-gray-color-2);--td-component-stroke: #e2e8f0;--td-component-border: #cbd5e1; --td-font-white-1: #ffffff;--td-font-white-2: rgba(255, 255, 255, 0.55);--td-font-white-3: rgba(255, 255, 255, 0.35);--td-font-white-4: rgba(255, 255, 255, 0.22);--td-font-gray-1: rgba(0, 0, 0, 0.9);--td-font-gray-2: rgba(0, 0, 0, 0.6);--td-font-gray-3: rgba(0, 0, 0, 0.4);--td-font-gray-4: rgba(0, 0, 0, 0.26);--td-text-color-primary: #0f172a;--td-text-color-secondary: #475569;--td-text-color-placeholder: #64748b;--td-text-color-disabled: #64748b;--td-text-color-anti: #fff;--td-text-color-brand: var(--td-brand-color);--td-text-color-link: var(--td-brand-color);    /* 字体配置 */  --td-font-family: var(--app-font-family);  --td-font-family-medium: var(--app-font-family);  --td-font-family-mono: var(--app-font-family-mono);  --td-font-size-link-small: 12px;  --td-font-size-link-medium: 14px;  --td-font-size-link-large: 16px;  --td-font-size-mark-small: 12px;  --td-font-size-mark-medium: 14px;  --td-font-size-body-small: 12px;  --td-font-size-body-medium: 14px;  --td-font-size-body-large: 16px;  --td-font-size-title-small: 14px;  --td-font-size-title-medium: 16px;  --td-font-size-title-large: 20px;  --td-font-size-headline-small: 24px;  --td-font-size-headline-medium: 28px;  --td-font-size-headline-large: 36px;  --td-font-size-display-medium: 48px;  --td-font-size-display-large: 64px;  --td-line-height-common: 8px;  --td-line-height-link-small: calc(    var(--td-font-size-link-small) + var(--td-line-height-common)  );  --td-line-height-link-medium: calc(    var(--td-font-size-link-medium) + var(--td-line-height-common)  );  --td-line-height-link-large: calc(    var(--td-font-size-link-large) + var(--td-line-height-common)  );  --td-line-height-mark-small: calc(    var(--td-font-size-mark-small) + var(--td-line-height-common)  );  --td-line-height-mark-medium: calc(    var(--td-font-size-mark-medium) + var(--td-line-height-common)  );  --td-line-height-body-small: calc(    var(--td-font-size-body-small) + var(--td-line-height-common)  );  --td-line-height-body-medium: calc(    var(--td-font-size-body-medium) + var(--td-line-height-common)  );  --td-line-height-body-large: calc(    var(--td-font-size-body-large) + var(--td-line-height-common)  );  --td-line-height-title-small: calc(    var(--td-font-size-title-small) + var(--td-line-height-common)  );  --td-line-height-title-medium: calc(    var(--td-font-size-title-medium) + var(--td-line-height-common)  );  --td-line-height-title-large: calc(    var(--td-font-size-title-medium) + var(--td-line-height-common)  );  --td-line-height-headline-small: calc(    var(--td-font-size-headline-small) + var(--td-line-height-common)  );  --td-line-height-headline-medium: calc(    var(--td-font-size-headline-medium) + var(--td-line-height-common)  );  --td-line-height-headline-large: calc(    var(--td-font-size-headline-large) + var(--td-line-height-common)  );  --td-line-height-display-medium: calc(    var(--td-font-size-display-medium) + var(--td-line-height-common)  );  --td-line-height-display-large: calc(    var(--td-font-size-display-large) + var(--td-line-height-common)  );  --td-font-link-small: var(--td-font-size-link-small) /    var(--td-line-height-link-small) var(--td-font-family);  --td-font-link-medium: var(--td-font-size-link-medium) /    var(--td-line-height-link-medium) var(--td-font-family);  --td-font-link-large: var(--td-font-size-link-large) /    var(--td-line-height-link-large) var(--td-font-family);  --td-font-mark-small: 600 var(--td-font-size-mark-small) /    var(--td-line-height-mark-small) var(--td-font-family);  --td-font-mark-medium: 600 var(--td-font-size-mark-medium) /    var(--td-line-height-mark-medium) var(--td-font-family);  --td-font-body-small: var(--td-font-size-body-small) /    var(--td-line-height-body-small) var(--td-font-family);  --td-font-body-medium: var(--td-font-size-body-medium) /    var(--td-line-height-body-medium) var(--td-font-family);  --td-font-body-large: var(--td-font-size-body-large) /    var(--td-line-height-body-large) var(--td-font-family);  --td-font-title-small: var(--td-font-size-title-small) /    var(--td-line-height-title-small) var(--td-font-family);  --td-font-title-medium: var(--td-font-size-title-medium) /    var(--td-line-height-title-medium) var(--td-font-family);  --td-font-title-large: var(--td-font-size-title-large) /    var(--td-line-height-title-large) var(--td-font-family);  --td-font-headline-small: var(--td-font-size-headline-small) /    var(--td-line-height-headline-small) var(--td-font-family);  --td-font-headline-medium: var(--td-font-size-headline-medium) /    var(--td-line-height-headline-medium) var(--td-font-family);  --td-font-headline-large: var(--td-font-size-headline-large) /    var(--td-line-height-headline-large) var(--td-font-family);  --td-font-display-medium: var(--td-font-size-display-medium) /    var(--td-line-height-display-medium) var(--td-font-family);  --td-font-display-large: var(--td-font-size-display-large) /    var(--td-line-height-display-large) var(--td-font-family);  /* 字体颜色 */  --td-text-color-primary: var(--td-font-gray-1);  --td-text-color-secondary: var(--td-font-gray-2);  --td-text-color-placeholder: var(--td-font-gray-3);  --td-text-color-disabled: var(--td-font-gray-4);  --td-text-color-anti: #fff;  --td-text-color-brand: var(--td-brand-color);  --td-text-color-link: var(--td-brand-color);  /* end 字体配置 */        /* 圆角配置 */  --td-radius-small: 2px;  --td-radius-default: 3px;  --td-radius-medium: 6px;  --td-radius-large: 9px;  --td-radius-extraLarge: 12px;  --td-radius-round: 999px;  --td-radius-circle: 50%;  /* end 圆角配置 */    /* 阴影配置 */  --td-shadow-1: 0px 1px 10px rgba(0, 0, 0, 0.05),    0px 4px 5px rgba(0, 0, 0, 0.08), 0px 2px 4px -1px rgba(0, 0, 0, 0.12);  --td-shadow-2: 0px 3px 14px 2px rgba(0, 0, 0, 0.05),    0px 8px 10px 1px rgba(0, 0, 0, 0.06), 0px 5px 5px -3px rgba(0, 0, 0, 0.1);  --td-shadow-3: 0px 6px 30px 5px rgba(0, 0, 0, 0.05),    0px 16px 24px 2px rgba(0, 0, 0, 0.04), 0px 8px 10px -5px rgba(0, 0, 0, 0.08);  /* end 阴影配置 */    }
 :root:root[theme-mode="dark"]{
     --brand-main: var(--td-brand-color-6);
     --td-brand-color-light: var(--td-brand-color-1);
     --td-brand-color-focus: color-mix(in srgb, var(--td-brand-color) 28%, transparent);
-    --td-brand-color-disabled: #1a6b3b;
+    --td-brand-color-disabled: #33435c;
     --td-brand-color-hover: var(--td-brand-color-5);
     --td-brand-color: var(--td-brand-color-6);
     --td-brand-color-active:var(--td-brand-color-7);
-    --td-brand-color-1: #06b04d20;
-    --td-brand-color-2: #015e0d;
-    --td-brand-color-3: #027218;
-    --td-brand-color-4: #038626;
-    --td-brand-color-5: #049b38;
-    --td-brand-color-6: #06b04d;
-    --td-brand-color-7: #07c05f;
-    --td-brand-color-8: #08dd6e;
-    --td-brand-color-9: #09f479; 
-    --td-brand-color-10: #a6fccf;
+    --td-brand-color-1: #172d4c;
+    --td-brand-color-2: #1e3a5f;
+    --td-brand-color-3: #315687;
+    --td-brand-color-4: #487ebd;
+    --td-brand-color-5: #bfdbfe;
+    --td-brand-color-6: #93c5fd;
+    --td-brand-color-7: #60a5fa;
+    --td-brand-color-8: #a8cefd;
+    --td-brand-color-9: #dbeafe;
+    --td-brand-color-10: #eff6ff;
     --td-warning-color-1: #4f2a1d;
 --td-warning-color-2: #582f21;
 --td-warning-color-3: #733c23;
@@ -58,22 +76,22 @@
 --td-gray-color-12: #2c2c2c;
 --td-gray-color-13: #242424;
 --td-gray-color-14: #181818;
---td-bg-color-page: var(--td-gray-color-14);
---td-bg-color-sidebar: #181818;
---td-bg-color-settings-modal: #181818;
---td-bg-color-container: var(--td-gray-color-13);
---td-bg-color-container-hover: var(--td-gray-color-12);
---td-bg-color-container-active: var(--td-gray-color-10);
---td-bg-color-container-select: var(--td-gray-color-9);
---td-bg-color-secondarycontainer: var(--td-gray-color-12);
---td-bg-color-secondarycontainer-hover: var(--td-gray-color-11);
---td-bg-color-secondarycontainer-active: var(--td-gray-color-9);
---td-bg-color-component: var(--td-gray-color-11);
---td-bg-color-component-hover: var(--td-gray-color-10);
---td-bg-color-component-active: var(--td-gray-color-9);
---td-bg-color-component-disabled: var(--td-gray-color-12);
---td-component-stroke: var(--td-gray-color-11);
---td-component-border: var(--td-gray-color-9); --td-font-white-1: rgba(255, 255, 255, 0.9);
+--td-bg-color-page: #0f172a;
+--td-bg-color-sidebar: #101b2d;
+--td-bg-color-settings-modal: #0f172a;
+--td-bg-color-container: #172235;
+--td-bg-color-container-hover: #1f3049;
+--td-bg-color-container-active: #2c415e;
+--td-bg-color-container-select: #263a55;
+--td-bg-color-secondarycontainer: #1c2b41;
+--td-bg-color-secondarycontainer-hover: #253754;
+--td-bg-color-secondarycontainer-active: #2c415e;
+--td-bg-color-component: #27374f;
+--td-bg-color-component-hover: #334763;
+--td-bg-color-component-active: #3c5270;
+--td-bg-color-component-disabled: #24334b;
+--td-component-stroke: #2c3a52;
+--td-component-border: #43536e; --td-font-white-1: rgba(255, 255, 255, 0.9);
 --td-font-white-2: rgba(255, 255, 255, 0.55);
 --td-font-white-3: rgba(255, 255, 255, 0.35);
 --td-font-white-4: rgba(255, 255, 255, 0.22);
@@ -81,10 +99,10 @@
 --td-font-gray-2: rgba(255, 255, 255, 0.55);
 --td-font-gray-3: rgba(255, 255, 255, 0.35);
 --td-font-gray-4: rgba(255, 255, 255, 0.22);
---td-text-color-primary: var(--td-font-white-1);
---td-text-color-secondary: var(--td-font-white-2);
---td-text-color-placeholder: var(--td-font-white-3);
---td-text-color-disabled: var(--td-font-white-4);
+--td-text-color-primary: #e6edf7;
+--td-text-color-secondary: #b1c0d6;
+--td-text-color-placeholder: #8da0bd;
+--td-text-color-disabled: #8da0bd;
 --td-text-color-anti: #fff;
 --td-text-color-brand: var(--td-brand-color);
 --td-text-color-link: var(--td-brand-color);
@@ -117,7 +135,40 @@
     opacity: 0.9;
 }
 
-/* 全局 t-radio-button outline 选中态：填充品牌色（绿底白字） */
+/* Solid actions sit behind white text. Dark-mode links use a lighter blue. */
+:root {
+    --app-brand-default: #1d4ed8;
+    --app-brand-solid: var(--app-brand-default);
+    --app-brand-solid-hover: #1e40af;
+    --app-brand-solid-active: #1e3a8a;
+    --app-brand-on-disabled: #475569;
+    --app-login-gradient: linear-gradient(225deg, #0f172a 0%, #173264 40%, #1d4ed8 100%);
+}
+:root[theme-mode="dark"] {
+    --app-brand-solid: #2563eb;
+    --app-brand-solid-hover: #1d4ed8;
+    --app-brand-solid-active: #1e40af;
+    --app-brand-on-disabled: #b1c0d6;
+    --app-login-gradient: linear-gradient(225deg, #0b1221 0%, #132749 54%, #1d3e7d 100%);
+}
+
+.t-button.t-button--variant-base.t-button--theme-primary,
+.t-switch.t-is-checked {
+    --td-brand-color: var(--app-brand-solid);
+    --td-brand-color-hover: var(--app-brand-solid-hover);
+    --td-brand-color-active: var(--app-brand-solid-active);
+}
+.t-button.t-button--variant-base.t-button--theme-primary.t-is-disabled {
+    --td-text-color-anti: var(--app-brand-on-disabled);
+}
+
+.t-button.t-button--theme-primary:focus-visible,
+.t-switch:focus-visible {
+    outline: 2px solid var(--app-focus-border);
+    outline-offset: 2px;
+}
+
+/* 全局 t-radio-button outline 选中态 */
 .t-radio-group .t-radio-button {
     border-color: var(--td-component-stroke);
     transition: all 0.2s ease;
@@ -129,15 +180,15 @@
 .t-radio-group .t-radio-button.t-is-checked,
 .t-radio-group .t-radio-button.t-is-checked .t-radio-button__label,
 .t-radio-group .t-radio-button.t-is-checked > span {
-    background: var(--td-brand-color);
-    border-color: var(--td-brand-color);
+    background: var(--app-brand-solid);
+    border-color: var(--app-brand-solid);
     color: var(--td-text-color-anti);
 }
 .t-radio-group .t-radio-button.t-is-checked:hover:not(.t-is-disabled),
 .t-radio-group .t-radio-button.t-is-checked:hover:not(.t-is-disabled) .t-radio-button__label,
 .t-radio-group .t-radio-button.t-is-checked:hover:not(.t-is-disabled) > span {
-    background: var(--td-brand-color-active);
-    border-color: var(--td-brand-color-active);
+    background: var(--app-brand-solid-active);
+    border-color: var(--app-brand-solid-active);
     color: var(--td-text-color-anti);
 }
 .t-radio-group .t-radio-button.t-is-disabled {
@@ -157,7 +208,7 @@
 .t-radio-group .t-radio-button.t-is-disabled.t-is-checked > span {
     background: var(--td-brand-color-disabled) !important;
     border-color: var(--td-brand-color-disabled) !important;
-    color: var(--td-text-color-anti) !important;
+    color: var(--app-brand-on-disabled) !important;
 }
 
 /* 全局文档/外链样式：品牌色文字 + link 图标，hover 加下划线 */
@@ -192,7 +243,7 @@ select:-webkit-autofill {
     transition: background-color 5000s ease-in-out 0s;
 }
 
-/* 全局：输入聚焦保留细绿描边（同 hover），去掉粗外发光环 */
+/* 全局：输入聚焦保留品牌色描边（同 hover），去掉粗外发光环 */
 .t-input:focus:not(.t-is-disabled):not(.t-is-error):not(.t-is-warning):not(.t-is-success),
 .t-input--focused:not(.t-is-error):not(.t-is-warning):not(.t-is-success),
 .t-textarea__inner:focus:not(.t-is-disabled):not(.t-is-error):not(.t-is-warning):not(.t-is-success),
@@ -203,8 +254,8 @@ select:-webkit-autofill {
 
 /* Keep selection surfaces quiet; small indicators retain the brand accent. */
 :root {
-    --app-selection-bg: color-mix(in srgb, var(--td-text-color-primary) 4%, var(--td-bg-color-container));
-    --app-selection-text: var(--td-text-color-primary);
+    --app-selection-bg: var(--td-brand-color-light);
+    --app-selection-text: var(--td-text-color-brand);
     --app-selection-border: color-mix(in srgb, var(--td-brand-color) 30%, var(--td-component-stroke));
     --app-focus-border: var(--td-brand-color);
 }
