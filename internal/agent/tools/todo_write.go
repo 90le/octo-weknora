@@ -43,8 +43,8 @@ NOTE that you should not use this tool if there is only one trivial task to do. 
 
 <example>
 User: Compare the onboarding requirements for the retail and automotive teams.
-Assistant: I'll help you compare the two teams’ onboarding requirements. Let me create a retrieval plan to gather information about each framework.
-*Creates a todo list with retrieval tasks: 1) Find the shared onboarding policy, 2) Retrieve the retail team checklist, 3) Retrieve the automotive team checklist, 4) Retrieve the source passages for each requirement*
+Assistant: I'll gather the shared policy and each team's onboarding checklist.
+*Creates a todo list: find the shared policy, retrieve each team's checklist, and locate the supporting passages.*
 *Note: Summary and synthesis will be handled by thinking tool after all retrieval tasks are completed*
 Assistant: Let me start by searching the knowledge base for the shared onboarding policy.
 
