@@ -5,12 +5,14 @@ on:
     branches: [main]
     paths:
       - "frontend/**"
+      - "LICENSE"
       - "scripts/build_frontend_dist.sh"
       - "scripts/test_embed_nginx.py"
       - ".github/workflows/frontend.yml"
   pull_request:
     paths:
       - "frontend/**"
+      - "LICENSE"
       - "scripts/build_frontend_dist.sh"
       - "scripts/test_embed_nginx.py"
       - ".github/workflows/frontend.yml"
@@ -71,5 +73,5 @@ jobs:
             -t weknora-ui:ci \
             frontend/
 
-      - name: Test embed and MCP proxy routes
-        run: python3 scripts/test_embed_nginx.py weknora-ui:ci
+      - name: Test embed, MCP proxy routes, and packaged notices
+        run: python3 scripts/test_embed_nginx.py weknora-ui:ci --verify-license

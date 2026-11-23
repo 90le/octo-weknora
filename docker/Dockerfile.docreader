@@ -1,6 +1,8 @@
 # =========================
 # 构建阶段（轻量化：仅文档解析 + 图片提取，无 OCR/VLM）
 # =========================
+ARG DOCREADER_PROTOC_VERSION=3.19.4
+ARG GRPC_HEALTH_PROBE_VERSION=v0.4.24
 FROM python:3.10.18-bookworm AS builder
 
 ARG APT_MIRROR=""
@@ -28,6 +30,7 @@ RUN apt-get update && apt-get install -y \
 
 # 检查是否存在本地protoc安装包，如果存在则离线安装，否则在线安装
 ARG TARGETARCH
+ARG DOCREADER_PROTOC_VERSION
 COPY packages/ /app/packages/
 RUN ls -lah /app/packages/
 # 兼容 BuildKit 和传统构建：如果 TARGETARCH 为空，使用 uname 检测
@@ -48,7 +51,7 @@ RUN if [ -z "$TARGETARCH" ]; then \
         "arm") PROTOC_ARCH="arm" ;; \
         *) echo "Unsupported architecture for protoc: $TARGETARCH" && exit 1 ;; \
     esac && \
-    PROTOC_PACKAGE="protoc-3.19.4-linux-${PROTOC_ARCH}.zip" && \
+    PROTOC_PACKAGE="protoc-${DOCREADER_PROTOC_VERSION}-linux-${PROTOC_ARCH}.zip" && \
     if [ -f "/app/packages/${PROTOC_PACKAGE}" ]; then \
         echo "发现本地protoc安装包，将进行离线安装"; \
         cp /app/packages/${PROTOC_PACKAGE} /app/ && \
@@ -57,7 +60,7 @@ RUN if [ -z "$TARGETARCH" ]; then \
         rm -f /app/${PROTOC_PACKAGE}; \
     else \
         echo "未发现本地protoc安装包，将进行在线安装"; \
-        curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v3.19.4/${PROTOC_PACKAGE} && \
+        curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v${DOCREADER_PROTOC_VERSION}/${PROTOC_PACKAGE} && \
         unzip -o ${PROTOC_PACKAGE} -d /usr/local && \
         chmod +x /usr/local/bin/protoc && \
         rm -f ${PROTOC_PACKAGE}; \
@@ -67,6 +70,10 @@ RUN if [ -z "$TARGETARCH" ]; then \
 COPY docreader/pyproject.toml docreader/uv.lock ./
 RUN pip install uv --break-system-packages && \
     python -m uv sync --locked --no-dev
+
+# 保存对应源码。普通应用代码变更可以复用该层。
+COPY docreader/scripts/fetch_python_license_sources.py /tmp/fetch_python_license_sources.py
+RUN /usr/local/bin/python /tmp/fetch_python_license_sources.py uv.lock /python-license-sources
 
 # 复制源代码和生成脚本
 COPY docreader docreader
@@ -113,6 +120,7 @@ RUN apt-get update && apt-get install -y \
 
 # 安装 grpc_health_probe
 ARG TARGETARCH
+ARG GRPC_HEALTH_PROBE_VERSION
 # 兼容 BuildKit 和传统构建：如果 TARGETARCH 为空，使用 uname 检测
 RUN if [ -z "$TARGETARCH" ]; then \
         case $(uname -m) in \
@@ -125,7 +133,6 @@ RUN if [ -z "$TARGETARCH" ]; then \
     else \
         echo "[BuildKit] 架构: $TARGETARCH"; \
     fi && \
-    GRPC_HEALTH_PROBE_VERSION=v0.4.24 && \
     case $TARGETARCH in \
         "amd64") ARCH="amd64" ;; \
         "arm64") ARCH="arm64" ;; \
@@ -156,6 +163,16 @@ RUN python -m playwright install-deps webkit
 
 COPY docreader/pyproject.toml docreader/uv.lock ./
 COPY --from=builder /app/docreader docreader
+
+ARG DOCREADER_PROTOC_VERSION
+COPY LICENSE ./LICENSE
+COPY docreader/THIRD_PARTY_NOTICES.md ./THIRD_PARTY_NOTICES.md
+COPY docreader/licenses/ ./licenses/
+COPY --from=builder /python-license-sources/ ./licenses/sources/
+RUN test -s LICENSE && test -s THIRD_PARTY_NOTICES.md && \
+    test -s "licenses/grpc-health-probe-${GRPC_HEALTH_PROBE_VERSION}/LICENSE" && \
+    test -s "licenses/protoc-${DOCREADER_PROTOC_VERSION}/LICENSE" && \
+    python -m docreader.scripts.write_python_license_index licenses/python-packages.json licenses/sources
 
 # 创建共享临时图片目录
 RUN mkdir -p /tmp/docreader

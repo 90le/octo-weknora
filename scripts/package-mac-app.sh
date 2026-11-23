@@ -91,7 +91,11 @@ if [ -d config ]; then
 fi
 if [ -d web ]; then
     cp -r web "${RESOURCES_DIR}/"
+    if [ -f "${RESOURCES_DIR}/web/index.html" ]; then
+        node frontend/scripts/check-dist-licenses.mjs "${RESOURCES_DIR}/web"
+    fi
 fi
+bash ./scripts/check-license-bundle.sh --bundle "${RESOURCES_DIR}"
 
 # 注意：Wails build 生成的二进制文件工作目录默认是 app 的 Contents/MacOS 目录
 # 后续可能需要调整代码中对配置文件的路径读取逻辑。

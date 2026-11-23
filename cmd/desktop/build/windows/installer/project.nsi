@@ -9,8 +9,10 @@ Unicode true
 ## If they are defined here, "wails_tools.nsh" will not touch them. This allows to use this project.nsi manually
 ## from outside of Wails for debugging and development of the installer.
 ##
-## For development first make a wails nsis build to populate the "wails_tools.nsh":
-## > wails build --target windows/amd64 --nsis
+## Before packaging, stage the license bundle from the repository root using Git Bash:
+## > bash scripts/copy-licenses.sh cmd/desktop/build/windows/installer/.license-bundle
+## Then from cmd/desktop, build the installer and populate "wails_tools.nsh":
+## > wails build -platform windows/amd64 -nsis
 ## Then you can call makensis on this file with specifying the path to your binary:
 ## For a AMD64 only installer:
 ## > makensis -DARG_WAILS_AMD64_BINARY=..\..\bin\app.exe
@@ -90,11 +92,10 @@ Section
 
     !insertmacro wails.files
 
-    ; Paths are relative to cmd/desktop/build/windows/installer.
-    File "..\..\..\..\..\LICENSE"
-    File "..\..\..\..\..\THIRD_PARTY_NOTICES.md"
+    File ".license-bundle\LICENSE"
+    File ".license-bundle\THIRD_PARTY_NOTICES.md"
     SetOutPath "$INSTDIR\licenses"
-    File /r "..\..\..\..\..\licenses\*"
+    File /r ".license-bundle\licenses\*"
     SetOutPath $INSTDIR
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"

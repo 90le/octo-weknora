@@ -9,6 +9,13 @@ Container distributions include the complete bundle in `/app`;
 macOS applications include them in `Contents/Resources`.
 Windows installers place them next to the installed executable.
 
+Browser builds publish the WeKnora and bundled dependency notices at
+`/assets/weknora-licenses.txt` and `/assets/npm-licenses.md`. The former
+includes the corresponding source location for the version of noVNC in the
+browser bundle. The standalone widget retains the WeKnora notice in its script.
+The DocReader image carries its own [third-party notices](docreader/THIRD_PARTY_NOTICES.md)
+and an index of the notices present in its installed Python dependencies.
+
 ## Go MySQL Driver
 
 - Component: `github.com/go-sql-driver/mysql`, version `v1.10.0`.
@@ -77,3 +84,9 @@ through Go's configured `GOPROXY` and module cache, verifies their SHA-256 hashe
 and includes them in the destination bundle. Offline packaging requires those
 module archives to be present in the Go module cache beforehand. To verify a
 packaged source directory, run `scripts/check-license-bundle.sh PATH/TO/licenses/sources`.
+To verify an unpacked backend or desktop artifact, run
+`scripts/check-license-bundle.sh --bundle PATH/TO/PACKAGE`. Verify browser
+artifacts with `node frontend/scripts/check-dist-licenses.mjs PATH/TO/WEB`.
+When introducing or updating a distributed dependency, check the license of
+the actual version shipped, update the applicable notices and corresponding
+source information, and verify the resulting artifact.
