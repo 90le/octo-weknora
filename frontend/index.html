@@ -17,11 +17,13 @@
 <body>
 <script>
 (function(){
-  var t=localStorage.getItem('WeKnora_theme')||'light';
+  var userId='anon';
+  try { userId=JSON.parse(localStorage.getItem('weknora_user'))?.id||'anon'; } catch (_) {}
+  var t=localStorage.getItem('WeKnora_'+userId+'_theme')||localStorage.getItem('WeKnora_theme')||'light';
   if(t==='system')t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';
   document.documentElement.setAttribute('theme-mode',t);
-  /* 与 theme.css 中 --td-bg-color-page 一致，避免样式加载后整页背景从 #fff 跳到 #eee 触发重绘闪动 */
-  var bg=t==='dark'?'#181818':'#eee';
+  /* 与 theme.css 中 --td-bg-color-page 一致，避免样式加载后整页背景与初始背景不一致 触发重绘闪动 */
+  var bg=t==='dark'?'#0f172a':'#f8fafc';
   document.documentElement.style.background=bg;
   document.documentElement.style.minHeight='100%';
   document.documentElement.style.colorScheme=t==='dark'?'dark':'light';
@@ -32,10 +34,10 @@
     if(w){
       if(t==='dark'){
         if(w.WindowSetDarkTheme)w.WindowSetDarkTheme();
-        if(w.WindowSetBackgroundColour)w.WindowSetBackgroundColour(24,24,24,255);
+        if(w.WindowSetBackgroundColour)w.WindowSetBackgroundColour(15,23,42,255);
       }else{
         if(w.WindowSetLightTheme)w.WindowSetLightTheme();
-        if(w.WindowSetBackgroundColour)w.WindowSetBackgroundColour(238,238,238,255);
+        if(w.WindowSetBackgroundColour)w.WindowSetBackgroundColour(248,250,252,255);
       }
     }
   }catch(_){}
@@ -66,9 +68,7 @@
 <div id="app"></div>
 <script>
 (function(){
-  var t=localStorage.getItem('WeKnora_theme')||'light';
-  if(t==='system')t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';
-  var bg=t==='dark'?'#181818':'#eee';
+  var bg=document.documentElement.style.background;
   var el=document.getElementById('app');
   if(el){ el.style.background=bg; el.style.minHeight='100%'; }
 })();

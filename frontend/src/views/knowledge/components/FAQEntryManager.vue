@@ -4004,7 +4004,7 @@ watch(() => entries.value.map(e => ({
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, var(--td-brand-color) 0%, var(--td-brand-color-active) 100%);
+  background: linear-gradient(135deg, var(--app-brand-solid) 0%, var(--app-brand-solid-active) 100%);
   color: var(--td-text-color-anti);
   border-radius: var(--app-radius-xs);
   font-family: var(--app-font-family);

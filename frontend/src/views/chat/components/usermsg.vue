@@ -271,7 +271,7 @@ const closePreImg = () => {
     gap: 4px;
     flex: 1 0 0;
     border-radius: var(--app-radius-md);
-    background: var(--td-bg-color-secondarycontainer);
+    background: var(--td-brand-color-light);
     margin-left: auto;
     color: var(--td-text-color-primary);
     font-size: var(--app-text-xl);
@@ -391,12 +391,6 @@ const closePreImg = () => {
     }
 }
 
-html[theme-mode="dark"] {
-    .user_msg {
-        background: var(--td-bg-color-secondarycontainer);
-        color: var(--td-text-color-primary);
-    }
-}
 </style>
 
 <style scoped>

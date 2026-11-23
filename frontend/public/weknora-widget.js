@@ -30,7 +30,7 @@
   var EMBED_SOURCE = 'weknora-embed';
   var POSITIONS = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
   var DEFAULT_POSITION = 'bottom-right';
-  var DEFAULT_COLOR = '#07C05F';
+  var DEFAULT_COLOR = '#1D4ED8';
   var DEFAULT_TITLE = 'AI Assistant';
   var DEFAULT_WIDTH = 400;
   var DEFAULT_HEIGHT = 600;

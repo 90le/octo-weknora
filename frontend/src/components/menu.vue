@@ -87,9 +87,8 @@
                         <div class="menu_item-box">
                             <div class="menu_icon" :class="`menu_icon--${item.icon}`">
                                 <t-icon v-if="item.icon === 'channels' || item.icon === 'issues'" :name="item.icon === 'channels' ? 'chat-message' : 'task'" size="20px" />
-                                <img v-else class="icon"
-                                    :src="getImgSrc(item.icon == 'zhishiku' ? knowledgeIcon : item.icon == 'agent' ? agentIcon : item.icon == 'artifact' ? artifactIcon : item.icon == 'toolbox' ? toolboxIcon : item.icon == 'organization' ? organizationIcon : item.icon == 'logout' ? logoutIcon : item.icon == 'setting' ? settingIcon : prefixIcon)"
-                                    alt="">
+                                <span v-else class="icon menu-icon-mask" aria-hidden="true"
+                                    :style="{ maskImage: `url(${JSON.stringify(getMenuMask(item.icon))})` }" />
                             </div>
                             <template v-if="!uiStore.sidebarCollapsed">
                                 <span class="menu_title" :title="item.title">{{ item.title }}</span>
@@ -1133,6 +1132,18 @@ let artifactIcon = ref('artifact.svg');
 let toolboxIcon = ref('toolbox.svg');
 let organizationIcon = ref('organization.svg');
 let pathPrefix = ref(route.name)
+const getMenuMask = (icon: string) => {
+    const icons: Record<string, string> = {
+        zhishiku: knowledgeIcon.value,
+        agent: agentIcon.value,
+        artifact: artifactIcon.value,
+        toolbox: toolboxIcon.value,
+        organization: organizationIcon.value,
+        logout: logoutIcon.value,
+        setting: settingIcon.value,
+    };
+    return getImgSrc(icons[icon] ?? prefixIcon.value);
+};
 const getIcon = (path: string) => {
     // 根据当前路由状态更新所有图标
     const kbActiveState = getIconActiveState('knowledge-bases');
@@ -1468,7 +1479,7 @@ const resizeSidebar = (delta: number, keyboard: boolean) => {
 
     .menu_item_active {
         border-radius: var(--app-radius-xs);
-        background: var(--td-bg-color-secondarycontainer) !important;
+        background: var(--app-selection-bg) !important;
 
         .menu_icon,
         .menu_title {
@@ -1476,8 +1487,12 @@ const resizeSidebar = (delta: number, keyboard: boolean) => {
         }
     }
 
-    .menu_item_c_active {
+    .menu_item:focus-visible {
+        outline: 2px solid var(--app-focus-border);
+        outline-offset: -2px;
+    }
 
+    .menu_item_c_active {
         .menu_icon,
         .menu_title {
             color: var(--td-text-color-primary);
@@ -1526,6 +1541,13 @@ const resizeSidebar = (delta: number, keyboard: boolean) => {
             width: 18px;
             height: 18px;
             overflow: hidden;
+        }
+
+        .menu-icon-mask {
+            background: currentColor;
+            mask-position: center;
+            mask-repeat: no-repeat;
+            mask-size: contain;
         }
 
         // 图形几乎占满画布的图标缩小显示，否则会比其他图标大一圈
@@ -2027,12 +2049,6 @@ html[theme-mode="dark"] .aside_box .menu_item:hover .menu_icon img.icon {
 // menu_item_c_active: text is primary, so icon should match
 html[theme-mode="dark"] .aside_box .menu_item_c_active .menu_icon img.icon {
     opacity: 0.9;
-}
-
-// Active (green) icons should not be inverted
-html[theme-mode="dark"] .aside_box .menu_item_active .menu_icon img.icon {
-    filter: none;
-    opacity: 1;
 }
 
 // 下拉菜单样式已统一至 @/assets/dropdown-menu.less
