@@ -611,7 +611,7 @@ func TestBuildInstallPromptAsksForADeclarationWithoutValues(t *testing.T) {
 	require.Contains(t, prompt, `{"env":[]}`)
 	require.Contains(t, prompt, "Never write any value",
 		"a value the model invents would be stored as the workspace credential")
-	require.Contains(t, prompt, "WEKNORA_API_KEY",
+	require.Contains(t, prompt, "Declare every other runtime setting or credential the skill actually reads.",
 		"the installer must be told credential names are declarable, or it writes {\"env\":[]}")
 	require.Contains(t, prompt, "On-demand / optional extras MUST be installed now")
 	require.Contains(t, prompt, "uv venv --seed")
