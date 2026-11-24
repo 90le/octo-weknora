@@ -23,13 +23,13 @@ type Service struct {
 	knowledge interfaces.KnowledgeService
 	// Management validates and executes additional native operations (e.g. KB
 	// creation/bindings). It must authorize on both preview and confirmation.
-	Management          ManagementExecutor
-	ReportPrincipal     func(context.Context, ReportSchedule) (context.Context, error)
-	ReportDelivery      func(context.Context, ReportSchedule, *Report, *ReportArtifact) error
-	ManualReplyDelivery func(context.Context, ManualReplyTarget, string, string) (string, error)
-	ManualReplyCheck    func(context.Context, ManualReplyTarget) error
-	reportCron          *cron.Cron
-	reportModels        qualityModelResolver
+	Management               ManagementExecutor
+	ReportPrincipal          func(context.Context, ReportSchedule) (context.Context, error)
+	ReportDelivery           func(context.Context, ReportSchedule, *Report, *ReportArtifact) error
+	ManualReplyDelivery      func(context.Context, ManualReplyTarget, string, string) (string, error)
+	ManualReplyRecipientName func(context.Context, ManualReplyTarget) (string, error)
+	reportCron               *cron.Cron
+	reportModels             qualityModelResolver
 }
 
 func NewService(db *gorm.DB, kb interfaces.KnowledgeBaseService, knowledge interfaces.KnowledgeService) *Service {

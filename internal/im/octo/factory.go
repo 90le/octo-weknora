@@ -152,13 +152,7 @@ func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint6
 				AllowSandboxSkills:  p.Tools.Skills,
 				Revision:            fmt.Sprint(channel.ID, channel.AgentID, connection.UpdatedAt),
 			}
-			var profile struct {
-				UID  string `json:"uid"`
-				Name string `json:"name"`
-			}
-			if a.api.request(ctx, http.MethodGet, "/v1/bot/user/info?uid="+url.QueryEscape(msg.UserID), nil, &profile) == nil && profile.UID == msg.UserID {
-				result.SenderName = safeDisplayName(profile.Name)
-			}
+			result.SenderName = a.profileDisplayName(ctx, msg.UserID)
 			return result, nil
 		}
 		kind := byte(2)
@@ -275,6 +269,18 @@ func scopedRuntimePolicy(db *gorm.DB, a *Adapter, channelID string, tenant uint6
 		}
 		return out, nil
 	}
+}
+
+func (a *Adapter) profileDisplayName(ctx context.Context, uid string) string {
+	var profile struct {
+		UID  string `json:"uid"`
+		Name string `json:"name"`
+	}
+	path := "/v1/bot/user/info?uid=" + url.QueryEscape(uid)
+	if a.api.request(ctx, http.MethodGet, path, nil, &profile) != nil || profile.UID != uid {
+		return ""
+	}
+	return safeDisplayName(profile.Name)
 }
 
 func flag(value json.RawMessage) bool { return string(value) == "1" || string(value) == "true" }

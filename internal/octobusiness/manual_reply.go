@@ -132,8 +132,9 @@ func (h *Handler) PreviewIssueReply(c *gin.Context) {
 		respond(c, nil, err)
 		return
 	}
-	if h.service.ManualReplyCheck != nil {
-		if err := h.service.ManualReplyCheck(ctx, target); err != nil {
+	if h.service.ManualReplyRecipientName != nil {
+		msg.UserName, err = h.service.ManualReplyRecipientName(ctx, target)
+		if err != nil {
 			respond(c, nil, errReplySource)
 			return
 		}
@@ -182,8 +183,9 @@ func (s *Service) sendIssueReply(ctx context.Context, issueID, id string) (*manu
 	if time.Since(reply.CreatedAt) > 15*time.Minute || s.ManualReplyDelivery == nil {
 		return nil, ErrConflict
 	}
-	target, _, err := s.manualReplyTarget(ctx, issue, reply.Target)
-	if err != nil || target.SourceDigest != reply.Signature {
+	target, source, err := s.manualReplyTarget(ctx, issue, reply.Target)
+	if err != nil || target.SourceDigest != reply.Signature ||
+		source.UserID != reply.UserUID || source.Extra["octo_message_id"] != reply.MessageID {
 		return nil, errReplySource
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
