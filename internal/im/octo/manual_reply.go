@@ -34,10 +34,13 @@ func (a *Adapter) DeliverManualReply(
 	return wire.ReadID(response.ID), err
 }
 
-// CheckManualReply checks live authorization without sending anything.
-func (a *Adapter) CheckManualReply(ctx context.Context, target octobusiness.ManualReplyTarget) error {
-	_, _, _, err := a.checkManualReplyTarget(ctx, target)
-	return err
+// ManualReplyRecipientName resolves the display name of the authorized original sender.
+func (a *Adapter) ManualReplyRecipientName(ctx context.Context, target octobusiness.ManualReplyTarget) (string, error) {
+	in, _, _, err := a.checkManualReplyTarget(ctx, target)
+	if err != nil {
+		return "", err
+	}
+	return in.UserName, nil
 }
 
 func (a *Adapter) checkManualReplyTarget(
@@ -53,6 +56,15 @@ func (a *Adapter) checkManualReplyTarget(
 		octobusiness.ManualSourceDigest(row.Input, row.Authority) != target.SourceDigest ||
 		json.Unmarshal([]byte(row.Input), &in) != nil || in.UserID == "" ||
 		in.Extra["octo_card_event_key"] != "" || !wire.DecimalID(in.Extra["octo_message_id"]) {
+		return nil, 0, "", octobusiness.ErrDenied
+	}
+	// A manual reply must quote the exact native message selected in preview.
+	// A missing or damaged snapshot must not turn it into an unquoted mention.
+	var original struct {
+		Type int `json:"type"`
+	}
+	if target.InboxID != "octo:"+a.uid+":"+in.Extra["octo_message_id"] ||
+		json.Unmarshal([]byte(in.Extra["octo_original_payload"]), &original) != nil || original.Type <= 0 {
 		return nil, 0, "", octobusiness.ErrDenied
 	}
 	kind, err := strconv.Atoi(in.Extra["octo_channel_type"])
@@ -73,6 +85,15 @@ func (a *Adapter) checkManualReplyTarget(
 	if err != nil || scope == nil || scope.AccountID != target.AccountID || scope.ScopeID != target.ScopeID ||
 		!slices.Contains(scope.KnowledgeBaseIDs, target.LibraryID) {
 		return nil, 0, "", octobusiness.ErrDenied
+	}
+	// The retained input can predate nickname resolution. The current scope
+	// belongs to this sender; some group rosters supply only a UID.
+	name := scope.SenderName
+	if !target.IsDirect && (name == "" || name == in.UserID) {
+		name = a.profileDisplayName(ctx, in.UserID)
+	}
+	if name != "" && name != in.UserID {
+		in.UserName = name
 	}
 	return &in, kind, channel, nil
 }
