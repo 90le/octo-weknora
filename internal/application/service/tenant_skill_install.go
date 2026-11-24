@@ -1971,9 +1971,8 @@ Hard requirements:
   a value you invent would be stored as this workspace's real credential. If one environment
   variable is required, set required to true; if it is optional, set required to false. If the
   skill needs no environment variables, write {"env":[]}.
-  Do not declare WEKNORA_SKILL_DIR, WEKNORA_SKILL_OUTPUT_DIR, WEKNORA_SKILL_HISTORY_ROOT or
-  WEKNORA_SESSION_INPUT_DIR: the sandbox injects those. Other WEKNORA_* names the skill reads
-  (WEKNORA_API_KEY, WEKNORA_BASE_URL, WEKNORA_HOST, WEKNORA_TOKEN, WEKNORA_KB_ID) MUST be declared.
+  Omit the skill, input, and artifact directory variables supplied by the sandbox.
+  Declare every other runtime setting or credential the skill actually reads.
 
 On-demand / optional extras MUST be installed now. Every chat session starts
 from the image this install produces, and whatever a session installs dies with

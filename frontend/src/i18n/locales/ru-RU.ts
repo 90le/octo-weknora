@@ -70,7 +70,7 @@ export default {
     workspace: 'Current workspace: {name}',
     workflow: 'Source space setup steps',
     discover: 'Discover existing mounts',
-    discoverHint: 'This only checks directories already exposed to WeKnora. Registration does not mount disks, grant folders, create data sources or sync files.',
+    discoverHint: 'This only checks directories already exposed to Yewen. Registration does not mount disks, grant folders, create data sources or sync files.',
     stepDiscover: '1. Discover existing mounts',
     stepAuthorize: '2. Grant existing directories',
     stepSource: '3. Choose a knowledge source',
@@ -745,7 +745,7 @@ export default {
     filterByAgentWithName: 'Фильтр по агенту: {name}',
     filterAllAgents: 'Все агенты',
     claw: {
-      title: 'WeKnora Skill',
+      title: 'Навык для работы с базой знаний',
       subtitle: 'Импорт документов и гибридный поиск (вектор + ключевые слова) через REST API 业问 — загрузки, URL, Markdown и поиск.',
       capabilitiesTitle: 'Возможности Skill',
       stepsTitle: 'Шаги настройки',
@@ -755,7 +755,7 @@ export default {
       copyCmdSuccess: 'Команда установки скопирована',
       ecosystemNote: 'Skill размещён на ClawHub ({\'@\'}lyingbug/weknora). Полная документация API — на странице ClawHub.',
       installCta: 'Открыть ClawHub',
-      installCtaHint: 'Установка WeKnora Skill · откроется в новой вкладке',
+      installCtaHint: 'Установка Навык для работы с базой знаний · откроется в новой вкладке',
       hubMeta: 'ClawHub · {\'@\'}lyingbug/weknora · MIT-0',
       steps: {
         verify: {
@@ -2446,8 +2446,8 @@ export default {
           desc: 'Конвертер Microsoft MarkItDown (PDF/Office/HTML и др.)'
         },
         weknoracloud: {
-          name: 'WeKnora Cloud',
-          desc: 'Парсинг документов через WeKnora Cloud'
+          name: 'Облачные модели и парсинг',
+          desc: 'Парсинг документов через Облачные модели и парсинг'
         },
         paddleocr_vl_cloud: {
           name: 'PaddleOCR-VL Cloud',
@@ -6494,7 +6494,7 @@ export default {
     title: 'Ключи песочницы',
     host: {
       title: 'Переменные среды',
-      description: 'Личные ключи для навыков на этом компьютере, а не системные или деплой-настройки WeKnora.',
+      description: 'Личные ключи для навыков на этом компьютере, а не системные или деплой-настройки Yewen.',
       helpAria: 'Справка по переменным среды',
       introRuntimeBody: 'Подставляются, когда навык выполняется на этом компьютере. Значение можно передать и прямо в диалоге. После сохранения открытый текст больше не показывается.',
       loadFailed: 'Не удалось загрузить переменные среды.',
@@ -6503,7 +6503,7 @@ export default {
       nameInvalid: 'Это имя нельзя использовать. Зарезервированные имена (например PATH или начинающиеся с WEKNORA_) отклоняются.',
       deleteConfirm: 'Удалить {name}? Дальнейшие запуски на этом компьютере больше не будут его получать.'
     },
-    description: 'Личные ключи для навыков и песочниц, а не системные или деплой-настройки WeKnora.',
+    description: 'Личные ключи для навыков и песочниц, а не системные или деплой-настройки Yewen.',
     helpAria: 'Справка по ключам песочницы',
     introPersonalTitle: 'Только ваши',
     introPersonalBody: 'Подставляются только в ваши диалоги и запуски. Другие участники их не видят, и их значения не заменяют ваши.',
@@ -6887,7 +6887,7 @@ export default {
       cubeApiKeyOptional: 'Optional — leave empty for an unauthenticated self-hosted CubeSandbox',
       cubeApiKeyWhere: 'Как включить аутентификацию в собственном кластере',
       cubeDnsServers: 'DNS-серверы',
-      cubeDnsServersHelp: 'Необязательно. IP nameserver, которые записываются в стандартный шаблон WeKnora. Пустое значение оставляет значение кластера по умолчанию (обычно 119.29.29.29). Если UDP/53 до публичных резолверов недоступен, укажите достижимые адреса из /etc/resolv.conf хоста Cube, исключая 10/8, 172.16/12 и 192.168/16. Чтобы изменение вступило в силу, на карточке шаблона нажмите «Пересобрать».',
+      cubeDnsServersHelp: 'Необязательно. IP nameserver, которые записываются в стандартный шаблон Yewen. Пустое значение оставляет значение кластера по умолчанию (обычно 119.29.29.29). Если UDP/53 до публичных резолверов недоступен, укажите достижимые адреса из /etc/resolv.conf хоста Cube, исключая 10/8, 172.16/12 и 192.168/16. Чтобы изменение вступило в силу, на карточке шаблона нажмите «Пересобрать».',
       cubeDnsServersPlaceholder: 'например 8.8.8.8, Enter чтобы добавить',
       e2bApiKeyHelp: 'Создайте ключ на странице API Keys в консоли E2B; обычно он начинается с e2b_.',
       e2bApiKeyWhere: 'Получить API-ключ в консоли E2B',
@@ -7372,24 +7372,24 @@ export default {
       paddleocrVlCloudTokenPlaceholder: 'Токен PaddleOCR-VL AI Studio'
     },
     weknoraCloud: {
-      title: 'WeKnora Cloud · Внешний сервис',
-      description: 'Настройте учётные данные APPID и APPSECRET для WeKnora Cloud. Данные используются для модельных сервисов и движка парсинга документов.',
+      title: 'Облачные модели и парсинг · Внешний сервис',
+      description: 'Настройте учётные данные APPID и APPSECRET для Облачные модели и парсинг. Данные используются для модельных сервисов и движка парсинга документов.',
       viewDocs: 'Документация',
       unconfigured: 'Учётные данные не настроены. Заполните APPID и APPSECRET.',
       configured: 'Учётные данные настроены, статус в норме.',
-      expired: 'Учётные данные WeKnora Cloud истекли',
+      expired: 'Учётные данные Облачные модели и парсинг истекли',
       expiredDefault: 'Ключ шифрования изменился после перезапуска. Сохранённые данные не могут быть расшифрованы. Введите данные заново.',
       reconfigure: 'Перенастроить',
       appIdLabel: 'APPID',
-      appIdDesc: 'ID приложения WeKnora Cloud',
+      appIdDesc: 'ID приложения Облачные модели и парсинг',
       appIdPlaceholder: 'Введите APPID',
       appSecretLabel: 'APPSECRET',
-      appSecretDesc: 'Секрет приложения WeKnora Cloud',
+      appSecretDesc: 'Секрет приложения Облачные модели и парсинг',
       appSecretPlaceholder: 'Введите APPSECRET',
       saveHint: 'Данные будут проверены и зашифрованы перед сохранением.',
       saveBtn: 'Сохранить',
       usageTitle: 'Инструкция',
-      usageSteps: '1. Сохраните APPID и APPSECRET\n2. Добавьте chat, embedding, rerank и vlm в разделе «Облачные модели» ниже\n3. Парсинг: Настройки БЗ → Движок парсинга → WeKnora Cloud',
+      usageSteps: '1. Сохраните APPID и APPSECRET\n2. Добавьте chat, embedding, rerank и vlm в разделе «Облачные модели» ниже\n3. Парсинг: Настройки БЗ → Движок парсинга → Облачные модели и парсинг',
       fillRequired: 'Заполните APPID и APPSECRET',
       saveSuccess: 'Учётные данные сохранены',
       saveFailed: 'Не удалось сохранить данные',
@@ -7412,7 +7412,7 @@ export default {
       },
       modelsSection: {
         title: 'Облачные модели',
-        descReady: 'Зарегистрируйте четыре стандартные модели WeKnora Cloud для чата, поиска, реранкинга и зрения.',
+        descReady: 'Зарегистрируйте четыре стандартные модели Облачные модели и парсинг для чата, поиска, реранкинга и зрения.',
         descPending: 'Сначала сохраните учётные данные выше, затем добавьте модели здесь.',
         statusAdded: 'Добавлена',
         statusPending: 'Нужны учётные данные',

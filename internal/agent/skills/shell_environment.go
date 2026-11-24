@@ -32,7 +32,8 @@ func (m *Manager) PrepareShellEnvironment(ctx context.Context, sessionID, skillN
 		runtimeEnv[k] = v
 	}
 	applySkillNodePath(runtimeEnv, dir)
-	runtimeEnv[skillDirEnvVar] = dir
+	runtimeEnv[sandbox.SkillDirEnv] = dir
+	runtimeEnv[sandbox.LegacySkillDirEnv] = dir
 	outputDir, inputDir := ArtifactOutputDir(), sandbox.SessionInputRoot
 	if root, ok := m.hostWorkspaceRoot(ctx, sessionID); ok {
 		// Host has no collected output tree or attachment directory yet: point

@@ -53,6 +53,10 @@ func (s *sessionService) KnowledgeQA(
 		defer releaseTurn()
 	}
 
+	if answer, ok := productIdentityReply(ctx, req); ok {
+		return emitProductIdentityReply(ctx, req, eventBus, answer, false)
+	}
+
 	// Span the request setup (KB / model resolution, search target building,
 	// agent override application). This covers the visible gap between trace
 	// start and the first stage observation in the Langfuse timeline.

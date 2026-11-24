@@ -142,14 +142,14 @@ The sandbox belongs to this session alone; nothing here runs on the host.
 - skill_name selects a listed skill for this call. Installed skills use their Python virtualenv and Node modules;
   host resources are staged automatically and use the system runtime until a local .venv is created.
   Scoped credentials apply to both. Example: skill_name="pdf", command="python3 report.py".
-  Run bundled scripts via "$WEKNORA_SKILL_DIR/scripts/...". Omit skill_name for system commands.
+  Run bundled scripts via "$YEWEN_SKILL_DIR/scripts/...". Omit skill_name for system commands.
 - /workspace/input contains user attachments: preserve originals. /workspace/output is the only directory collected
   for download, so it takes finished deliverables only; keep scratch and intermediate files elsewhere under /workspace.
   apt-get is available when the sandbox network policy allows it; permanent dependencies belong in the skill installer.
 - Install extras with skill_name set and the default work_dir:
   ` + "`" + skillPythonPackageInstallCommand + "`" + ` (no pip needed), or
   ` + "`" + skillNodePackageInstallCommand + "`" + `.
-  If .venv is absent, create it with python3 -m venv --without-pip "${WEKNORA_SKILL_DIR:?}/.venv".
+  If .venv is absent, create it with python3 -m venv --without-pip "${YEWEN_SKILL_DIR:?}/.venv".
   Without uv, run the venv Python with -m ensurepip --upgrade before -m pip install.
   Changes live and die with this session.
 - Non-zero exit_code is a command result: inspect stderr before deciding whether a corrected call is useful. Transport failures/timeouts are tool failures. Changing tools does not change permissions; do not repeat a denied operation through another tool.

@@ -61,7 +61,8 @@ func TestInstallManagerRunsInBoundVersionDir(t *testing.T) {
 	require.Equal(t, filepath.Join(dir, ".weknora", "cache", "uv"), runner.req.Env["UV_CACHE_DIR"])
 	require.Equal(t, filepath.Join(dir, ".weknora", "cache", "pip"), runner.req.Env["PIP_CACHE_DIR"])
 	require.Equal(t, filepath.Join(dir, ".weknora", "cache", "npm"), runner.req.Env["npm_config_cache"])
-	require.Equal(t, dir, runner.req.Env["WEKNORA_SKILL_DIR"])
+	require.Equal(t, dir, runner.req.Env[sandbox.LegacySkillDirEnv])
+	require.Equal(t, dir, runner.req.Env[sandbox.SkillDirEnv])
 	require.Equal(t, "1", runner.req.Env["X"])
 
 	release()

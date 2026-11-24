@@ -74,7 +74,8 @@ func TestShellStagesHostResourcesOncePerSession(t *testing.T) {
 	command := `python3 "$WEKNORA_SKILL_DIR/scripts/run.py"`
 	_, env, err := mgr.PrepareShellEnvironment(context.Background(), "session-1", "host-skill", command, nil)
 	require.NoError(t, err)
-	dir := env[skillDirEnvVar]
+	dir := env[sandbox.SkillDirEnv]
+	require.Equal(t, dir, env[sandbox.LegacySkillDirEnv])
 	require.True(t, strings.HasPrefix(dir, "/workspace/.skills/host-skill/"), dir)
 	require.Equal(t, []byte{0, 255, 1}, store.files["session-1:"+path.Join(dir, "asset.bin")])
 	require.NotEmpty(t, store.files["session-1:"+path.Join(dir, "scripts/run.py")])
@@ -95,7 +96,7 @@ func TestShellStagesHostResourcesOncePerSession(t *testing.T) {
 	_, env, err = mgr.PrepareShellEnvironment(context.Background(), "session-1", "host-skill", command, nil)
 	require.NoError(t, err)
 	require.Equal(t, 3*writes, store.writes, "a removed staged directory must be prepared again")
-	store.files["session-1:"+path.Join(env[skillDirEnvVar], "SKILL.md")] = []byte("mutated")
+	store.files["session-1:"+path.Join(env[sandbox.SkillDirEnv], "SKILL.md")] = []byte("mutated")
 	_, _, err = mgr.PrepareShellEnvironment(context.Background(), "session-1", "host-skill", command, nil)
 	require.NoError(t, err)
 	require.Equal(t, 4*writes, store.writes, "a mutated staged manifest must be prepared again")
@@ -113,7 +114,7 @@ func TestShellStagingFailureDoesNotPublishReadyEnvironment(t *testing.T) {
 	store.err = nil
 	_, env, err = mgr.PrepareShellEnvironment(context.Background(), "session", "host-skill", "true", nil)
 	require.NoError(t, err)
-	require.NotEmpty(t, env[skillDirEnvVar])
+	require.NotEmpty(t, env[sandbox.SkillDirEnv])
 }
 
 func TestStrictStagedSkillRejectsChangedScripts(t *testing.T) {
@@ -126,7 +127,7 @@ func TestStrictStagedSkillRejectsChangedScripts(t *testing.T) {
 	require.NoError(t, mgr.Initialize(context.Background()))
 	_, env, err := mgr.PrepareShellEnvironment(context.Background(), "session", "host-skill", "true", nil)
 	require.NoError(t, err)
-	file := "session:" + path.Join(env[skillDirEnvVar], "scripts/run.py")
+	file := "session:" + path.Join(env[sandbox.SkillDirEnv], "scripts/run.py")
 	original := append([]byte(nil), store.files[file]...)
 	require.NotEmpty(t, original)
 	store.files[file] = []byte("modified script")
