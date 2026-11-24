@@ -132,8 +132,9 @@ func (h *Handler) PreviewIssueReply(c *gin.Context) {
 		respond(c, nil, err)
 		return
 	}
-	if h.service.ManualReplyCheck != nil {
-		if err := h.service.ManualReplyCheck(ctx, target); err != nil {
+	if h.service.ManualReplyRecipientName != nil {
+		msg.UserName, err = h.service.ManualReplyRecipientName(ctx, target)
+		if err != nil {
 			respond(c, nil, errReplySource)
 			return
 		}

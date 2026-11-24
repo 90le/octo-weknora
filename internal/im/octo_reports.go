@@ -12,7 +12,7 @@ type reportSender interface {
 }
 
 type manualReplySender interface {
-	CheckManualReply(context.Context, octobusiness.ManualReplyTarget) error
+	ManualReplyRecipientName(context.Context, octobusiness.ManualReplyTarget) (string, error)
 	DeliverManualReply(context.Context, octobusiness.ManualReplyTarget, string, string) (string, error)
 }
 
@@ -53,12 +53,12 @@ func (s *Service) ConfigureOctoReports(business *octobusiness.Service) {
 		}
 		return sender, nil
 	}
-	business.ManualReplyCheck = func(ctx context.Context, target octobusiness.ManualReplyTarget) error {
+	business.ManualReplyRecipientName = func(ctx context.Context, target octobusiness.ManualReplyTarget) (string, error) {
 		sender, err := findManualSender(target)
 		if err != nil {
-			return err
+			return "", err
 		}
-		return sender.CheckManualReply(ctx, target)
+		return sender.ManualReplyRecipientName(ctx, target)
 	}
 	business.ManualReplyDelivery = func(
 		ctx context.Context, target octobusiness.ManualReplyTarget, id, body string,
