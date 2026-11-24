@@ -53,7 +53,9 @@ func (s *Service) ConfigureOctoReports(business *octobusiness.Service) {
 		}
 		return sender, nil
 	}
-	business.ManualReplyRecipientName = func(ctx context.Context, target octobusiness.ManualReplyTarget) (string, error) {
+	business.ManualReplyRecipientName = func(
+		ctx context.Context, target octobusiness.ManualReplyTarget,
+	) (string, error) {
 		sender, err := findManualSender(target)
 		if err != nil {
 			return "", err

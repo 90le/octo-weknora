@@ -95,8 +95,13 @@ func TestManualGroupReplyRecipientName(t *testing.T) {
 			}
 			input, err := json.Marshal(msg)
 			require.NoError(t, err)
-			scope := im.ExecutionScope{AccountID: "account", ScopeID: "scope", KnowledgeBaseIDs: []string{"kb"}, SenderName: tc.memberName}
-			row := Inbox{TenantID: a.tenantID, ChannelID: a.channelID, MessageID: "octo:" + a.uid + ":" + mid, Input: string(input), Authority: encodeAuthority(&scope)}
+			scope := im.ExecutionScope{
+				AccountID: "account", ScopeID: "scope", KnowledgeBaseIDs: []string{"kb"}, SenderName: tc.memberName,
+			}
+			row := Inbox{
+				TenantID: a.tenantID, ChannelID: a.channelID, MessageID: "octo:" + a.uid + ":" + mid,
+				Input: string(input), Authority: encodeAuthority(&scope),
+			}
 			require.NoError(t, a.db.Create(&row).Error)
 			a.policy = func(_ context.Context, _ *im.IMChannel, in *im.IncomingMessage) (*im.ExecutionScope, error) {
 				require.Equal(t, uid, in.UserID)
@@ -104,7 +109,8 @@ func TestManualGroupReplyRecipientName(t *testing.T) {
 			}
 			target := octobusiness.ManualReplyTarget{
 				TenantID: a.tenantID, ChannelID: a.channelID, AccountID: scope.AccountID, ScopeID: scope.ScopeID,
-				InboxID: row.MessageID, LibraryID: "kb", SourceDigest: octobusiness.ManualSourceDigest(row.Input, row.Authority),
+				InboxID: row.MessageID, LibraryID: "kb",
+				SourceDigest: octobusiness.ManualSourceDigest(row.Input, row.Authority),
 			}
 			sent := make(chan wire.Payload, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +148,8 @@ func TestManualGroupReplyRecipientName(t *testing.T) {
 			label := "@" + tc.want
 			require.Equal(t, label+" 人工答复", payload.Text())
 			require.Equal(t, []string{uid}, payload.Mention.UIDs)
-			require.Equal(t, []wire.Entity{{UID: uid, Length: len(utf16.Encode([]rune(label)))}}, payload.Mention.Entities)
+			entity := wire.Entity{UID: uid, Length: len(utf16.Encode([]rune(label)))}
+			require.Equal(t, []wire.Entity{entity}, payload.Mention.Entities)
 			require.NotNil(t, payload.Reply)
 			require.Equal(t, mid, wire.ReadID(payload.Reply.ID))
 			require.Equal(t, uid, payload.Reply.Sender)

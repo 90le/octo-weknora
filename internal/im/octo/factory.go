@@ -276,7 +276,8 @@ func (a *Adapter) profileDisplayName(ctx context.Context, uid string) string {
 		UID  string `json:"uid"`
 		Name string `json:"name"`
 	}
-	if a.api.request(ctx, http.MethodGet, "/v1/bot/user/info?uid="+url.QueryEscape(uid), nil, &profile) != nil || profile.UID != uid {
+	path := "/v1/bot/user/info?uid=" + url.QueryEscape(uid)
+	if a.api.request(ctx, http.MethodGet, path, nil, &profile) != nil || profile.UID != uid {
 		return ""
 	}
 	return safeDisplayName(profile.Name)
