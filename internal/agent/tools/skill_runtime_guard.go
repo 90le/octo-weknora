@@ -28,11 +28,11 @@ import (
 // actual image or staged directory. Keep work_dir at its /workspace default.
 const (
 	skillPythonPackageInstallCommand = `uv pip install --python ` +
-		`"${WEKNORA_SKILL_DIR:?}/.venv/bin/python" <package>`
-	skillPythonPackageFallbackCommand = `"${WEKNORA_SKILL_DIR:?}/.venv/bin/python" -m ensurepip --upgrade && ` +
-		`"${WEKNORA_SKILL_DIR:?}/.venv/bin/python" -m pip install <package>`
-	skillPythonVenvCreateCommand   = `python3 -m venv --without-pip "${WEKNORA_SKILL_DIR:?}/.venv"`
-	skillNodePackageInstallCommand = `npm --prefix "${WEKNORA_SKILL_DIR:?}" install <package>`
+		`"${YEWEN_SKILL_DIR:?}/.venv/bin/python" <package>`
+	skillPythonPackageFallbackCommand = `"${YEWEN_SKILL_DIR:?}/.venv/bin/python" -m ensurepip --upgrade && ` +
+		`"${YEWEN_SKILL_DIR:?}/.venv/bin/python" -m pip install <package>`
+	skillPythonVenvCreateCommand   = `python3 -m venv --without-pip "${YEWEN_SKILL_DIR:?}/.venv"`
+	skillNodePackageInstallCommand = `npm --prefix "${YEWEN_SKILL_DIR:?}" install <package>`
 )
 
 func missingSkillPackageGuidance(skillName string) string {
@@ -41,7 +41,7 @@ func missingSkillPackageGuidance(skillName string) string {
 		skillArg = "skill_name=" + strconv.Quote(skillName)
 	}
 	return "Install missing packages with shell_exec(" + skillArg + ", command=...), leaving work_dir at /workspace. " +
-		"That named call supplies $WEKNORA_SKILL_DIR, the actual installed or staged skill directory. " +
+		"That named call supplies $YEWEN_SKILL_DIR, the actual installed or staged skill directory. " +
 		"For Python, use `" + skillPythonPackageInstallCommand + "`; uv does not need pip in the virtualenv. " +
 		"If .venv is absent (as with staged host resources), first run `" + skillPythonVenvCreateCommand + "`. " +
 		"If uv is unavailable in a custom image, use `" + skillPythonPackageFallbackCommand + "`. " +

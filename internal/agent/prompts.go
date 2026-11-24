@@ -321,7 +321,7 @@ func formatToolGuidanceForMode(names []string, skillInstallMode bool, layout san
 		b.WriteString("For listed skills, run bundled scripts and your own scripts with " +
 			"shell_exec(skill_name=..., command=...). This selects an installed skill's runtime " +
 			"or stages host skill resources, and applies scoped credentials; " +
-			"use $WEKNORA_SKILL_DIR for bundled files.\n")
+			"use $YEWEN_SKILL_DIR for bundled files.\n")
 		b.WriteString("In older instructions, translate execute_skill_script(skill_name, script_path, ...) " +
 			"to shell_exec(skill_name=..., command=...).\n")
 	}

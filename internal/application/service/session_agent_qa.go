@@ -39,6 +39,20 @@ func (s *sessionService) AgentQA(
 		return errors.New("custom agent configuration is required for agent QA")
 	}
 
+	if answer, ok := productIdentityReply(ctx, req); ok {
+		if !req.TurnLeaseHeld {
+			if err := s.RejectSendIfRewinding(ctx, sessionID); err != nil {
+				return err
+			}
+			release, err := s.holdSandboxTurn(ctx, sessionID, req.CustomAgent.Config.SandboxConfigID)
+			if err != nil {
+				return err
+			}
+			defer release()
+		}
+		return emitProductIdentityReply(ctx, req, eventBus, answer, true)
+	}
+
 	// Resolve retrieval tenant using shared helper
 	agentTenantID := s.resolveRetrievalTenantID(ctx, req)
 	logAgentQAStart(ctx, req, agentTenantID)

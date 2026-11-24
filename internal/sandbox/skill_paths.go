@@ -7,6 +7,13 @@ import (
 	"strings"
 )
 
+// SkillDirEnv names the runtime directory in new tool instructions. Existing
+// installed skills can still use LegacySkillDirEnv.
+const (
+	SkillDirEnv       = "YEWEN_SKILL_DIR"
+	LegacySkillDirEnv = "WEKNORA_SKILL_DIR"
+)
+
 const (
 	// SkillsImageRoot is where installed skills live inside the snapshot image.
 	// It is outside /workspace on purpose: /workspace is per-session scratch

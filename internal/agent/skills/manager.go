@@ -29,12 +29,6 @@ const sessionInputEnvVar = "WEKNORA_SESSION_INPUT_DIR"
 // chain without LLM mediation.
 const artifactHistoryEnvVar = "WEKNORA_SKILL_HISTORY_ROOT"
 
-// skillDirEnvVar points a script at its own directory inside the sandbox
-// image. Installed skills run with /workspace as WorkDir, so this is how a
-// script reaches the data and helpers that were installed beside it. The
-// install-time verification pass exports the same name.
-const skillDirEnvVar = "WEKNORA_SKILL_DIR"
-
 // nodePathEnvVar carries the skill's own node_modules. pythonPathEnvVar is
 // never injected — a skill's Python packages arrive through its venv
 // interpreter — but stays on the blacklist below, because a stored PYTHONPATH
@@ -53,7 +47,8 @@ func InjectedSandboxEnvVars() []string {
 		artifactOutputEnvVar,
 		sessionInputEnvVar,
 		artifactHistoryEnvVar,
-		skillDirEnvVar,
+		sandbox.SkillDirEnv,
+		sandbox.LegacySkillDirEnv,
 		pythonPathEnvVar,
 		nodePathEnvVar,
 	}

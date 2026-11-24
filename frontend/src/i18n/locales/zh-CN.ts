@@ -745,7 +745,7 @@ export default {
     filterByAgentWithName: '按智能体筛选：{name}',
     filterAllAgents: '全部智能体',
     claw: {
-      title: 'WeKnora Skill',
+      title: '知识问答 Skill',
       subtitle: '通过业问 REST API 导入文档并执行混合检索（向量 + 关键词）。适用于上传文件/URL/Markdown 到知识库、跨库检索与浏览知识内容。',
       capabilitiesTitle: 'Skill 能力',
       stepsTitle: '配置步骤',
@@ -755,7 +755,7 @@ export default {
       copyCmdSuccess: '已复制安装命令',
       ecosystemNote: 'Skill 托管于 ClawHub（{\'@\'}lyingbug/weknora），完整 API 说明与版本历史请参见 ClawHub 页面。',
       installCta: '前往 ClawHub',
-      installCtaHint: '安装 WeKnora Skill · 将在新标签页打开',
+      installCtaHint: '安装 知识问答 Skill · 将在新标签页打开',
       hubMeta: 'ClawHub · {\'@\'}lyingbug/weknora · MIT-0',
       steps: {
         verify: {
@@ -2446,8 +2446,8 @@ export default {
           desc: 'Microsoft MarkItDown 文档转换工具（支持 PDF/Office/HTML 等）'
         },
         weknoracloud: {
-          name: 'WeKnora Cloud',
-          desc: '使用 WeKnora Cloud 进行文档解析'
+          name: '云端模型与解析服务',
+          desc: '使用 云端模型与解析服务 进行文档解析'
         },
         paddleocr_vl_cloud: {
           name: 'PaddleOCR-VL Cloud',
@@ -7372,24 +7372,24 @@ export default {
       paddleocrVlCloudTokenPlaceholder: 'PaddleOCR-VL 飞桨星河社区 Token'
     },
     weknoraCloud: {
-      title: 'WeKnora Cloud · 第三方服务',
-      description: '配置 WeKnora Cloud 的 APPID 和 APPSECRET 凭证。凭证用于模型服务和文档解析引擎。',
+      title: '云端模型与解析服务 · 第三方服务',
+      description: '配置 云端模型与解析服务 的 APPID 和 APPSECRET 凭证。凭证用于模型服务和文档解析引擎。',
       viewDocs: '查看文档',
       unconfigured: '尚未配置凭证，请填写 APPID 和 APPSECRET',
       configured: '凭证已配置，状态正常',
-      expired: 'WeKnora Cloud 凭证已失效',
+      expired: '云端模型与解析服务 凭证已失效',
       expiredDefault: '服务重启后加密密钥已变更，已保存的凭证无法解密。请重新填写凭证。',
       reconfigure: '重新配置',
       appIdLabel: 'APPID',
-      appIdDesc: 'WeKnora Cloud 的应用 ID',
+      appIdDesc: '云端模型与解析服务 的应用 ID',
       appIdPlaceholder: '请输入 APPID',
       appSecretLabel: 'APPSECRET',
-      appSecretDesc: 'WeKnora Cloud 的应用密钥',
+      appSecretDesc: '云端模型与解析服务 的应用密钥',
       appSecretPlaceholder: '请输入 APPSECRET',
       saveHint: '保存后将验证服务可达性并加密存储凭证',
       saveBtn: '保存凭证',
       usageTitle: '使用说明',
-      usageSteps: '1. 填写并保存 APPID / APPSECRET\n2. 在下方「云模型接入」中按行添加 chat、embedding、rerank、vlm\n3. 文档解析：知识库设置 → 解析引擎，选择 WeKnora Cloud 引擎',
+      usageSteps: '1. 填写并保存 APPID / APPSECRET\n2. 在下方「云模型接入」中按行添加 chat、embedding、rerank、vlm\n3. 文档解析：知识库设置 → 解析引擎，选择 云端模型与解析服务 引擎',
       fillRequired: '请填写 APPID 和 APPSECRET',
       saveSuccess: '凭证已保存',
       saveFailed: '凭证保存失败',
@@ -7412,7 +7412,7 @@ export default {
       },
       modelsSection: {
         title: '云模型接入',
-        descReady: '将 WeKnora Cloud 提供的四类标准模型注册到当前空间，用于对话、向量检索、重排序与多模态理解。',
+        descReady: '将 云端模型与解析服务 提供的四类标准模型注册到当前空间，用于对话、向量检索、重排序与多模态理解。',
         descPending: '请先保存上方凭证，再在此添加云模型。',
         statusAdded: '已添加',
         statusPending: '待配置凭证',

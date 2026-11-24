@@ -70,7 +70,7 @@ export default {
     workspace: 'Current workspace: {name}',
     workflow: 'Source space setup steps',
     discover: 'Discover existing mounts',
-    discoverHint: 'This only checks directories already exposed to WeKnora. Registration does not mount disks, grant folders, create data sources or sync files.',
+    discoverHint: 'This only checks directories already exposed to Yewen. Registration does not mount disks, grant folders, create data sources or sync files.',
     stepDiscover: '1. Discover existing mounts',
     stepAuthorize: '2. Grant existing directories',
     stepSource: '3. Choose a knowledge source',
@@ -2224,24 +2224,24 @@ export default {
     },
     capabilityUnavailable: 'This feature is not supported by the current deployment. You have been returned to an available page.',
     weknoraCloud: {
-      title: 'WeKnora Cloud · Third-party service',
-      description: 'Configure WeKnora Cloud APPID and APPSECRET credentials. Credentials are used for model services and document parsing engine.',
+      title: 'Cloud Models and Parsing · Third-party service',
+      description: 'Configure Cloud Models and Parsing APPID and APPSECRET credentials. Credentials are used for model services and document parsing engine.',
       viewDocs: 'View Docs',
       unconfigured: 'Credentials not configured. Please fill in APPID and APPSECRET.',
       configured: 'Credentials configured and working.',
-      expired: 'WeKnora Cloud credentials expired',
+      expired: 'Cloud Models and Parsing credentials expired',
       expiredDefault: 'Encryption key changed after service restart. Saved credentials cannot be decrypted. Please re-enter credentials.',
       reconfigure: 'Reconfigure',
       appIdLabel: 'APPID',
-      appIdDesc: 'WeKnora Cloud application ID',
+      appIdDesc: 'Cloud Models and Parsing application ID',
       appIdPlaceholder: 'Enter APPID',
       appSecretLabel: 'APPSECRET',
-      appSecretDesc: 'WeKnora Cloud application secret',
+      appSecretDesc: 'Cloud Models and Parsing application secret',
       appSecretPlaceholder: 'Enter APPSECRET',
       saveHint: 'Credentials will be validated and encrypted before saving.',
       saveBtn: 'Save Credentials',
       usageTitle: 'Usage Guide',
-      usageSteps: '1. Save APPID and APPSECRET\n2. Register chat, embedding, rerank, and vlm in Cloud Models below\n3. Parser: Knowledge Base Settings → Parser Engine → WeKnora Cloud',
+      usageSteps: '1. Save APPID and APPSECRET\n2. Register chat, embedding, rerank, and vlm in Cloud Models below\n3. Parser: Knowledge Base Settings → Parser Engine → Cloud Models and Parsing',
       fillRequired: 'Please fill in APPID and APPSECRET',
       saveSuccess: 'Credentials saved successfully',
       saveFailed: 'Failed to save credentials',
@@ -2254,7 +2254,7 @@ export default {
       modelHintDocsLink: 'API docs',
       modelsSection: {
         title: 'Cloud Models',
-        descReady: 'Register the four standard WeKnora Cloud models for chat, retrieval, reranking, and vision.',
+        descReady: 'Register the four standard Cloud Models and Parsing models for chat, retrieval, reranking, and vision.',
         descPending: 'Save credentials above before adding cloud models here.',
         statusAdded: 'Added',
         statusPending: 'Credentials required',
@@ -6707,8 +6707,8 @@ export default {
           desc: 'PaddleOCR-VL Cloud API'
         },
         weknoracloud: {
-          name: 'WeKnora Cloud',
-          desc: 'Document parsing via WeKnora Cloud'
+          name: 'Cloud Models and Parsing',
+          desc: 'Document parsing via Cloud Models and Parsing'
         },
         markitdown: {
           name: 'MarkItDown',
@@ -8365,7 +8365,7 @@ export default {
       storeMeta: 'Chrome Web Store · v1.0.0'
     },
     claw: {
-      title: 'WeKnora Skill',
+      title: 'Knowledge Q&A Skill',
       subtitle: 'Import documents and run hybrid retrieval (vector + keyword) via the 业问 REST API—for uploads, URL imports, Markdown entries, and cross-KB search.',
       capabilitiesTitle: 'Skill capabilities',
       capabilities: {
@@ -8415,7 +8415,7 @@ export default {
       copyCmdSuccess: 'Install command copied',
       ecosystemNote: 'Skill hosted on ClawHub ({\'@\'}lyingbug/weknora). See the ClawHub page for full API docs and version history.',
       installCta: 'Open ClawHub',
-      installCtaHint: 'Install WeKnora Skill · opens in a new tab',
+      installCtaHint: 'Install Knowledge Q&A Skill · opens in a new tab',
       hubMeta: 'ClawHub · {\'@\'}lyingbug/weknora · MIT-0'
     }
   },
