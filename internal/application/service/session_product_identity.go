@@ -9,8 +9,10 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
-const productIdentityAnswer = "我是业问，秒针的企业知识问答助手。"
-const productIdentityAnswerEnglish = "I’m Yewen, the enterprise knowledge assistant from Miaozhen."
+const (
+	productIdentityAnswer        = "我是业问，秒针的企业知识问答助手。"
+	productIdentityAnswerEnglish = "I’m Yewen, the enterprise knowledge assistant from Miaozhen."
+)
 
 var (
 	selfIdentityQuestion = regexp.MustCompile(`(?i)^(?:(?:请问|请|能不能|能否)\s*)?(?:` +
@@ -46,8 +48,9 @@ func productIdentityReply(ctx context.Context, req *types.QARequest) (string, bo
 	}
 	query = strings.Join(strings.Fields(strings.Trim(query, "¿¡ \t？?。！!.")), " ")
 	upstream := upstreamWord.FindString(query)
-	if !selfIdentityQuestion.MatchString(query) &&
-		(upstream == "" || !(strings.EqualFold(upstream, query) || upstreamIdentityQuestion.MatchString(query))) {
+	asksAboutUpstream := upstream != "" &&
+		(strings.EqualFold(upstream, query) || upstreamIdentityQuestion.MatchString(query))
+	if !selfIdentityQuestion.MatchString(query) && !asksAboutUpstream {
 		return "", false
 	}
 	if strings.HasPrefix(types.LanguageFromContextOrDefault(ctx), "en") {
