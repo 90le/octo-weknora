@@ -58,6 +58,15 @@ func (a *Adapter) checkManualReplyTarget(
 		in.Extra["octo_card_event_key"] != "" || !wire.DecimalID(in.Extra["octo_message_id"]) {
 		return nil, 0, "", octobusiness.ErrDenied
 	}
+	// A manual reply must quote the exact native message selected in preview.
+	// A missing or damaged snapshot must not turn it into an unquoted mention.
+	var original struct {
+		Type int `json:"type"`
+	}
+	if target.InboxID != "octo:"+a.uid+":"+in.Extra["octo_message_id"] ||
+		json.Unmarshal([]byte(in.Extra["octo_original_payload"]), &original) != nil || original.Type <= 0 {
+		return nil, 0, "", octobusiness.ErrDenied
+	}
 	kind, err := strconv.Atoi(in.Extra["octo_channel_type"])
 	channel := in.Extra["octo_channel_id"]
 	if err != nil || (kind != 1 && kind != 2 && kind != 5) || target.IsDirect != (kind == 1) {

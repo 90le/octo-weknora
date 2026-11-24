@@ -23,7 +23,10 @@ func TestManualDirectReplyChecksCurrentPolicyAfterPreview(t *testing.T) {
 	id := "octo:" + a.uid + ":" + originalID
 	m := im.IncomingMessage{
 		MessageID: id, UserID: user, ChatType: im.ChatTypeDirect,
-		Extra: map[string]string{"octo_channel_type": "1", "octo_channel_id": user, "octo_message_id": originalID},
+		Extra: map[string]string{
+			"octo_channel_type": "1", "octo_channel_id": user, "octo_message_id": originalID,
+			"octo_original_payload": `{"type":1,"content":"Direct question"}`,
+		},
 	}
 	input, err := json.Marshal(m)
 	require.NoError(t, err)
@@ -74,6 +77,20 @@ func TestManualDirectReplyChecksCurrentPolicyAfterPreview(t *testing.T) {
 	payload := body["payload"].(map[string]any)
 	require.Equal(t, originalID, payload["reply"].(map[string]any)["message_id"])
 	require.NotContains(t, payload, "mention")
+
+	for _, tc := range []struct{ mid, original string }{
+		{"99", `{"type":1,"content":"Another message"}`},
+		{originalID, ""},
+	} {
+		m.Extra["octo_message_id"], m.Extra["octo_original_payload"] = tc.mid, tc.original
+		changed, err := json.Marshal(m)
+		require.NoError(t, err)
+		require.NoError(t, a.inboxQuery(ctx, id).Update("input", string(changed)).Error)
+		target.SourceDigest = octobusiness.ManualSourceDigest(string(changed), entry.Authority)
+		_, err = a.DeliverManualReply(ctx, target, "claim", "Reply")
+		require.ErrorIs(t, err, octobusiness.ErrDenied)
+		require.Empty(t, requests)
+	}
 }
 
 func TestManualGroupReplyRecipientName(t *testing.T) {
@@ -91,7 +108,10 @@ func TestManualGroupReplyRecipientName(t *testing.T) {
 			require.NoError(t, a.db.AutoMigrate(&Inbox{}))
 			msg := im.IncomingMessage{
 				UserID: uid, UserName: uid, ChatType: im.ChatTypeGroup,
-				Extra: map[string]string{"octo_channel_type": "2", "octo_channel_id": channel, "octo_message_id": mid},
+				Extra: map[string]string{
+					"octo_channel_type": "2", "octo_channel_id": channel, "octo_message_id": mid,
+					"octo_original_payload": `{"type":1,"content":"提交的反馈"}`,
+				},
 			}
 			input, err := json.Marshal(msg)
 			require.NoError(t, err)
@@ -154,6 +174,8 @@ func TestManualGroupReplyRecipientName(t *testing.T) {
 			require.Equal(t, mid, wire.ReadID(payload.Reply.ID))
 			require.Equal(t, uid, payload.Reply.Sender)
 			require.Equal(t, tc.want, payload.Reply.Name)
+			require.NotNil(t, payload.Reply.Payload)
+			require.Equal(t, "提交的反馈", payload.Reply.Payload.Text())
 		})
 	}
 }
