@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/im"
 	"github.com/Tencent/WeKnora/internal/im/octo/wire"
@@ -175,6 +176,77 @@ func (a *Adapter) DeliverReport(ctx context.Context, s octobusiness.ReportSchedu
 
 // ListBotDeliveryTargets enumerates all Octo groups and subareas joined by this
 // Bot (including unbound management groups) and annotates KB binding counts.
+func (a *Adapter) ResolveUserNames(ctx context.Context, tenant uint64, uids []string) map[string]string {
+	out := map[string]string{}
+	if a.tenantID != tenant || len(uids) == 0 {
+		return out
+	}
+	now := time.Now()
+	missing := make([]string, 0, len(uids))
+	seen := map[string]bool{}
+
+	a.profileMu.Lock()
+	if a.profileCache == nil {
+		a.profileCache = map[string]cachedOctoProfile{}
+	}
+	for _, raw := range uids {
+		uid := strings.TrimSpace(raw)
+		if uid == "" || seen[uid] {
+			continue
+		}
+		seen[uid] = true
+		if entry, ok := a.profileCache[uid]; ok && now.Before(entry.expiresAt) {
+			if entry.name != "" {
+				out[uid] = entry.name
+			}
+			continue
+		}
+		if len(missing) < 40 {
+			missing = append(missing, uid)
+		}
+	}
+	a.profileMu.Unlock()
+
+	if len(missing) == 0 {
+		return out
+	}
+
+	lookupCtx, cancel := context.WithTimeout(ctx, 3500*time.Millisecond)
+	defer cancel()
+
+	type resItem struct {
+		uid  string
+		name string
+	}
+	results := make(chan resItem, len(missing))
+	sem := make(chan struct{}, 6)
+	for _, uid := range missing {
+		sem <- struct{}{}
+		go func(u string) {
+			defer func() { <-sem }()
+			name := a.profileDisplayName(lookupCtx, u)
+			if name == u {
+				name = ""
+			}
+			results <- resItem{uid: u, name: name}
+		}(uid)
+	}
+
+	a.profileMu.Lock()
+	for i := 0; i < len(missing); i++ {
+		r := <-results
+		ttl := 15 * time.Minute
+		if r.name == "" {
+			ttl = 2 * time.Minute
+		} else {
+			out[r.uid] = r.name
+		}
+		a.profileCache[r.uid] = cachedOctoProfile{name: r.name, expiresAt: time.Now().Add(ttl)}
+	}
+	a.profileMu.Unlock()
+	return out
+}
+
 func (a *Adapter) ListBotDeliveryTargets(ctx context.Context, tenant uint64) (*octobusiness.BotDeliveryTargetsResponse, error) {
 	if a.db == nil || tenant != a.tenantID {
 		return nil, octobusiness.ErrDenied

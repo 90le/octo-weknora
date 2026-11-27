@@ -29,6 +29,7 @@ type Service struct {
 	BotDeliveryTargets       func(context.Context, uint64, string) (*BotDeliveryTargetsResponse, error)
 	BotVerifyFriend          func(context.Context, uint64, string, string) (*BotFriendVerifyResult, error)
 	MultiTargetDelivery      func(context.Context, uint64, string, DeliveryTarget, string, *Report, *ReportArtifact) (string, error)
+	ResolveOctoUserNames     func(context.Context, uint64, string, []string) map[string]string
 	ManualReplyDelivery      func(context.Context, ManualReplyTarget, string, string) (string, error)
 	ManualReplyRecipientName func(context.Context, ManualReplyTarget) (string, error)
 	reportCron               *cron.Cron
@@ -349,6 +350,9 @@ func (s *Service) ListIssues(ctx context.Context, f IssueFilter) (*IssuePage, er
 		return nil, err
 	}
 	err = q.Order("created_at DESC, id").Offset((f.Page - 1) * f.PageSize).Limit(f.PageSize).Find(&result.Items).Error
+	if err == nil {
+		s.enrichIssuesNames(ctx, p.TenantID, result.Items)
+	}
 	return result, err
 }
 
@@ -367,6 +371,12 @@ func (s *Service) GetIssue(ctx context.Context, id string) (*Issue, []IssueEvent
 	}
 	events := []IssueEvent{}
 	err = s.db.WithContext(ctx).Where("tenant_id = ? AND issue_id = ?", p.TenantID, id).Order("created_at, id").Find(&events).Error
+	if err == nil {
+		one := []Issue{row}
+		s.enrichIssuesNames(ctx, p.TenantID, one)
+		row = one[0]
+		s.enrichIssueEventsNames(ctx, p.TenantID, row.ChannelID, events)
+	}
 	return &row, events, err
 }
 
@@ -390,6 +400,7 @@ func (s *Service) UpdateIssue(ctx context.Context, id string, in IssueUpdate) (*
 		(in.OwnerContactID != "" && (in.OwnerUID != nil || len(in.OwnerContactID) > 128)) {
 		return nil, ErrInvalid
 	}
+	actorName := s.resolveConsoleUserName(ctx, p.UserID, p.UserName)
 	var row Issue
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		copyService := *s
@@ -444,7 +455,7 @@ func (s *Service) UpdateIssue(ctx context.Context, id string, in IssueUpdate) (*
 		if e := tx.Save(&row).Error; e != nil {
 			return e
 		}
-		if e := tx.Create(&IssueEvent{ID: uuid.NewString(), TenantID: p.TenantID, IssueID: id, ActorUID: p.UserID, ActorName: p.UserName, Status: in.Status, Note: in.Note, IdempotencyKey: eventKey}).Error; e != nil {
+		if e := tx.Create(&IssueEvent{ID: uuid.NewString(), TenantID: p.TenantID, IssueID: id, ActorUID: p.UserID, ActorName: actorName, Status: in.Status, Note: in.Note, IdempotencyKey: eventKey}).Error; e != nil {
 			return e
 		}
 		return audit(tx, p, "octo.issue.updated", id, map[string]string{"status": in.Status, "owner_uid": row.OwnerUID})

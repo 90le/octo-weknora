@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -180,4 +181,50 @@ func TestMultiTargetDeliveryIsolationAndSingleRetryGuard(t *testing.T) {
 	require.Equal(t, 1, calls["group:g-mgmt"])
 	require.Equal(t, 2, calls["dm:uid-qbb"])
 	require.Equal(t, 1, calls["dm:uid-zk"])
+}
+
+func TestStrictModeToggleOnFreshIssueAndNicknameBackfill(t *testing.T) {
+	s := testService(t)
+	ctx := consoleTestContext()
+	p, err := currentPrincipal(ctx)
+	require.NoError(t, err)
+	iss := &Issue{
+		ID: "iss-fresh-1", TenantID: 1, ChannelID: "ch-1", ScopeID: "sc-1", ScopeName: "业务区",
+		KnowledgeBaseID: "kb-1", Kind: "missing", Title: "缺少新版本说明", Status: "open",
+		ReporterUID: "u-octo-42", ReporterName: "u-octo-42", Attachments: types.JSON("[]"), IdempotencyKey: "idem-fresh-1",
+	}
+	require.NoError(t, s.db.Create(iss).Error)
+
+	// Toggle strict on fresh issue without prior remediation record
+	require.NoError(t, s.setRemediationMode(ctx, p, iss, "strict", ""))
+	view, err := s.remediation(ctx, iss)
+	require.NoError(t, err)
+	require.Equal(t, "strict", view.VerificationMode)
+	require.Equal(t, 1, view.Revision)
+
+	// Idempotent second strict call produces no duplicate event
+	require.NoError(t, s.setRemediationMode(ctx, p, iss, "strict", ""))
+	var evCount int64
+	require.NoError(t, s.db.Model(&IssueEvent{}).Where("issue_id = ?", iss.ID).Count(&evCount).Error)
+	require.Equal(t, int64(1), evCount)
+
+	// Switch back to lightweight
+	require.NoError(t, s.setRemediationMode(ctx, p, iss, "lightweight", "轻量闭环"))
+	view, err = s.remediation(ctx, iss)
+	require.NoError(t, err)
+	require.Equal(t, "lightweight", view.VerificationMode)
+
+	// Verify nickname backfill on GetIssue
+	s.ResolveOctoUserNames = func(_ context.Context, _ uint64, _ string, uids []string) map[string]string {
+		out := map[string]string{}
+		for _, u := range uids {
+			if u == "u-octo-42" {
+				out[u] = "丘比特"
+			}
+		}
+		return out
+	}
+	got, _, err := s.GetIssue(ctx, iss.ID)
+	require.NoError(t, err)
+	require.Equal(t, "丘比特", got.ReporterName)
 }

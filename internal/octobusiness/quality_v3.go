@@ -151,8 +151,15 @@ func (s *Service) convertQualityToIssue(ctx context.Context, messageID string, i
 			scopeName = sc.DisplayName
 			groupID, subareaID = sc.GroupID, sc.SubareaID
 		}
-	} else if isDirect && input.UserName != "" {
-		scopeName = "私聊 · " + input.UserName
+	}
+	reporterName := strings.TrimSpace(input.UserName)
+	if input.UserID != "" && (reporterName == "" || reporterName == input.UserID) {
+		if resolved := s.resolveOctoNicknames(ctx, p.TenantID, entry.ChannelID, []string{input.UserID}); resolved[input.UserID] != "" {
+			reporterName = resolved[input.UserID]
+		}
+	}
+	if isDirect {
+		scopeName = "私聊 · " + firstNonEmpty(reporterName, input.UserID)
 	}
 
 	desc := strings.TrimSpace(in.Note)
@@ -194,7 +201,7 @@ func (s *Service) convertQualityToIssue(ctx context.Context, messageID string, i
 		Description:     limitQualityText(desc, 3900),
 		Status:          "open",
 		ReporterUID:     input.UserID,
-		ReporterName:    input.UserName,
+		ReporterName:    firstNonEmpty(reporterName, input.UserID),
 		MessageID:       entry.MessageID,
 		OriginalMessage: limitQualityText(question, 4000),
 		Attachments:     types.JSON("[]"),
@@ -405,6 +412,31 @@ func (s *Service) queryQualityV3(
 	}
 	start := min(len(filtered), (f.Page-1)*f.PageSize)
 	page.Rows = append(page.Rows, filtered[start:min(start+f.PageSize, len(filtered))]...)
+	// Resolve Octo user nicknames for the current page (bounded & TTL-cached).
+	if len(page.Rows) > 0 && s.ResolveOctoUserNames != nil {
+		byChannel := map[string][]string{}
+		for _, r := range page.Rows {
+			if r.userID != "" && (r.AskerName == "" || r.AskerName == r.userID) {
+				byChannel[r.ChannelID] = append(byChannel[r.ChannelID], r.userID)
+			}
+		}
+		resolved := map[string]string{}
+		for chID, uids := range byChannel {
+			for uid, nick := range s.resolveOctoNicknames(ctx, p.TenantID, chID, uids) {
+				if nick != "" {
+					resolved[uid] = nick
+				}
+			}
+		}
+		for i := range page.Rows {
+			if nick := resolved[page.Rows[i].userID]; nick != "" {
+				page.Rows[i].AskerName = nick
+				if page.Rows[i].SourceType == "dm" {
+					page.Rows[i].ScopeName = "私聊 · " + nick
+				}
+			}
+		}
+	}
 	return page, nil
 }
 

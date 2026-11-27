@@ -38,6 +38,7 @@ import { issueReplies, previewIssueReply, sendIssueReply, type IssueReply, type 
 import OctoMarkdown from './OctoMarkdown.vue'
 
 const props = defineProps<{issue:OctoIssue}>()
+const emit = defineEmits<{sent:[IssueReply]}>()
 const targets = [{value:'question',label:'回复原始提问者'},{value:'feedback',label:'回复反馈提交者'}]
 const phases:Record<string,string> = {sent:'已发送',sending:'发送中',blocked:'当前权限已变更',uncertain:'送达未确认'}
 const target = ref('question')
@@ -74,7 +75,7 @@ async function send() {
   try {
     const response = await sendIssueReply(props.issue.id,preview.value.id)
     visible.value = false
-    if (response.data.status === 'sent') body.value = ''
+    if (response.data.status === 'sent') { body.value = ''; emit('sent', response.data) }
     else error.value = (phases[response.data.status] || '发送未完成') + '。请先核对 Octo 原会话。'
     await load()
   } catch { error.value = '发送结果未确认。请先核对发送记录和原会话。'; visible.value = false; await load() }

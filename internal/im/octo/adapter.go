@@ -31,11 +31,18 @@ import (
 
 const Platform im.Platform = "octo"
 
+type cachedOctoProfile struct {
+	name      string
+	expiresAt time.Time
+}
+
 type Adapter struct {
 	statusMu      sync.RWMutex
 	status        im.ChannelRuntimeStatus
 	cardDiagMu    sync.Mutex
 	cardDiagAt    map[string]time.Time
+	profileMu     sync.Mutex
+	profileCache  map[string]cachedOctoProfile
 	db            *gorm.DB
 	channelID     string
 	tenantID      uint64

@@ -207,6 +207,7 @@ func (s *Service) setRemediationMode(ctx context.Context, p Principal, issue *Is
 	if !p.Console || issue.TenantID != p.TenantID {
 		return ErrDenied
 	}
+	actorName := s.resolveConsoleUserName(ctx, p.UserID, p.UserName)
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current remediationRecord
 		found := tx.Where("tenant_id = ? AND issue_id = ?", p.TenantID, issue.ID).Limit(1).Find(&current)
@@ -214,7 +215,31 @@ func (s *Service) setRemediationMode(ctx context.Context, p Principal, issue *Is
 			return found.Error
 		}
 		now := time.Now().UTC()
-		if found.RowsAffected > 0 {
+		if found.RowsAffected == 0 {
+			if mode == "lightweight" {
+				// Already in default lightweight mode; avoid duplicate audit noise.
+				return nil
+			}
+			record := remediationRecord{
+				IssueID:          issue.ID,
+				TenantID:         p.TenantID,
+				Coordinator:      p.UserID,
+				Revision:         1,
+				VerificationMode: "strict",
+				Plan:             remediationPlan{Cause: "material"},
+				UpdatedAt:        now,
+			}
+			if err := tx.Create(&record).Error; err != nil {
+				return err
+			}
+		} else {
+			curMode := current.VerificationMode
+			if curMode == "" {
+				curMode = "strict"
+			}
+			if curMode == mode && reason == "" {
+				return nil
+			}
 			if err := tx.Model(&remediationRecord{}).
 				Where("tenant_id = ? AND issue_id = ?", p.TenantID, issue.ID).
 				Updates(map[string]any{"verification_mode": mode, "updated_at": now}).Error; err != nil {
@@ -233,7 +258,7 @@ func (s *Service) setRemediationMode(ctx context.Context, p Principal, issue *Is
 			TenantID:       p.TenantID,
 			IssueID:        issue.ID,
 			ActorUID:       p.UserID,
-			ActorName:      p.UserName,
+			ActorName:      actorName,
 			Status:         issue.Status,
 			Note:           note,
 			IdempotencyKey: uuid.NewString(),

@@ -71,7 +71,8 @@
                   <t-tag size="small" variant="light">{{ sourceLabel(active.source_type) }}</t-tag>
                 </div>
                 <div class="mini">
-                  {{ active.asker_name || '成员' }} · {{ formatTime(active.created_at) }} · {{ active.scope_name }} · {{ active.id }}
+                  {{ active.asker_name || '成员' }} · {{ formatTime(active.created_at) }} · {{ active.scope_name }} ·
+                  <span class="msg-ref" :title="active.id" @click="copyMsgId(active.id)">{{ shortMsgId(active.id) }}</span>
                 </div>
               </div>
               <div class="sd-nav">
@@ -271,6 +272,16 @@ function rowTone(r: QualityRow): 'danger' | 'warning' | 'success' | 'default' {
 function formatTime(v: string) {
   return v ? new Date(v).toLocaleString() : ''
 }
+function shortMsgId(id: string) {
+  if (!id) return ''
+  const parts = id.split(':')
+  const tail = parts[parts.length - 1] || id
+  return `消息 #${tail.length > 10 ? tail.slice(-8) : tail}`
+}
+function copyMsgId(id: string) {
+  if (!id) return
+  navigator.clipboard?.writeText(id).then(() => MessagePlugin.success('已复制完整消息编号')).catch(() => {})
+}
 
 function selectRow(row: QualityRow) {
   activeId.value = row.id
@@ -469,5 +480,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 .panel-hd h3 { margin: 0; font-size: 14px; }
 .min0 { min-width: 0; }
 .mini { font-size: 12px; color: var(--td-text-color-placeholder); }
+.msg-ref { cursor: pointer; text-decoration: underline dotted; }
+.msg-ref:hover { color: var(--td-brand-color); }
 @media (max-width: 960px) { .split-shell { grid-template-columns: minmax(0, 1fr); } }
 </style>

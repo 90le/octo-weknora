@@ -2,7 +2,7 @@
   <t-drawer
     :visible="visible"
     header="Octo 运营与后台复核设置"
-    size="420px"
+    size="440px"
     attach="body"
     @close="emit('update:visible', false)"
   >
@@ -15,8 +15,18 @@
         <t-switch v-model="form.enabled" />
       </div>
       <label class="fld">
-        <span>复核模型 ID（留空沿用渠道模型）</span>
-        <t-input v-model="form.model_id" clearable placeholder="留空沿用当前 Octo Bot 绑定模型" />
+        <span>复核模型（留空沿用当前 Octo Bot 绑定模型）</span>
+        <t-select
+          v-model="form.model_id"
+          :options="modelOptions"
+          :loading="loadingModels"
+          clearable
+          filterable
+          placeholder="留空沿用当前 Octo Bot 绑定模型"
+        />
+        <small v-if="form.model_id && !matchedModel" class="warn-hint">
+          当前保存的模型 ID（{{ form.model_id }}）未在可用对话模型列表中，建议重新选择或清空沿用默认。
+        </small>
       </label>
       <div class="two-col">
         <label class="fld">
@@ -41,14 +51,17 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
+import { listModels, type ModelConfig } from '@/api/model'
 import { qualitySettings, saveQualitySettings, type QualitySettings } from '@/api/octo-business'
 
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ 'update:visible': [boolean]; saved: [] }>()
 
 const saving = ref(false)
+const loadingModels = ref(false)
+const models = ref<ModelConfig[]>([])
 const form = reactive<QualitySettings>({
   enabled: true,
   model_id: '',
@@ -57,15 +70,46 @@ const form = reactive<QualitySettings>({
   sample_percent: 14,
 })
 
+const matchedModel = computed(() => models.value.find((m) => m.id === form.model_id))
+
+const modelOptions = computed(() => {
+  const opts = models.value
+    .filter((m): m is ModelConfig & { id: string } => Boolean(m.id))
+    .map((m) => {
+      const title = m.display_name || m.name || m.id
+      const src = m.source === 'local' ? '本地' : '远端'
+      const tag = m.is_default ? `${src} · 默认` : src
+      return {
+        label: `${title}（${tag}）`,
+        value: m.id,
+      }
+    })
+  if (form.model_id && !opts.some((o) => o.value === form.model_id)) {
+    opts.unshift({
+      label: `历史模型（${form.model_id.slice(0, 8)}… · 已不可用）`,
+      value: form.model_id,
+    })
+  }
+  return opts
+})
+
 watch(
   () => props.visible,
   async (open) => {
     if (!open) return
-    try {
-      const res = await qualitySettings()
-      if (res.data) Object.assign(form, res.data)
-    } catch {
+    loadingModels.value = true
+    const [cfgRes, modelRes] = await Promise.allSettled([
+      qualitySettings(),
+      listModels('KnowledgeQA'),
+    ])
+    loadingModels.value = false
+    if (cfgRes.status === 'fulfilled' && cfgRes.value.data) {
+      Object.assign(form, cfgRes.value.data)
+    } else if (cfgRes.status === 'rejected') {
       MessagePlugin.warning('读取后台复核设置失败，展示默认参考值')
+    }
+    if (modelRes.status === 'fulfilled') {
+      models.value = modelRes.value || []
     }
   },
 )
@@ -73,7 +117,7 @@ watch(
 async function save() {
   saving.value = true
   try {
-    await saveQualitySettings({ ...form })
+    await saveQualitySettings({ ...form, model_id: form.model_id || '' })
     MessagePlugin.success('Octo 复核设置已保存')
     emit('saved')
     emit('update:visible', false)
@@ -90,4 +134,5 @@ async function save() {
 .row-between { display: flex; justify-content: space-between; align-items: center; font-size: 13.5px; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .fld { display: grid; gap: 5px; font-size: 12.5px; color: var(--td-text-color-secondary); }
+.warn-hint { color: var(--td-warning-color); font-size: 12px; }
 </style>
