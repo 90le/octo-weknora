@@ -49,7 +49,7 @@ func TestIMPolicyLimitsAndIsolation(t *testing.T) {
 		DockerNetworkMode:    "bridge",
 		EnvVars:              map[string]string{"SECRET": "bad"},
 		DockerCPULimit:       5,
-		DockerMemoryBytes:    2 << 30,
+		DockerMemoryBytes:    4 << 30,
 		DockerPidsLimit:      999,
 		DefaultTimeout:       time.Hour,
 	}

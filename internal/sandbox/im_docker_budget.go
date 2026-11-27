@@ -24,8 +24,8 @@ type imDockerOutputLimitKey struct{}
 type imLimitedDockerEngine struct{ dockerEngineAPI }
 
 const (
-	imWorkspaceTmpfs = "rw,nosuid,nodev,size=100663296,mode=1777"
-	imTmpTmpfs       = "rw,nosuid,nodev,size=67108864,mode=1777"
+	imWorkspaceTmpfs = "rw,nosuid,nodev,size=167772160,mode=1777"
+	imTmpTmpfs       = "rw,nosuid,nodev,size=134217728,mode=1777"
 )
 
 // IM commands do not need the generic installer capabilities. Never grant
