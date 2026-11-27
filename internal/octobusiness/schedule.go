@@ -29,43 +29,47 @@ const (
 var errReportScheduleChanged = errors.New("report schedule changed or disabled")
 
 type ReportSchedule struct {
-	ID            string     `json:"id" gorm:"primaryKey"`
-	TenantID      uint64     `json:"-"`
-	Name          string     `json:"name"`
-	ChannelID     string     `json:"channel_id"`
-	ScopeID       string     `json:"scope_id"`
-	RecipientType string     `json:"recipient_type"`
-	RecipientUID  string     `json:"recipient_uid"`
-	Weekday       int        `json:"weekday"`
-	Hour          int        `json:"hour"`
-	Minute        int        `json:"minute"`
-	Timezone      string     `json:"timezone"`
-	Format        string     `json:"format"`
-	Enabled       bool       `json:"enabled"`
-	CreatedBy     string     `json:"created_by"`
-	NextRunAt     time.Time  `json:"next_run_at"`
-	LastRunAt     *time.Time `json:"last_run_at"`
-	LastStatus    string     `json:"last_status"`
-	LastError     string     `json:"last_error"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
-	RunKey        string     `json:"-" gorm:"-"`
-	Template      string     `json:"template"`
-	Frequency     string     `json:"frequency"`
-	Period        string     `json:"period"`
-	Mode          string     `json:"mode"`
-	Lookback      int        `json:"lookback"`
-	IntervalDays  int        `json:"interval_days"`
-	MonthDay      int        `json:"month_day"`
-	Threshold     int        `json:"threshold"`
-	MinimumUsers  int        `json:"minimum_users"`
-	OnlyChanges   bool       `json:"only_changes"`
-	Instruction   string     `json:"instruction"`
-	Topic         string     `json:"topic"`
-	QuietStart    int        `json:"quiet_start"`
-	QuietEnd      int        `json:"quiet_end"`
-	CooldownHours int        `json:"cooldown_hours"`
-	Manual        bool       `json:"-" gorm:"-"`
+	ID                  string           `json:"id" gorm:"primaryKey"`
+	TenantID            uint64           `json:"-"`
+	Name                string           `json:"name"`
+	ChannelID           string           `json:"channel_id"`
+	ScopeID             string           `json:"scope_id"`
+	RecipientType       string           `json:"recipient_type"`
+	RecipientUID        string           `json:"recipient_uid"`
+	Weekday             int              `json:"weekday"`
+	Hour                int              `json:"hour"`
+	Minute              int              `json:"minute"`
+	Timezone            string           `json:"timezone"`
+	Format              string           `json:"format"`
+	Enabled             bool             `json:"enabled"`
+	CreatedBy           string           `json:"created_by"`
+	NextRunAt           time.Time        `json:"next_run_at"`
+	LastRunAt           *time.Time       `json:"last_run_at"`
+	LastStatus          string           `json:"last_status"`
+	LastError           string           `json:"last_error"`
+	CreatedAt           time.Time        `json:"created_at"`
+	UpdatedAt           time.Time        `json:"updated_at"`
+	RunKey              string           `json:"-" gorm:"-"`
+	Template            string           `json:"template"`
+	Frequency           string           `json:"frequency"`
+	Period              string           `json:"period"`
+	Mode                string           `json:"mode"`
+	Lookback            int              `json:"lookback"`
+	IntervalDays        int              `json:"interval_days"`
+	MonthDay            int              `json:"month_day"`
+	Threshold           int              `json:"threshold"`
+	MinimumUsers        int              `json:"minimum_users"`
+	OnlyChanges         bool             `json:"only_changes"`
+	Instruction         string           `json:"instruction"`
+	Topic               string           `json:"topic"`
+	QuietStart          int              `json:"quiet_start"`
+	QuietEnd            int              `json:"quiet_end"`
+	CooldownHours       int              `json:"cooldown_hours"`
+	SenderChannelID     string           `json:"sender_channel_id"`
+	DeliveryTargetsJSON string           `json:"-"`
+	ScopeFilterJSON     string           `json:"scope_filter_json"`
+	DeliveryTargets     []DeliveryTarget `json:"delivery_targets" gorm:"-"`
+	Manual              bool             `json:"-" gorm:"-"`
 }
 
 func (ReportSchedule) TableName() string { return "octo_report_schedules" }
@@ -124,6 +128,9 @@ func (s *Service) ListReportSchedules(ctx context.Context) ([]ReportSchedule, er
 	}
 	rows := []ReportSchedule{}
 	err = s.db.WithContext(ctx).Where("tenant_id = ?", p.TenantID).Order("name, id").Limit(200).Find(&rows).Error
+	for i := range rows {
+		hydrateScheduleTargets(&rows[i])
+	}
 	return rows, err
 }
 
@@ -132,13 +139,16 @@ func (s *Service) PutReportSchedule(ctx context.Context, input ReportSchedule) (
 	if err != nil || !p.Console {
 		return nil, ErrDenied
 	}
+	if err = serializeScheduleTargets(&input); err != nil {
+		return nil, err
+	}
 	next, err := normalizeReportSchedule(&input, time.Now())
 	if err != nil {
 		return nil, err
 	}
 	input.TenantID = p.TenantID
 	input.NextRunAt = next
-	if input.Enabled {
+	if input.Enabled && len(input.DeliveryTargets) == 0 {
 		if s.ReportPrincipal == nil {
 			return nil, ErrDenied
 		}

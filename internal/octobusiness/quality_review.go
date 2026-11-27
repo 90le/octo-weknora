@@ -84,6 +84,14 @@ type qualityRow struct {
 	Sources            []QualitySource    `json:"sources,omitempty"`
 	UnavailableSources int                `json:"unavailable_sources"`
 	Review             *qualityReviewView `json:"review,omitempty"`
+	SourceType         string             `json:"source_type,omitempty"`
+	ScopeID            string             `json:"scope_id,omitempty"`
+	ScopeName          string             `json:"scope_name,omitempty"`
+	ChannelID          string             `json:"channel_id,omitempty"`
+	BotName            string             `json:"bot_name,omitempty"`
+	AskerName          string             `json:"asker_name,omitempty"`
+	Interrupted        bool               `json:"interrupted,omitempty"`
+	AgentTrace         []string           `json:"agent_trace,omitempty"`
 	userID             string
 	name               string
 	libraries          []string

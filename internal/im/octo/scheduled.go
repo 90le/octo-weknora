@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/im"
 	"github.com/Tencent/WeKnora/internal/im/octo/wire"
@@ -169,4 +171,263 @@ func (a *Adapter) DeliverReport(ctx context.Context, s octobusiness.ReportSchedu
 		return fmt.Errorf("scheduled report delivery not acknowledged")
 	}
 	return nil
+}
+
+// ListBotDeliveryTargets enumerates all Octo groups and subareas joined by this
+// Bot (including unbound management groups) and annotates KB binding counts.
+func (a *Adapter) ListBotDeliveryTargets(ctx context.Context, tenant uint64) (*octobusiness.BotDeliveryTargetsResponse, error) {
+	if a.db == nil || tenant != a.tenantID {
+		return nil, octobusiness.ErrDenied
+	}
+	var ch im.IMChannel
+	if err := a.db.WithContext(ctx).Where("id = ? AND tenant_id = ? AND enabled = ?", a.channelID, tenant, true).First(&ch).Error; err != nil {
+		return nil, octobusiness.ReportAccessError("channel")
+	}
+	cfg, _ := im.ParseCredentials(ch.Credentials)
+	accountID := im.GetString(cfg, "account_id")
+
+	var scopes []octointegration.Scope
+	_ = a.db.WithContext(ctx).Where("tenant_id = ? AND account_id = ?", tenant, accountID).Find(&scopes).Error
+	scopeByKey := map[string]octointegration.Scope{}
+	store := octointegration.NewStore(a.db)
+	boundCount := map[string]int{}
+	for _, sc := range scopes {
+		k := sc.GroupID + ":" + sc.SubareaID
+		scopeByKey[k] = sc
+		if eff, err := store.Effective(ctx, tenant, sc.ID); err == nil {
+			boundCount[k] = len(eff)
+		}
+	}
+
+	var apiGroups []struct {
+		GroupNo string `json:"group_no"`
+		Name    string `json:"name"`
+	}
+	groups := []octobusiness.BotDeliveryGroup{}
+	seen := map[string]bool{}
+	if err := a.api.request(ctx, http.MethodGet, "/v1/bot/groups?page=1&page_size=100", nil, &apiGroups); err == nil {
+		for _, g := range apiGroups {
+			if g.GroupNo == "" {
+				continue
+			}
+			k := g.GroupNo + ":"
+			sc, hasScope := scopeByKey[k]
+			label := strings.TrimSpace(g.Name)
+			if label == "" && hasScope {
+				label = sc.DisplayName
+			}
+			if label == "" {
+				label = g.GroupNo
+			}
+			key := "group:" + g.GroupNo
+			seen[key] = true
+			groups = append(groups, octobusiness.BotDeliveryGroup{
+				Key:          key,
+				GroupID:      g.GroupNo,
+				Kind:         "主群",
+				Label:        label,
+				BoundKBCount: boundCount[k],
+			})
+			var threads []struct {
+				ShortID string `json:"short_id"`
+				Name    string `json:"name"`
+			}
+			if a.api.request(ctx, http.MethodGet, "/v1/bot/groups/"+url.PathEscape(g.GroupNo)+"/threads?page=1&page_size=100", nil, &threads) == nil {
+				for _, th := range threads {
+					if th.ShortID == "" {
+						continue
+					}
+					tk := g.GroupNo + ":" + th.ShortID
+					tsc := scopeByKey[tk]
+					tName := strings.TrimSpace(th.Name)
+					if tName == "" {
+						tName = th.ShortID
+					}
+					tKey := "group:" + g.GroupNo + ":" + th.ShortID
+					seen[tKey] = true
+					groups = append(groups, octobusiness.BotDeliveryGroup{
+						Key:          tKey,
+						GroupID:      g.GroupNo,
+						SubareaID:    th.ShortID,
+						Kind:         "子区",
+						Label:        label + " / " + tName,
+						BoundKBCount: boundCount[tk],
+						Inherited:    tsc.InheritParent,
+					})
+				}
+			}
+		}
+	}
+	// Include locally verified scopes if live listing returned partial results.
+	for _, sc := range scopes {
+		key := "group:" + sc.GroupID
+		kind := "主群"
+		if sc.SubareaID != "" {
+			key += ":" + sc.SubareaID
+			kind = "子区"
+		}
+		if seen[key] {
+			continue
+		}
+		k := sc.GroupID + ":" + sc.SubareaID
+		groups = append(groups, octobusiness.BotDeliveryGroup{
+			Key:          key,
+			GroupID:      sc.GroupID,
+			SubareaID:    sc.SubareaID,
+			Kind:         kind,
+			Label:        sc.DisplayName,
+			BoundKBCount: boundCount[k],
+			Inherited:    sc.InheritParent && sc.SubareaID != "",
+		})
+	}
+
+	var dmCandidates []octobusiness.BotDMCandidate
+	var conn octointegration.Connection
+	if a.db.WithContext(ctx).Where("tenant_id = ? AND account_id = ?", tenant, accountID).First(&conn).Error == nil {
+		if owner := conn.VerifiedOwnerUID(a.uid); owner != "" {
+			dmCandidates = append(dmCandidates, octobusiness.BotDMCandidate{
+				UID:    owner,
+				Name:   firstString(a.profileDisplayName(ctx, owner), owner),
+				Source: "creator",
+			})
+		}
+	}
+	return &octobusiness.BotDeliveryTargetsResponse{
+		ChannelID:    a.channelID,
+		AccountID:    accountID,
+		BotName:      ch.Name,
+		Groups:       groups,
+		DMCandidates: dmCandidates,
+	}, nil
+}
+
+// VerifyBotFriend performs live Octo CheckDMFriend + user profile lookup for a UID.
+func (a *Adapter) VerifyBotFriend(ctx context.Context, tenant uint64, uid string) (*octobusiness.BotFriendVerifyResult, error) {
+	if a.db == nil || tenant != a.tenantID {
+		return nil, octobusiness.ErrDenied
+	}
+	var ch im.IMChannel
+	if err := a.db.WithContext(ctx).Where("id = ? AND tenant_id = ? AND enabled = ?", a.channelID, tenant, true).First(&ch).Error; err != nil {
+		return nil, octobusiness.ReportAccessError("channel")
+	}
+	cfg, _ := im.ParseCredentials(ch.Credentials)
+	accountID := im.GetString(cfg, "account_id")
+	var conn octointegration.Connection
+	owner := ""
+	if a.db.WithContext(ctx).Where("tenant_id = ? AND account_id = ?", tenant, accountID).First(&conn).Error == nil {
+		owner = conn.VerifiedOwnerUID(a.uid)
+	}
+	name := a.profileDisplayName(ctx, uid)
+	if owner != "" && uid == owner {
+		return &octobusiness.BotFriendVerifyResult{
+			OK:        true,
+			UID:       uid,
+			Name:      firstString(name, uid),
+			IsCreator: true,
+		}, nil
+	}
+	isFriend, err := octointegration.CheckDMFriend(ctx, a.api.token, uid, a.api.http)
+	if err != nil {
+		return &octobusiness.BotFriendVerifyResult{
+			OK:            false,
+			UID:           uid,
+			Name:          name,
+			ReasonCode:    "friend_check_unavailable",
+			ReasonMessage: "Octo 好友校验接口暂不可用，请稍后重试",
+		}, nil
+	}
+	if !isFriend {
+		return &octobusiness.BotFriendVerifyResult{
+			OK:            false,
+			UID:           uid,
+			Name:          name,
+			ReasonCode:    "not_friend",
+			ReasonMessage: fmt.Sprintf("UID %s 不是「%s」的好友，无法私聊投递", uid, ch.Name),
+		}, nil
+	}
+	return &octobusiness.BotFriendVerifyResult{
+		OK:   true,
+		UID:  uid,
+		Name: firstString(name, uid),
+	}, nil
+}
+
+// DeliverReportToTarget verifies the target live on Octo and sends the rendered
+// Markdown report to one specific group, subarea, or verified friend DM.
+func (a *Adapter) DeliverReportToTarget(
+	ctx context.Context, tenant uint64, target octobusiness.DeliveryTarget, runKey string, report *octobusiness.Report, file *octobusiness.ReportArtifact,
+) (string, error) {
+	if a.db == nil || tenant != a.tenantID {
+		return "", octobusiness.ReportAccessError("channel")
+	}
+	var dest string
+	var kind int
+	switch target.Kind {
+	case "dm":
+		ver, err := a.VerifyBotFriend(ctx, tenant, target.UID)
+		if err != nil || ver == nil || !ver.OK {
+			return "", octobusiness.ReportAccessError("recipient_policy")
+		}
+		dest, kind = target.UID, 1
+	case "group":
+		endpoint := "/v1/bot/groups/" + url.PathEscape(target.GroupID)
+		dest, kind = target.GroupID, 2
+		if target.SubareaID != "" {
+			endpoint += "/threads/" + url.PathEscape(target.SubareaID)
+			dest = target.GroupID + "____" + target.SubareaID
+			kind = 5
+		}
+		var live struct {
+			Group  string `json:"group_no"`
+			Thread string `json:"short_id"`
+			Status int    `json:"status"`
+		}
+		if err := a.api.request(ctx, http.MethodGet, endpoint, nil, &live); err != nil || live.Group != target.GroupID || live.Thread != target.SubareaID || live.Status != 1 {
+			return "", octobusiness.ReportAccessError("scope_live")
+		}
+	default:
+		return "", octobusiness.ErrInvalid
+	}
+	if _, err := wire.ParseScope(dest, byte(kind)); err != nil {
+		return "", octobusiness.ErrInvalid
+	}
+	if file != nil {
+		msg := &im.IncomingMessage{UserID: target.UID, MessageID: runKey, Extra: map[string]string{"octo_channel_id": dest, "octo_channel_type": strconv.Itoa(kind)}}
+		fctx, err := a.startFileDeliveryTurn(ctx, msg.MessageID)
+		if err != nil {
+			return "", err
+		}
+		if err := a.sendGeneratedFile(fctx, msg, file.Name, []byte(file.Content), file.ContentType, func() error { return nil }); err != nil {
+			return "", err
+		}
+		return "file:" + runKey, nil
+	}
+	markdown, err := octobusiness.ReportFile(report, "markdown")
+	if err != nil {
+		return "", err
+	}
+	var result struct {
+		ID json.RawMessage `json:"message_id"`
+	}
+	err = a.api.post(ctx, "/v1/bot/sendMessage", map[string]any{
+		"channel_id":    dest,
+		"channel_type":  kind,
+		"client_msg_no": uuid.NewSHA1(uuid.NameSpaceOID, []byte("report-mt:"+runKey)).String(),
+		"payload":       map[string]any{"type": 1, "content": markdown.Content},
+	}, &result)
+	if err != nil {
+		return "", err
+	}
+	rcpt := wire.ReadID(result.ID)
+	if rcpt == "" {
+		return "", fmt.Errorf("scheduled report delivery not acknowledged")
+	}
+	return rcpt, nil
+}
+
+func firstString(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
 }

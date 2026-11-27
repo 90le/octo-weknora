@@ -147,6 +147,12 @@ const router = createRouter({
           meta: { requiresInit: true, requiresAuth: true, requiresWorkspaceAdmin: true, knowledgeOperations: true }
         },
         {
+          path: "issues/:issueId",
+          name: "knowledgeIssueDetail",
+          component: () => import("../views/integrations/OctoIssuesPage.vue"),
+          meta: { requiresInit: true, requiresAuth: true, requiresWorkspaceAdmin: true, knowledgeOperations: true }
+        },
+        {
           path: "knowledge-bases/:kbId/contacts",
           name: "knowledgeContacts",
           component: () => import("../views/integrations/KnowledgeContactsPage.vue"),

@@ -5,20 +5,24 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 // The console coordinator and the business contact on Issue belong to different identity domains.
 type remediationRecord struct {
-	IssueID     string          `gorm:"primaryKey" json:"-"`
-	TenantID    uint64          `json:"-"`
-	Coordinator string          `json:"coordinator"`
-	Revision    int             `json:"revision"`
-	Plan        remediationPlan `gorm:"serializer:json;type:text" json:"plan"`
+	IssueID          string          `gorm:"primaryKey" json:"-"`
+	TenantID         uint64          `json:"-"`
+	Coordinator      string          `json:"coordinator"`
+	Revision         int             `json:"revision"`
+	VerificationMode string          `gorm:"default:strict" json:"verification_mode"`
+	Plan             remediationPlan `gorm:"serializer:json;type:text" json:"plan"`
+	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
 func (remediationRecord) TableName() string { return "octo_issue_remediations" }
@@ -65,10 +69,14 @@ type remediationView struct {
 
 func (s *Service) remediation(ctx context.Context, issue *Issue) (*remediationView, error) {
 	view := &remediationView{State: "unclaimed"}
+	view.VerificationMode = "lightweight"
 	db := s.db.WithContext(ctx)
 	found := db.Where("tenant_id = ? AND issue_id = ?", issue.TenantID, issue.ID).Limit(1).Find(&view.remediationRecord)
 	if found.Error != nil || found.RowsAffected == 0 {
 		return view, found.Error
+	}
+	if view.VerificationMode == "" {
+		view.VerificationMode = "strict"
 	}
 	base := view.Plan.Source
 	if base == nil {
@@ -146,14 +154,14 @@ func (s *Service) saveRemediation(ctx context.Context, p Principal, issue *Issue
 				}
 			}
 		}
-		record := remediationRecord{IssueID: issue.ID, TenantID: p.TenantID, Coordinator: p.UserID, Revision: in.Revision + 1, Plan: plan}
+		record := remediationRecord{IssueID: issue.ID, TenantID: p.TenantID, Coordinator: p.UserID, Revision: in.Revision + 1, VerificationMode: "strict", Plan: plan, UpdatedAt: time.Now().UTC()}
 		if current.Revision == 0 {
 			if err := tx.Create(&record).Error; err != nil {
 				return err
 			}
 		} else {
 			record.Coordinator = current.Coordinator
-			res := tx.Model(&record).Where("tenant_id = ? AND revision = ?", p.TenantID, in.Revision).Select("plan", "revision").Updates(&record)
+			res := tx.Model(&record).Where("tenant_id = ? AND revision = ?", p.TenantID, in.Revision).Select("plan", "revision", "verification_mode", "updated_at").Updates(&record)
 			if res.Error != nil {
 				return res.Error
 			}
@@ -162,6 +170,78 @@ func (s *Service) saveRemediation(ctx context.Context, p Principal, issue *Issue
 			}
 		}
 		return audit(tx, p, "octo.issue.remediation_updated", issue.ID, map[string]string{"cause": in.Cause})
+	})
+}
+
+// SetRemediationMode toggles an issue bi-directionally between lightweight
+// (1-click instant retest & resolve) and strict (version gate + 3-case retest)
+// while recording an immutable audit event and issue timeline entry.
+func (h *Handler) SetRemediationMode(c *gin.Context) {
+	ctx, err := ConsoleContext(c)
+	if err != nil {
+		respond(c, nil, err)
+		return
+	}
+	p, issue, err := h.service.retestAdminIssue(ctx, c.Param("id"))
+	if err != nil {
+		respond(c, nil, err)
+		return
+	}
+	var in struct {
+		Mode   string `json:"mode"`
+		Reason string `json:"reason"`
+	}
+	if c.ShouldBindJSON(&in) != nil || !contains([]string{"lightweight", "strict"}, in.Mode) || len(in.Reason) > 1000 {
+		respond(c, nil, ErrInvalid)
+		return
+	}
+	if err = h.service.setRemediationMode(ctx, p, issue, in.Mode, strings.TrimSpace(in.Reason)); err != nil {
+		respond(c, nil, err)
+		return
+	}
+	view, err := h.service.remediation(ctx, issue)
+	respond(c, view, err)
+}
+
+func (s *Service) setRemediationMode(ctx context.Context, p Principal, issue *Issue, mode, reason string) error {
+	if !p.Console || issue.TenantID != p.TenantID {
+		return ErrDenied
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current remediationRecord
+		found := tx.Where("tenant_id = ? AND issue_id = ?", p.TenantID, issue.ID).Limit(1).Find(&current)
+		if found.Error != nil {
+			return found.Error
+		}
+		now := time.Now().UTC()
+		if found.RowsAffected > 0 {
+			if err := tx.Model(&remediationRecord{}).
+				Where("tenant_id = ? AND issue_id = ?", p.TenantID, issue.ID).
+				Updates(map[string]any{"verification_mode": mode, "updated_at": now}).Error; err != nil {
+				return err
+			}
+		}
+		note := "已开启严格修订与三类回归门禁"
+		if mode == "lightweight" {
+			note = "已关闭严格门禁并退回轻量闭环模式"
+		}
+		if reason != "" {
+			note += "：" + reason
+		}
+		ev := IssueEvent{
+			ID:             uuid.NewString(),
+			TenantID:       p.TenantID,
+			IssueID:        issue.ID,
+			ActorUID:       p.UserID,
+			ActorName:      p.UserName,
+			Status:         issue.Status,
+			Note:           note,
+			IdempotencyKey: uuid.NewString(),
+		}
+		if err := tx.Create(&ev).Error; err != nil {
+			return err
+		}
+		return audit(tx, p, "octo.issue.strict_mode_toggled", issue.ID, map[string]string{"mode": mode})
 	})
 }
 
@@ -195,7 +275,7 @@ var errRemediationChanged = errors.New("maintenance plan or published source cha
 
 func (s *Service) requireVerifiedRepair(ctx context.Context, issue *Issue) error {
 	v, err := s.remediation(ctx, issue)
-	if err != nil || v.Revision == 0 {
+	if err != nil || v.Revision == 0 || v.VerificationMode == "lightweight" {
 		return err
 	}
 	if v.State != "ready" {

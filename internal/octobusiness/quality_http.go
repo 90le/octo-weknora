@@ -14,9 +14,14 @@ func (h *Handler) QualityReview(c *gin.Context) {
 		respond(c, nil, err)
 		return
 	}
-	filter := qualityFilter{
-		LibraryID: c.Query("library_id"), Keyword: c.Query("keyword"), Outcome: c.Query("filter"),
-		Topic: c.Query("topic"), Group: c.Query("group"),
+	filter := qualityFilterV3{
+		qualityFilter: qualityFilter{
+			LibraryID: c.Query("library_id"), Keyword: c.Query("keyword"), Outcome: c.Query("filter"),
+			Topic: c.Query("topic"), Group: c.Query("group"),
+		},
+		SourceType: c.Query("source_type"),
+		ChannelID:  c.Query("channel_id"),
+		IncludeDM:  c.Query("include_dm") == "true" || c.Query("scope_id") == "" || c.Query("source_type") == "dm",
 	}
 	if filter.Page, err = strconv.Atoi(c.DefaultQuery("page", "1")); err != nil {
 		respond(c, nil, ErrInvalid)
@@ -34,7 +39,7 @@ func (h *Handler) QualityReview(c *gin.Context) {
 			}
 		}
 	}
-	page, err := h.service.queryQuality(ctx, c.Query("scope_id"), filter)
+	page, err := h.service.queryQualityV3(ctx, c.Query("scope_id"), filter)
 	respond(c, page, err)
 }
 

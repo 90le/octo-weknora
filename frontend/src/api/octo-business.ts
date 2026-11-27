@@ -29,10 +29,11 @@ export const updateIssue=(id:string, data:{status:IssueStatus;owner_uid?:string;
 export const retestIssue=(id:string,scenario='original',revision=0)=>post<Envelope<IssueRetest>>(`${root}/issues/${encodeURIComponent(id)}/retest`, {scenario,revision}, { timeout:95000 })
 export interface RepairSource {document_id:string;version:string;path:string}
 export interface RepairPlan {cause:string;acceptance:string;paraphrase:string;counterexample:string;wait_for_update:boolean}
-export interface RepairView {revision:number;coordinator:string;state:string;plan:RepairPlan & {source?:RepairSource};published?:RepairSource}
+export interface RepairView {revision:number;coordinator:string;state:string;verification_mode?:'lightweight'|'strict';plan:RepairPlan & {source?:RepairSource};published?:RepairSource}
 const repairPath=(id:string)=>`${root}/issues/${encodeURIComponent(id)}/remediation`
 export const issueRepair=(id:string)=>get<Envelope<RepairView>>(repairPath(id))
 export const saveIssueRepair=(id:string,plan:RepairPlan & {revision:number;document_id:string})=>put<Envelope<RepairView>>(repairPath(id),plan)
+export const setIssueRemediationMode=(id:string,mode:'lightweight'|'strict',reason='')=>patch<Envelope<RepairView>>(`${repairPath(id)}/mode`,{mode,reason})
 export interface IssueReply {
   id:string;actor_uid:string;channel_id:string;scope_name:string;target:string;user_name:string;user_uid:string
   message_id:string;body:string;status:string;receipt:string;created_at:string
@@ -46,8 +47,11 @@ export const batchIssues=(body:{targets:{id:string;updated_at:string}[];action:s
   post<Envelope<OperationResult[]>>(`${root}/issues/batch`,body)
 export interface QualityRow {
   id: string; question: string; answer: string; outcome: string; created_at: string
-  unanswered_repeats: number; group_key: string; unavailable_sources: number; sources?: {library: string}[]
+  unanswered_repeats: number; group_key: string; unavailable_sources: number; sources?: {library: string; wiki_slug?: string; chunk_id?: string}[]
   review?: { state:string; suggestion:string; reason:string; disposition:string; topic:string; issue_id:string; library_id:string }
+  source_type?: 'group'|'subarea'|'dm'|''
+  scope_id?: string; scope_name?: string; channel_id?: string; bot_name?: string; asker_name?: string
+  interrupted?: boolean; agent_trace?: string[]
 }
 export interface QualityStats {
   questions:number; users:number; reviewed:number; needs_review:number; unavailable:number; failed:number
@@ -65,11 +69,15 @@ export interface QualityDraft {
   finding: { category: string; title: string; reason: string; suggestion: string; evidence: {ref: string; quote: string}[] }
   excerpts: {id: string; label: string; text?: string; status?: string}[]
 }
-export interface QualityFilter { library_id?:string; keyword?:string; filter?:string; topic?:string; group?:string; from?:string; to?:string; page?:number; page_size?:number }
+export interface QualityFilter { library_id?:string; keyword?:string; filter?:string; topic?:string; group?:string; from?:string; to?:string; page?:number; page_size?:number; source_type?:string; channel_id?:string; include_dm?:boolean }
 export const listQuality=(scope: string, filter:QualityFilter={})=>{
-  const query = new URLSearchParams(Object.entries({scope_id:scope,...filter}).filter(([, val])=>Boolean(val)).map(([key,val])=>[key,String(val)]))
+  const query = new URLSearchParams(Object.entries({scope_id:scope,...filter}).filter(([, val])=>val!==undefined&&val!==''&&val!==false).map(([key,val])=>[key,String(val)]))
   return get<Envelope<QualityPage>>(`${root}/quality?${query}`)
 }
+export const convertQualityToIssue=(messageId: string, data: {scope_id?:string; channel_id?:string; is_direct?:boolean; title:string; knowledge_base_id:string; kind:IssueKind; note?:string; contact_id?:string})=>
+  post<Envelope<OctoIssue>>(`${root}/quality/${encodeURIComponent(messageId)}/convert-issue`, data)
+export const retryFailedQuality=(data: {scope_id?:string; message_id?:string}={})=>
+  post<Envelope<{retried:number}>>(`${root}/quality/retry-failed`, data)
 export const analyzeQuality=(data: {scope_id: string; library_id: string; message_ids: string[];use_review?:boolean})=>
   post<Envelope<QualityDraft>>(`${root}/quality/analyze`, data, { timeout:75000 })
 export const confirmQuality=(id: string,data: {title: string; note: string; contact_id: string})=>
@@ -83,6 +91,17 @@ export const listContacts=(kb:string)=>get(`${root}/contacts?knowledge_base_id=$
 export const saveContact=(data:OctoContact)=>put(`${root}/contacts`,data)
 export const deleteContact=(id:string)=>del(`${root}/contacts/${encodeURIComponent(id)}`)
 export const issueReport=(filter:IssueFilter)=>get(`${root}/report?${issueQuery(filter)}`) as unknown as Promise<Envelope<{counts:Record<string,number>;items:OctoIssue[];total:number;truncated:boolean;from?:string;to?:string;generated_at:string;scope:string;notice:string}>>
+export interface DeliveryTarget {
+  key: string
+  kind: 'group' | 'dm'
+  group_id?: string
+  subarea_id?: string
+  uid?: string
+  label: string
+  channel_kind: string
+  bound_kb_count?: number
+  inherited?: boolean
+}
 export interface ReportSchedule {
   id:string;name:string;channel_id:string;scope_id:string;recipient_type:'source'|'private';recipient_uid:string
   weekday:number;hour:number;minute:number;timezone:string;format:'text'|'markdown'|'html'|'csv';enabled:boolean
@@ -90,6 +109,7 @@ export interface ReportSchedule {
   template:string;frequency:string;period:string;mode:string;lookback:number;interval_days:number;month_day:number
   threshold:number;minimum_users:number;only_changes:boolean;instruction:string
   topic:string;quiet_start:number;quiet_end:number;cooldown_hours:number
+  sender_channel_id?:string;delivery_targets?:DeliveryTarget[];scope_filter_json?:string
 }
 export const listReportSchedules=()=>get(`${root}/report-schedules`) as unknown as Promise<Envelope<ReportSchedule[]>>
 export const saveReportSchedule=(data:ReportSchedule)=>data.id?put(`${root}/report-schedules/${encodeURIComponent(data.id)}`,data):post(`${root}/report-schedules`,data)
@@ -99,6 +119,52 @@ export interface ReportPreview extends ReportDates { next:string;authorized:bool
 export interface ReportRun extends ReportDates {
   id:string; schedule_id:string;status:string;due_at:string;target:string;summary:string;error_code:string
 }
+export interface ReportRunDelivery {
+  id:string;run_id:string;schedule_id:string;sender_channel:string;target_key:string;target_kind:'group'|'dm'
+  target_label:string;status:'pending'|'sending'|'sent'|'failed'|'uncertain';receipt:string;error_code:string;error_message:string;attempt_count:number;sent_at?:string
+}
+export interface ReportRunViewV3 extends ReportRun {
+  sender_channel_id:string;schedule_name:string;template:string;deliveries:ReportRunDelivery[]
+}
+export interface BotDeliveryGroup {
+  key:string;group_id:string;subarea_id:string;kind:'主群'|'子区';label:string;bound_kb_count:number;inherited:boolean
+}
+export interface BotDMCandidate { uid:string;name:string;source:'recent_dm'|'contact'|'creator' }
+export interface BotDeliveryTargetsResponse {
+  channel_id:string;account_id:string;bot_name:string;groups:BotDeliveryGroup[];dm_candidates:BotDMCandidate[]
+}
+export interface BotFriendVerifyResult {
+  ok:boolean;uid:string;name:string;is_creator:boolean;reason_code?:string;reason_message?:string;suggested_bots?:string[]
+}
+export interface WorkbenchKBHealth {
+  id:string;name:string;docs:number;ready:number;disabled:number;pptx:number;xlsx:number;wiki_pages:number
+  sync_status:'ok'|'partial'|'failed'|'none';partial_runs_14d:number;last_sync_at:string;schedule:string;sync_note:string
+}
+export interface WorkbenchActionItem {
+  kind:'qa'|'issue';priority:number;id:string;title:string;badge:string;badge_tone:'err'|'warn'|'brand'|'ok'
+  source_type:string;place:string;scope_id:string;channel_id:string;knowledge_base_id:string;knowledge_base_name:string
+  meta_top:string;meta_sub:string;sub_text:string;cta:string;primary:boolean
+}
+export interface WorkbenchSummary {
+  since:string;until:string
+  alerts:{ interrupted_count:number;failed_ai_reviews:number;partial_sync_kbs:WorkbenchKBHealth[] }
+  kpis:{ ai_process_count:number;ai_converted_count:number;open_issues:number;replied_issues:number;interrupted_count:number;failed_ai_reviews:number;interrupted_rate:number;kb_count:number;wiki_pages:number;pptx_count:number;xlsx_count:number }
+  action_stream:WorkbenchActionItem[]
+  kb_health:WorkbenchKBHealth[]
+  hot_questions:Array<{id:string;question:string;knowledge_base_name:string;source_type:string;count:number;users:number}>
+  pending_qa:number;open_issues:number
+}
+export const workbenchSummary=(params:Record<string,string|undefined>)=>{
+  const q=new URLSearchParams(Object.entries(params).filter(([,v])=>Boolean(v)).map(([k,v])=>[k,String(v)]))
+  return get<Envelope<WorkbenchSummary>>(`${root}/workbench/summary?${q}`)
+}
+export const botDeliveryTargets=(channelId:string)=>get<Envelope<BotDeliveryTargetsResponse>>(`${root}/bots/${encodeURIComponent(channelId)}/delivery-targets`)
+export const verifyBotFriend=(channelId:string,uid:string)=>post<Envelope<BotFriendVerifyResult>>(`${root}/bots/${encodeURIComponent(channelId)}/verify-friend`,{uid})
+export const createAdhocReportRun=(body:{title?:string;sender_channel_id:string;delivery_targets:DeliveryTarget[];format?:string;custom_note?:string;scope_id?:string;knowledge_base_id?:string;from?:string;to?:string})=>
+  post<Envelope<ReportRunViewV3>>(`${root}/reports/adhoc-runs`,body,{timeout:90000})
+export const listAllReportRuns=(status='')=>get<Envelope<ReportRunViewV3[]>>(`${root}/report-runs${status?`?status=${encodeURIComponent(status)}`:''}`)
+export const sendReportRunV3=(run:string)=>post<Envelope<ReportRunViewV3>>(`${root}/report-runs/${encodeURIComponent(run)}/send`,{},{timeout:125000})
+export const retryReportDelivery=(run:string,deliveryId:string)=>post<Envelope<ReportRunViewV3>>(`${root}/report-runs/${encodeURIComponent(run)}/deliveries/${encodeURIComponent(deliveryId)}/retry`,{},{timeout:90000})
 export const previewReportSchedule=(data:ReportSchedule & ReportDates)=>post<Envelope<ReportPreview>>(`${root}/report-schedules/preview`,data)
 const runsPath=(id:string)=>`${root}/report-schedules/${encodeURIComponent(id)}/runs`
 export const listReportRuns=(id:string)=>get<Envelope<ReportRun[]>>(runsPath(id))

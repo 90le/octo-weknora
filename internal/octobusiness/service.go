@@ -26,6 +26,9 @@ type Service struct {
 	Management               ManagementExecutor
 	ReportPrincipal          func(context.Context, ReportSchedule) (context.Context, error)
 	ReportDelivery           func(context.Context, ReportSchedule, *Report, *ReportArtifact) error
+	BotDeliveryTargets       func(context.Context, uint64, string) (*BotDeliveryTargetsResponse, error)
+	BotVerifyFriend          func(context.Context, uint64, string, string) (*BotFriendVerifyResult, error)
+	MultiTargetDelivery      func(context.Context, uint64, string, DeliveryTarget, string, *Report, *ReportArtifact) (string, error)
 	ManualReplyDelivery      func(context.Context, ManualReplyTarget, string, string) (string, error)
 	ManualReplyRecipientName func(context.Context, ManualReplyTarget) (string, error)
 	reportCron               *cron.Cron

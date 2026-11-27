@@ -46,9 +46,13 @@ func (s ReportSchedule) validationSource() ReportSchedule {
 
 func normalizeReportSchedule(s *ReportSchedule, now time.Time) (time.Time, error) {
 	periods := []string{"", "last_days", "yesterday", "previous_week", "previous_month", "since_last", "custom"}
-	if !validText(s.Name, 256) || !validText(s.ChannelID, 128) || !validText(s.ScopeID, 128) ||
+	hasMulti := len(s.DeliveryTargets) > 0 || (strings.TrimSpace(s.DeliveryTargetsJSON) != "" && s.DeliveryTargetsJSON != "[]")
+	if hasMulti && s.RecipientType == "" {
+		s.RecipientType = "source"
+	}
+	if !validText(s.Name, 256) || !validText(s.ChannelID, 128) || (!hasMulti && !validText(s.ScopeID, 128)) ||
 		!contains([]string{"source", "private"}, s.RecipientType) ||
-		(s.RecipientType == "private" && s.Mode != "generate" && !validText(s.RecipientUID, 128)) ||
+		(!hasMulti && s.RecipientType == "private" && s.Mode != "generate" && !validText(s.RecipientUID, 128)) ||
 		!contains([]string{"text", "markdown", "html", "csv"}, s.Format) ||
 		!contains([]string{"", "maintenance", "quality", "topic", "anomaly"}, s.Template) ||
 		!contains([]string{"", "weekly", "daily", "weekdays", "monthly", "interval", "manual"}, s.Frequency) ||

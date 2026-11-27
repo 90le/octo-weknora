@@ -11,6 +11,12 @@ type reportSender interface {
 	DeliverReport(context.Context, octobusiness.ReportSchedule, *octobusiness.Report, *octobusiness.ReportArtifact) error
 }
 
+type multiTargetReportSender interface {
+	ListBotDeliveryTargets(context.Context, uint64) (*octobusiness.BotDeliveryTargetsResponse, error)
+	VerifyBotFriend(context.Context, uint64, string) (*octobusiness.BotFriendVerifyResult, error)
+	DeliverReportToTarget(context.Context, uint64, octobusiness.DeliveryTarget, string, *octobusiness.Report, *octobusiness.ReportArtifact) (string, error)
+}
+
 type manualReplySender interface {
 	ManualReplyRecipientName(context.Context, octobusiness.ManualReplyTarget) (string, error)
 	DeliverManualReply(context.Context, octobusiness.ManualReplyTarget, string, string) (string, error)
@@ -41,6 +47,38 @@ func (s *Service) ConfigureOctoReports(business *octobusiness.Service) {
 			return err
 		}
 		return r.DeliverReport(ctx, schedule, report, file)
+	}
+	lookupMulti := func(tenant uint64, channelID string) (multiTargetReportSender, error) {
+		a, ch, ok := s.GetChannelAdapter(channelID)
+		if !ok || ch.TenantID != tenant || ch.Platform != "octo" || !ch.Enabled {
+			return nil, octobusiness.ReportAccessError("channel")
+		}
+		m, ok := a.(multiTargetReportSender)
+		if !ok {
+			return nil, octobusiness.ReportAccessError("channel")
+		}
+		return m, nil
+	}
+	business.BotDeliveryTargets = func(ctx context.Context, tenant uint64, channelID string) (*octobusiness.BotDeliveryTargetsResponse, error) {
+		m, err := lookupMulti(tenant, channelID)
+		if err != nil {
+			return nil, err
+		}
+		return m.ListBotDeliveryTargets(ctx, tenant)
+	}
+	business.BotVerifyFriend = func(ctx context.Context, tenant uint64, channelID, uid string) (*octobusiness.BotFriendVerifyResult, error) {
+		m, err := lookupMulti(tenant, channelID)
+		if err != nil {
+			return nil, err
+		}
+		return m.VerifyBotFriend(ctx, tenant, uid)
+	}
+	business.MultiTargetDelivery = func(ctx context.Context, tenant uint64, channelID string, target octobusiness.DeliveryTarget, runKey string, report *octobusiness.Report, file *octobusiness.ReportArtifact) (string, error) {
+		m, err := lookupMulti(tenant, channelID)
+		if err != nil {
+			return "", err
+		}
+		return m.DeliverReportToTarget(ctx, tenant, target, runKey, report, file)
 	}
 	findManualSender := func(target octobusiness.ManualReplyTarget) (manualReplySender, error) {
 		a, ch, ok := s.GetChannelAdapter(target.ChannelID)
