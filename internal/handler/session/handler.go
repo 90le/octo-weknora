@@ -74,6 +74,9 @@ type Handler struct {
 	// validate CreateSession's optional project_dir. Nil means none are
 	// approved, so a non-empty project_dir is rejected.
 	approvedProjectDirs HostProjectDirsLoader
+	// octoBridge resolves Octo session provenance and routes Web replies back
+	// along the originating Octo DM/group/subarea return path.
+	octoBridge OctoSessionBridge
 }
 
 // NewHandler creates a new instance of Handler with all necessary dependencies
@@ -275,6 +278,17 @@ func (h *Handler) GetSession(c *gin.Context) {
 	// strict owner lookup authorizes the normal writable chat controls.
 	if session.IMPlatform == "octo" {
 		session.CanContinue = h.canContinueOctoChat(ctx, id)
+		canOperate := h.canOperateOctoSession(ctx, id)
+		if h.octoBridge != nil {
+			if origins := h.octoBridge.ResolveSessionOrigins(ctx, session.TenantID, []string{id}); origins[id] != nil {
+				origin := *origins[id]
+				origin.CanReplyOcto = canOperate
+				session.IMOrigin = &origin
+			}
+		}
+		if canOperate {
+			session.CanContinue = true
+		}
 	}
 
 	// Return session data
@@ -343,6 +357,27 @@ func (h *Handler) GetSessionsByTenant(c *gin.Context) {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(errors.NewInternalServerError(err.Error()))
 		return
+	}
+
+	if h.octoBridge != nil {
+		if items, ok := result.Data.([]*types.SessionListItem); ok && len(items) > 0 {
+			octoIDs := make([]string, 0, len(items))
+			var tenantID uint64
+			for _, it := range items {
+				if it != nil && it.IMPlatform == "octo" {
+					octoIDs = append(octoIDs, it.ID)
+					tenantID = it.TenantID
+				}
+			}
+			if len(octoIDs) > 0 {
+				origins := h.octoBridge.ResolveSessionOrigins(ctx, tenantID, octoIDs)
+				for _, it := range items {
+					if it != nil && origins[it.ID] != nil {
+						it.IMOrigin = origins[it.ID]
+					}
+				}
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{

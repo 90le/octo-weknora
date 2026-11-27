@@ -247,6 +247,26 @@ func (a *Adapter) ResolveUserNames(ctx context.Context, tenant uint64, uids []st
 	return out
 }
 
+func (a *Adapter) FindCachedUIDsByNickname(tenant uint64, keyword string) []string {
+	if a.tenantID != tenant {
+		return nil
+	}
+	kw := strings.ToLower(strings.TrimSpace(keyword))
+	if kw == "" {
+		return nil
+	}
+	now := time.Now()
+	a.profileMu.Lock()
+	defer a.profileMu.Unlock()
+	var out []string
+	for uid, entry := range a.profileCache {
+		if entry.name != "" && now.Before(entry.expiresAt) && strings.Contains(strings.ToLower(entry.name), kw) {
+			out = append(out, uid)
+		}
+	}
+	return out
+}
+
 func (a *Adapter) ListBotDeliveryTargets(ctx context.Context, tenant uint64) (*octobusiness.BotDeliveryTargetsResponse, error) {
 	if a.db == nil || tenant != a.tenantID {
 		return nil, octobusiness.ErrDenied

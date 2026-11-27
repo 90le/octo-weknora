@@ -175,8 +175,28 @@ type Session struct {
 	// Web console can classify a session's origin folder without a list query.
 	IMPlatform string `json:"im_platform,omitempty" gorm:"-"`
 
+	// IMOrigin carries human-readable channel/group/subarea/user provenance
+	// for IM-originated sessions (populated on read, never stored on sessions).
+	IMOrigin *SessionIMOrigin `json:"im_origin,omitempty" gorm:"-"`
+
 	// Association relationship, not stored in the database
 	Messages []Message `json:"-" gorm:"foreignKey:SessionID"`
+}
+
+// SessionIMOrigin describes where an IM-originated session came from so the
+// sidebar and Web chat header can show channel, chat type, group/subarea, and
+// resolved user nickname, and route Web replies back to the original path.
+type SessionIMOrigin struct {
+	Platform     string `json:"platform"`
+	ChannelID    string `json:"channel_id,omitempty"`
+	ChannelName  string `json:"channel_name,omitempty"`
+	ChatType     string `json:"chat_type,omitempty"` // direct | group | subarea
+	GroupID      string `json:"group_id,omitempty"`
+	SubareaID    string `json:"subarea_id,omitempty"`
+	SourceName   string `json:"source_name,omitempty"`
+	UserUID      string `json:"user_uid,omitempty"`
+	UserName     string `json:"user_name,omitempty"`
+	CanReplyOcto bool   `json:"can_reply_octo,omitempty"`
 }
 
 func (s *Session) BeforeCreate(tx *gorm.DB) (err error) {

@@ -1897,6 +1897,7 @@ export default {
     im: {
       title: 'IM 集成',
       description: '将智能体接入即时通讯平台，支持 Octo、企业微信、飞书、Slack、Telegram、钉钉、Mattermost、微信、QQBot 和云之家',
+      octo: 'Octo 渠道',
       feishu: '飞书',
       lark: 'Lark（飞书国际版）',
       slack: 'Slack',

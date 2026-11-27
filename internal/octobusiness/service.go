@@ -30,6 +30,7 @@ type Service struct {
 	BotVerifyFriend          func(context.Context, uint64, string, string) (*BotFriendVerifyResult, error)
 	MultiTargetDelivery      func(context.Context, uint64, string, DeliveryTarget, string, *Report, *ReportArtifact) (string, error)
 	ResolveOctoUserNames     func(context.Context, uint64, string, []string) map[string]string
+	FindOctoUIDsByNickname   func(uint64, string) []string
 	ManualReplyDelivery      func(context.Context, ManualReplyTarget, string, string) (string, error)
 	ManualReplyRecipientName func(context.Context, ManualReplyTarget) (string, error)
 	reportCron               *cron.Cron
@@ -305,7 +306,19 @@ func (s *Service) issueQuery(ctx context.Context, p Principal, f IssueFilter) *g
 		q = q.Where("archive_state = ''")
 	}
 	if f.Keyword != "" {
-		q = q.Where("LOWER(title) LIKE ? OR LOWER(description) LIKE ?", "%"+strings.ToLower(f.Keyword)+"%", "%"+strings.ToLower(f.Keyword)+"%")
+		like := "%" + strings.ToLower(strings.TrimSpace(f.Keyword)) + "%"
+		uids := s.findUIDsByNickname(ctx, p.TenantID, f.Keyword)
+		if len(uids) > 0 {
+			q = q.Where(
+				"LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(reporter_name) LIKE ? OR LOWER(owner_name) LIKE ? OR LOWER(scope_name) LIKE ? OR reporter_uid IN ? OR owner_uid IN ?",
+				like, like, like, like, like, uids, uids,
+			)
+		} else {
+			q = q.Where(
+				"LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(reporter_name) LIKE ? OR LOWER(owner_name) LIKE ? OR LOWER(scope_name) LIKE ?",
+				like, like, like, like, like,
+			)
+		}
 	}
 	// SQLite stores timestamp offsets in text. A local timestamp and a UTC bound
 	// need chronological comparison for the operator's date filter and reports.

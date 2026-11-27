@@ -277,8 +277,9 @@ func (s *Service) collectDMCandidates(ctx context.Context, tenant uint64, channe
 			out = append(out, c)
 		}
 	}
-	// 1. Recent private DM senders seen by this Bot channel
+	// 1. Recent private DM senders seen by this Bot channel (capped at 15 so contacts are never starved)
 	var inbox []struct{ Input string }
+	recentAdded := 0
 	if quiet.Table("octo_message_inbox").Select("input").
 		Where("tenant_id = ? AND channel_id = ?", tenant, channelID).
 		Order("created_at DESC").Limit(120).Find(&inbox).Error == nil {
@@ -293,26 +294,51 @@ func (s *Service) collectDMCandidates(ctx context.Context, tenant uint64, channe
 					Name:   firstNonEmpty(in.UserName, in.UserID),
 					Source: "recent_dm",
 				})
-				if len(out) >= 20 {
-					return out
+				recentAdded++
+				if recentAdded >= 15 {
+					break
 				}
 			}
 		}
 	}
 	// 2. Configured KB contacts in this tenant
 	var contacts []Contact
-	if quiet.Where("tenant_id = ?", tenant).Order("is_default DESC, name").Limit(30).Find(&contacts).Error == nil {
+	if quiet.Where("tenant_id = ?", tenant).Order("is_default DESC, name").Limit(50).Find(&contacts).Error == nil {
 		for _, c := range contacts {
-			if c.UID != "" && !seen[c.UID] {
+			if c.UID != "" {
+				if seen[c.UID] {
+					// Upgrade existing raw-UID name with configured contact name when available.
+					for i := range out {
+						if out[i].UID == c.UID && (out[i].Name == "" || out[i].Name == out[i].UID) && strings.TrimSpace(c.Name) != "" {
+							out[i].Name = strings.TrimSpace(c.Name)
+						}
+					}
+					continue
+				}
 				seen[c.UID] = true
 				out = append(out, BotDMCandidate{
 					UID:    c.UID,
 					Name:   firstNonEmpty(c.Name, c.UID),
 					Source: "contact",
 				})
-				if len(out) >= 24 {
+				if len(out) >= 40 {
 					break
 				}
+			}
+		}
+	}
+	// 3. Batch-resolve Octo nicknames for any candidate whose Name is still empty or raw UID
+	missing := make([]string, 0, len(out))
+	for _, c := range out {
+		if c.UID != "" && (strings.TrimSpace(c.Name) == "" || c.Name == c.UID) {
+			missing = append(missing, c.UID)
+		}
+	}
+	if len(missing) > 0 {
+		resolved := s.resolveOctoNicknames(ctx, tenant, channelID, missing)
+		for i := range out {
+			if nick := resolved[out[i].UID]; nick != "" && (strings.TrimSpace(out[i].Name) == "" || out[i].Name == out[i].UID) {
+				out[i].Name = nick
 			}
 		}
 	}

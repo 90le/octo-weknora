@@ -1851,9 +1851,11 @@ func registerWebSearchProviders(registry *infra_web_search.Registry) {
 func registerIMService(
 	imService *imPkg.Service, cleaner interfaces.ResourceCleaner, db *gorm.DB,
 	business *octobusiness.Service, queue interfaces.TaskEnqueuer,
-	artifacts *service.ArtifactCollector, systemHandler *handler.SystemHandler, models interfaces.ModelService,
+	artifacts *service.ArtifactCollector, systemHandler *handler.SystemHandler,
+	sessionHandler *session.Handler, models interfaces.ModelService,
 ) {
 	systemHandler.SetIMRuntime(imService)
+	sessionHandler.SetOctoSessionBridge(imService.OctoSessionBridge())
 	imService.ConfigureArtifactCollector(artifacts)
 	imService.RegisterAdapterFactory("wecom", wecom.NewFactory())
 	imService.RegisterAdapterFactory("feishu", feishu.NewFactory(feishu.RegionFeishu))

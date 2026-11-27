@@ -111,19 +111,30 @@
         <div v-else class="uid-res">输入 Octo 好友 UID 后点「校验 UID」，或点下方候选自动填入并实时校验。</div>
 
         <div v-if="candidates.length">
-          <div class="mini" style="margin-bottom: 5px">
-            系统近期私聊 / 联系人候选（Octo 无全量好友列表，点击将实时校验好友关系）：
+          <div class="cand-hd">
+            <span class="mini">系统近期私聊 / 联系人候选（点击自动填入并实时校验好友关系）：</span>
+            <t-input
+              v-model="candQuery"
+              size="small"
+              clearable
+              class="cand-search"
+              placeholder="按昵称或 UID 筛选候选..."
+            />
           </div>
           <div class="cand-list">
             <t-button
-              v-for="c in candidates"
+              v-for="c in filteredCandidates"
               :key="c.uid"
               size="small"
               variant="outline"
+              :title="`UID: ${c.uid}`"
               @click="pickCandidate(c.uid)"
             >
-              {{ c.name }} ({{ c.uid }})
+              <span class="cand-src">{{ candSourceLabel(c.source) }}</span>
+              <b>{{ candDisplayName(c) }}</b>
+              <span class="cand-uid">({{ shortUid(c.uid) }})</span>
             </t-button>
+            <span v-if="!filteredCandidates.length" class="mini">没有匹配的候选成员</span>
           </div>
         </div>
       </div>
@@ -158,6 +169,7 @@ const emit = defineEmits<{
 
 const mode = ref<'group' | 'dm'>('group')
 const groupQuery = ref('')
+const candQuery = ref('')
 const uidInput = ref('')
 const uidCheck = ref<BotFriendVerifyResult | null>(null)
 const checkingUid = ref(false)
@@ -172,6 +184,24 @@ const filteredGroups = computed(() => {
   if (!q) return groups.value
   return groups.value.filter((g) => `${g.label} ${g.kind} ${g.bound_kb_count ? '已绑库' : '未绑库 仅入群'}`.toLowerCase().includes(q))
 })
+const filteredCandidates = computed(() => {
+  const q = candQuery.value.trim().toLowerCase()
+  if (!q) return candidates.value
+  return candidates.value.filter((c) => `${c.name} ${c.uid} ${candSourceLabel(c.source)}`.toLowerCase().includes(q))
+})
+function candSourceLabel(src: string) {
+  if (src === 'creator') return '创建者'
+  if (src === 'contact') return '联系人'
+  return '近期私聊'
+}
+function candDisplayName(c: BotDMCandidate) {
+  const name = (c.name || '').trim()
+  if (name && name !== c.uid) return name
+  return `用户 ${shortUid(c.uid)}`
+}
+function shortUid(uid: string) {
+  return uid.length > 10 ? `${uid.slice(0, 8)}…` : uid
+}
 
 const invalidKeys = computed(() => {
   const validGroupKeys = new Set(groups.value.map((g) => g.key))
@@ -311,7 +341,11 @@ watch(() => props.senderChannelId, (id) => void loadBotTargets(id), { immediate:
 .uid-res { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-radius: 6px; font-size: 12px; border: 1px solid var(--td-component-border); background: var(--td-bg-color-secondarycontainer); }
 .uid-res.ok { border-color: var(--td-success-color-3); background: var(--td-success-color-1); color: var(--td-success-color); }
 .uid-res.err { border-color: var(--td-error-color-3); background: var(--td-error-color-1); color: var(--td-error-color); }
-.cand-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.cand-hd { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.cand-search { width: 190px; }
+.cand-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 150px; overflow-y: auto; }
+.cand-src { display: inline-block; margin-right: 4px; padding: 0 4px; border-radius: 4px; font-size: 11px; background: var(--td-bg-color-secondarycontainer); color: var(--td-text-color-secondary); }
+.cand-uid { margin-left: 4px; font-size: 11px; color: var(--td-text-color-placeholder); }
 .min0 { min-width: 0; }
 .mini { font-size: 12px; color: var(--td-text-color-placeholder); }
 </style>

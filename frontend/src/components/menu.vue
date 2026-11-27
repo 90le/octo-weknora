@@ -770,6 +770,7 @@ const mapSessionRow = (item: any) => ({
     is_pinned: !!item.is_pinned,
     pinned_at: item.pinned_at || null,
     im_platform: item.im_platform || '',
+    im_origin: item.im_origin || null,
     description: item.description || '',
     user_id: item.user_id || '',
     parent_session_id: item.parent_session_id || '',

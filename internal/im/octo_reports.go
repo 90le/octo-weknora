@@ -16,6 +16,7 @@ type multiTargetReportSender interface {
 	VerifyBotFriend(context.Context, uint64, string) (*octobusiness.BotFriendVerifyResult, error)
 	DeliverReportToTarget(context.Context, uint64, octobusiness.DeliveryTarget, string, *octobusiness.Report, *octobusiness.ReportArtifact) (string, error)
 	ResolveUserNames(context.Context, uint64, []string) map[string]string
+	FindCachedUIDsByNickname(uint64, string) []string
 }
 
 type manualReplySender interface {
@@ -103,6 +104,28 @@ func (s *Service) ConfigureOctoReports(business *octobusiness.Service) {
 			}
 		}
 		return nil
+	}
+	business.FindOctoUIDsByNickname = func(tenant uint64, keyword string) []string {
+		channels, err := s.ListChannelsByTenant(context.Background(), tenant)
+		if err != nil {
+			return nil
+		}
+		seen := map[string]bool{}
+		var out []string
+		for _, ch := range channels {
+			if ch.Platform != "octo" || !ch.Enabled {
+				continue
+			}
+			if m, err := lookupMulti(tenant, ch.ID); err == nil {
+				for _, uid := range m.FindCachedUIDsByNickname(tenant, keyword) {
+					if !seen[uid] {
+						seen[uid] = true
+						out = append(out, uid)
+					}
+				}
+			}
+		}
+		return out
 	}
 	findManualSender := func(target octobusiness.ManualReplyTarget) (manualReplySender, error) {
 		a, ch, ok := s.GetChannelAdapter(target.ChannelID)

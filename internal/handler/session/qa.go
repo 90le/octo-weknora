@@ -232,6 +232,13 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	// creation with a 500 instead of a clean not-found).
 	session, err := h.sessionService.GetOwnedSession(ctx, sessionID)
 	if err != nil {
+		if caller := types.CallerFromContext(ctx); caller.Role.HasPermission(types.TenantRoleAdmin) {
+			if adminSess, adminErr := h.sessionService.GetSession(ctx, sessionID); adminErr == nil && adminSess != nil && adminSess.IMPlatform == "octo" {
+				session, err = adminSess, nil
+			}
+		}
+	}
+	if err != nil {
 		logger.Warnf(ctx, "Failed to get session: error_type=%T", err)
 		return nil, nil, errors.NewNotFoundError("Session not found")
 	}

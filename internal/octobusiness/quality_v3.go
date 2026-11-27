@@ -389,12 +389,38 @@ func (s *Service) queryQualityV3(
 	}
 
 	keyword := strings.ToLower(strings.TrimSpace(f.Keyword))
+	// When filtering by keyword, pre-resolve Octo nicknames (TTL-cached) so operators
+	// can search directly by member / DM user nickname.
+	if keyword != "" && len(rows) > 0 && s.ResolveOctoUserNames != nil {
+		byChannel := map[string][]string{}
+		for _, r := range rows {
+			if r.userID != "" && (r.AskerName == "" || r.AskerName == r.userID) {
+				byChannel[r.ChannelID] = append(byChannel[r.ChannelID], r.userID)
+			}
+		}
+		resolved := map[string]string{}
+		for chID, uids := range byChannel {
+			for uid, nick := range s.resolveOctoNicknames(ctx, p.TenantID, chID, uids) {
+				if nick != "" {
+					resolved[uid] = nick
+				}
+			}
+		}
+		for i := range rows {
+			if nick := resolved[rows[i].userID]; nick != "" {
+				rows[i].AskerName = nick
+				if rows[i].SourceType == "dm" {
+					rows[i].ScopeName = "私聊 · " + nick
+				}
+			}
+		}
+	}
 	filtered := make([]qualityRow, 0, len(rows))
 	for _, row := range rows {
 		if !qualityMatchesV3(row, f.Outcome) ||
 			(f.Group != "" && f.Group != row.GroupKey) ||
 			(f.Topic != "" && (row.Review == nil || row.Review.Topic != f.Topic)) ||
-			(keyword != "" && !strings.Contains(strings.ToLower(row.Question+"\n"+row.Answer+"\n"+row.ScopeName), keyword)) {
+			(keyword != "" && !strings.Contains(strings.ToLower(row.Question+"\n"+row.Answer+"\n"+row.ScopeName+"\n"+row.AskerName+"\n"+row.userID), keyword)) {
 			continue
 		}
 		filtered = append(filtered, row)

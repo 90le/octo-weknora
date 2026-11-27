@@ -5,7 +5,7 @@
       size="small"
       clearable
       class="scope-search"
-      placeholder="搜索问法、产品库、群或成员..."
+      placeholder="搜索问法、产品库、群/子区、联系人或成员昵称..."
       @enter="emit('change')"
       @clear="emit('change')"
     />

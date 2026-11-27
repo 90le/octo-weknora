@@ -25,6 +25,7 @@
                 </t-tooltip>
             </div>
         </div>
+        <OctoSessionOriginBar v-if="!embeddedMode && currentSession?.im_origin" :origin="currentSession.im_origin" />
         <div class="chat_thread" :style="{ '--chat-composer-height': `${composerHeight}px`, '--chat-scrollbar-gutter': `${scrollbarGutter}px` }">
             <div ref="scrollContainer" class="chat_scroll_box" @scroll="handleScroll">
                 <div class="chat_scroll_content">
@@ -138,6 +139,20 @@
                                     @rewind="handleRewind"
                                     @render-complete-change="(ready) => handleAnswerRenderComplete(session, ready)">
                                 </botmsg>
+                                <div v-if="!embeddedMode && currentSession?.im_origin?.can_reply_octo && session.is_completed" class="octo-msg-bar">
+                                    <span v-if="session.channel === 'octo_manual'" class="octo-msg-tag manual">
+                                        Bot 人工直复 · 已送达 Octo
+                                    </span>
+                                    <span v-else-if="session.channel === 'octo_relayed'" class="octo-msg-tag relayed">
+                                        ✓ 已原路回传至 Octo
+                                    </span>
+                                    <button v-else-if="session.channel === 'web' || !session.channel" type="button"
+                                        class="octo-relay-btn"
+                                        :disabled="relayingMsgId === resolveAssistantMessageId(session)"
+                                        @click="handleRelayToOcto(session)">
+                                        {{ relayingMsgId === resolveAssistantMessageId(session) ? '正在回传...' : '发送到原 Octo 会话 ↗' }}
+                                    </button>
+                                </div>
                                 <FollowUpSuggestions v-if="chatMode === 'web' && session.answerFullyRendered && !session.steerForked && !session.suggestionsDismissed"
                                     :suggestion-set="session.suggestionSet"
                                     :loading="session.suggestionLoading"
@@ -162,7 +177,35 @@
                             <t-icon name="chevron-down" size="18px" />
                         </div>
                     </transition>
-                    <InputField ref="inputFieldRef" :auto-focus="focusComposerOnMount" :compact="!embeddedMode"
+                    <div v-if="!embeddedMode && currentSession?.im_origin?.can_reply_octo" class="octo-composer-bar">
+                        <div class="octo-mode-seg" role="group" aria-label="Octo 对话模式">
+                            <button type="button" :aria-pressed="octoReplyMode === 'ai'" @click="octoReplyMode = 'ai'">AI 对话</button>
+                            <button type="button" :aria-pressed="octoReplyMode === 'manual'" @click="octoReplyMode = 'manual'">Bot 人工直复</button>
+                        </div>
+                        <t-checkbox v-if="octoReplyMode === 'ai'" v-model="autoRelayToOcto" class="octo-auto-relay">
+                            AI 回复完成后自动原路发回 Octo
+                        </t-checkbox>
+                        <span v-else class="octo-manual-hint">
+                            将以「{{ currentSession.im_origin.channel_name || 'Octo Bot' }}」身份直接原路回复至
+                            {{ currentSession.im_origin.chat_type === 'direct' ? `私聊 · ${currentSession.im_origin.user_name || currentSession.im_origin.user_uid}` : (currentSession.im_origin.source_name || '原群会话') }}
+                        </span>
+                    </div>
+                    <div v-if="!embeddedMode && currentSession?.im_origin?.can_reply_octo && octoReplyMode === 'manual'" class="octo-manual-box">
+                        <t-textarea
+                            v-model="octoManualDraft"
+                            :autosize="{ minRows: 2, maxRows: 5 }"
+                            :maxlength="8000"
+                            placeholder="输入要以 Bot 身份直接发回原 Octo 会话的人工回复内容..."
+                            @keydown.ctrl.enter.prevent="handleSendOctoManual"
+                        />
+                        <div class="octo-manual-ft">
+                            <span class="octo-manual-tip">Ctrl+Enter 快捷发送 · 按上一条消息路径原路返回并同步记录到本会话</span>
+                            <t-button theme="primary" size="small" :loading="sendingOctoManual" :disabled="!octoManualDraft.trim()" @click="handleSendOctoManual">
+                                以 Bot 身份立即发送
+                            </t-button>
+                        </div>
+                    </div>
+                    <InputField v-show="octoReplyMode !== 'manual' || !currentSession?.im_origin?.can_reply_octo" ref="inputFieldRef" :auto-focus="focusComposerOnMount" :compact="!embeddedMode"
                         @send-msg="(query, modelId, mentionedItems, imageFiles, attachmentFiles, options) => sendMsg(query, modelId, mentionedItems, imageFiles, attachmentFiles, options)"
                         @steer-msg="(query, mentionedItems, delivery) => handleSteerMsg(query, mentionedItems, delivery)"
                         @promote-steer="handlePromoteSteer"
@@ -203,7 +246,8 @@ import { useRoute, useRouter, onBeforeRouteLeave, onBeforeRouteUpdate } from 'vu
 import InputField from '../../components/Input-field.vue';
 import botmsg from './components/botmsg.vue';
 import usermsg from './components/usermsg.vue';
-import { getMessageList, getSession, forkSession, rewindSession } from "@/api/chat/index";
+import OctoSessionOriginBar from './components/OctoSessionOriginBar.vue';
+import { getMessageList, getSession, forkSession, rewindSession, sendOctoManualReply, relayMessageToOcto } from "@/api/chat/index";
 import { getChannelArtifactChat } from "@/api/artifacts";
 import { isChannelArtifactMessage } from './channelArtifactMode';
 import { resolveForkAffordance } from './forkPoint';
@@ -733,8 +777,76 @@ const handleSuggestedQuestionClick = (item) => {
 
 const resolveAssistantMessageId = (message) => message?.assistant_message_id || message?.id;
 
+const octoReplyMode = ref('ai');
+const autoRelayToOcto = ref(false);
+const octoManualDraft = ref('');
+const sendingOctoManual = ref(false);
+const relayingMsgId = ref('');
+const lastWebSentAt = ref(0);
+
+const handleSendOctoManual = async () => {
+    const content = octoManualDraft.value.trim();
+    if (!content || sendingOctoManual.value || !session_id.value) return;
+    sendingOctoManual.value = true;
+    try {
+        const res = await sendOctoManualReply(session_id.value, content, true);
+        if (res?.success && res?.data?.message) {
+            messagesList.push({
+                ...res.data.message,
+                role: 'assistant',
+                is_completed: true,
+                channel: 'octo_manual',
+            });
+            octoManualDraft.value = '';
+            MessagePlugin.success(`已通过原 Bot 发送到 Octo${res.data.receipt ? `（回执 ${res.data.receipt}）` : ''}`);
+            nextTick(() => scrollToBottom());
+        } else {
+            MessagePlugin.error(res?.error || '发送到 Octo 失败');
+        }
+    } catch (e) {
+        MessagePlugin.error(e?.response?.data?.error || '发送到 Octo 失败，请检查 Bot 渠道状态');
+    } finally {
+        sendingOctoManual.value = false;
+    }
+};
+
+const handleRelayToOcto = async (message, isAuto = false) => {
+    const msgId = resolveAssistantMessageId(message);
+    if (!msgId || !session_id.value || relayingMsgId.value === msgId) return;
+    if (message.channel === 'octo_relayed' || message.channel === 'octo_manual') return;
+    relayingMsgId.value = msgId;
+    try {
+        const res = await relayMessageToOcto(session_id.value, msgId, true);
+        if (res?.success) {
+            message.channel = 'octo_relayed';
+            MessagePlugin.success(isAuto ? 'AI 回复已自动原路发回 Octo' : `已发送到原 Octo 会话${res?.data?.receipt ? `（回执 ${res.data.receipt}）` : ''}`);
+        } else {
+            MessagePlugin.error(res?.error || '回传到 Octo 失败');
+        }
+    } catch (e) {
+        MessagePlugin.error(e?.response?.data?.error || '回传到 Octo 失败');
+    } finally {
+        relayingMsgId.value = '';
+    }
+};
+
 const handleAnswerRenderComplete = (message, ready) => {
     message.answerFullyRendered = Boolean(ready);
+    if (
+        ready &&
+        autoRelayToOcto.value &&
+        currentSession.value?.im_origin?.can_reply_octo &&
+        lastWebSentAt.value > 0 &&
+        !message._autoRelayed &&
+        message.channel !== 'octo_relayed' &&
+        message.channel !== 'octo_manual'
+    ) {
+        const createdMs = message.created_at ? new Date(message.created_at).getTime() : Date.now();
+        if (createdMs >= lastWebSentAt.value - 5000) {
+            message._autoRelayed = true;
+            void handleRelayToOcto(message, true);
+        }
+    }
 };
 
 const loadFollowUpSuggestions = async (message, ensure = false, regenerate = false) => {
@@ -1420,6 +1532,7 @@ const attachSteerFollowUp = async (completedAssistantId) => {
 const sendMsg = async (value, modelId = '', mentionedItems = [], imageFiles = [], attachmentFiles = [], options = {}) => {
     if (chatMode.value !== 'web') return;
     if (composerLocked.value) return
+    lastWebSentAt.value = Date.now();
     const reasoningEffort = props.embeddedMode ? undefined : (useSettingsStoreInstance.reasoningEffortOverride || undefined);
     stopStream();
     prepareForNewOutgoingMessage();
@@ -2210,6 +2323,104 @@ onBeforeRouteUpdate((to, from, next) => {
 .sq-fade-leave-to {
     opacity: 0;
 }
+.octo-msg-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    padding-left: 2px;
+}
+.octo-msg-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    font-weight: 500;
+}
+.octo-msg-tag.manual {
+    background: var(--td-brand-color-light);
+    color: var(--td-brand-color);
+}
+.octo-msg-tag.relayed {
+    background: var(--td-success-color-1);
+    color: var(--td-success-color);
+}
+.octo-relay-btn {
+    border: 1px solid var(--td-component-border);
+    background: var(--td-bg-color-container);
+    color: var(--td-brand-color);
+    border-radius: 6px;
+    padding: 2px 9px;
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    &:hover:not(:disabled) {
+        background: var(--td-brand-color-light);
+    }
+    &:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+}
+.octo-composer-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: var(--td-bg-color-secondarycontainer);
+    border: 1px solid var(--td-component-border);
+    font-size: 12px;
+}
+.octo-mode-seg {
+    display: inline-flex;
+    padding: 2px;
+    border-radius: 6px;
+    background: var(--td-bg-color-container);
+    border: 1px solid var(--td-component-border);
+    button {
+        height: 24px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        font-size: 12px;
+        color: var(--td-text-color-secondary);
+        cursor: pointer;
+        &[aria-pressed='true'] {
+            background: var(--td-brand-color-light);
+            color: var(--td-brand-color);
+            font-weight: 600;
+        }
+    }
+}
+.octo-manual-hint {
+    color: var(--td-brand-color);
+    font-weight: 500;
+}
+.octo-manual-box {
+    display: grid;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--td-bg-color-container);
+    border: 1px solid var(--td-brand-color-3);
+}
+.octo-manual-ft {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.octo-manual-tip {
+    font-size: 11.5px;
+    color: var(--td-text-color-placeholder);
+}
 </style>
 
 <style lang="less">
@@ -2263,5 +2474,103 @@ onBeforeRouteUpdate((to, from, next) => {
             margin-left: 0;
         }
     }
+}
+.octo-msg-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    padding-left: 2px;
+}
+.octo-msg-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    font-weight: 500;
+}
+.octo-msg-tag.manual {
+    background: var(--td-brand-color-light);
+    color: var(--td-brand-color);
+}
+.octo-msg-tag.relayed {
+    background: var(--td-success-color-1);
+    color: var(--td-success-color);
+}
+.octo-relay-btn {
+    border: 1px solid var(--td-component-border);
+    background: var(--td-bg-color-container);
+    color: var(--td-brand-color);
+    border-radius: 6px;
+    padding: 2px 9px;
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    &:hover:not(:disabled) {
+        background: var(--td-brand-color-light);
+    }
+    &:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+}
+.octo-composer-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: var(--td-bg-color-secondarycontainer);
+    border: 1px solid var(--td-component-border);
+    font-size: 12px;
+}
+.octo-mode-seg {
+    display: inline-flex;
+    padding: 2px;
+    border-radius: 6px;
+    background: var(--td-bg-color-container);
+    border: 1px solid var(--td-component-border);
+    button {
+        height: 24px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        font-size: 12px;
+        color: var(--td-text-color-secondary);
+        cursor: pointer;
+        &[aria-pressed='true'] {
+            background: var(--td-brand-color-light);
+            color: var(--td-brand-color);
+            font-weight: 600;
+        }
+    }
+}
+.octo-manual-hint {
+    color: var(--td-brand-color);
+    font-weight: 500;
+}
+.octo-manual-box {
+    display: grid;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--td-bg-color-container);
+    border: 1px solid var(--td-brand-color-3);
+}
+.octo-manual-ft {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.octo-manual-tip {
+    font-size: 11.5px;
+    color: var(--td-text-color-placeholder);
 }
 </style>

@@ -14,11 +14,14 @@
       <input ref="titleInputRef" v-model="titleDraft" class="session-title-edit__input"
         :maxlength="SESSION_TITLE_MAX_LENGTH" @keydown.esc.prevent="cancelTitleEdit" @blur="submitTitleEdit" />
     </form>
-    <span v-else class="submenu_title" :class="batchMode ? 'submenu_title--batch' : ''" :title="item.title">
-      <t-icon v-if="item.is_pinned" name="pin" class="submenu_pin_icon" />
-      <span ref="titleTextRef" class="submenu_title-text">{{ item.title }}</span>
-      <span v-if="apiOwnerTag" class="session-owner-tag" :class="`session-owner-tag--${apiOwnerTag.kind}`"
-        :title="apiOwnerTag.full">{{ apiOwnerTag.label }}</span>
+    <span v-else class="submenu_title" :class="[batchMode ? 'submenu_title--batch' : '', octoMeta ? 'submenu_title--has-meta' : '']" :title="octoTooltip || item.title">
+      <span class="submenu_title-line">
+        <t-icon v-if="item.is_pinned" name="pin" class="submenu_pin_icon" />
+        <span ref="titleTextRef" class="submenu_title-text">{{ item.title }}</span>
+        <span v-if="apiOwnerTag" class="session-owner-tag" :class="`session-owner-tag--${apiOwnerTag.kind}`"
+          :title="apiOwnerTag.full">{{ apiOwnerTag.label }}</span>
+      </span>
+      <span v-if="octoMeta" class="submenu_octo-meta">{{ octoMeta }}</span>
     </span>
     <div v-if="!batchMode || hasBadge" class="session-row-menu-wrap"
       :class="{ 'session-row-menu-wrap--badge': hasBadge }" @click.stop>
@@ -79,6 +82,7 @@ import { computed, nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { normalizeSessionTitleDraft, SESSION_TITLE_MAX_LENGTH } from './sessionTitleEdit'
 import { useSessionTitleMotion } from '@/composables/useSessionTitleMotion'
+import type { SessionIMOrigin } from '@/api/chat'
 
 interface SessionMenuOption {
   content: string
@@ -90,7 +94,7 @@ interface SessionMenuOption {
 type MenuMode = 'menu' | 'clear' | 'delete'
 
 const props = defineProps<{
-  item: { id: string; path: string; title: string; is_pinned?: boolean; user_id?: string; parent_session_id?: string }
+  item: { id: string; path: string; title: string; is_pinned?: boolean; user_id?: string; parent_session_id?: string; im_platform?: string; im_origin?: SessionIMOrigin | null }
   batchMode: boolean
   activePath: string
   selectedIds: string[]
@@ -111,6 +115,28 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const octoMeta = computed(() => {
+  const o = props.item.im_origin
+  if (!o || o.platform !== 'octo') return ''
+  const kind = o.chat_type === 'direct' ? '私聊' : o.chat_type === 'subarea' ? '子区' : o.chat_type === 'group' ? '主群' : 'Octo'
+  const nick = (o.user_name && o.user_name !== o.user_uid)
+    ? o.user_name
+    : (o.user_uid && o.user_uid.length > 10 ? `${o.user_uid.slice(0, 6)}…` : o.user_uid || '')
+  if (o.chat_type === 'direct') {
+    return [kind, nick].filter(Boolean).join(' · ')
+  }
+  return [kind, o.source_name, nick].filter(Boolean).join(' · ')
+})
+
+const octoTooltip = computed(() => {
+  const o = props.item.im_origin
+  if (!o || o.platform !== 'octo') return ''
+  const parts = [props.item.title]
+  if (o.channel_name) parts.push(`Bot: ${o.channel_name}`)
+  if (octoMeta.value) parts.push(`来源: ${octoMeta.value}`)
+  return parts.join('\n')
+})
 
 const menuOpen = ref(false)
 const menuMode = ref<MenuMode>('menu')
@@ -409,6 +435,32 @@ const confirmDangerAction = (): void => {
     border: 0.5px solid var(--td-component-stroke);
   }
 }
+.submenu_title--has-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.submenu_title-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
+.submenu_octo-meta {
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--td-text-color-placeholder);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 </style>
 
 <style lang="less">
@@ -483,6 +535,32 @@ const confirmDangerAction = (): void => {
       background: var(--td-error-color-5);
     }
   }
+}
+
+.submenu_title--has-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.submenu_title-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+
+.submenu_octo-meta {
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--td-text-color-placeholder);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 </style>

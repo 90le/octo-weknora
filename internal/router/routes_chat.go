@@ -85,6 +85,8 @@ func RegisterSessionRoutes(
 		// tree to avoid "wildcard conflicts" panic at route registration.
 		sessions.POST("/:session_id/pin", handler.PinSession)
 		sessions.DELETE("/:id/pin", handler.UnpinSession)
+		sessions.POST("/:session_id/octo-reply", handler.SendOctoManualReply)
+		sessions.POST("/:session_id/messages/:message_id/relay-octo", handler.RelayMessageToOcto)
 		// 继续接收活跃流
 		sessions.GET("/continue-stream/:session_id", handler.ContinueStream)
 		if suggestionHandler != nil {

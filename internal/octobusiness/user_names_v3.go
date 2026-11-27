@@ -15,6 +15,37 @@ func (s *Service) resolveOctoNicknames(ctx context.Context, tenant uint64, chann
 	return s.ResolveOctoUserNames(ctx, tenant, channelID, uids)
 }
 
+func (s *Service) findUIDsByNickname(ctx context.Context, tenant uint64, keyword string) []string {
+	kw := strings.ToLower(strings.TrimSpace(keyword))
+	if kw == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	add := func(uid string) {
+		uid = strings.TrimSpace(uid)
+		if uid != "" && !seen[uid] {
+			seen[uid] = true
+			out = append(out, uid)
+		}
+	}
+	if s.FindOctoUIDsByNickname != nil {
+		for _, uid := range s.FindOctoUIDsByNickname(tenant, kw) {
+			add(uid)
+		}
+	}
+	if s.db != nil {
+		var contacts []Contact
+		quiet := s.db.Session(&gorm.Session{Logger: gormlogger.Discard}).WithContext(ctx)
+		if quiet.Where("tenant_id = ? AND (LOWER(name) LIKE ? OR LOWER(topic) LIKE ?)", tenant, "%"+kw+"%", "%"+kw+"%").Limit(50).Find(&contacts).Error == nil {
+			for _, c := range contacts {
+				add(c.UID)
+			}
+		}
+	}
+	return out
+}
+
 func (s *Service) resolveConsoleUserNames(ctx context.Context, userIDs []string) map[string]string {
 	out := map[string]string{}
 	if s.db == nil || len(userIDs) == 0 {
