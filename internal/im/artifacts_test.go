@@ -178,6 +178,7 @@ func TestIMArtifactTurnDeliversBoundedBinaryAndReportsPartialFailure(t *testing.
 	first := makeTestArtifact("example.pdf", data)
 	second := makeTestArtifact("example.txt", []byte("hello"))
 	private := makeTestArtifact("private.csv", []byte("private"))
+	private.SourcePath = "/workspace/output/tmp/private.csv"
 	scope := &ExecutionScope{
 		AccountID: "account", ScopeID: "scope", Revision: "r",
 		KnowledgeBaseIDs: []string{"kb"}, AllowFileDelivery: true,
@@ -384,6 +385,7 @@ func TestIMGroupNaturalRequestUsesReferencedFiles(t *testing.T) {
 	adapter := &artifactTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}}
 	report := makeTestArtifact("report.pdf", []byte("report"))
 	private := makeTestArtifact("private.csv", []byte("private"))
+	private.SourcePath = "/workspace/output/tmp/private.csv"
 	collector := &fakeIMArtifactCollector{artifacts: types.MessageArtifacts{report, private}}
 	req := &qaRequest{
 		msg: &IncomingMessage{
@@ -584,7 +586,7 @@ func TestIMPPTGroupAdmissionKeepsSendAndPermissionBoundaries(t *testing.T) {
 	}{
 		{"生成PPT给我", true, 1},
 		{"生成PPT，不要发送", true, 0},
-		{"生成幻灯片", true, 0},
+		{"生成幻灯片", true, 1},
 		{"生成PPT给我", false, 0},
 	} {
 		t.Run(tc.text, func(t *testing.T) {
@@ -605,4 +607,78 @@ func TestIMPPTGroupAdmissionKeepsSendAndPermissionBoundaries(t *testing.T) {
 			require.Equal(t, tc.want, collector.snapshots)
 		})
 	}
+}
+
+func TestIMMultiFileHTMLAndPPTXDeliversBothWithoutLiteralAnswerNames(t *testing.T) {
+	scope := &ExecutionScope{
+		AccountID: "a", ScopeID: "s", Revision: "r", KnowledgeBaseIDs: []string{"kb"}, AllowFileDelivery: true,
+	}
+	adapter := &artifactTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}}
+	htmlFile := makeTestArtifact("bot对话测试专区-群与子区说明.html", []byte("<html><body>ok</body></html>"))
+	htmlFile.SourcePath = "/workspace/output/bot对话测试专区-群与子区说明.html"
+	pptxFile := makeTestArtifact("bot对话测试专区-群与子区说明.pptx", []byte("PKpptx"))
+	pptxFile.SourcePath = "/workspace/output/bot对话测试专区-群与子区说明.pptx"
+	collector := &fakeIMArtifactCollector{artifacts: types.MessageArtifacts{htmlFile, pptxFile}}
+	req := &qaRequest{
+		msg: &IncomingMessage{
+			UserID: "u", MessageID: "m",
+			Content:  "@秒针业问 介绍本群子区，并生成html和pptx介绍给我",
+			ChatType: ChatTypeGroup, Extra: map[string]string{},
+		},
+		channel: &IMChannel{TenantID: 7, Platform: "octo"}, channelID: "channel",
+		session: &types.Session{ID: "session", TenantID: 7}, agent: &types.CustomAgent{TenantID: 7},
+		adapter: adapter, scope: scope,
+	}
+	s := &Service{
+		artifactCollector: collector,
+		defaultFileSvc: &memoryIMArtifactFiles{
+			files: map[string][]byte{
+				htmlFile.URL: []byte("<html><body>ok</body></html>"),
+				pptxFile.URL: []byte("PKpptx"),
+			},
+		},
+	}
+	ctx := s.beginIMArtifactTurn(imArtifactTestGrant(s.businessContext(context.Background(), req, scope)), req)
+	msg := &types.Message{ID: "answer"}
+	// Model summarizes with friendly labels instead of repeating exact filenames.
+	result := s.finishIMArtifactTurn(ctx, msg, "已生成两份介绍文件：\n- 群与子区说明 HTML\n- 群与子区说明 PPTX")
+	require.Equal(t, []string{htmlFile.FileName, pptxFile.FileName}, adapter.sent)
+	require.Len(t, msg.Artifacts, 2)
+	require.Contains(t, result, htmlFile.FileName)
+	require.Contains(t, result, pptxFile.FileName)
+}
+
+func TestIMMoreThanFiveFilesBundlesIntoSingleZip(t *testing.T) {
+	scope := &ExecutionScope{
+		AccountID: "a", ScopeID: "s", Revision: "r", KnowledgeBaseIDs: []string{"kb"}, AllowFileDelivery: true,
+	}
+	adapter := &artifactTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}}
+	var artifacts types.MessageArtifacts
+	fileMap := map[string][]byte{}
+	for i := 1; i <= 6; i++ {
+		name := "chart_" + string(rune('0'+i)) + ".png"
+		data := []byte("imgdata-" + name)
+		art := makeTestArtifact(name, data)
+		art.SourcePath = "/workspace/output/" + name
+		artifacts = append(artifacts, art)
+		fileMap[art.URL] = data
+	}
+	req := &qaRequest{
+		msg: &IncomingMessage{
+			UserID: "u", MessageID: "m", Content: "请生成 6 张图表给我", ChatType: ChatTypeDirect, Extra: map[string]string{},
+		},
+		channel: &IMChannel{TenantID: 7, Platform: "octo"}, channelID: "channel",
+		session: &types.Session{ID: "session", TenantID: 7}, agent: &types.CustomAgent{TenantID: 7},
+		adapter: adapter, scope: scope,
+	}
+	s := &Service{
+		artifactCollector: &fakeIMArtifactCollector{artifacts: artifacts},
+		defaultFileSvc:    &memoryIMArtifactFiles{files: fileMap},
+	}
+	ctx := s.beginIMArtifactTurn(imArtifactTestGrant(s.businessContext(context.Background(), req, scope)), req)
+	result := s.finishIMArtifactTurn(ctx, &types.Message{ID: "answer"}, "已生成 6 张图表。")
+	require.Equal(t, []string{"outputs-bundle.zip"}, adapter.sent)
+	require.Contains(t, result, "outputs-bundle.zip")
+	require.Contains(t, result, "chart_1.png")
+	require.Contains(t, result, "chart_6.png")
 }

@@ -438,8 +438,24 @@ func TestGroupNaturalTextFileRequest(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.Success, result.Error)
 	require.True(t, HasDeliveredFile(ctx))
+	// Multi-file group text delivery is now supported up to 5 distinct files.
 	second, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"other.txt","content":"other"}`))
 	require.NoError(t, err)
-	require.False(t, second.Success)
-	require.Equal(t, []string{"report.txt"}, sent)
+	require.True(t, second.Success, second.Error)
+	// Same filename without multi-version request is still blocked.
+	dup, err := NewFileDeliveryTool().Execute(ctx, json.RawMessage(`{"name":"report.txt","content":"v2"}`))
+	require.NoError(t, err)
+	require.False(t, dup.Success)
+	require.Equal(t, []string{"report.txt", "other.txt"}, sent)
+}
+
+func TestMatchesRequestedArtifactTypeSupportsHTMLAndMultiFormat(t *testing.T) {
+	prompt := "@秒针业问 介绍本群子区，并生成html和pptx介绍给我"
+	require.True(t, WantsFileDelivery(prompt))
+	require.True(t, WantsExplicitFileSend(prompt))
+	require.True(t, MatchesRequestedArtifactType(prompt, "bot对话测试专区-群与子区说明.html"))
+	require.True(t, MatchesRequestedArtifactType(prompt, "bot对话测试专区-群与子区说明.pptx"))
+	require.False(t, MatchesRequestedArtifactType("请生成 PDF 文件并发送给我", "private.csv"))
+	require.True(t, MatchesRequestedArtifactType("帮我做一个网页介绍", "intro.html"))
+	require.True(t, MatchesRequestedArtifactType("导出 drawio 流程图", "flow.drawio"))
 }

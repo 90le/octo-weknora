@@ -1,6 +1,8 @@
 package im
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -141,12 +143,18 @@ var (
 		`(?:发送|投递)(?:成功|完成)|成功(?:发送|投递))|(?:(?:已经|已)(?:成功)?|成功)(?:发送|投递)(?:了)?(?:文件|附件)`)
 )
 
+const (
+	maxDirectIMArtifactFiles = 5
+	maxIMBundleZipBytes      = 20 << 20
+)
+
 type imArtifactTurn struct {
-	collector   imArtifactCollector
-	snapshot    *appservice.IMArtifactSnapshot
-	req         *qaRequest
-	fingerprint string
-	startErr    error
+	collector       imArtifactCollector
+	snapshot        *appservice.IMArtifactSnapshot
+	req             *qaRequest
+	fingerprint     string
+	explicitRequest bool
+	startErr        error
 }
 
 // ConfigureArtifactCollector is called before channels start. The collector is
@@ -165,16 +173,12 @@ func (s *Service) beginIMArtifactTurn(ctx context.Context, req *qaRequest) conte
 	if req.msg == nil {
 		return ctx
 	}
-	// The shared request classifier recognizes pptx but not the common “PPT”
-	// and “幻灯片” names. Normalize only for request admission.
 	requestText := imPPTRequest.ReplaceAllString(req.msg.Content, "pptx")
-	ctx = context.WithValue(ctx, imFileRequestKey{}, octobusiness.WantsFileDelivery(requestText))
+	prohibited := octobusiness.ExplicitlyProhibitsFileDelivery(requestText)
+	explicitRequest := !prohibited && octobusiness.WantsFileDelivery(requestText)
+	ctx = context.WithValue(ctx, imFileRequestKey{}, explicitRequest)
 	if req.scope == nil || !req.scope.AllowFileDelivery || req.session == nil ||
-		req.agent == nil || req.msg == nil ||
-		!octobusiness.WantsFileDelivery(requestText) {
-		return ctx
-	}
-	if req.msg.ChatType != ChatTypeDirect && !octobusiness.WantsExplicitFileSend(requestText) {
+		req.agent == nil || prohibited {
 		return ctx
 	}
 	grant, ok := types.IMSandboxGrantFromContext(ctx)
@@ -183,14 +187,22 @@ func (s *Service) beginIMArtifactTurn(ctx context.Context, req *qaRequest) conte
 		// text export into a misleading sandbox error when no grant exists.
 		return ctx
 	}
-	// Tell the model how the existing channel collector works; it cannot send a
-	// binary through the text-only delivery tool or a sandbox URL.
-	instruction := "文件请求：使用已授权的工具实际生成文件，完成文件放在 /workspace/output/；" +
-		"在最终答复中列出准确文件名。系统将在本轮按授权收集并投递，sandbox: 链接不是 Octo 下载地址。" +
-		"不得把计划、命令或未确认的投递说成成功；如生成失败请说明实际工具结果。"
-	prior, _ := ctx.Value(executionContextKey{}).(string)
-	ctx = context.WithValue(ctx, executionContextKey{}, strings.TrimSpace(prior+"\n\n"+instruction))
-	t := &imArtifactTurn{collector: s.artifactCollector, req: req, fingerprint: scopeFingerprint(req.scope)}
+	// Tell the model how the unified channel collector works whenever file
+	// creation is requested; all finished deliverables belong in /workspace/output/.
+	if explicitRequest {
+		instruction := "文件请求：使用已授权的工具实际生成全部用户要求的文件，所有成品文件统一放入 /workspace/output/（不要留在 /workspace 根目录或 /tmp）；" +
+			"若需要生成多个文件或复杂文档（如 HTML + PPTX），优先编写生成脚本通过 shell_exec 一次性产出，并在结束前核对 /workspace/output/ 中每个成品均存在且非空。" +
+			"在最终答复中列出准确文件名。系统将在本轮按授权自动收集并投递（Octo 服务端不直接支持的格式会自动打包为 ZIP 投递），sandbox: 链接不是 Octo 下载地址。" +
+			"不得把计划、命令或未确认的投递说成成功；如生成失败请说明实际工具结果。"
+		prior, _ := ctx.Value(executionContextKey{}).(string)
+		ctx = context.WithValue(ctx, executionContextKey{}, strings.TrimSpace(prior+"\n\n"+instruction))
+	}
+	t := &imArtifactTurn{
+		collector:       s.artifactCollector,
+		req:             req,
+		fingerprint:     scopeFingerprint(req.scope),
+		explicitRequest: explicitRequest,
+	}
 	if t.collector == nil {
 		t.startErr = errors.New("artifact collection unavailable")
 		return context.WithValue(ctx, imArtifactTurnKey{}, t)
@@ -238,11 +250,21 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 		}
 		return answer
 	}
+	alreadyDeliveredText := map[string]bool{}
 	if octobusiness.HasDeliveredFile(ctx) {
-		// Do not repeat an already attempted delivery.
-		return renderConfirmedTextDelivery(ctx, answer)
+		if deliveredFiles, err := octobusiness.DeliveredTextFiles(ctx); err == nil {
+			for _, f := range deliveredFiles {
+				alreadyDeliveredText[f.Name] = true
+			}
+		}
 	}
 	if t.startErr != nil || t.authorize(ctx) != nil {
+		if octobusiness.HasDeliveredFile(ctx) {
+			return renderConfirmedTextDelivery(ctx, answer)
+		}
+		if !t.explicitRequest && !imSandboxLink.MatchString(answer) && !imBareSandboxLink.MatchString(answer) {
+			return answer
+		}
 		return imUnconfirmedArtifactAnswer(answer) + "\n\n文件发送未完成：无法安全读取本次会话的产物。"
 	}
 	callCtx := octobusiness.WithFileDeliveryExtraCheck(ctx, func(checkCtx context.Context) error {
@@ -258,6 +280,9 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 	candidates := imArtifactLinkNames(answer)
 	selected := func(relative string, ambiguous bool) appservice.IMArtifactSelection {
 		name := path.Base(relative)
+		if alreadyDeliveredText[name] {
+			return appservice.IMArtifactNotSelected
+		}
 		explicit := octobusiness.MentionsArtifactName(text, relative)
 		if ambiguous && !strings.Contains(relative, "/") {
 			explicit = octobusiness.MentionsArtifactName(text, "./"+relative)
@@ -280,18 +305,30 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 			return appservice.IMArtifactCurrentTurn
 		}
 		if ambiguous || imTemporaryArtifact(relative) || octobusiness.HasNamedArtifact(text) ||
-			(!candidates[name] && !octobusiness.MentionsArtifactName(answer, name)) ||
 			!octobusiness.MatchesRequestedArtifactType(text, name) {
 			return appservice.IMArtifactNotSelected
 		}
+		// Any non-temporary file created or modified in /workspace/output/ during
+		// this turn that matches the requested type(s) is eligible for delivery,
+		// even if the model summarized it with a friendly title instead of
+		// repeating the exact filename or a sandbox: link.
 		return appservice.IMArtifactCurrentTurn
 	}
 	// The sandbox may not exist until the first command. CollectIM checks the
 	// unpinned case separately; the strict extra check is for actual delivery.
 	artifacts, collectErr := t.collector.CollectIM(ctx, t.snapshot, msg.ID, selected)
 	if len(artifacts) == 0 {
+		if octobusiness.HasDeliveredFile(ctx) {
+			return renderConfirmedTextDelivery(ctx, answer)
+		}
 		if collectErr != nil {
+			if !t.explicitRequest && !imSandboxLink.MatchString(answer) && !imBareSandboxLink.MatchString(answer) {
+				return answer
+			}
 			return imUnconfirmedArtifactAnswer(answer) + "\n\n文件未能收集，请检查文件大小或沙箱状态后重试。"
+		}
+		if !t.explicitRequest && !imSandboxLink.MatchString(answer) && !imBareSandboxLink.MatchString(answer) {
+			return answer
 		}
 		var names []string
 		for name := range candidates {
@@ -317,45 +354,71 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 	if !ok {
 		return renderIMArtifactAnswer(answer, nil, true) + "\n\n文件发送未完成：当前渠道不支持附件投递。"
 	}
-	var sent, sentDisplay, failed, unknown []string
-	for _, artifact := range artifacts {
-		if t.authorize(callCtx) != nil || octobusiness.ValidateFileDeliveryAuthority(callCtx) != nil {
-			failed = append(failed, artifact.FileName)
-			continue
-		}
-		data, err := s.readIMArtifact(callCtx, artifact)
-		if err != nil {
-			failed = append(failed, artifact.FileName)
-			continue
-		}
-		contentType := mime.TypeByExtension(strings.ToLower(path.Ext(artifact.FileName)))
-		if contentType == "" {
-			contentType = "application/octet-stream"
-		}
-		deliveredName := artifact.FileName
-		var deliveryErr error
+	sendOne := func(fileName string, data []byte, contentType string) (string, error) {
 		if reporting, ok := sender.(interface {
 			SendGeneratedFileWithResult(context.Context, *IncomingMessage, string, []byte, string) (string, error)
 		}); ok {
-			deliveredName, deliveryErr = reporting.SendGeneratedFileWithResult(
-				callCtx, t.req.msg, artifact.FileName, data, contentType,
-			)
-		} else {
-			deliveryErr = sender.SendGeneratedFile(callCtx, t.req.msg, artifact.FileName, data, contentType)
+			return reporting.SendGeneratedFileWithResult(callCtx, t.req.msg, fileName, data, contentType)
 		}
-		if err := deliveryErr; err != nil {
-			if outcome, ok := err.(interface{ DeliveryOutcome() string }); ok && outcome.DeliveryOutcome() == "failed" {
-				failed = append(failed, artifact.FileName)
+		return fileName, sender.SendGeneratedFile(callCtx, t.req.msg, fileName, data, contentType)
+	}
+	var sent, sentDisplay, failed, unknown []string
+	bundled := false
+	if len(artifacts) > maxDirectIMArtifactFiles {
+		if zipData, memberNames, bundleErr := s.buildIMArtifactBundleZip(callCtx, t, artifacts); bundleErr == nil {
+			bundled = true
+			deliveredName, deliveryErr := sendOne("outputs-bundle.zip", zipData, "application/zip")
+			if deliveryErr != nil {
+				if outcome, ok := deliveryErr.(interface{ DeliveryOutcome() string }); ok && outcome.DeliveryOutcome() == "failed" {
+					failed = append(failed, "outputs-bundle.zip")
+				} else {
+					unknown = append(unknown, "outputs-bundle.zip")
+				}
 			} else {
-				unknown = append(unknown, artifact.FileName)
+				sent = append(sent, memberNames...)
+				if deliveredName == "" {
+					deliveredName = "outputs-bundle.zip"
+				}
+				sentDisplay = append(sentDisplay, deliveredName+"（包含 "+strings.Join(memberNames, "、")+"）")
 			}
-			continue
-		}
-		sent = append(sent, artifact.FileName)
-		if deliveredName != "" && deliveredName != artifact.FileName {
-			sentDisplay = append(sentDisplay, deliveredName+"（包含 "+artifact.FileName+"）")
 		} else {
-			sentDisplay = append(sentDisplay, artifact.FileName)
+			logger.Warnf(ctx, "[IM] multi-file bundle zip skipped (%v); delivering first %d files individually", bundleErr, maxDirectIMArtifactFiles)
+		}
+	}
+	if !bundled {
+		for idx, artifact := range artifacts {
+			if idx >= maxDirectIMArtifactFiles {
+				failed = append(failed, artifact.FileName+"（超出单次直发上限）")
+				continue
+			}
+			if t.authorize(callCtx) != nil || octobusiness.ValidateFileDeliveryAuthority(callCtx) != nil {
+				failed = append(failed, artifact.FileName)
+				continue
+			}
+			data, err := s.readIMArtifact(callCtx, artifact)
+			if err != nil {
+				failed = append(failed, artifact.FileName)
+				continue
+			}
+			contentType := mime.TypeByExtension(strings.ToLower(path.Ext(artifact.FileName)))
+			if contentType == "" {
+				contentType = "application/octet-stream"
+			}
+			deliveredName, deliveryErr := sendOne(artifact.FileName, data, contentType)
+			if err := deliveryErr; err != nil {
+				if outcome, ok := err.(interface{ DeliveryOutcome() string }); ok && outcome.DeliveryOutcome() == "failed" {
+					failed = append(failed, artifact.FileName)
+				} else {
+					unknown = append(unknown, artifact.FileName)
+				}
+				continue
+			}
+			sent = append(sent, artifact.FileName)
+			if deliveredName != "" && deliveredName != artifact.FileName {
+				sentDisplay = append(sentDisplay, deliveredName+"（包含 "+artifact.FileName+"）")
+			} else {
+				sentDisplay = append(sentDisplay, artifact.FileName)
+			}
 		}
 	}
 	if len(failed) > 0 || len(unknown) > 0 || collectErr != nil {
@@ -384,6 +447,50 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 		answer += "\n\n部分文件未能收集，请检查文件大小或沙箱状态后重试。"
 	}
 	return renderIMArtifactAnswer(answer, nil, false)
+}
+
+func (s *Service) buildIMArtifactBundleZip(
+	callCtx context.Context, t *imArtifactTurn, artifacts types.MessageArtifacts,
+) ([]byte, []string, error) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	usedNames := map[string]int{}
+	memberNames := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if t.authorize(callCtx) != nil || octobusiness.ValidateFileDeliveryAuthority(callCtx) != nil {
+			_ = zw.Close()
+			return nil, nil, ErrScopeDenied
+		}
+		data, err := s.readIMArtifact(callCtx, artifact)
+		if err != nil {
+			_ = zw.Close()
+			return nil, nil, err
+		}
+		entryName := artifact.FileName
+		if count := usedNames[entryName]; count > 0 {
+			ext := path.Ext(entryName)
+			stem := strings.TrimSuffix(entryName, ext)
+			entryName = fmt.Sprintf("%s_%d%s", stem, count+1, ext)
+		}
+		usedNames[artifact.FileName]++
+		w, err := zw.CreateHeader(&zip.FileHeader{Name: entryName, Method: zip.Deflate})
+		if err != nil {
+			_ = zw.Close()
+			return nil, nil, err
+		}
+		if _, err := w.Write(data); err != nil {
+			_ = zw.Close()
+			return nil, nil, err
+		}
+		memberNames = append(memberNames, entryName)
+	}
+	if err := zw.Close(); err != nil {
+		return nil, nil, err
+	}
+	if buf.Len() == 0 || buf.Len() > maxIMBundleZipBytes {
+		return nil, nil, errors.New("bundle zip exceeds size limit")
+	}
+	return buf.Bytes(), memberNames, nil
 }
 
 // One successful text delivery cannot confirm other file names in the answer.

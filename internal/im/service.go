@@ -67,8 +67,9 @@ const (
 	// This prevents API rate-limiting while keeping perceived latency low.
 	streamFlushInterval = 300 * time.Millisecond
 	// agentCompleteWaitTimeout bounds how long IM waits for EventAgentComplete after
-	// the final answer stream finishes, preventing indefinite hangs.
-	agentCompleteWaitTimeout = 10 * time.Second
+	// the final answer stream finishes, preventing indefinite hangs while giving
+	// complex multi-file turns enough time to finish persistence.
+	agentCompleteWaitTimeout = 30 * time.Second
 )
 
 // imCitationTagRe matches inline citation tags produced by the agent pipeline.
@@ -3290,12 +3291,38 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	eventBus := event.NewEventBus()
 
 	if progress, ok := ctx.Value(processingProgressContextKey{}).(ProcessingProgress); ok {
+		var stageMu sync.Mutex
+		activeStage := ""
+		heartbeatStop := make(chan struct{})
+		defer close(heartbeatStop)
+		go func() {
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					stageMu.Lock()
+					st := activeStage
+					stageMu.Unlock()
+					if st != "" {
+						progress.Report(st)
+					}
+				case <-heartbeatStop:
+					return
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
 		eventBus.On(event.EventAgentToolCall, func(_ context.Context, evt event.Event) error {
 			data, ok := evt.Data.(event.AgentToolCallData)
 			if !ok {
 				return nil
 			}
 			if stage := safeProgressToolStage(data.ToolName); stage != "" {
+				stageMu.Lock()
+				activeStage = stage
+				stageMu.Unlock()
 				progress.Report(stage)
 			}
 			return nil
@@ -3306,6 +3333,9 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 				return nil
 			}
 			if stage := safeProgressToolStage(data.ToolName); stage != "" {
+				stageMu.Lock()
+				activeStage = ""
+				stageMu.Unlock()
 				if data.Success {
 					progress.Report(stage + ":done")
 				} else {
@@ -3316,6 +3346,9 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 		})
 		eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
 			if data, ok := evt.Data.(event.AgentFinalAnswerData); ok && data.Content != "" {
+				stageMu.Lock()
+				activeStage = ""
+				stageMu.Unlock()
 				progress.Report("answer")
 			}
 			return nil

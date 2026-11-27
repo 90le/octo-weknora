@@ -354,14 +354,26 @@ func (t *WriteSandboxFileTool) Execute(ctx context.Context, args json.RawMessage
 		}, nil
 	}
 
-	sizeLine := fmt.Sprintf("bytes=%d", len(content))
+	sizeLine := fmt.Sprintf("bytes=%d, lines=%d", len(content), CountContentLines(string(content)))
 	if mode == writeModeAppend {
-		sizeLine = fmt.Sprintf("appended=%d, total_bytes=%d", len(chunk), len(content))
+		sizeLine = fmt.Sprintf("appended=%d, total_bytes=%d, total_lines=%d", len(chunk), len(content), CountContentLines(string(content)))
 	}
 	if stat := formatSandboxDiffStat(added, 0); stat != "" {
 		sizeLine = stat + ", " + sizeLine
 	}
-	output := fmt.Sprintf("=== Wrote sandbox file: %s ===\n\n%s\n", clean, sizeLine)
+	var outBuilder strings.Builder
+	outBuilder.WriteString(fmt.Sprintf("=== Wrote sandbox file: %s ===\n\n%s\n", clean, sizeLine))
+	if tail := sandboxFileTailPreview(string(content)); tail != "" && len(content) > 200 {
+		outBuilder.WriteString("\nTail:\n```\n")
+		outBuilder.WriteString(tail)
+		outBuilder.WriteString("\n```\n")
+	}
+	if warn := sandboxIntegrityWarning(clean, mode, content, layoutOutputDir(layout)); warn != "" {
+		outBuilder.WriteString("\n")
+		outBuilder.WriteString(warn)
+		outBuilder.WriteString("\n")
+	}
+	output := outBuilder.String()
 	data := map[string]interface{}{
 		"display_type": ToolWriteSandboxFile,
 		"session_id":   sessionID,
@@ -422,4 +434,43 @@ func (t *WriteSandboxFileTool) readForAppend(
 // Cleanup releases any resources.
 func (t *WriteSandboxFileTool) Cleanup(ctx context.Context) error {
 	return nil
+}
+
+func sandboxFileTailPreview(content string) string {
+	trimmed := strings.TrimRight(content, "\r\n")
+	if trimmed == "" {
+		return ""
+	}
+	lines := strings.Split(trimmed, "\n")
+	start := len(lines) - 2
+	if start < 0 {
+		start = 0
+	}
+	snippet := strings.Join(lines[start:], "\n")
+	if len(snippet) > 200 {
+		snippet = "..." + snippet[len(snippet)-197:]
+	}
+	return snippet
+}
+
+func sandboxIntegrityWarning(cleanPath, mode string, content []byte, outputDir string) string {
+	if len(content) == 0 && outputDir != "" && strings.HasPrefix(cleanPath, strings.TrimRight(outputDir, "/")+"/") {
+		return "Warning: file written to the output directory is empty (0 bytes) and will not be delivered; write complete content."
+	}
+	if mode != writeModeOverwrite || len(content) == 0 {
+		return ""
+	}
+	ext := strings.ToLower(path.Ext(cleanPath))
+	switch ext {
+	case ".html", ".htm":
+		lower := strings.ToLower(string(content))
+		if (strings.Contains(lower, "<html") || strings.Contains(lower, "<!doctype")) && !strings.Contains(lower, "</html>") {
+			return "Warning: HTML appears incomplete (missing </html>). Use mode=\"append\" to finish writing the file."
+		}
+	case ".json":
+		if !json.Valid(content) {
+			return "Warning: JSON content is not valid JSON yet (may be truncated). Use mode=\"append\" or edit_sandbox_file to complete/fix it."
+		}
+	}
+	return ""
 }

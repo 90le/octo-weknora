@@ -74,16 +74,61 @@ func TestGeneratedFileWithResultSVGFallback(t *testing.T) {
 	}
 }
 
+func TestGeneratedFileFallbackUniversalZip(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"intro.html", []byte("<html><body>你好</body></html>")},
+		{"notes.drawio", []byte("<mxfile/>")},
+		{"data.bin", []byte{0x01, 0x02, 0x03}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, msg, ctx, _ := journalFixture(t)
+			gets, puts, sends := 0, 0, 0
+			a.api.http.Transport = fileRoundTripper(func(r *http.Request) (*http.Response, error) {
+				switch r.Method {
+				case http.MethodGet:
+					gets++
+					if r.URL.Query().Get("filename") == tc.name {
+						return fileResponse(400, map[string]any{
+							"error": map[string]string{"code": "err.server.bot_api.file_type_unsupported"},
+						}), nil
+					}
+					if r.URL.Query().Get("filename") != tc.name+".zip" {
+						t.Fatalf("unexpected zip name: %s", r.URL.Query().Get("filename"))
+					}
+					size, _ := strconv.Atoi(r.URL.Query().Get("fileSize"))
+					return fileResponse(200, filePresignFixture(size)), nil
+				case http.MethodPut:
+					puts++
+					body, _ := io.ReadAll(r.Body)
+					z, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+					if err != nil || len(z.File) != 1 || z.File[0].Name != tc.name {
+						t.Fatalf("invalid zip: %v", err)
+					}
+					return fileResponse(200, nil), nil
+				case http.MethodPost:
+					sends++
+					return fileResponse(200, map[string]string{"message_id": "123"}), nil
+				}
+				return nil, errors.New("unexpected request")
+			})
+			name, err := a.SendGeneratedFileWithResult(ctx, msg, tc.name, tc.data, "")
+			if err != nil || name != tc.name+".zip" || gets != 2 || puts != 1 || sends != 1 {
+				t.Fatalf("name=%q err=%v gets=%d puts=%d sends=%d", name, err, gets, puts, sends)
+			}
+		})
+	}
+}
+
 func TestGeneratedFileFallbackFailsClosed(t *testing.T) {
 	for _, tc := range []struct {
 		name, data, code string
 		status           int
 		legacy           bool
 	}{
-		{"evil.exe", "MZ", "err.server.bot_api.file_type_unsupported", 400, false},
-		{"unknown.bin", "data", "err.server.bot_api.file_type_unsupported", 400, false},
-		{"drawing.svg", "MZ", "err.server.bot_api.file_type_unsupported", 400, false},
-		{"drawing.svg", "<svg/><svg/>", "err.server.bot_api.file_type_unsupported", 400, false},
+		{"already.zip", "PK", "err.server.bot_api.file_type_unsupported", 400, false},
 		{"drawing.svg", "<svg/>", "other", 400, false},
 		{"drawing.svg", "<svg/>", "err.server.bot_api.file_type_unsupported", 500, false},
 		{"drawing.svg", "<svg/>", "err.server.bot_api.file_type_unsupported", 400, true},

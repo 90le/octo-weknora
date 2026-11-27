@@ -21,14 +21,6 @@ import (
 
 const octoMaxSegmentRunes = 3500
 
-// blockedManualUploadExts rejects high-risk executable formats even when
-// auto-zipping unsupported Octo file types.
-var blockedManualUploadExts = map[string]bool{
-	".exe": true, ".bat": true, ".cmd": true, ".com": true, ".msi": true,
-	".scr": true, ".pif": true, ".vbs": true, ".ps1": true, ".dll": true,
-	".so": true, ".dylib": true, ".sh": true, ".apk": true, ".dmg": true,
-}
-
 // SplitOctoMessage splits long Markdown/text content into tidy segments that
 // stay under Octo's single-message size limit, preferring paragraph breaks and
 // preserving fenced code blocks across segment boundaries.
@@ -294,9 +286,6 @@ func (a *Adapter) SendSessionBridgeFile(
 	}
 	cleanName := sanitizeBridgeFilename(fileName)
 	ext := strings.ToLower(path.Ext(cleanName))
-	if blockedManualUploadExts[ext] {
-		return "", "", errors.New("unsupported executable file type: " + ext)
-	}
 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()

@@ -39,6 +39,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -78,9 +79,8 @@ const (
 	// pin the session's sandbox for hours.
 	shellExecMaxTimeout = 10 * time.Minute
 	// shellExecMaxCommandBytes rejects excessively long command strings.
-	// Real skill setup one-liners fit comfortably under 8 KiB. Generated
-	// scripts belong in write_sandbox_file, not inlined in the command.
-	shellExecMaxCommandBytes = 8 * 1024
+	// Generated scripts belong in write_sandbox_file, not inlined in the command.
+	shellExecMaxCommandBytes = 16 * 1024
 	// max_output_bytes controls stdout only. Stderr uses a smaller independent
 	// budget so verbose failures cannot consume the entire tool result.
 	defaultShellExecOutputBytes = 16 * 1024
@@ -624,6 +624,7 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 	var res *sandbox.ExecuteResult
 	var err error
 	var outputFiles []string
+	var afterEntries map[string]sandbox.RemoteDirEntry
 	if executor, ok := t.executor.(interface {
 		ExecShellCommandWithOutputSnapshot(
 			context.Context, string, string, sandbox.ShellExecOptions, string,
@@ -633,9 +634,10 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 		res, snapshot, err = executor.ExecShellCommandWithOutputSnapshot(execCtx, sessionID, execCommand,
 			sandbox.ShellExecOptions{WorkDir: workDir, Timeout: timeout, Env: env}, layoutOutputDir(layout))
 		if snapshot != nil {
+			afterEntries = outputEntriesSnapshot(snapshot.After)
 			outputFiles = changedOutputLinks(
 				layoutOutputDir(layout),
-				outputEntriesSnapshot(snapshot.Before), outputEntriesSnapshot(snapshot.After),
+				outputEntriesSnapshot(snapshot.Before), afterEntries,
 			)
 		}
 	} else {
@@ -645,6 +647,7 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 		res, err = t.executor.ExecShellCommand(execCtx, sessionID, execCommand, workDir, timeout, env)
 		if err == nil && res != nil && inspected {
 			if after, ok := sandboxOutputSnapshot(ctx, t.executor, sessionID, layoutOutputDir(layout)); ok {
+				afterEntries = after
 				outputFiles = changedOutputLinks(layoutOutputDir(layout), before, after)
 			}
 		}
@@ -719,6 +722,10 @@ func (t *ShellExecTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 	}
 	if hint := t.recoveryHint(input.SkillName, res.ExitCode, command, stderr); hint != "" {
 		b.WriteString(hint)
+		b.WriteString("\n")
+	}
+	if inv := formatOutputDirInventory(layoutOutputDir(layout), afterEntries); inv != "" {
+		b.WriteString(inv)
 		b.WriteString("\n")
 	}
 	visibleOutput := b.String()
@@ -1202,4 +1209,48 @@ func truncateShellStream(s string, limit int) (string, bool) {
 	b.WriteString(marker)
 	b.WriteString(s[len(s)-tail:])
 	return b.String(), true
+}
+
+func formatOutputDirInventory(outputDir string, entries map[string]sandbox.RemoteDirEntry) string {
+	if outputDir == "" || len(entries) == 0 {
+		return ""
+	}
+	prefix := strings.TrimRight(path.Clean(outputDir), "/") + "/"
+	paths := make([]string, 0, len(entries))
+	for p := range entries {
+		if strings.HasPrefix(p, prefix) {
+			paths = append(paths, p)
+		}
+	}
+	if len(paths) == 0 {
+		return ""
+	}
+	sort.Strings(paths)
+	items := make([]string, 0, len(paths))
+	var emptyNames []string
+	for _, p := range paths {
+		rel := strings.TrimPrefix(p, prefix)
+		e := entries[p]
+		items = append(items, fmt.Sprintf("%s (%s)", rel, formatHumanBytes(e.Size)))
+		if e.Size == 0 {
+			emptyNames = append(emptyNames, rel)
+		}
+	}
+	var out strings.Builder
+	out.WriteString(fmt.Sprintf("## Output Directory (%s)\n\nFiles (%d): %s\n", outputDir, len(items), strings.Join(items, ", ")))
+	if len(emptyNames) > 0 {
+		out.WriteString(fmt.Sprintf("Warning: empty 0-byte deliverable(s) will not be sent: %s\n", strings.Join(emptyNames, ", ")))
+	}
+	return out.String()
+}
+
+func formatHumanBytes(n int64) string {
+	switch {
+	case n < 1024:
+		return fmt.Sprintf("%d B", n)
+	case n < 1024*1024:
+		return fmt.Sprintf("%.1f KB", float64(n)/1024)
+	default:
+		return fmt.Sprintf("%.2f MB", float64(n)/(1024*1024))
+	}
 }

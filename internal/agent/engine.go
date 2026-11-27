@@ -825,6 +825,15 @@ func (e *AgentEngine) runReActIteration(
 	// call), so the very next LLM call sees the user's addition.
 	e.drainSteerMessages(ctx, state, messagesPtr, sessionID, assistantMessageID)
 
+	// Graceful wrap-up nudge on long-running turns so the model finishes and
+	// verifies deliverables in /workspace/output/ instead of hitting the hard cap mid-task.
+	if e.config != nil && e.config.MaxIterations >= 12 && round == e.config.MaxIterations-1 {
+		*messagesPtr = append(*messagesPtr, chat.Message{
+			Role:    "user",
+			Content: "[System notice: 2 tool rounds remaining. Ensure all requested finished deliverables are saved and non-empty under /workspace/output/, then provide a clear final summary.]",
+		})
+	}
+
 	logger.Infof(ctx, "[Agent][Round-%d/%s] Starting: %d messages, %d tools, est_tokens=%d",
 		round, e.maxIterationsDisplay(), len(*messagesPtr), len(tools), currentTokens)
 	e.logContextPrediction(ctx, round, *messagesPtr, tools, currentTokens)

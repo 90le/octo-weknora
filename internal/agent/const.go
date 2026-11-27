@@ -22,7 +22,7 @@ const (
 	// DefaultAgentTemperature is the default temperature for the agent
 	DefaultAgentTemperature = 0.7
 	// DefaultAgentMaxIterations is the default maximum number of iterations for the agent
-	DefaultAgentMaxIterations = 20
+	DefaultAgentMaxIterations = 30
 	// DefaultUseCustomSystemPrompt is the default whether to use custom system prompt for the agent
 	DefaultUseCustomSystemPrompt = false
 
@@ -93,6 +93,10 @@ func toolExecutionTimeout(toolName string, arguments ...string) time.Duration {
 	}
 	if toolName == "shell_exec" {
 		return shellExecToolTimeout
+	}
+	switch toolName {
+	case "write_sandbox_file", "edit_sandbox_file", "sandbox_ls":
+		return 120 * time.Second
 	}
 	return defaultToolExecTimeout
 }

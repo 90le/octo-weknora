@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/xml"
 	"errors"
 	"io"
 	"mime"
@@ -37,42 +36,11 @@ const maxGeneratedFileBytes = 20 << 20
 
 var errUnsupportedFileType = errors.New("octo file type unsupported")
 
-// Restrict this compatibility path to well-formed SVG; unknown types and
-// executable formats cannot use an archive to bypass the server's policy.
-func safeZipFallback(name string, data []byte) bool {
-	if !strings.EqualFold(path.Ext(name), ".svg") || !utf8.Valid(data) {
-		return false
-	}
-	decoder := xml.NewDecoder(bytes.NewReader(data))
-	root, depth := false, 0
-	for {
-		token, err := decoder.Token()
-		if err == io.EOF {
-			return root && depth == 0
-		}
-		if err != nil {
-			return false
-		}
-		switch v := token.(type) {
-		case xml.Directive:
-			return false
-		case xml.StartElement:
-			if depth == 0 {
-				if root || v.Name.Local != "svg" ||
-					(v.Name.Space != "" && v.Name.Space != "http://www.w3.org/2000/svg") {
-					return false
-				}
-				root = true
-			}
-			depth++
-		case xml.EndElement:
-			depth--
-		case xml.CharData:
-			if depth == 0 && strings.TrimSpace(string(v)) != "" {
-				return false
-			}
-		}
-	}
+// canZipFallback reports whether a file rejected by Octo's presign endpoint
+// with errUnsupportedFileType can be packaged into a .zip archive and retried.
+// Any non-.zip file rejected as unsupported by Octo is eligible for auto-ZIP.
+func canZipFallback(name string) bool {
+	return validGeneratedFilename(name) && !strings.EqualFold(path.Ext(name), ".zip")
 }
 
 func zipGeneratedFile(name string, data []byte) (string, []byte, error) {
@@ -82,7 +50,7 @@ func zipGeneratedFile(name string, data []byte) (string, []byte, error) {
 	}
 	var out bytes.Buffer
 	w := zip.NewWriter(&out)
-	member, err := w.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store})
+	member, err := w.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Deflate})
 	if err == nil {
 		_, err = member.Write(data)
 	}
@@ -222,7 +190,7 @@ func (a *Adapter) SendGeneratedFileWithResult(
 	if err == nil {
 		return name, nil
 	}
-	if !errors.Is(err, errUnsupportedFileType) || !safeZipFallback(name, data) {
+	if !errors.Is(err, errUnsupportedFileType) || !canZipFallback(name) {
 		return "", err
 	}
 	zipName, zipData, zipErr := zipGeneratedFile(name, data)

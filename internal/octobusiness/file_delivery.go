@@ -176,19 +176,64 @@ func WithCurrentFileDeliveryAuthority(ctx context.Context, general bool) (contex
 	return ctx, ValidateFileDeliveryAuthority(ctx)
 }
 
+// ExplicitlyProhibitsFileDelivery reports whether the user explicitly forbade
+// sending or exporting files (e.g. "不要发送文件", "只在沙箱保存", "do not send").
+func ExplicitlyProhibitsFileDelivery(text string) bool {
+	text = strings.ToLower(text)
+	for _, clause := range strings.FieldsFunc(text, func(r rune) bool {
+		return strings.ContainsRune("，。！？；,!?;\n", r)
+	}) {
+		if strings.Contains(clause, "保存在沙箱") || strings.Contains(clause, "仅保存") ||
+			strings.Contains(clause, "只保存") || strings.Contains(clause, "不要发到") ||
+			strings.Contains(clause, "别发到") || strings.Contains(clause, "不发送") {
+			return true
+		}
+		negationText := strings.NewReplacer("分别", "", "区别", "", "特别", "").Replace(clause)
+		negative := false
+		for _, word := range []string{"不要", "不用", "不需要", "无需", "禁止", "别", "do not", "don't", "no need"} {
+			if strings.Contains(negationText, word) {
+				negative = true
+				break
+			}
+		}
+		if !negative {
+			continue
+		}
+		if hasFileKeyword(clause) || strings.ContainsAny(clause, "发传给送") ||
+			strings.Contains(clause, "导出") || strings.Contains(clause, "投递") ||
+			strings.Contains(clause, "上传") || strings.Contains(clause, "分享") ||
+			strings.Contains(clause, "公开") || strings.Contains(clause, "对外") ||
+			strings.Contains(clause, "交付") || strings.Contains(clause, "send") ||
+			strings.Contains(clause, "attach") || strings.Contains(clause, "deliver") ||
+			strings.Contains(clause, "export") || strings.Contains(clause, "upload") ||
+			strings.Contains(clause, "share") {
+			return true
+		}
+	}
+	return false
+}
+
 // WantsFileDelivery identifies an explicit request before automatic artifact
 // publication. It is deliberately conservative about negative requests.
 func WantsFileDelivery(text string) bool { return explicitlyRequestsFile(text) }
 
-// WantsExplicitFileSend is used for group delivery, where merely asking to
-// create a file must not publish it to everyone in the conversation.
+// WantsExplicitFileSend is used for group delivery, recognizing broad natural
+// phrasings while still respecting explicit do-not-send prohibitions.
 func WantsExplicitFileSend(text string) bool {
+	if ExplicitlyProhibitsFileDelivery(text) {
+		return false
+	}
 	if !explicitlyRequestsFile(text) {
 		return false
 	}
-	text = strings.ToLower(text)
-	for _, word := range []string{"发送", "发给", "发我", "发到", "发出来", "请发", "传给", "给我", "投递", "send", "attach", "deliver"} {
-		if strings.Contains(text, word) {
+	lower := strings.ToLower(text)
+	for _, word := range []string{
+		"发送", "发给", "发我", "发到", "发出来", "发群", "放群", "请发", "传给", "传我", "给我",
+		"投递", "导出", "下载", "打包", "出一份", "出份", "做一份", "做份", "写一份", "写份",
+		"生成", "制作", "整理成", "做成", "转成", "输出",
+		"send", "attach", "deliver", "export", "download", "generate", "create",
+	} {
+		if strings.Contains(lower, word) {
 			return true
 		}
 	}
@@ -213,28 +258,49 @@ func WantsAllFiles(text string) bool {
 	return false
 }
 
-// MatchesRequestedArtifactType narrows a generic request when it names a file
-// format. A request with no format still requires a concrete final link.
+// MatchesRequestedArtifactType checks whether a generated file matches the
+// format(s) requested by the user. Supports all common document, web, media,
+// archive, and code formats, plus direct extension mentions in the prompt.
 func MatchesRequestedArtifactType(text, name string) bool {
 	text, ext := strings.ToLower(text), strings.ToLower(path.Ext(name))
+	if ext != "" {
+		bareExt := strings.TrimPrefix(ext, ".")
+		// Direct extension mention in user text (e.g. "html", ".html", "pptx", "svg", "yaml") always matches.
+		if bareExt != "" && (strings.Contains(text, ext) || containsWordOrToken(text, bareExt)) {
+			return true
+		}
+	}
 	categories := []struct {
 		words []string
 		exts  []string
 	}{
-		{[]string{"word", "docx"}, []string{".doc", ".docx"}},
-		{[]string{"excel", "xlsx", "表格"}, []string{".xls", ".xlsx", ".csv"}},
+		{[]string{"word", "docx", "doc"}, []string{".doc", ".docx", ".rtf"}},
+		{[]string{"excel", "xlsx", "xls", "表格", "电子表格", "数据表"}, []string{".xls", ".xlsx", ".csv"}},
 		{[]string{"pdf"}, []string{".pdf"}},
-		{[]string{"ppt", "powerpoint", "演示文稿"}, []string{".ppt", ".pptx"}},
-		{[]string{"markdown", ".md"}, []string{".md"}},
+		{[]string{"ppt", "pptx", "powerpoint", "演示文稿", "幻灯片", "slide", "slides", "deck"}, []string{".ppt", ".pptx", ".pdf"}},
+		{[]string{"html", "htm", "网页", "页面", "h5"}, []string{".html", ".htm"}},
+		{[]string{"markdown", ".md", "md文件", "md文档"}, []string{".md", ".markdown"}},
+		{[]string{"txt", "纯文本", "文本文件"}, []string{".txt", ".md"}},
 		{[]string{"csv"}, []string{".csv"}},
 		{[]string{"json"}, []string{".json"}},
-		{[]string{"图片", "png", "jpeg", "jpg"}, []string{".png", ".jpg", ".jpeg"}},
+		{[]string{"yaml", "yml"}, []string{".yaml", ".yml"}},
+		{[]string{"xml"}, []string{".xml"}},
+		{[]string{"svg", "矢量图"}, []string{".svg"}},
+		{[]string{"压缩包", "打包", "归档", "zip", "tar", "archive"}, []string{".zip", ".tar", ".gz", ".tgz", ".7z", ".rar"}},
+		{[]string{"图片", "图表", "流程图", "脑图", "思维导图", "png", "jpeg", "jpg", "webp", "gif", "image", "chart", "diagram"}, []string{".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}},
+		{[]string{"音频", "mp3", "wav", "audio"}, []string{".mp3", ".wav", ".m4a", ".ogg", ".flac"}},
+		{[]string{"视频", "mp4", "video"}, []string{".mp4", ".mov", ".webm", ".mkv"}},
+		{[]string{"代码", "脚本", "sql", "python", "script", "code"}, []string{".py", ".js", ".ts", ".go", ".sh", ".sql", ".java", ".cpp", ".c", ".h", ".css", ".html", ".json", ".yaml", ".yml"}},
 	}
 	found, match := false, false
 	for _, category := range categories {
 		mentioned := false
 		for _, word := range category.words {
-			mentioned = mentioned || strings.Contains(text, word)
+			if len(word) <= 3 && isASCIIAlnum(word) {
+				mentioned = mentioned || containsWordOrToken(text, word)
+			} else {
+				mentioned = mentioned || strings.Contains(text, word)
+			}
 		}
 		if mentioned {
 			found = true
@@ -244,6 +310,46 @@ func MatchesRequestedArtifactType(text, name string) bool {
 		}
 	}
 	return !found || match
+}
+
+func isASCIIAlnum(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
+// containsWordOrToken matches ASCII token without splitting another ASCII word
+// (e.g. "html" matches "生成html和pptx", "html文件", ".html", but "md" does not match "cmd").
+func containsWordOrToken(text, token string) bool {
+	if token == "" {
+		return false
+	}
+	for offset := 0; offset <= len(text)-len(token); {
+		idx := strings.Index(text[offset:], token)
+		if idx < 0 {
+			return false
+		}
+		idx += offset
+		leftOK := idx == 0 || !isASCIIWordByte(text[idx-1])
+		rightIdx := idx + len(token)
+		rightOK := rightIdx == len(text) || !isASCIIWordByte(text[rightIdx])
+		if leftOK && rightOK {
+			return true
+		}
+		offset = idx + len(token)
+	}
+	return false
+}
+
+func isASCIIWordByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 // MentionsArtifactName matches a concrete file name or relative path in the
@@ -372,47 +478,47 @@ func (*fileDeliveryTool) Parameters() json.RawMessage {
 		`"required":["name","content"]}`)
 }
 
-func explicitlyRequestsFile(text string) bool {
-	text = strings.ToLower(text)
+func hasFileKeyword(clause string) bool {
 	fileWords := []string{
-		"文件", "附件", "压缩包", "电子表格", "演示文稿", "图片", "音频", "视频",
-		"markdown", ".md", ".txt", ".csv", ".json", ".html", ".zip", ".7z", ".rar",
-		".png", ".jpg", ".jpeg", ".svg", ".mp3", ".wav", ".mp4",
-		"pdf", "docx", "xlsx", "pptx", "word", "excel", "powerpoint", "attachment", "file",
+		"文件", "附件", "压缩包", "电子表格", "表格", "数据表", "演示文稿", "幻灯片", "文档", "报告",
+		"网页", "页面", "图片", "图表", "流程图", "脑图", "思维导图", "音频", "视频", "代码", "脚本", "清单",
+		"markdown", ".md", ".txt", ".csv", ".json", ".html", ".htm", ".zip", ".7z", ".rar", ".tar",
+		".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".mp3", ".wav", ".mp4",
+		".yaml", ".yml", ".xml", ".sql", ".py", ".js", ".ts",
+		"pdf", "docx", "xlsx", "pptx", "ppt", "html", "htm", "svg", "csv", "json", "yaml", "zip",
+		"word", "excel", "powerpoint", "attachment", "file", "slides", "slide", "deck", "report", "document",
 	}
+	for _, word := range fileWords {
+		if len(word) <= 3 && isASCIIAlnum(word) {
+			if containsWordOrToken(clause, word) {
+				return true
+			}
+		} else if strings.Contains(clause, word) {
+			return true
+		}
+	}
+	return false
+}
+
+func explicitlyRequestsFile(text string) bool {
+	if ExplicitlyProhibitsFileDelivery(text) {
+		return false
+	}
+	text = strings.ToLower(text)
 	requestWords := []string{
-		"发给", "发送", "发我", "发文件", "发附件", "发 markdown", "发md", "发 .md", "请发", "传给", "给我",
-		"生成", "导出", "下载", "保存", "输出", "整理成", "做成", "转成", "制作",
-		"send", "attach", "export", "download", "generate", "create", "save", "write",
+		"发给", "发送", "发我", "发文件", "发附件", "发 markdown", "发md", "发 .md", "发群", "放群", "请发", "传给", "传我", "给我",
+		"生成", "导出", "下载", "保存", "输出", "整理成", "整理一份", "做成", "做一份", "做份", "做一个", "做个",
+		"写一份", "写份", "写个", "出一份", "出份", "转成", "制作", "打包", "归档", "投递",
+		"send", "attach", "export", "download", "generate", "create", "save", "write", "make", "build", "produce", "render",
 	}
 	requested := false
 	for _, clause := range strings.FieldsFunc(text, func(r rune) bool {
 		return strings.ContainsRune("，。！？；,!?;\n", r)
 	}) {
-		hasFile, hasRequest := false, false
-		for _, word := range fileWords {
-			hasFile = hasFile || strings.Contains(clause, word)
-		}
+		hasFile := hasFileKeyword(clause)
+		hasRequest := false
 		for _, word := range requestWords {
 			hasRequest = hasRequest || strings.Contains(clause, word)
-		}
-		negative := false
-		// "分别", "区别" and "特别" are not prohibitions.
-		negationText := strings.NewReplacer("分别", "", "区别", "", "特别", "").Replace(clause)
-		for _, word := range []string{"不要", "不用", "不需要", "无需", "禁止", "别", "do not", "don't", "no need"} {
-			negative = negative || strings.Contains(negationText, word)
-		}
-		// Negation may refer to the file requested in an earlier clause:
-		// "生成文件，不要发送" must not authorize an outbound attachment.
-		if negative && (hasFile || strings.ContainsAny(clause, "发传给送") ||
-			strings.Contains(clause, "导出") || strings.Contains(clause, "投递") ||
-			strings.Contains(clause, "上传") || strings.Contains(clause, "分享") ||
-			strings.Contains(clause, "公开") || strings.Contains(clause, "对外") ||
-			strings.Contains(clause, "交付") || strings.Contains(clause, "send") ||
-			strings.Contains(clause, "attach") || strings.Contains(clause, "deliver") ||
-			strings.Contains(clause, "export") || strings.Contains(clause, "upload") ||
-			strings.Contains(clause, "share")) {
-			return false
 		}
 		requested = requested || (hasFile && hasRequest) ||
 			strings.Contains(clause, "导出") || strings.Contains(clause, "export")
@@ -485,8 +591,8 @@ func (*fileDeliveryTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 	hash := sha256.Sum256([]byte(input.Content))
 	attempt := name + "\x00" + hex.EncodeToString(hash[:])
 	if state.closed || state.attempts[attempt] || state.unknown[name] || len(state.attempts) >= 5 ||
-		(legacyMode && len(state.attempts) != 0) || (!p.IsDirect && !HasNamedArtifact(p.MessageText) &&
-		len(state.attempts) != 0) || (state.names[name] && !requestsMultipleVersions(p.MessageText)) {
+		(legacyMode && len(state.attempts) != 0) ||
+		(state.names[name] && !requestsMultipleVersions(p.MessageText)) {
 		return toolResult(nil, errors.New("this file was already attempted or the per-message limit was reached"))
 	}
 	ctx, err = WithCurrentFileDeliveryAuthority(ctx, !legacyMode)

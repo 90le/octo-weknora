@@ -87,7 +87,7 @@ const defaultMaxArtifactFileBytes int64 = 50 * 1024 * 1024
 const (
 	maxIMArtifactFileBytes  int64 = 20 << 20
 	maxIMArtifactTotalBytes int64 = 40 << 20
-	maxIMArtifactFiles            = 5
+	maxIMArtifactFiles            = 20
 )
 
 // Resource binding coordinates for collected artifacts. The owner is the
@@ -691,6 +691,8 @@ func (c *ArtifactCollector) collect(
 		if filter != nil {
 			selection = filter(entry, nameCounts[entry.Name] > 1)
 			if selection != IMArtifactExplicit && selection != IMArtifactCurrentTurn {
+				logger.Infof(ctx, "[ArtifactCollector] IM skipped entry: session=%s path=%s size=%d reason=unselected",
+					sessionID, entry.Path, entry.Size)
 				continue
 			}
 		}
@@ -702,6 +704,8 @@ func (c *ArtifactCollector) collect(
 			limit := min(maxIMArtifactFileBytes, remaining)
 			if !ok || len(uploads) >= maxIMArtifactFiles || entry.Size <= 0 ||
 				entry.Size > limit || limit <= 0 {
+				logger.Warnf(ctx, "[ArtifactCollector] IM skipped entry: session=%s path=%s size=%d limit=%d count=%d reason=bounds_or_empty",
+					sessionID, entry.Path, entry.Size, limit, len(uploads))
 				captureErr = errors.New("one or more IM artifacts could not be collected")
 				continue
 			}
@@ -713,16 +717,22 @@ func (c *ArtifactCollector) collect(
 				return nil, err
 			}
 			if readErr != nil || len(data) == 0 || int64(len(data)) > limit {
+				logger.Warnf(ctx, "[ArtifactCollector] IM skipped entry: session=%s path=%s read_bytes=%d err=%v reason=read_failed",
+					sessionID, entry.Path, len(data), readErr)
 				captureErr = errors.New("one or more IM artifacts could not be collected")
 				continue
 			}
 			if selection == IMArtifactCurrentTurn || selection == IMArtifactExplicit {
 				isChanged, changeErr := changed(entry, data)
 				if changeErr != nil {
+					logger.Warnf(ctx, "[ArtifactCollector] IM skipped entry: session=%s path=%s err=%v reason=change_check_failed",
+						sessionID, entry.Path, changeErr)
 					captureErr = changeErr
 					continue
 				}
 				if !isChanged {
+					logger.Infof(ctx, "[ArtifactCollector] IM skipped entry: session=%s path=%s size=%d reason=unchanged",
+						sessionID, entry.Path, entry.Size)
 					continue
 				}
 			}

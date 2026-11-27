@@ -270,9 +270,9 @@ func (e *AgentEngine) executeToolCalls(
 // chasing arguments the failing call does not have.
 const truncatedArgumentsError = "Tool call was not executed: the model output was cut off " +
 	"before the arguments finished, so they are incomplete rather than wrong. " +
-	"Re-issue exactly one needed call with a complete JSON object under 8 KiB. " +
+	"Re-issue exactly one needed call with a complete JSON object under 6 KiB. " +
 	"Use a narrow query or range; do not include a whole document or file body. " +
-	"If more work is needed, split it into smaller calls in later rounds. " +
+	"If more work is needed, split it into smaller calls in later rounds (or use append mode / a compact generator script). " +
 	"Do not answer from this failed call."
 
 // failTruncatedToolCalls records every call in a truncated response as failed
