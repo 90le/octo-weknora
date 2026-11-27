@@ -258,6 +258,26 @@ func WantsAllFiles(text string) bool {
 	return false
 }
 
+// IsOpenEndedMultiFileRequest reports whether the user asked for an open-ended
+// set of multiple files (e.g. "包括不限于等15种文件类型"), where mentioning an
+// example filename or format must not exclude other deliverables created in the
+// same turn.
+func IsOpenEndedMultiFileRequest(text string) bool {
+	if WantsAllFiles(text) {
+		return true
+	}
+	lower := strings.ToLower(text)
+	for _, phrase := range []string{
+		"不限于", "包括但不限于", "包括不限于", "等", "多种", "多个", "各类", "不同格式", "各种格式",
+		"and more", "etc", "various formats", "multiple formats",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
 // MatchesRequestedArtifactType checks whether a generated file matches the
 // format(s) requested by the user. Supports all common document, web, media,
 // archive, and code formats, plus direct extension mentions in the prompt.

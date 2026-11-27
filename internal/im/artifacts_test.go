@@ -682,3 +682,47 @@ func TestIMMoreThanFiveFilesBundlesIntoSingleZip(t *testing.T) {
 	require.Contains(t, result, "chart_1.png")
 	require.Contains(t, result, "chart_6.png")
 }
+
+func TestIMOpenEndedFifteenFileTypesDeliversAllFifteenInBundleZip(t *testing.T) {
+	scope := &ExecutionScope{
+		AccountID: "a", ScopeID: "s", Revision: "r", KnowledgeBaseIDs: []string{"kb"}, AllowFileDelivery: true,
+	}
+	adapter := &artifactTestAdapter{scopeTestAdapter: &scopeTestAdapter{scope: scope}}
+	names := []string{
+		"01-yewen-intro.md", "02-yewen-intro.html", "03-yewen-intro.txt", "04-yewen-intro.json",
+		"05-yewen-intro.csv", "06-yewen-intro.yaml", "07-yewen-intro.xml", "08-yewen-intro.rtf",
+		"09-yewen-intro.svg", "10-yewen-intro.tex", "11-yewen-intro.docx", "12-yewen-intro.xlsx",
+		"13-yewen-intro.pptx", "14-yewen-intro.pdf", "15-yewen-intro.toml",
+	}
+	var artifacts types.MessageArtifacts
+	fileMap := map[string][]byte{}
+	for _, name := range names {
+		data := []byte("content-" + name)
+		art := makeTestArtifact(name, data)
+		art.SourcePath = "/workspace/output/" + name
+		artifacts = append(artifacts, art)
+		fileMap[art.URL] = data
+	}
+	req := &qaRequest{
+		msg: &IncomingMessage{
+			UserID: "u", MessageID: "m",
+			Content:  "使用Markdown、HTML、Word (.docx)、JSON、CSV、PPT、PDF包括不限于等15种文件类型方式简短介绍你自己，并文件给我。",
+			ChatType: ChatTypeGroup, Extra: map[string]string{},
+		},
+		channel: &IMChannel{TenantID: 7, Platform: "octo"}, channelID: "channel",
+		session: &types.Session{ID: "session", TenantID: 7}, agent: &types.CustomAgent{TenantID: 7},
+		adapter: adapter, scope: scope,
+	}
+	s := &Service{
+		artifactCollector: &fakeIMArtifactCollector{artifacts: artifacts},
+		defaultFileSvc:    &memoryIMArtifactFiles{files: fileMap},
+	}
+	ctx := s.beginIMArtifactTurn(imArtifactTestGrant(s.businessContext(context.Background(), req, scope)), req)
+	msg := &types.Message{ID: "answer"}
+	result := s.finishIMArtifactTurn(ctx, msg, "15种格式已全部生成。")
+	require.Equal(t, []string{"outputs-bundle.zip"}, adapter.sent)
+	require.Len(t, msg.Artifacts, 15)
+	for _, name := range names {
+		require.Contains(t, result, name)
+	}
+}

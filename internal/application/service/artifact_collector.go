@@ -87,7 +87,7 @@ const defaultMaxArtifactFileBytes int64 = 50 * 1024 * 1024
 const (
 	maxIMArtifactFileBytes  int64 = 20 << 20
 	maxIMArtifactTotalBytes int64 = 40 << 20
-	maxIMArtifactFiles            = 20
+	maxIMArtifactFiles            = 50
 )
 
 // Resource binding coordinates for collected artifacts. The owner is the

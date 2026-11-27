@@ -304,14 +304,16 @@ func (s *Service) finishIMArtifactTurn(ctx context.Context, msg *types.Message, 
 		if explicit || (!ambiguous && octobusiness.MentionsArtifactName(text, name)) {
 			return appservice.IMArtifactCurrentTurn
 		}
-		if ambiguous || imTemporaryArtifact(relative) || octobusiness.HasNamedArtifact(text) ||
-			!octobusiness.MatchesRequestedArtifactType(text, name) {
+		if ambiguous || imTemporaryArtifact(relative) {
+			return appservice.IMArtifactNotSelected
+		}
+		if octobusiness.HasNamedArtifact(text) && !octobusiness.IsOpenEndedMultiFileRequest(text) {
 			return appservice.IMArtifactNotSelected
 		}
 		// Any non-temporary file created or modified in /workspace/output/ during
-		// this turn that matches the requested type(s) is eligible for delivery,
-		// even if the model summarized it with a friendly title instead of
-		// repeating the exact filename or a sandbox: link.
+		// this turn is eligible for delivery (SnapshotIM + CollectIM already
+		// guarantee only current-turn outputs are collected), so open-ended or
+		// multi-format requests ("包括不限于等15种文件类型") never drop files.
 		return appservice.IMArtifactCurrentTurn
 	}
 	// The sandbox may not exist until the first command. CollectIM checks the
