@@ -1,4 +1,4 @@
-import { get, post, put, del, postChat, getDown } from "../../utils/request";
+import { get, post, put, del, postChat, getDown, postUpload } from "../../utils/request";
 
 export async function createSessions(data: Record<string, unknown> = {}) {
   return post("/api/v1/sessions", data);
@@ -110,7 +110,17 @@ export async function sendOctoManualReply(
   session_id: string,
   content: string,
   quote_latest = true,
+  files: File[] = [],
 ) {
+  if (files && files.length > 0) {
+    const fd = new FormData();
+    fd.append("content", content);
+    fd.append("quote_latest", quote_latest ? "true" : "false");
+    for (const f of files) {
+      fd.append("files", f);
+    }
+    return postUpload(`/api/v1/sessions/${session_id}/octo-reply`, fd);
+  }
   return post(`/api/v1/sessions/${session_id}/octo-reply`, { content, quote_latest }, { timeout: 45000 });
 }
 

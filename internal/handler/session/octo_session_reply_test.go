@@ -43,6 +43,11 @@ func (f *fakeOctoBridge) SendToSessionOrigin(_ context.Context, _ uint64, _ stri
 	return "rcpt-999", &types.SessionIMOrigin{Platform: "octo", ChatType: "subarea", SourceName: "bot对话测试专区"}, nil
 }
 
+func (f *fakeOctoBridge) SendFileToSessionOrigin(_ context.Context, _ uint64, _, fileName string, _ []byte, _ string, _ bool) (string, string, *types.SessionIMOrigin, error) {
+	f.sentCount++
+	return "rcpt-file-1", fileName, &types.SessionIMOrigin{Platform: "octo", ChatType: "subarea", SourceName: "bot对话测试专区"}, nil
+}
+
 type bridgeSessionStub struct {
 	interfaces.SessionService
 	sess *types.Session

@@ -115,6 +115,16 @@
                     <SessionSourceFilter inline :emphasized="sessionScopeFilterPinned" :sources="sessionSourceOptions"
                         :current="activeSessionBucketKey" @select="switchSessionBucket" />
                 </div>
+                <div v-if="activeSessionBucketKey === 'im:octo' && !batchMode" class="octo-sidebar-filter">
+                    <input v-model="octoSidebarQuery" type="text" class="octo-sidebar-search"
+                        placeholder="搜群/子区、成员昵称或标题..." />
+                    <div class="octo-sidebar-types" role="group" aria-label="Octo 会话类型筛选">
+                        <button type="button" :aria-pressed="octoSidebarType === ''" @click="octoSidebarType = ''">全部</button>
+                        <button type="button" :aria-pressed="octoSidebarType === 'direct'" @click="octoSidebarType = 'direct'">私聊</button>
+                        <button type="button" :aria-pressed="octoSidebarType === 'group'" @click="octoSidebarType = 'group'">主群</button>
+                        <button type="button" :aria-pressed="octoSidebarType === 'subarea'" @click="octoSidebarType = 'subarea'">子区</button>
+                    </div>
+                </div>
                 <template v-if="sessionListBooting && !hasAnySession">
                     <div v-for="n in 4" :key="'skel-' + n" class="submenu_item_p session-chat-row">
                         <div class="session-list-row session-list-row--flat">
@@ -505,11 +515,30 @@ const dateBucketLabels = computed<Record<DateBucketKey, string>>(() => ({
     earlier: t('time.earlier'),
 }));
 
+const octoSidebarQuery = ref('');
+const octoSidebarType = ref('');
+
 const filteredGroupedSessions = computed(() => {
     const bucket = activeBucket.value;
     if (!bucket?.items.length) return [];
+    let list = bucket.items;
+    if (activeSessionBucketKey.value === 'im:octo') {
+        const tFilter = octoSidebarType.value;
+        const kw = octoSidebarQuery.value.trim().toLowerCase();
+        if (tFilter || kw) {
+            list = list.filter((item: any) => {
+                const o = item.im_origin;
+                if (tFilter && o?.chat_type !== tFilter) return false;
+                if (kw) {
+                    const hay = `${item.title || ''} ${o?.source_name || ''} ${o?.user_name || ''} ${o?.user_uid || ''}`.toLowerCase();
+                    if (!hay.includes(kw)) return false;
+                }
+                return true;
+            });
+        }
+    }
     return groupSessionsByDate(
-        bucket.items.map((item) => ({
+        list.map((item) => ({
             ...item,
             path: `chat/${item.id}`,
             title: item.title || '',
@@ -1998,6 +2027,45 @@ const resizeSidebar = (delta: number, keyboard: boolean) => {
         animation: none;
     }
 }
+.octo-sidebar-filter {
+    display: grid;
+    gap: 6px;
+    padding: 4px 10px 8px;
+}
+.octo-sidebar-search {
+    width: 100%;
+    height: 28px;
+    padding: 0 8px;
+    border: 1px solid var(--td-component-border);
+    border-radius: 6px;
+    background: var(--td-bg-color-container);
+    color: var(--td-text-color-primary);
+    font-size: 12px;
+    outline: none;
+    &:focus {
+        border-color: var(--td-brand-color);
+    }
+}
+.octo-sidebar-types {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    button {
+        height: 22px;
+        border: 1px solid var(--td-component-border);
+        border-radius: 5px;
+        background: var(--td-bg-color-container);
+        color: var(--td-text-color-secondary);
+        font-size: 11px;
+        cursor: pointer;
+        &[aria-pressed='true'] {
+            border-color: var(--td-brand-color);
+            background: var(--td-brand-color-light);
+            color: var(--td-brand-color);
+            font-weight: 600;
+        }
+    }
+}
 </style>
 <style lang="less">
 // Dark mode: 滚动条在深色背景下需要更亮的颜色才看得见
@@ -2082,6 +2150,45 @@ html[theme-mode="dark"] .aside_box .menu_item_c_active .menu_icon img.icon {
     .t-button--theme-danger:hover {
         background-color: var(--td-error-color);
         border-color: var(--td-error-color);
+    }
+}
+.octo-sidebar-filter {
+    display: grid;
+    gap: 6px;
+    padding: 4px 10px 8px;
+}
+.octo-sidebar-search {
+    width: 100%;
+    height: 28px;
+    padding: 0 8px;
+    border: 1px solid var(--td-component-border);
+    border-radius: 6px;
+    background: var(--td-bg-color-container);
+    color: var(--td-text-color-primary);
+    font-size: 12px;
+    outline: none;
+    &:focus {
+        border-color: var(--td-brand-color);
+    }
+}
+.octo-sidebar-types {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    button {
+        height: 22px;
+        border: 1px solid var(--td-component-border);
+        border-radius: 5px;
+        background: var(--td-bg-color-container);
+        color: var(--td-text-color-secondary);
+        font-size: 11px;
+        cursor: pointer;
+        &[aria-pressed='true'] {
+            border-color: var(--td-brand-color);
+            background: var(--td-brand-color-light);
+            color: var(--td-brand-color);
+            font-weight: 600;
+        }
     }
 }
 </style>

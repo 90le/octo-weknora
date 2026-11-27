@@ -14,12 +14,13 @@ import (
 
 type octoSessionBridgeAdapter interface {
 	ResolveUserNames(context.Context, uint64, []string) map[string]string
-	SendSessionBridgeReply(ctx context.Context, tenant uint64, targetChannelID string, channelType int, body string, quoteInboxInput string) (string, error)
+	SendSessionBridgeReply(ctx context.Context, tenant uint64, targetChannelID string, channelType int, body string, quoteInboxInput string, mentionUID string, mentionName string) (string, error)
+	SendSessionBridgeFile(ctx context.Context, tenant uint64, targetChannelID string, channelType int, fileName string, data []byte, contentType string, quoteInboxInput string) (string, string, error)
 }
 
 // OctoSessionBridgeService bridges Web sessions with their originating Octo
 // channel, resolving human-readable provenance (chat type, group/subarea,
-// nickname) and routing Web replies back along the latest message's return path.
+// nickname) and routing Web replies & files back along the latest return path.
 type OctoSessionBridgeService struct {
 	im *Service
 }
@@ -73,7 +74,6 @@ func (b *OctoSessionBridgeService) resolveRoutes(ctx context.Context, tenant uin
 		return out
 	}
 
-	// Keep newest mapping per session_id
 	bySession := map[string]struct {
 		IMChannelID, UserID, ChatID, ThreadID string
 	}{}
@@ -89,29 +89,23 @@ func (b *OctoSessionBridgeService) resolveRoutes(ctx context.Context, tenant uin
 		}
 	}
 
-	// Load channel names & account_ids
 	chNames := map[string]string{}
-	chAccounts := map[string]string{}
 	if len(channelIDs) > 0 {
 		ids := make([]string, 0, len(channelIDs))
 		for id := range channelIDs {
 			ids = append(ids, id)
 		}
 		var chs []struct {
-			ID, Name, Credentials string
+			ID, Name string
 		}
-		if quiet.Table("im_channels").Select("id, name, credentials").
+		if quiet.Table("im_channels").Select("id, name").
 			Where("tenant_id = ? AND id IN ?", tenant, ids).Find(&chs).Error == nil {
 			for _, ch := range chs {
 				chNames[ch.ID] = ch.Name
-				if cfg, err := ParseCredentials(types.JSON(ch.Credentials)); err == nil {
-					chAccounts[ch.ID] = GetString(cfg, "account_id")
-				}
 			}
 		}
 	}
 
-	// Load verified octo_scopes for group/subarea display names
 	scopeNames := map[string]string{}
 	var scopes []struct {
 		GroupID, SubareaID, DisplayName string
@@ -123,7 +117,6 @@ func (b *OctoSessionBridgeService) resolveRoutes(ctx context.Context, tenant uin
 		}
 	}
 
-	// Load latest Octo message request_id per session so we can inspect exact inbox return path
 	latestReqBySession := map[string]string{}
 	var msgs []struct {
 		SessionID string
@@ -157,7 +150,6 @@ func (b *OctoSessionBridgeService) resolveRoutes(ctx context.Context, tenant uin
 		}
 	}
 
-	// Build routes and collect UIDs needing Octo nickname resolution
 	uidsByChannel := map[string][]string{}
 	for sid, m := range bySession {
 		rt := &sessionRoute{
@@ -185,12 +177,16 @@ func (b *OctoSessionBridgeService) resolveRoutes(ctx context.Context, tenant uin
 						rt.targetChannelID = in.UserID
 						rt.origin.ChatType = "direct"
 						rt.origin.SourceName = "私聊"
-					} else if kind == 5 {
+					} else if kind == 5 || strings.Contains(in.Extra["octo_channel_id"], "____") {
 						rt.channelType = 5
 						rt.targetChannelID = in.Extra["octo_channel_id"]
 						rt.origin.ChatType = "subarea"
 						rt.origin.GroupID = in.Extra["octo_group_id"]
 						rt.origin.SubareaID = in.Extra["octo_subarea_id"]
+						if rt.origin.GroupID == "" && strings.Contains(rt.targetChannelID, "____") {
+							parts := strings.SplitN(rt.targetChannelID, "____", 2)
+							rt.origin.GroupID, rt.origin.SubareaID = parts[0], parts[1]
+						}
 					} else if kind == 2 {
 						rt.channelType = 2
 						rt.targetChannelID = in.Extra["octo_channel_id"]
@@ -201,26 +197,26 @@ func (b *OctoSessionBridgeService) resolveRoutes(ctx context.Context, tenant uin
 			}
 		}
 
-		// 2. Fallback to im_channel_sessions columns when inbox row wasn't matched
+		// 2. Fallback to im_channel_sessions columns (Octo subareas use 4 underscores "____")
 		if rt.channelType == 0 {
 			if m.ChatID == "" || m.ChatID == m.UserID || strings.HasPrefix(m.ChatID, "dm:") {
 				rt.channelType = 1
 				rt.targetChannelID = m.UserID
 				rt.origin.ChatType = "direct"
 				rt.origin.SourceName = "私聊"
-			} else if m.ThreadID != "" {
-				rt.channelType = 5
-				rt.targetChannelID = m.ChatID
-				rt.origin.ChatType = "subarea"
-				rt.origin.GroupID = strings.TrimPrefix(strings.Split(m.ChatID, ":")[0], "group:")
-				rt.origin.SubareaID = m.ThreadID
-			} else if strings.Contains(m.ChatID, ":") {
-				parts := strings.SplitN(m.ChatID, ":", 2)
+			} else if strings.Contains(m.ChatID, "____") {
+				parts := strings.SplitN(m.ChatID, "____", 2)
 				rt.channelType = 5
 				rt.targetChannelID = m.ChatID
 				rt.origin.ChatType = "subarea"
 				rt.origin.GroupID = parts[0]
 				rt.origin.SubareaID = parts[1]
+			} else if m.ThreadID != "" {
+				rt.channelType = 5
+				rt.targetChannelID = m.ChatID + "____" + m.ThreadID
+				rt.origin.ChatType = "subarea"
+				rt.origin.GroupID = m.ChatID
+				rt.origin.SubareaID = m.ThreadID
 			} else {
 				rt.channelType = 2
 				rt.targetChannelID = m.ChatID
@@ -230,18 +226,26 @@ func (b *OctoSessionBridgeService) resolveRoutes(ctx context.Context, tenant uin
 		}
 
 		if rt.origin.ChatType == "subarea" || rt.origin.ChatType == "group" {
-			name := scopeNames[rt.origin.GroupID+":"+rt.origin.SubareaID]
-			if name == "" && rt.origin.GroupID != "" {
-				name = scopeNames[rt.origin.GroupID+":"]
-			}
-			if name == "" {
-				if rt.origin.SubareaID != "" {
-					name = rt.origin.SubareaID
+			subName := scopeNames[rt.origin.GroupID+":"+rt.origin.SubareaID]
+			parentName := scopeNames[rt.origin.GroupID+":"]
+			if rt.origin.ChatType == "subarea" {
+				switch {
+				case parentName != "" && subName != "" && !strings.Contains(subName, parentName):
+					rt.origin.SourceName = parentName + " / " + subName
+				case subName != "":
+					rt.origin.SourceName = subName
+				case parentName != "":
+					rt.origin.SourceName = parentName + " / 子区"
+				default:
+					rt.origin.SourceName = "子区 " + rt.origin.SubareaID
+				}
+			} else {
+				if parentName != "" {
+					rt.origin.SourceName = parentName
 				} else {
-					name = rt.origin.GroupID
+					rt.origin.SourceName = rt.origin.GroupID
 				}
 			}
-			rt.origin.SourceName = name
 		}
 
 		if rt.origin.UserUID != "" && (rt.origin.UserName == "" || rt.origin.UserName == rt.origin.UserUID) {
@@ -250,7 +254,6 @@ func (b *OctoSessionBridgeService) resolveRoutes(ctx context.Context, tenant uin
 		out[sid] = rt
 	}
 
-	// Batch-resolve Octo nicknames via adapter TTL cache
 	resolvedNames := map[string]string{}
 	for chID, uids := range uidsByChannel {
 		if adapter, _, err := b.lookupAdapter(tenant, chID); err == nil {
@@ -296,9 +299,38 @@ func (b *OctoSessionBridgeService) SendToSessionOrigin(
 	if quoteLatest {
 		quoteRaw = rt.quoteInboxInput
 	}
-	receipt, err := adapter.SendSessionBridgeReply(ctx, tenantID, rt.targetChannelID, rt.channelType, content, quoteRaw)
+	receipt, err := adapter.SendSessionBridgeReply(
+		ctx, tenantID, rt.targetChannelID, rt.channelType, content, quoteRaw,
+		rt.origin.UserUID, rt.origin.UserName,
+	)
 	if err != nil {
 		return "", rt.origin, err
 	}
 	return receipt, rt.origin, nil
+}
+
+// SendFileToSessionOrigin implements session.OctoSessionBridge.
+func (b *OctoSessionBridgeService) SendFileToSessionOrigin(
+	ctx context.Context, tenantID uint64, sessionID, fileName string, data []byte, contentType string, quoteLatest bool,
+) (string, string, *types.SessionIMOrigin, error) {
+	routes := b.resolveRoutes(ctx, tenantID, []string{sessionID})
+	rt, ok := routes[sessionID]
+	if !ok || rt == nil || rt.origin == nil {
+		return "", "", nil, errors.New("octo session origin not found")
+	}
+	adapter, _, err := b.lookupAdapter(tenantID, rt.origin.ChannelID)
+	if err != nil {
+		return "", "", rt.origin, err
+	}
+	quoteRaw := ""
+	if quoteLatest {
+		quoteRaw = rt.quoteInboxInput
+	}
+	receipt, sentName, err := adapter.SendSessionBridgeFile(
+		ctx, tenantID, rt.targetChannelID, rt.channelType, fileName, data, contentType, quoteRaw,
+	)
+	if err != nil {
+		return "", sentName, rt.origin, err
+	}
+	return receipt, sentName, rt.origin, nil
 }

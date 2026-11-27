@@ -14,14 +14,11 @@
       <input ref="titleInputRef" v-model="titleDraft" class="session-title-edit__input"
         :maxlength="SESSION_TITLE_MAX_LENGTH" @keydown.esc.prevent="cancelTitleEdit" @blur="submitTitleEdit" />
     </form>
-    <span v-else class="submenu_title" :class="[batchMode ? 'submenu_title--batch' : '', octoMeta ? 'submenu_title--has-meta' : '']" :title="octoTooltip || item.title">
-      <span class="submenu_title-line">
-        <t-icon v-if="item.is_pinned" name="pin" class="submenu_pin_icon" />
-        <span ref="titleTextRef" class="submenu_title-text">{{ item.title }}</span>
-        <span v-if="apiOwnerTag" class="session-owner-tag" :class="`session-owner-tag--${apiOwnerTag.kind}`"
-          :title="apiOwnerTag.full">{{ apiOwnerTag.label }}</span>
-      </span>
-      <span v-if="octoMeta" class="submenu_octo-meta">{{ octoMeta }}</span>
+    <span v-else class="submenu_title" :class="batchMode ? 'submenu_title--batch' : ''" :title="octoTooltip || item.title">
+      <t-icon v-if="item.is_pinned" name="pin" class="submenu_pin_icon" />
+      <span ref="titleTextRef" class="submenu_title-text">{{ item.title }}</span>
+      <span v-if="apiOwnerTag" class="session-owner-tag" :class="`session-owner-tag--${apiOwnerTag.kind}`"
+        :title="apiOwnerTag.full">{{ apiOwnerTag.label }}</span>
     </span>
     <div v-if="!batchMode || hasBadge" class="session-row-menu-wrap"
       :class="{ 'session-row-menu-wrap--badge': hasBadge }" @click.stop>

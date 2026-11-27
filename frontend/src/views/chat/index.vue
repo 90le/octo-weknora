@@ -183,7 +183,7 @@
                             <button type="button" :aria-pressed="octoReplyMode === 'manual'" @click="octoReplyMode = 'manual'">Bot 人工直复</button>
                         </div>
                         <t-checkbox v-if="octoReplyMode === 'ai'" v-model="autoRelayToOcto" class="octo-auto-relay">
-                            AI 回复完成后自动原路发回 Octo
+                            AI 回复完成后自动原路发回 Octo（含全部段落与生成附件）
                         </t-checkbox>
                         <span v-else class="octo-manual-hint">
                             将以「{{ currentSession.im_origin.channel_name || 'Octo Bot' }}」身份直接原路回复至
@@ -194,13 +194,25 @@
                         <t-textarea
                             v-model="octoManualDraft"
                             :autosize="{ minRows: 2, maxRows: 5 }"
-                            :maxlength="8000"
-                            placeholder="输入要以 Bot 身份直接发回原 Octo 会话的人工回复内容..."
+                            :maxlength="20000"
+                            placeholder="输入要以 Bot 身份直接发回原 Octo 会话的人工回复内容（群/子区将自动原生 @原用户，超长自动整齐分段）..."
                             @keydown.ctrl.enter.prevent="handleSendOctoManual"
                         />
+                        <div v-if="octoManualFiles.length" class="octo-manual-files">
+                            <span v-for="(file, idx) in octoManualFiles" :key="`${file.name}-${idx}`" class="octo-file-chip">
+                                <span>📎 {{ file.name }}</span>
+                                <button type="button" class="octo-file-x" aria-label="移除附件" @click="removeOctoManualFile(idx)">×</button>
+                            </span>
+                        </div>
                         <div class="octo-manual-ft">
-                            <span class="octo-manual-tip">Ctrl+Enter 快捷发送 · 按上一条消息路径原路返回并同步记录到本会话</span>
-                            <t-button theme="primary" size="small" :loading="sendingOctoManual" :disabled="!octoManualDraft.trim()" @click="handleSendOctoManual">
+                            <div class="octo-manual-ft-l">
+                                <input ref="octoFileInputRef" type="file" multiple style="display: none" @change="onOctoManualFilesPicked" />
+                                <t-button size="small" variant="outline" :disabled="sendingOctoManual || octoManualFiles.length >= 5" @click="octoFileInputRef?.click()">
+                                    📎 添加附件 ({{ octoManualFiles.length }}/5)
+                                </t-button>
+                                <span class="octo-manual-tip">支持 Octo 任意附件，不支持格式自动打包 ZIP · Ctrl+Enter 发送</span>
+                            </div>
+                            <t-button theme="primary" size="small" :loading="sendingOctoManual" :disabled="!octoManualDraft.trim() && !octoManualFiles.length" @click="handleSendOctoManual">
                                 以 Bot 身份立即发送
                             </t-button>
                         </div>
@@ -780,16 +792,39 @@ const resolveAssistantMessageId = (message) => message?.assistant_message_id || 
 const octoReplyMode = ref('ai');
 const autoRelayToOcto = ref(false);
 const octoManualDraft = ref('');
+const octoManualFiles = ref([]);
+const octoFileInputRef = ref(null);
 const sendingOctoManual = ref(false);
 const relayingMsgId = ref('');
 const lastWebSentAt = ref(0);
 
+const onOctoManualFilesPicked = (ev) => {
+    const picked = Array.from(ev?.target?.files || []);
+    if (ev?.target) ev.target.value = '';
+    for (const f of picked) {
+        if (octoManualFiles.value.length >= 5) {
+            MessagePlugin.warning('单次最多添加 5 个附件');
+            break;
+        }
+        if (f.size > 20 * 1024 * 1024) {
+            MessagePlugin.warning(`附件「${f.name}」超过 20MB 上限，已跳过`);
+            continue;
+        }
+        octoManualFiles.value.push(f);
+    }
+};
+
+const removeOctoManualFile = (idx) => {
+    octoManualFiles.value.splice(idx, 1);
+};
+
 const handleSendOctoManual = async () => {
     const content = octoManualDraft.value.trim();
-    if (!content || sendingOctoManual.value || !session_id.value) return;
+    const files = [...octoManualFiles.value];
+    if ((!content && !files.length) || sendingOctoManual.value || !session_id.value) return;
     sendingOctoManual.value = true;
     try {
-        const res = await sendOctoManualReply(session_id.value, content, true);
+        const res = await sendOctoManualReply(session_id.value, content, true, files);
         if (res?.success && res?.data?.message) {
             messagesList.push({
                 ...res.data.message,
@@ -798,7 +833,10 @@ const handleSendOctoManual = async () => {
                 channel: 'octo_manual',
             });
             octoManualDraft.value = '';
-            MessagePlugin.success(`已通过原 Bot 发送到 Octo${res.data.receipt ? `（回执 ${res.data.receipt}）` : ''}`);
+            octoManualFiles.value = [];
+            const fileCount = (res.data.sent_files || []).length;
+            const fileNote = fileCount ? `（含 ${fileCount} 个附件）` : '';
+            MessagePlugin.success(`已通过原 Bot 发送到 Octo${fileNote}`);
             nextTick(() => scrollToBottom());
         } else {
             MessagePlugin.error(res?.error || '发送到 Octo 失败');
@@ -819,7 +857,14 @@ const handleRelayToOcto = async (message, isAuto = false) => {
         const res = await relayMessageToOcto(session_id.value, msgId, true);
         if (res?.success) {
             message.channel = 'octo_relayed';
-            MessagePlugin.success(isAuto ? 'AI 回复已自动原路发回 Octo' : `已发送到原 Octo 会话${res?.data?.receipt ? `（回执 ${res.data.receipt}）` : ''}`);
+            const filesCount = (res?.data?.sent_files || []).length;
+            const fileErrs = res?.data?.file_errors || [];
+            const fileSummary = filesCount ? `（含 ${filesCount} 个附件）` : '';
+            if (fileErrs.length) {
+                MessagePlugin.warning(`正文已发回 Octo${fileSummary}，部分附件未送达：${fileErrs.join('；')}`);
+            } else {
+                MessagePlugin.success(isAuto ? `AI 完整回复已自动原路发回 Octo${fileSummary}` : `已发送到原 Octo 会话${fileSummary}`);
+            }
         } else {
             MessagePlugin.error(res?.error || '回传到 Octo 失败');
         }
@@ -832,22 +877,26 @@ const handleRelayToOcto = async (message, isAuto = false) => {
 
 const handleAnswerRenderComplete = (message, ready) => {
     message.answerFullyRendered = Boolean(ready);
-    if (
-        ready &&
-        autoRelayToOcto.value &&
-        currentSession.value?.im_origin?.can_reply_octo &&
-        lastWebSentAt.value > 0 &&
-        !message._autoRelayed &&
-        message.channel !== 'octo_relayed' &&
-        message.channel !== 'octo_manual'
-    ) {
-        const createdMs = message.created_at ? new Date(message.created_at).getTime() : Date.now();
-        if (createdMs >= lastWebSentAt.value - 5000) {
-            message._autoRelayed = true;
-            void handleRelayToOcto(message, true);
+};
+
+// Trigger automatic relay ONLY after the entire multi-step Agent turn has
+// completely finished (isReplying: true -> false), so multi-paragraph text and
+// all sandbox-generated artifacts are persisted and delivered together.
+watch(isReplying, (now, prev) => {
+    if (prev && !now && autoRelayToOcto.value && currentSession.value?.im_origin?.can_reply_octo && lastWebSentAt.value > 0) {
+        for (let i = messagesList.length - 1; i >= 0; i--) {
+            const m = messagesList[i];
+            if (m && m.role === 'assistant' && m.is_completed && !m._autoRelayed && m.channel !== 'octo_relayed' && m.channel !== 'octo_manual') {
+                const createdMs = m.created_at ? new Date(m.created_at).getTime() : Date.now();
+                if (createdMs >= lastWebSentAt.value - 10000) {
+                    m._autoRelayed = true;
+                    setTimeout(() => void handleRelayToOcto(m, true), 400);
+                }
+                break;
+            }
         }
     }
-};
+});
 
 const loadFollowUpSuggestions = async (message, ensure = false, regenerate = false) => {
     const messageId = resolveAssistantMessageId(message);
@@ -2417,6 +2466,36 @@ onBeforeRouteUpdate((to, from, next) => {
     gap: 8px;
     flex-wrap: wrap;
 }
+.octo-manual-files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.octo-file-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--td-brand-color-light);
+    border: 1px solid var(--td-brand-color-3);
+    font-size: 12px;
+    color: var(--td-text-color-primary);
+}
+.octo-file-x {
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    color: var(--td-text-color-secondary);
+    font-size: 14px;
+    padding: 0 2px;
+}
+.octo-manual-ft-l {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
 .octo-manual-tip {
     font-size: 11.5px;
     color: var(--td-text-color-placeholder);
@@ -2566,6 +2645,36 @@ onBeforeRouteUpdate((to, from, next) => {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.octo-manual-files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.octo-file-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--td-brand-color-light);
+    border: 1px solid var(--td-brand-color-3);
+    font-size: 12px;
+    color: var(--td-text-color-primary);
+}
+.octo-file-x {
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    color: var(--td-text-color-secondary);
+    font-size: 14px;
+    padding: 0 2px;
+}
+.octo-manual-ft-l {
+    display: flex;
+    align-items: center;
     gap: 8px;
     flex-wrap: wrap;
 }
