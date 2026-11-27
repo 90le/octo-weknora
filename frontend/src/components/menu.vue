@@ -111,18 +111,80 @@
                      (instead of embedding it in the first date group, which
                      appears/disappears while a bucket loads) prevents the
                      top-right control from jumping when switching session type. -->
-                <div v-if="showSessionSourceFilter && !batchMode" class="session-list-scope-header">
+                <div v-if="showSessionSourceFilter && !batchMode" class="session-list-scope-header"
+                    :class="{ 'session-list-scope-header--octo-toolbar': activeSessionBucketKey === 'im:octo' }">
                     <SessionSourceFilter inline :emphasized="sessionScopeFilterPinned" :sources="sessionSourceOptions"
                         :current="activeSessionBucketKey" @select="switchSessionBucket" />
+                    <div v-if="activeSessionBucketKey === 'im:octo'" class="octo-toolbar-actions">
+                        <button type="button" class="octo-icon-btn"
+                            :class="{ 'is-active': octoSearchOpen || Boolean(octoSidebarQuery.trim()) }"
+                            title="搜索群/子区、成员昵称或标题" @click="toggleOctoSearch">
+                            <t-icon name="search" size="14px" />
+                        </button>
+                        <t-popup v-model:visible="octoFilterOpen" trigger="click" placement="bottom-right"
+                            :overlay-inner-style="{ padding: '10px', width: '236px', borderRadius: '10px' }">
+                            <button type="button" class="octo-icon-btn"
+                                :class="{ 'is-active': octoFilterOpen || hasOctoActiveFilters }"
+                                title="按类型、群/子区或成员筛选">
+                                <t-icon name="filter" size="14px" />
+                                <span v-if="hasOctoActiveFilters" class="octo-filter-dot" aria-hidden="true" />
+                            </button>
+                            <template #content>
+                                <div class="octo-filter-popover" @click.stop>
+                                    <div class="octo-pop-section">
+                                        <div class="octo-pop-label">
+                                            <span>会话类型</span>
+                                            <button v-if="hasOctoActiveFilters" type="button" class="octo-pop-reset"
+                                                @click="resetOctoFilters">重置</button>
+                                        </div>
+                                        <div class="octo-pop-seg" role="group" aria-label="Octo 会话类型筛选">
+                                            <button type="button" :class="{ active: octoSidebarType === '' }"
+                                                @click="octoSidebarType = ''">全部</button>
+                                            <button type="button" :class="{ active: octoSidebarType === 'direct' }"
+                                                @click="octoSidebarType = 'direct'">私聊</button>
+                                            <button type="button" :class="{ active: octoSidebarType === 'group' }"
+                                                @click="octoSidebarType = 'group'">主群</button>
+                                            <button type="button" :class="{ active: octoSidebarType === 'subarea' }"
+                                                @click="octoSidebarType = 'subarea'">子区</button>
+                                        </div>
+                                    </div>
+                                    <div class="octo-pop-section">
+                                        <div class="octo-pop-label"><span>来源群 / 子区</span></div>
+                                        <select v-model="octoSidebarScope" class="octo-pop-select">
+                                            <option value="">全部群 / 子区</option>
+                                            <option v-for="scope in octoScopeOptions" :key="scope" :value="scope">
+                                                {{ scope }}
+                                            </option>
+                                        </select>
+                                    </div>
+                                    <div class="octo-pop-section">
+                                        <div class="octo-pop-label"><span>成员昵称</span></div>
+                                        <select v-model="octoSidebarUser" class="octo-pop-select">
+                                            <option value="">全部成员</option>
+                                            <option v-for="user in octoUserOptions" :key="user" :value="user">
+                                                {{ user }}
+                                            </option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </template>
+                        </t-popup>
+                    </div>
                 </div>
-                <div v-if="activeSessionBucketKey === 'im:octo' && !batchMode" class="octo-sidebar-filter">
-                    <input v-model="octoSidebarQuery" type="text" class="octo-sidebar-search"
-                        placeholder="搜群/子区、成员昵称或标题..." />
-                    <div class="octo-sidebar-types" role="group" aria-label="Octo 会话类型筛选">
-                        <button type="button" :aria-pressed="octoSidebarType === ''" @click="octoSidebarType = ''">全部</button>
-                        <button type="button" :aria-pressed="octoSidebarType === 'direct'" @click="octoSidebarType = 'direct'">私聊</button>
-                        <button type="button" :aria-pressed="octoSidebarType === 'group'" @click="octoSidebarType = 'group'">主群</button>
-                        <button type="button" :aria-pressed="octoSidebarType === 'subarea'" @click="octoSidebarType = 'subarea'">子区</button>
+                <div v-if="activeSessionBucketKey === 'im:octo' && !batchMode && (octoSearchOpen || octoActiveChips.length > 0)"
+                    class="octo-toolbar-sub">
+                    <div v-if="octoSearchOpen" class="octo-mini-search">
+                        <t-icon name="search" size="13px" class="octo-mini-search__icon" />
+                        <input ref="octoSearchInputRef" v-model="octoSidebarQuery" type="text"
+                            placeholder="搜群/子区、成员或标题..." />
+                        <button v-if="octoSidebarQuery" type="button" class="octo-mini-search__clear"
+                            title="清空搜索" @click="octoSidebarQuery = ''">&times;</button>
+                    </div>
+                    <div v-if="octoActiveChips.length > 0" class="octo-active-chips">
+                        <span v-for="chip in octoActiveChips" :key="chip.key" class="octo-chip" :title="chip.fullLabel">
+                            <span class="octo-chip__text">{{ chip.label }}</span>
+                            <button type="button" class="octo-chip__close" @click="clearOctoChip(chip.key)">&times;</button>
+                        </span>
                     </div>
                 </div>
                 <template v-if="sessionListBooting && !hasAnySession">
@@ -517,6 +579,88 @@ const dateBucketLabels = computed<Record<DateBucketKey, string>>(() => ({
 
 const octoSidebarQuery = ref('');
 const octoSidebarType = ref('');
+const octoSidebarScope = ref('');
+const octoSidebarUser = ref('');
+const octoSearchOpen = ref(false);
+const octoFilterOpen = ref(false);
+const octoSearchInputRef = ref<HTMLInputElement | null>(null);
+
+const OCTO_TYPE_LABELS: Record<string, string> = {
+    direct: '私聊',
+    group: '主群',
+    subarea: '子区',
+};
+
+const octoScopeOptions = computed<string[]>(() => {
+    const bucket = sessionBuckets.value['im:octo'];
+    if (!bucket?.items?.length) return [];
+    const seen = new Set<string>();
+    for (const item of bucket.items as any[]) {
+        const name = String(item?.im_origin?.source_name || '').trim();
+        if (name) seen.add(name);
+    }
+    return Array.from(seen);
+});
+
+const octoUserOptions = computed<string[]>(() => {
+    const bucket = sessionBuckets.value['im:octo'];
+    if (!bucket?.items?.length) return [];
+    const seen = new Set<string>();
+    for (const item of bucket.items as any[]) {
+        const name = String(item?.im_origin?.user_name || item?.im_origin?.user_uid || '').trim();
+        if (name) seen.add(name);
+    }
+    return Array.from(seen);
+});
+
+const hasOctoActiveFilters = computed(() =>
+    Boolean(octoSidebarType.value || octoSidebarScope.value || octoSidebarUser.value)
+);
+
+const octoActiveChips = computed(() => {
+    const chips: Array<{ key: 'type' | 'scope' | 'user'; label: string; fullLabel: string }> = [];
+    if (octoSidebarType.value) {
+        const lbl = OCTO_TYPE_LABELS[octoSidebarType.value] || octoSidebarType.value;
+        chips.push({ key: 'type', label: lbl, fullLabel: lbl });
+    }
+    if (octoSidebarScope.value) {
+        const parts = octoSidebarScope.value.split('/').map((s) => s.trim()).filter(Boolean);
+        const shortLabel = parts.length > 1 ? parts[parts.length - 1] : octoSidebarScope.value;
+        chips.push({ key: 'scope', label: shortLabel, fullLabel: octoSidebarScope.value });
+    }
+    if (octoSidebarUser.value) {
+        chips.push({ key: 'user', label: octoSidebarUser.value, fullLabel: octoSidebarUser.value });
+    }
+    return chips;
+});
+
+const toggleOctoSearch = async () => {
+    octoSearchOpen.value = !octoSearchOpen.value;
+    if (octoSearchOpen.value) {
+        await nextTick();
+        octoSearchInputRef.value?.focus();
+    } else {
+        octoSidebarQuery.value = '';
+    }
+};
+
+const resetOctoFilters = () => {
+    octoSidebarType.value = '';
+    octoSidebarScope.value = '';
+    octoSidebarUser.value = '';
+};
+
+const clearOctoChip = (key: 'type' | 'scope' | 'user') => {
+    if (key === 'type') octoSidebarType.value = '';
+    else if (key === 'scope') octoSidebarScope.value = '';
+    else if (key === 'user') octoSidebarUser.value = '';
+};
+
+watch(activeSessionBucketKey, (key) => {
+    if (key !== 'im:octo') {
+        octoFilterOpen.value = false;
+    }
+});
 
 const filteredGroupedSessions = computed(() => {
     const bucket = activeBucket.value;
@@ -524,11 +668,15 @@ const filteredGroupedSessions = computed(() => {
     let list = bucket.items;
     if (activeSessionBucketKey.value === 'im:octo') {
         const tFilter = octoSidebarType.value;
+        const sFilter = octoSidebarScope.value;
+        const uFilter = octoSidebarUser.value;
         const kw = octoSidebarQuery.value.trim().toLowerCase();
-        if (tFilter || kw) {
+        if (tFilter || sFilter || uFilter || kw) {
             list = list.filter((item: any) => {
                 const o = item.im_origin;
                 if (tFilter && o?.chat_type !== tFilter) return false;
+                if (sFilter && String(o?.source_name || '').trim() !== sFilter) return false;
+                if (uFilter && String(o?.user_name || o?.user_uid || '').trim() !== uFilter) return false;
                 if (kw) {
                     const hay = `${item.title || ''} ${o?.source_name || ''} ${o?.user_name || ''} ${o?.user_uid || ''}`.toLowerCase();
                     if (!hay.includes(kw)) return false;
@@ -2027,45 +2175,166 @@ const resizeSidebar = (delta: number, keyboard: boolean) => {
         animation: none;
     }
 }
-.octo-sidebar-filter {
-    display: grid;
-    gap: 6px;
-    padding: 4px 10px 8px;
-}
-.octo-sidebar-search {
-    width: 100%;
-    height: 28px;
-    padding: 0 8px;
-    border: 1px solid var(--td-component-border);
-    border-radius: 6px;
-    background: var(--td-bg-color-container);
-    color: var(--td-text-color-primary);
-    font-size: 12px;
-    outline: none;
-    &:focus {
-        border-color: var(--td-brand-color);
-    }
-}
-.octo-sidebar-types {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 4px;
-    button {
-        height: 22px;
-        border: 1px solid var(--td-component-border);
-        border-radius: 5px;
-        background: var(--td-bg-color-container);
-        color: var(--td-text-color-secondary);
-        font-size: 11px;
-        cursor: pointer;
-        &[aria-pressed='true'] {
-            border-color: var(--td-brand-color);
-            background: var(--td-brand-color-light);
-            color: var(--td-brand-color);
-            font-weight: 600;
+    .aside_box .session-list-scope-header.session-list-scope-header--octo-toolbar {
+        position: relative;
+        top: auto;
+        right: auto;
+        width: 100%;
+        max-width: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 4px;
+        padding: 2px 6px 4px var(--sidebar-inset-x);
+        box-sizing: border-box;
+
+        :deep(.session-source-filter--inline) {
+            opacity: 1;
         }
     }
-}
+
+    .octo-toolbar-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        flex-shrink: 0;
+    }
+
+    .octo-icon-btn {
+        width: 24px;
+        height: 24px;
+        border: none;
+        background: transparent;
+        border-radius: 6px;
+        color: var(--td-text-color-secondary);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        position: relative;
+        padding: 0;
+        transition: background-color 0.12s ease, color 0.12s ease;
+
+        &:hover {
+            background: var(--td-bg-color-container-hover);
+            color: var(--td-text-color-primary);
+        }
+
+        &.is-active {
+            background: var(--td-brand-color-light);
+            color: var(--td-brand-color);
+        }
+    }
+
+    .octo-filter-dot {
+        position: absolute;
+        top: 3px;
+        right: 3px;
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--td-brand-color);
+    }
+
+    .octo-toolbar-sub {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        padding: 2px 8px 6px var(--sidebar-inset-x);
+    }
+
+    .octo-mini-search {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 28px;
+        padding: 0 8px;
+        background: var(--td-bg-color-container);
+        border: 1px solid var(--td-component-border);
+        border-radius: 7px;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+
+        &:focus-within {
+            border-color: var(--td-brand-color);
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--td-brand-color) 14%, transparent);
+        }
+
+        &__icon {
+            color: var(--td-text-color-placeholder);
+            flex-shrink: 0;
+        }
+
+        input {
+            flex: 1;
+            min-width: 0;
+            border: none;
+            outline: none;
+            background: transparent;
+            font-size: 12px;
+            color: var(--td-text-color-primary);
+
+            &::placeholder {
+                color: var(--td-text-color-placeholder);
+            }
+        }
+
+        &__clear {
+            border: none;
+            background: none;
+            color: var(--td-text-color-placeholder);
+            cursor: pointer;
+            font-size: 14px;
+            line-height: 1;
+            padding: 0 2px;
+
+            &:hover {
+                color: var(--td-text-color-primary);
+            }
+        }
+    }
+
+    .octo-active-chips {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .octo-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        max-width: 100%;
+        height: 20px;
+        padding: 0 7px;
+        border-radius: 999px;
+        background: var(--td-brand-color-light);
+        color: var(--td-brand-color);
+        font-size: 11px;
+        font-weight: 500;
+
+        &__text {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 150px;
+        }
+
+        &__close {
+            border: none;
+            background: none;
+            color: inherit;
+            cursor: pointer;
+            font-size: 13px;
+            line-height: 1;
+            padding: 0;
+            opacity: 0.72;
+
+            &:hover {
+                opacity: 1;
+            }
+        }
+    }
 </style>
 <style lang="less">
 // Dark mode: 滚动条在深色背景下需要更亮的颜色才看得见
@@ -2152,42 +2421,85 @@ html[theme-mode="dark"] .aside_box .menu_item_c_active .menu_icon img.icon {
         border-color: var(--td-error-color);
     }
 }
-.octo-sidebar-filter {
-    display: grid;
-    gap: 6px;
-    padding: 4px 10px 8px;
-}
-.octo-sidebar-search {
-    width: 100%;
-    height: 28px;
-    padding: 0 8px;
-    border: 1px solid var(--td-component-border);
-    border-radius: 6px;
-    background: var(--td-bg-color-container);
+
+.octo-filter-popover {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
     color: var(--td-text-color-primary);
-    font-size: 12px;
-    outline: none;
-    &:focus {
-        border-color: var(--td-brand-color);
+
+    .octo-pop-section {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
     }
-}
-.octo-sidebar-types {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 4px;
-    button {
-        height: 22px;
-        border: 1px solid var(--td-component-border);
-        border-radius: 5px;
-        background: var(--td-bg-color-container);
-        color: var(--td-text-color-secondary);
+
+    .octo-pop-label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--td-text-color-placeholder);
+    }
+
+    .octo-pop-reset {
+        border: none;
+        background: none;
+        padding: 0;
+        color: var(--td-brand-color);
         font-size: 11px;
         cursor: pointer;
-        &[aria-pressed='true'] {
+
+        &:hover {
+            text-decoration: underline;
+        }
+    }
+
+    .octo-pop-seg {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 2px;
+        padding: 2px;
+        border-radius: 6px;
+        background: var(--td-bg-color-secondarycontainer);
+
+        button {
+            border: none;
+            background: transparent;
+            height: 24px;
+            border-radius: 5px;
+            font-size: 11.5px;
+            color: var(--td-text-color-secondary);
+            cursor: pointer;
+            transition: background-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+
+            &:hover {
+                color: var(--td-text-color-primary);
+            }
+
+            &.active {
+                background: var(--td-bg-color-container);
+                color: var(--td-text-color-primary);
+                font-weight: 600;
+                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+            }
+        }
+    }
+
+    .octo-pop-select {
+        width: 100%;
+        height: 28px;
+        padding: 0 8px;
+        border: 1px solid var(--td-component-border);
+        border-radius: 6px;
+        background: var(--td-bg-color-container);
+        color: var(--td-text-color-primary);
+        font-size: 12px;
+        outline: none;
+
+        &:focus {
             border-color: var(--td-brand-color);
-            background: var(--td-brand-color-light);
-            color: var(--td-brand-color);
-            font-weight: 600;
         }
     }
 }
