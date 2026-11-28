@@ -533,6 +533,9 @@ func documentInfo(knowledge *types.Knowledge, total int64) map[string]interface{
 		info["file_type"] = knowledge.FileType
 		info["file_size"] = formatFileSize(knowledge.FileSize)
 	}
+	if _, ok := types.ParseResourcePath(knowledge.FilePath); ok {
+		info["file_resource"] = strings.TrimSpace(knowledge.FilePath)
+	}
 	if knowledge.Metadata != nil {
 		if metadata, err := knowledge.Metadata.Map(); err == nil && len(metadata) > 0 {
 			info["metadata"] = metadata
@@ -590,6 +593,12 @@ func (t *ReadDocumentTool) buildOutput(
 	}
 	if knowledge.FileType != "" {
 		fmt.Fprintf(&b, " file_type=\"%s\"", xmlEscape(knowledge.FileType))
+	}
+	if knowledge.FileSize > 0 {
+		fmt.Fprintf(&b, " file_size=\"%s\"", xmlEscape(formatFileSize(knowledge.FileSize)))
+	}
+	if _, ok := types.ParseResourcePath(knowledge.FilePath); ok {
+		fmt.Fprintf(&b, " file_resource=\"%s\"", xmlEscape(strings.TrimSpace(knowledge.FilePath)))
 	}
 	if knowledge.ParseStatus != "" {
 		fmt.Fprintf(&b, " parse_status=\"%s\"", xmlEscape(formatParseStatus(knowledge.ParseStatus)))

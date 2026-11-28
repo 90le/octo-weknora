@@ -210,7 +210,11 @@ func (s *agentService) stageSessionAttachments(
 	// application-data directory, never the user's project tree. If InputDir
 	// were ever pointed at the workspace, this loop would delete the user's
 	// files.
+	kbStagedRoot := path.Join(path.Clean(layout.InputDir), kbSandboxInputSubdir)
 	for filePath := range existing {
+		if filePath == kbStagedRoot || strings.HasPrefix(filePath, kbStagedRoot+"/") {
+			continue
+		}
 		if _, keep := desired[filePath]; !keep {
 			// On-demand image copies and observations belong to the same original.
 			// Preserve them for live attachments; remove them with stale originals.

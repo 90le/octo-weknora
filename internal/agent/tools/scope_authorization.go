@@ -79,6 +79,18 @@ func authorizeKnowledgeInSearchTargets(
 	return authorizeLoadedKnowledge(ctx, searchTargets, knowledge, knowledgeService)
 }
 
+// AuthorizeLoadedKnowledge validates a loaded knowledge row against the
+// server-owned searchTargets scope (KB membership, IM published-only guard,
+// explicit document whitelist, and tag-scoped @mentions).
+func AuthorizeLoadedKnowledge(
+	ctx context.Context,
+	searchTargets types.SearchTargets,
+	knowledge *types.Knowledge,
+	knowledgeService interfaces.KnowledgeService,
+) (*types.Knowledge, error) {
+	return authorizeLoadedKnowledge(ctx, searchTargets, knowledge, knowledgeService)
+}
+
 // authorizeLoadedKnowledge is the scope check behind
 // authorizeKnowledgeInSearchTargets for callers that already hold the row.
 func authorizeLoadedKnowledge(

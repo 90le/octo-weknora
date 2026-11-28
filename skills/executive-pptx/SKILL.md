@@ -1,7 +1,7 @@
 ---
 name: executive-pptx
-version: 1.0.0
-description: 设计并生成商业数据分析师与战略咨询级别的原生可编辑 PowerPoint (.pptx) 汇报文件。支持完全自由的视觉美学设计（无死板母版束缚）、离线 ECharts 商业数据图表、矢量 SVG 图标与架构图、自动排版溢出质检以及 LibreOffice 缩略图视觉终审。适用于产品全景汇报、商业洞察分析、客户提案、项目复盘与多维对比展示。
+version: 1.1.0
+description: 设计并生成商业数据分析师与战略咨询级别的原生可编辑 PowerPoint (.pptx) 汇报文件。支持完全自由的视觉美学设计（无死板母版束缚）、结合知识库真实原图（resource://）与轻量源文件（.xlsx/.csv 等）素材、离线 ECharts 商业数据图表、矢量 SVG 图标与架构图、自动排版溢出质检以及 LibreOffice 缩略图视觉终审。适用于产品全景汇报、商业洞察分析、客户提案、项目复盘与多维对比展示。
 ---
 
 # Executive PPTX — 专业商业汇报生成工作流
@@ -55,7 +55,12 @@ description: 设计并生成商业数据分析师与战略咨询级别的原生�
    - 方式 C（复杂统计图）：用 `matplotlib` / `seaborn`（300 DPI 透明底 PNG）保存至 `/workspace/tmp/chart1.png` 后用 `<img src="/workspace/tmp/chart1.png">` 引入。
 3. **离线矢量商业图标**：
    - 直接使用 `<i data-icon="trending-up" style="width:22px;height:22px;color:#2563EB;"></i>`（内置 `trending-up`、`bar-chart`、`pie-chart`、`target`、`users`、`layers`、`cpu`、`database`、`shield-check`、`zap`、`globe`、`search`、`check-circle`、`alert-triangle`、`lightbulb`、`rocket`、`briefcase`、`compass`、`git-branch`、`clock`、`award`、`file-text`、`sparkles`、`arrow-right`、`activity`、`sliders`、`lock`、`message-square`、`filter`）。
-4. **复杂视觉块保真**：
+4. **结合知识库真实素材（原图 + 轻量源文件，极力推荐）**：
+   - **真图嵌入**：`search_knowledge` / `read_document` 返回的 `![描述](resource://<handle>)` 是知识库里的真实图片资产（产品界面截图、官方架构图、客户案例实景、品牌 Logo）。先用 `read_file(path="resource://<handle>", detail="brief", focus="确认画面清晰度与内容")` 查看并自动落盘到 `/workspace/input/kb/<handle>.<ext>`；挑选 3–6 张清晰、高信息密度的真图，直接用 `<img src="/workspace/input/kb/<handle>.png" style="width:100%;height:380px;object-fit:contain;border-radius:10px;">` 融入图文并茂页（左图右解读 / 上图下指标 / 案例实景展示）。
+   - **真图与排版搭配铁律**：严禁把一整页低清旧 PPT 截图铺满全页替代排版；坚持「**知识库真实界面/架构/实景图 + 自由商业排版 + ECharts/原生数据图表**」组合拳，既具真实可信度又具咨询级美感。
+   - **轻量数据源文件直读**：若 `read_document` 返回的 `<document ... file_resource="resource://<handle>" file_size="...">` 是轻量 `.xlsx / .csv / .md / .json`（≤ 15 MB），可用 `read_file(path="resource://<handle>")` 自动落盘到 `/workspace/input/kb/`，随后用 Python（`openpyxl` / `pandas`）精确统计汇总并生成准确 ECharts 或原生图表。
+
+5. **复杂视觉块保真**：
    - 复杂手绘 SVG 流程图/架构图、带多重 CSS 渐变的视觉徽章可直接加 `data-rasterize` 属性让编译器以 3× 高清无损嵌入；普通卡片、文字、表格**不要**加 `data-rasterize`，以保持 100% 原生可编辑！
 
 ---
