@@ -191,6 +191,7 @@ func TestFileDeliveryRejectsExplicitNegativeRequests(t *testing.T) {
 		"把知识生成 md 文件精简给我", "请导出 Markdown 文件", "please export a file",
 		"生成一份 PDF 给我", "请把内容做成 .zip 发送", "制作图片并发给我",
 		"请分别发送 report.txt 和 data.csv",
+		"请生成一份原生可编辑的 PowerPoint (.pptx) 演示文稿，不要死板灰白表格，不要直接贴模糊旧图，禁止编造精确数字，不要用传统模板，导出最终 .pptx 文件",
 	} {
 		if !explicitlyRequestsFile(text) {
 			t.Fatalf("explicit file request denied: %q", text)

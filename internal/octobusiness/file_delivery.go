@@ -178,19 +178,34 @@ func WithCurrentFileDeliveryAuthority(ctx context.Context, general bool) (contex
 
 // ExplicitlyProhibitsFileDelivery reports whether the user explicitly forbade
 // sending or exporting files (e.g. "不要发送文件", "只在沙箱保存", "do not send").
+// Content or styling prohibitions inside a file-generation prompt (e.g. "不要灰白表格",
+// "不要贴模糊旧图", "不要用传统模板", "禁止编造数据") must NOT trigger this guard.
 func ExplicitlyProhibitsFileDelivery(text string) bool {
 	text = strings.ToLower(text)
 	for _, clause := range strings.FieldsFunc(text, func(r rune) bool {
 		return strings.ContainsRune("，。！？；,!?;\n", r)
 	}) {
-		if strings.Contains(clause, "保存在沙箱") || strings.Contains(clause, "仅保存") ||
-			strings.Contains(clause, "只保存") || strings.Contains(clause, "不要发到") ||
-			strings.Contains(clause, "别发到") || strings.Contains(clause, "不发送") {
-			return true
+		clause = strings.TrimSpace(clause)
+		if clause == "" {
+			continue
+		}
+		for _, direct := range []string{
+			"保存在沙箱", "只在沙箱", "仅在沙箱", "仅保存", "只保存",
+			"不要发到", "别发到", "不发送", "不导出", "不投递", "不上传", "不分享",
+			"不要发文件", "不要发附件", "不用发文件", "不用发附件", "不发文件", "不发附件",
+			"不要文件", "不用文件", "不需要文件", "无需文件",
+			"不要附件", "不用附件", "不需要附件", "无需附件",
+			"不要生成文件", "不用生成文件", "不需要生成文件", "无需生成文件",
+			"不要输出文件", "不用输出文件", "禁止外发",
+			"only save in sandbox", "keep in sandbox", "no file attachment",
+		} {
+			if strings.Contains(clause, direct) {
+				return true
+			}
 		}
 		negationText := strings.NewReplacer("分别", "", "区别", "", "特别", "").Replace(clause)
 		negative := false
-		for _, word := range []string{"不要", "不用", "不需要", "无需", "禁止", "别", "do not", "don't", "no need"} {
+		for _, word := range []string{"不要", "不用", "不需要", "无需", "禁止", "别", "切勿", "请勿", "do not", "don't", "no need"} {
 			if strings.Contains(negationText, word) {
 				negative = true
 				break
@@ -199,14 +214,18 @@ func ExplicitlyProhibitsFileDelivery(text string) bool {
 		if !negative {
 			continue
 		}
-		if hasFileKeyword(clause) || strings.ContainsAny(clause, "发传给送") ||
-			strings.Contains(clause, "导出") || strings.Contains(clause, "投递") ||
-			strings.Contains(clause, "上传") || strings.Contains(clause, "分享") ||
-			strings.Contains(clause, "公开") || strings.Contains(clause, "对外") ||
-			strings.Contains(clause, "交付") || strings.Contains(clause, "send") ||
-			strings.Contains(clause, "attach") || strings.Contains(clause, "deliver") ||
-			strings.Contains(clause, "export") || strings.Contains(clause, "upload") ||
-			strings.Contains(clause, "share") {
+		for _, action := range []string{
+			"发送", "发给", "发我", "发到", "发出来", "发出去", "发群", "外发",
+			"传给", "传我", "传送", "给任何人", "给别人", "给我",
+			"导出", "投递", "上传", "分享", "公开", "对外", "交付",
+			"send", "attach", "deliver", "export", "upload", "share",
+		} {
+			if strings.Contains(clause, action) {
+				return true
+			}
+		}
+		// Handle concise trailing prohibitions such as "先不要发" or "不要把文件发了".
+		if strings.HasSuffix(clause, "发") || strings.HasSuffix(clause, "发了") || strings.HasSuffix(clause, "送") {
 			return true
 		}
 	}

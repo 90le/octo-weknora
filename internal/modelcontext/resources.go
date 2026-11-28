@@ -76,6 +76,13 @@ func (r *resourceRegistry) DecodeText(value string) string {
 	sort.SliceStable(pairs, func(i, j int) bool { return len(pairs[i].handle) > len(pairs[j].handle) })
 	for _, item := range pairs {
 		value = strings.ReplaceAll(value, item.handle, item.value)
+		// Models occasionally rewrite a registered compact "res://0001" handle to
+		// "resource://0001" when tool prompts mention the canonical resource:// scheme.
+		// Resolve that exact registered alias safely; unknown numeric handles remain untouched.
+		if strings.HasPrefix(item.handle, "res://") {
+			expandedAlias := "resource://" + strings.TrimPrefix(item.handle, "res://")
+			value = strings.ReplaceAll(value, expandedAlias, item.value)
+		}
 	}
 	return value
 }

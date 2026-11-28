@@ -154,6 +154,20 @@ def echarts_waterfall(
     }
 
 
+def _nice_ceil(val: float) -> float:
+    """Round a positive upper axis bound to a clean human-readable tick ceiling."""
+    if val <= 0:
+        return 10.0
+    import math
+    exp = math.floor(math.log10(val))
+    base = 10 ** exp
+    norm = val / base
+    for step in (1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0):
+        if norm <= step:
+            return round(step * base, 2)
+    return round(10.0 * base, 2)
+
+
 def echarts_cagr_combo(
     title: str,
     years: Sequence[str],
@@ -173,8 +187,8 @@ def echarts_cagr_combo(
     th = resolve_theme(theme)
     max_bar = max((float(v) for v in bars), default=100.0)
     max_line = max((float(v) for v in line_values), default=30.0)
-    bar_axis_max = round(max_bar * 1.28, 1) if max_bar > 0 else None
-    line_axis_max = round(max_line * 1.45, 1) if max_line > 0 else None
+    bar_axis_max = _nice_ceil(max_bar * 1.25) if max_bar > 0 else None
+    line_axis_max = _nice_ceil(max_line * 1.45) if max_line > 0 else None
     bar_data = []
     n = len(bars)
     for i, v in enumerate(bars):

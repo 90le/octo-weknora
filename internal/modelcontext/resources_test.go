@@ -175,3 +175,13 @@ func TestDecodeResponseKeepsGeminiSignature(t *testing.T) {
 	require.Equal(t, "read "+ref, decoded.ReasoningContent)
 	require.Equal(t, "google-generative-ai:thought-sig", decoded.ReasoningSignature)
 }
+
+func TestDecodeTextResolvesExpandedResourceAlias(t *testing.T) {
+	r := newResourceRegistry()
+	const ref = "resource://AbCdEfGhIjKlMnOpQrStUv"
+	handle := r.EncodeText(ref)
+	require.Equal(t, "res://0001", handle)
+	require.Equal(t, ref, r.DecodeText("res://0001"))
+	require.Equal(t, ref, r.DecodeText("resource://0001"))
+	require.Equal(t, "resource://9999", r.DecodeText("resource://9999"))
+}
