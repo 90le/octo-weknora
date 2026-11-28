@@ -16,8 +16,9 @@ import (
 )
 
 type fakeKBResLookup struct {
-	resources map[string]*types.StoredResource
-	owners    map[string][]kbResourceOwner
+	resources   map[string]*types.StoredResource
+	owners      map[string][]kbResourceOwner
+	annotations map[string][2]string
 }
 
 func (f *fakeKBResLookup) GetActiveResourceByHandle(_ context.Context, handle string) (*types.StoredResource, error) {
@@ -28,6 +29,15 @@ func (f *fakeKBResLookup) ListKnowledgeOwners(
 	_ context.Context, _ uint64, resourceID, _ string,
 ) ([]kbResourceOwner, error) {
 	return f.owners[resourceID], nil
+}
+
+func (f *fakeKBResLookup) LookupImageAnnotation(
+	_ context.Context, _ uint64, _, resourceRef string,
+) (string, string) {
+	if pair, ok := f.annotations[resourceRef]; ok {
+		return pair[0], pair[1]
+	}
+	return "", ""
 }
 
 type fakeKBResKnowledgeSvc struct {

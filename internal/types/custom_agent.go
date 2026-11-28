@@ -147,6 +147,10 @@ type CustomAgentConfig struct {
 	// ===== Model Settings =====
 	// Model ID to use for conversations
 	ModelID string `yaml:"model_id" json:"model_id"`
+	// DeepTaskModelID optionally overrides ModelID for heavy analytical reports,
+	// PPTX/document generation, or pinned authoring skills. Empty (default) always
+	// follows ModelID so ordinary Q&A and deep tasks share the agent's default model.
+	DeepTaskModelID string `yaml:"deep_task_model_id" json:"deep_task_model_id,omitempty"`
 	// ReRank model ID for retrieval
 	RerankModelID string `yaml:"rerank_model_id" json:"rerank_model_id"`
 	// Temperature for LLM (0-1)

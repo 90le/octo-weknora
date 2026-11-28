@@ -1333,7 +1333,8 @@ func (s *agentService) registerTools(
 				config.SearchTargets,
 				rerankModel,
 				s.cfg,
-			).WithContextImages(config.ChatModelSupportsVision)
+			).WithContextImages(config.ChatModelSupportsVision).
+				WithImageResourceMetaLookup(newKBImageResourceMetaLookup(s.db, config.SearchTargets))
 		case tools.ToolReadDocument:
 			toolToRegister = tools.NewReadDocumentTool(s.knowledgeService, s.chunkService, config.SearchTargets)
 		case tools.ToolListDocuments:

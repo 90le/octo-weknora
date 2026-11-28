@@ -9,6 +9,7 @@ export const KNOWN_MODEL_USAGE_BINDINGS = [
   'wiki_synthesis_model',
   'auto_tag_model',
   'chat_model',
+  'deep_task_model',
   'rerank_model',
   'query_understand_model',
   'follow_up_model',
@@ -142,6 +143,7 @@ const knowledgeBaseUsageSections: Partial<Record<KnownModelUsageBinding, Knowled
 
 const agentUsageSections: Partial<Record<KnownModelUsageBinding, AgentModelUsageSection>> = {
   chat_model: 'model',
+  deep_task_model: 'model',
   rerank_model: 'model',
   query_understand_model: 'model',
   vlm_model: 'multimodal',

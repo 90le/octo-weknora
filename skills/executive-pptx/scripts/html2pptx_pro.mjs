@@ -736,6 +736,64 @@ async function main() {
           }
         }
 
+        // Per-slide structural & visual density telemetry (enables both text-only and vision models to self-audit)
+        const slideWarnings = [];
+        const imgs = Array.from(slideEl.querySelectorAll('img'));
+        for (const im of imgs) {
+          const nw = im.naturalWidth || 0;
+          const nh = im.naturalHeight || 0;
+          const ir = im.getBoundingClientRect();
+          if (nw > 0 && nh > 0 && ir.width > 16 && ir.height > 16) {
+            const fit = getComputedStyle(im).objectFit || 'fill';
+            if (fit === 'fill') {
+              const natRatio = nw / nh;
+              const boxRatio = ir.width / ir.height;
+              const distortion = Math.max(natRatio / boxRatio, boxRatio / natRatio);
+              if (distortion > 1.22) {
+                slideWarnings.push(
+                  `Slide ${slideIdx + 1}: image aspect distortion ${distortion.toFixed(2)}x (use object-fit:contain)`
+                );
+              }
+            }
+          }
+        }
+        const textChars = textBoxes.reduce(
+          (acc, tb) => acc + tb.runs.map((r) => (r.text || '').trim()).join('').length,
+          0
+        );
+        const tableCount = elements.filter((e) => e.kind === 'table').length;
+        const chartCount = slideEl.querySelectorAll('[data-echarts], [data-pptx-chart]').length;
+        const imgCount = imgs.length;
+        const svgCount = slideEl.querySelectorAll('svg').length;
+        const titleEl = slideEl.querySelector('h1, h2, .slide-title, .title');
+        const titlePreview = (titleEl ? titleEl.innerText : (textBoxes[0]?.runs.map((r) => r.text || '').join('') || ''))
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 48);
+
+        // Estimate visual occupancy ratio on a coarse 64x36 grid (1280x720 / 20px)
+        const GW = 64;
+        const GH = 36;
+        const occupied = new Uint8Array(GW * GH);
+        for (const el of elements) {
+          if (el.kind === 'bg_image') continue;
+          const x0 = Math.max(0, Math.floor(el.x / 20));
+          const y0 = Math.max(0, Math.floor(el.y / 20));
+          const x1 = Math.min(GW, Math.ceil((el.x + el.w) / 20));
+          const y1 = Math.min(GH, Math.ceil((el.y + el.h) / 20));
+          for (let gy = y0; gy < y1; gy++) {
+            for (let gx = x0; gx < x1; gx++) {
+              occupied[gy * GW + gx] = 1;
+            }
+          }
+        }
+        let occCells = 0;
+        for (let k = 0; k < occupied.length; k++) occCells += occupied[k];
+        const whitespaceRatio = Math.round((1 - occCells / (GW * GH)) * 1000) / 1000;
+        if (textChars > 420) {
+          slideWarnings.push(`Slide ${slideIdx + 1}: high text density (${textChars} chars; aim <= 320 for executive readability)`);
+        }
+
         results.push({
           index: slideIdx,
           bgColor,
@@ -743,6 +801,19 @@ async function main() {
           notes,
           elements,
           issues,
+          qaMeta: {
+            slide: slideIdx + 1,
+            title: titlePreview,
+            text_chars: textChars,
+            table_count: tableCount,
+            chart_count: chartCount,
+            image_count: imgCount,
+            svg_count: svgCount,
+            whitespace_ratio: whitespaceRatio,
+            issues,
+            warnings: slideWarnings,
+            status: issues.length > 0 ? 'FAIL' : slideWarnings.length > 0 ? 'WARN' : 'PASS',
+          },
         });
       });
 
@@ -1026,11 +1097,36 @@ async function main() {
 
     await pptx.writeFile({ fileName: outputPptx });
     const stat = fs.statSync(outputPptx);
+    const slideReports = extracted.map((s) => s.qaMeta);
+    const tableSlides = slideReports.filter((r) => r.table_count > 0).length;
+    const deckWarnings = [];
+    if (tableSlides > 3) {
+      deckWarnings.push(`Too many table slides (${tableSlides}/${extracted.length}); keep tables <= 3 and use cards/charts/Harvey scorecards for variety.`);
+    }
+    const qaReport = {
+      output_pptx: outputPptx,
+      size_bytes: stat.size,
+      total_slides: extracted.length,
+      overall_pass: allIssues.length === 0,
+      hard_issue_count: allIssues.length,
+      table_slide_count: tableSlides,
+      deck_warnings: deckWarnings,
+      slides: slideReports,
+    };
+
     console.log(
-      `HTML2PPTX_PRO_OK slides=${extracted.length} output=${outputPptx} size_bytes=${stat.size} qa_issues=${allIssues.length}`
+      `HTML2PPTX_PRO_OK slides=${extracted.length} output=${outputPptx} size_bytes=${stat.size} qa_issues=${allIssues.length} table_slides=${tableSlides}`
     );
 
     if (qaOut) {
+      const qaDir = qaOut.toLowerCase().endsWith('.jpg') || qaOut.toLowerCase().endsWith('.png')
+        ? path.dirname(qaOut)
+        : qaOut;
+      fs.mkdirSync(qaDir, { recursive: true });
+      const reportPath = path.join(qaDir, 'qa_report.json');
+      fs.writeFileSync(reportPath, JSON.stringify(qaReport, null, 2), 'utf8');
+      console.log(`QA_REPORT_JSON=${reportPath}`);
+
       const qaScript = path.resolve(__dirname, 'render_pptx_qa.py');
       const res = spawnSync('python3', [qaScript, outputPptx, qaOut], {
         stdio: 'inherit',

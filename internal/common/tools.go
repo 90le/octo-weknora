@@ -234,7 +234,7 @@ func safePipelineStringField(key string) bool {
 		// URL stay redacted as user content.
 		"node_id", "block_types",
 		"chat_model", "model_id", "rerank_model", "rerank_model_id",
-		"vlm_model_id", "query_understand_model_id", "provider_id",
+		"vlm_model_id", "query_understand_model_id", "deep_task_model_id", "provider_id",
 		"finish_reason", "status", "error_code", "target_type":
 		return true
 	default:

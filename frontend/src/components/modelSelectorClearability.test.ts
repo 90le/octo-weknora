@@ -33,6 +33,7 @@ test('ModelSelector 清空时向父组件回传空字符串，默认仍不可清
 test('智能体中允许继承或关闭的可选模型可以恢复为空', () => {
   const rerank = modelSelectorTag(agentEditor, 'formData.config.rerank_model_id')
   assert.match(rerank, /:clearable="!needsRerankModel"/)
+  assertClearable(modelSelectorTag(agentEditor, 'formData.config.deep_task_model_id'))
   assertClearable(modelSelectorTag(agentEditor, 'formData.config.query_understand_model_id'))
   assertClearable(modelSelectorTag(agentEditor, 'formData.config.asr_model_id'))
   assertClearable(modelSelectorTag(agentEditor, 'formData.config.question_suggestions.follow_ups.model_id'))

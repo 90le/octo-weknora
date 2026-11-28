@@ -149,6 +149,7 @@ func (s *sessionService) AgentQA(
 		logger.Warnf(ctx, "No summary model configured for custom agent %s", req.CustomAgent.ID)
 		return errors.New("summary model (model_id) is not configured in custom agent settings")
 	}
+	effectiveModelID = s.resolveAgentTurnModelID(ctx, req, agentConfig, effectiveModelID)
 
 	summaryModel, err := s.modelService.GetChatModel(ctx, effectiveModelID)
 	if err != nil {

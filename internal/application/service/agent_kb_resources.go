@@ -5,6 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
 	"image/png"
 	"io"
 	"mime"
@@ -20,6 +23,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"golang.org/x/image/tiff"
+	_ "golang.org/x/image/webp"
 	"gorm.io/gorm"
 )
 
@@ -44,6 +48,7 @@ type kbResourceOwner struct {
 type kbResourceLookup interface {
 	GetActiveResourceByHandle(ctx context.Context, handle string) (*types.StoredResource, error)
 	ListKnowledgeOwners(ctx context.Context, tenantID uint64, resourceID, resourceRef string) ([]kbResourceOwner, error)
+	LookupImageAnnotation(ctx context.Context, tenantID uint64, knowledgeID, resourceRef string) (caption, ocrText string)
 }
 
 type gormKBResourceLookup struct {
@@ -133,6 +138,95 @@ func (l *gormKBResourceLookup) ListKnowledgeOwners(
 		})
 	}
 	return owners, nil
+}
+
+func (l *gormKBResourceLookup) LookupImageAnnotation(
+	ctx context.Context, tenantID uint64, knowledgeID, resourceRef string,
+) (caption, ocrText string) {
+	if l == nil || l.db == nil || tenantID == 0 || strings.TrimSpace(resourceRef) == "" {
+		return "", ""
+	}
+	var rows []struct {
+		Caption string `gorm:"column:caption"`
+		OCRText string `gorm:"column:ocr_text"`
+	}
+	q := l.db.WithContext(ctx).
+		Table("chunk_images").
+		Select("caption, ocr_text").
+		Where("tenant_id = ? AND url = ? AND is_enabled = ?", tenantID, resourceRef, true)
+	if strings.TrimSpace(knowledgeID) != "" {
+		q = q.Where("knowledge_id = ?", knowledgeID)
+	}
+	if err := q.Order("updated_at DESC").Limit(4).Find(&rows).Error; err != nil {
+		return "", ""
+	}
+	for _, r := range rows {
+		if c := strings.TrimSpace(r.Caption); len(c) > len(caption) {
+			caption = c
+		}
+		if o := strings.TrimSpace(r.OCRText); len(o) > len(ocrText) {
+			ocrText = o
+		}
+	}
+	return caption, ocrText
+}
+
+type gormImageResourceMetaLookup struct {
+	db        *gorm.DB
+	tenantIDs []uint64
+}
+
+func newKBImageResourceMetaLookup(db *gorm.DB, targets types.SearchTargets) tools.ImageResourceMetaLookup {
+	if db == nil {
+		return nil
+	}
+	seen := make(map[uint64]struct{}, len(targets))
+	tenantIDs := make([]uint64, 0, len(targets))
+	for _, target := range targets {
+		if target == nil || target.TenantID == 0 {
+			continue
+		}
+		if _, dup := seen[target.TenantID]; dup {
+			continue
+		}
+		seen[target.TenantID] = struct{}{}
+		tenantIDs = append(tenantIDs, target.TenantID)
+	}
+	return &gormImageResourceMetaLookup{db: db, tenantIDs: tenantIDs}
+}
+
+func (l *gormImageResourceMetaLookup) LookupImageResourceMeta(
+	ctx context.Context, handles []string,
+) (map[string]tools.ImageResourceMeta, error) {
+	if l == nil || l.db == nil || len(handles) == 0 {
+		return nil, nil
+	}
+	q := l.db.WithContext(ctx).
+		Table("resources").
+		Select("handle, size, mime_type, original_name").
+		Where("handle IN ? AND deleted_at IS NULL AND state = ?", handles, types.ResourceStateActive)
+	if len(l.tenantIDs) > 0 {
+		q = q.Where("tenant_id IN ?", l.tenantIDs)
+	}
+	var rows []struct {
+		Handle       string `gorm:"column:handle"`
+		Size         int64  `gorm:"column:size"`
+		MimeType     string `gorm:"column:mime_type"`
+		OriginalName string `gorm:"column:original_name"`
+	}
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[string]tools.ImageResourceMeta, len(rows))
+	for _, r := range rows {
+		out[r.Handle] = tools.ImageResourceMeta{
+			Handle:       r.Handle,
+			Size:         r.Size,
+			MimeType:     strings.TrimSpace(r.MimeType),
+			OriginalName: strings.TrimSpace(r.OriginalName),
+		}
+	}
+	return out, nil
 }
 
 type kbResourceReader struct {
@@ -292,6 +386,13 @@ func (r *kbResourceReader) ReadKnowledgeResource(
 	out.Size = int64(len(data))
 	out.MimeType = mimeType
 	out.OriginalName = origName
+	if isImage && len(data) > 0 {
+		if cfg, _, decErr := image.DecodeConfig(bytes.NewReader(data)); decErr == nil && cfg.Width > 0 && cfg.Height > 0 {
+			out.Width = cfg.Width
+			out.Height = cfg.Height
+		}
+		out.Caption, out.OCRText = r.lookup.LookupImageAnnotation(ctx, res.TenantID, authorizedKnowledge.ID, canonicalRef)
+	}
 
 	if stage && r.sandboxStore != nil && strings.TrimSpace(r.sessionID) != "" && strings.TrimSpace(r.inputDir) != "" {
 		stagedPath, stageErr := r.stageIntoSandbox(ctx, handle, origName, mimeType, isImage, data)

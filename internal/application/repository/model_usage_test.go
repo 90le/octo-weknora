@@ -214,6 +214,7 @@ func TestListModelUsages_CustomAgent(t *testing.T) {
 		TenantID: 1,
 		Config: types.CustomAgentConfig{
 			ModelID:                modelID,
+			DeepTaskModelID:        modelID,
 			RerankModelID:          modelID,
 			VLMModelID:             modelID,
 			ASRModelID:             modelID,
@@ -254,6 +255,7 @@ func TestListModelUsages_CustomAgent(t *testing.T) {
 	assert.Equal(t, "Zulu agent", usages[1].Name)
 	assert.Equal(t, []types.ModelUsageBinding{
 		types.ModelUsageBindingChatModel,
+		types.ModelUsageBindingDeepTaskModel,
 		types.ModelUsageBindingRerankModel,
 		types.ModelUsageBindingVLMModel,
 		types.ModelUsageBindingASRModel,

@@ -32,9 +32,12 @@ func knowledgeBaseModelUsageBindings(kb *types.KnowledgeBase, modelID string) []
 }
 
 func customAgentModelUsageBindings(agent *types.CustomAgent, modelID string) []types.ModelUsageBinding {
-	bindings := make([]types.ModelUsageBinding, 0, 6)
+	bindings := make([]types.ModelUsageBinding, 0, 7)
 	if agent.Config.ModelID == modelID {
 		bindings = append(bindings, types.ModelUsageBindingChatModel)
+	}
+	if agent.Config.DeepTaskModelID == modelID {
+		bindings = append(bindings, types.ModelUsageBindingDeepTaskModel)
 	}
 	if agent.Config.RerankModelID == modelID {
 		bindings = append(bindings, types.ModelUsageBindingRerankModel)
@@ -85,21 +88,23 @@ func scopeKnowledgeBasesByModelID(db *gorm.DB, modelID string) *gorm.DB {
 func scopeCustomAgentsByModelID(db *gorm.DB, modelID string) *gorm.DB {
 	if db.Dialector.Name() == "postgres" {
 		return db.Where(
-			"config->>'model_id' = ? OR config->>'rerank_model_id' = ? OR "+
+			"config->>'model_id' = ? OR config->>'deep_task_model_id' = ? OR "+
+				"config->>'rerank_model_id' = ? OR "+
 				"config->>'vlm_model_id' = ? OR config->>'asr_model_id' = ? OR "+
 				"config->>'query_understand_model_id' = ? OR "+
 				"config->'question_suggestions'->'follow_ups'->>'model_id' = ?",
-			modelID, modelID, modelID, modelID, modelID, modelID,
+			modelID, modelID, modelID, modelID, modelID, modelID, modelID,
 		)
 	}
 	return db.Where(
 		"json_extract(config, '$.model_id') = ? OR "+
+			"json_extract(config, '$.deep_task_model_id') = ? OR "+
 			"json_extract(config, '$.rerank_model_id') = ? OR "+
 			"json_extract(config, '$.vlm_model_id') = ? OR "+
 			"json_extract(config, '$.asr_model_id') = ? OR "+
 			"json_extract(config, '$.query_understand_model_id') = ? OR "+
 			"json_extract(config, '$.question_suggestions.follow_ups.model_id') = ?",
-		modelID, modelID, modelID, modelID, modelID, modelID,
+		modelID, modelID, modelID, modelID, modelID, modelID, modelID,
 	)
 }
 

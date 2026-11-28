@@ -128,6 +128,7 @@ test('maps knowledge-base bindings to the configuration section that owns them',
 
 test('maps agent bindings to the configuration section that owns them', () => {
   assert.equal(modelUsageAgentSection(['chat_model']), 'model')
+  assert.equal(modelUsageAgentSection(['deep_task_model']), 'model')
   assert.equal(modelUsageAgentSection(['rerank_model']), 'model')
   assert.equal(modelUsageAgentSection(['query_understand_model']), 'model')
   assert.equal(modelUsageAgentSection(['vlm_model']), 'multimodal')

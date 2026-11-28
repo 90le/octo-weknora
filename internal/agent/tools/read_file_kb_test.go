@@ -53,6 +53,10 @@ func TestReadFileKnowledgeResourceImageVisionAndStage(t *testing.T) {
 				DocumentTitle: "Media Studio 全景介绍",
 				KnowledgeID:   "k-1",
 				Size:          int64(len(pngBytes)),
+				Width:         1440,
+				Height:        900,
+				Caption:       "Media Studio 全景架构图",
+				OCRText:       "数据采集 -> 洞察分析 -> 投放决策",
 				Data:          pngBytes,
 				StagedPath:    "/workspace/input/kb/AbCdEfGhIjKlMnOpQrStUv.png",
 			}, nil
@@ -68,7 +72,12 @@ func TestReadFileKnowledgeResourceImageVisionAndStage(t *testing.T) {
 	require.Equal(t, "架构图模块", res.ImageFocus)
 	require.Contains(t, res.Output, "/workspace/input/kb/AbCdEfGhIjKlMnOpQrStUv.png")
 	require.Contains(t, res.Output, "Media Studio 全景介绍")
+	require.Contains(t, res.Output, "dimensions=1440x900 (aspect=1.60, landscape)")
+	require.Contains(t, res.Output, "<image_caption>Media Studio 全景架构图</image_caption>")
+	require.Contains(t, res.Output, "<image_ocr>数据采集 -> 洞察分析 -> 投放决策</image_ocr>")
 	require.Equal(t, "/workspace/input/kb/AbCdEfGhIjKlMnOpQrStUv.png", res.Data["sandbox_path"])
+	require.Equal(t, 1440, res.Data["width"])
+	require.Equal(t, 900, res.Data["height"])
 }
 
 func TestReadFileKnowledgeResourceSVGAndOversizedAndText(t *testing.T) {

@@ -650,7 +650,27 @@ func renderKnowledgeChunks(mode string, chunks []modelChunk, info map[string]int
 					continue
 				}
 				caption := stringValue(image, "caption")
-				fmt.Fprintf(&b, "      ![%s](%s)\n", caption, imageURL)
+				sizeHuman := stringValue(image, "size_human")
+				mimeType := stringValue(image, "mime_type")
+				if sizeHuman != "" || mimeType != "" {
+					metaParts := make([]string, 0, 2)
+					if sizeHuman != "" {
+						metaParts = append(metaParts, "size="+sizeHuman)
+					}
+					if mimeType != "" {
+						metaParts = append(metaParts, "mime="+mimeType)
+					}
+					fmt.Fprintf(&b, "      ![%s](%s) <!-- %s -->\n", caption, imageURL, strings.Join(metaParts, ", "))
+				} else {
+					fmt.Fprintf(&b, "      ![%s](%s)\n", caption, imageURL)
+				}
+				if ocrText := strings.TrimSpace(stringValue(image, "ocr_text")); ocrText != "" &&
+					!strings.Contains(chunk.content, ocrText) {
+					if runes := []rune(ocrText); len(runes) > 1200 {
+						ocrText = string(runes[:1200]) + "..."
+					}
+					fmt.Fprintf(&b, "      <image_ocr>%s</image_ocr>\n", escapeText(ocrText))
+				}
 			}
 			b.WriteString("    </chunk>\n")
 		}

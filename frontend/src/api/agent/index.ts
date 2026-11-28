@@ -45,6 +45,7 @@ export interface CustomAgentConfig {
 
   // ===== 模型设置 =====
   model_id?: string;
+  deep_task_model_id?: string;      // 深度报告/PPT 增强模型（可选，留空跟随默认对话模型）
   rerank_model_id?: string;         // ReRank 模型 ID
   temperature?: number;
   max_completion_tokens?: number;   // 0 = 跟随系统默认（快速问答 2048；智能推理 4096，绑沙箱可写文件时 24576）。大于 0 为自定义上限

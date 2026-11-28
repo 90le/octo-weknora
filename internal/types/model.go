@@ -46,6 +46,7 @@ const (
 	ModelUsageBindingWikiSynthesisModel   ModelUsageBinding = "wiki_synthesis_model"
 	ModelUsageBindingAutoTagModel         ModelUsageBinding = "auto_tag_model"
 	ModelUsageBindingChatModel            ModelUsageBinding = "chat_model"
+	ModelUsageBindingDeepTaskModel        ModelUsageBinding = "deep_task_model"
 	ModelUsageBindingRerankModel          ModelUsageBinding = "rerank_model"
 	ModelUsageBindingQueryUnderstandModel ModelUsageBinding = "query_understand_model"
 	ModelUsageBindingFollowUpModel        ModelUsageBinding = "follow_up_model"

@@ -55,7 +55,10 @@ var searchKnowledgeTool = BaseTool{
 		"Every chunk carries a cN handle and belongs to a dN document. Use read_document(id=cN, context=k) to " +
 		"read the text around a chunk, and read_document(id=dN) to read a document from its start. Retrieval " +
 		"matches chunk text; the relevance model also " +
-		"sees the document title. To find a document by its title or file name use list_documents(keyword=...).",
+		"sees the document title. To find a document by its title or file name use list_documents(keyword=...).\n" +
+		"Set asset_type=\"image\" to search specifically for visual/OCR assets (charts, UI screenshots, architecture " +
+		"diagrams) with their resource://<handle>, file size, image caption, and extracted OCR text while filtering " +
+		"tiny logos/icons.",
 	schema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -68,6 +71,11 @@ var searchKnowledgeTool = BaseTool{
       "type": "string",
       "enum": ["hybrid", "semantic", "keyword"],
       "description": "Retrieval mode (default hybrid)"
+    },
+    "asset_type": {
+      "type": "string",
+      "enum": ["all", "image"],
+      "description": "Filter result focus: 'all' (default) searches normal text and multimodal chunks; 'image' targets KB images, charts, screenshots, and OCR visuals with resource:// handles, size metadata, captions, and OCR text"
     },
     "knowledge_base_ids": {
       "type": "array",
@@ -90,6 +98,7 @@ var searchKnowledgeTool = BaseTool{
 type SearchKnowledgeInput struct {
 	Query            string   `json:"query"`
 	Mode             string   `json:"mode,omitempty"`
+	AssetType        string   `json:"asset_type,omitempty"`
 	KnowledgeBaseIDs []string `json:"knowledge_base_ids,omitempty"`
 	Limit            int      `json:"limit,omitempty"`
 }
@@ -120,6 +129,9 @@ type SearchKnowledgeTool struct {
 	// contextImages attaches the images of results found by an image's own
 	// vector, for a model that can see them; see WithContextImages.
 	contextImages bool
+	// imageMetaLookup optionally enriches asset_type="image" results with file
+	// size / MIME metadata from stored resources to deprioritize tiny icons.
+	imageMetaLookup ImageResourceMetaLookup
 }
 
 // WithContextImages attaches to the result the images of the results that
@@ -198,6 +210,10 @@ func (t *SearchKnowledgeTool) Execute(ctx context.Context, args json.RawMessage)
 	if err != nil {
 		return &types.ToolResult{Success: false, Error: err.Error()}, err
 	}
+	assetType, err := normalizeSearchAssetType(input.AssetType)
+	if err != nil {
+		return &types.ToolResult{Success: false, Error: err.Error()}, err
+	}
 	limit := clampSearchLimit(input.Limit)
 
 	// Optional KB filter: reject hallucinated or out-of-scope handles.
@@ -239,6 +255,10 @@ func (t *SearchKnowledgeTool) Execute(ctx context.Context, args json.RawMessage)
 		if kb != nil {
 			kbTypeMap[kb.ID] = kb.Type
 		}
+	}
+
+	if assetType == SearchAssetTypeImage {
+		return t.executeImageAssetSearch(ctx, query, mode, limit, searchTargets, kbModes, kbList, kbTypeMap)
 	}
 
 	retrievalLimit := limit
