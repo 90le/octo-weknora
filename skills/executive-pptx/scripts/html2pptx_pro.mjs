@@ -14,6 +14,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 
@@ -45,18 +46,31 @@ const PX_TO_PT = PX_TO_IN * 72;
 function parseArgs(argv) {
   const positional = [];
   let allowOverflow = false;
-  for (const arg of argv.slice(2)) {
-    if (arg === '--allow-overflow') allowOverflow = true;
-    else positional.push(arg);
+  let qaOut = '';
+  const args = argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--allow-overflow') {
+      allowOverflow = true;
+    } else if (arg === '--strict') {
+      allowOverflow = false;
+    } else if (arg === '--qa' && i + 1 < args.length) {
+      qaOut = path.resolve(args[++i]);
+    } else if (arg.startsWith('--qa=')) {
+      qaOut = path.resolve(arg.slice(5));
+    } else {
+      positional.push(arg);
+    }
   }
   if (positional.length < 2) {
-    console.error('Usage: node html2pptx_pro.mjs <input.html> <output.pptx> [--allow-overflow]');
+    console.error('Usage: node html2pptx_pro.mjs <input.html> <output.pptx> [--allow-overflow] [--qa <qa_dir_or_jpg>]');
     process.exit(2);
   }
   return {
     inputHtml: path.resolve(positional[0]),
     outputPptx: path.resolve(positional[1]),
     allowOverflow,
+    qaOut,
   };
 }
 
@@ -109,7 +123,7 @@ function loadIconsMap() {
 }
 
 async function main() {
-  const { inputHtml, outputPptx, allowOverflow } = parseArgs(process.argv);
+  const { inputHtml, outputPptx, allowOverflow, qaOut } = parseArgs(process.argv);
   if (!fs.existsSync(inputHtml)) {
     console.error(`[html2pptx_pro] Input HTML not found: ${inputHtml}`);
     process.exit(1);
@@ -136,19 +150,35 @@ async function main() {
       viewport: { width: SLIDE_W_PX, height: SLIDE_H_PX },
       deviceScaleFactor: 3,
     });
-    // Pre-inject offline ECharts BEFORE page load so imperative <script> echarts.init() works too
+    // Pre-inject offline ECharts BEFORE page load and snapshot into an unshadowable global
+    // so DOM elements like <div id="echarts"> can never clobber window.echarts.init.
     if (hasEcharts) {
       await context.addInitScript({ path: echartsPath });
+      await context.addInitScript(() => {
+        if (globalThis.echarts && typeof globalThis.echarts.init === 'function') {
+          globalThis.__PRO_PPTX_ECHARTS__ = globalThis.echarts;
+        }
+      });
     }
     const page = await context.newPage();
 
     await page.goto(pathToFileURL(inputHtml).href, { waitUntil: 'load', timeout: 60000 });
 
-    // Fallback injection if init script didn't bind window.echarts
+    // Fallback injection if init script didn't bind ECharts cleanly
     if (hasEcharts) {
-      const hasWinEcharts = await page.evaluate(() => Boolean(window.echarts));
-      if (!hasWinEcharts) {
+      const hasValidEcharts = await page.evaluate(
+        () => Boolean(
+          (globalThis.__PRO_PPTX_ECHARTS__ && typeof globalThis.__PRO_PPTX_ECHARTS__.init === 'function') ||
+          (window.echarts && typeof window.echarts.init === 'function')
+        )
+      );
+      if (!hasValidEcharts) {
         await page.addScriptTag({ path: echartsPath });
+        await page.evaluate(() => {
+          if (window.echarts && typeof window.echarts.init === 'function') {
+            globalThis.__PRO_PPTX_ECHARTS__ = window.echarts;
+          }
+        });
       }
     }
 
@@ -196,20 +226,30 @@ async function main() {
         s.style.flexShrink = '0';
       });
 
-      // 4. Hydrate declarative [data-echarts] containers (with animation: false)
-      if (window.echarts) {
+      // 4. Hydrate declarative [data-echarts] containers (with animation: false & executive defaults)
+      const ecLib =
+        globalThis.__PRO_PPTX_ECHARTS__ && typeof globalThis.__PRO_PPTX_ECHARTS__.init === 'function'
+          ? globalThis.__PRO_PPTX_ECHARTS__
+          : window.echarts && typeof window.echarts.init === 'function'
+            ? window.echarts
+            : null;
+      if (ecLib) {
         document.querySelectorAll('[data-echarts]').forEach((el) => {
           if (el.dataset.echartsInitialized === '1') return;
           try {
             const raw = el.getAttribute('data-echarts') || '{}';
             const opt = JSON.parse(raw);
             opt.animation = false;
+            if (opt.backgroundColor === undefined) opt.backgroundColor = 'transparent';
+            if (!opt.color) {
+              opt.color = ['#1D4ED8', '#0EA5E9', '#10B981', '#F59E0B', '#6366F1', '#EC4899'];
+            }
             if (!opt.textStyle) opt.textStyle = {};
             if (!opt.textStyle.fontFamily) opt.textStyle.fontFamily = 'Noto Sans CJK SC, sans-serif';
             const rect = el.getBoundingClientRect();
             const w = Math.max(200, Math.round(rect.width) || parseInt(el.style.width, 10) || 600);
             const h = Math.max(150, Math.round(rect.height) || parseInt(el.style.height, 10) || 360);
-            const chart = window.echarts.init(el, null, { renderer: 'canvas', width: w, height: h });
+            const chart = ecLib.init(el, null, { renderer: 'canvas', width: w, height: h });
             chart.setOption(opt);
             el.dataset.echartsInitialized = '1';
           } catch (e) {
@@ -218,7 +258,7 @@ async function main() {
           }
         });
       } else if (document.querySelector('[data-echarts]')) {
-        errs.push('window.echarts is unavailable');
+        errs.push('offline echarts runtime is unavailable');
       }
       return errs;
     }, iconsMap);
@@ -427,14 +467,19 @@ async function main() {
             return;
           }
 
-          // 3. Native Table
+          // 3. Native Table (preserve exact DOM colWidthsPx and rowHeightsPx)
           if (el.tagName === 'TABLE') {
             const rows = [];
             const trs = Array.from(el.querySelectorAll('tr'));
             const colWidthsPx = [];
+            const rowHeightsPx = [];
             if (trs.length > 0) {
               const firstCells = Array.from(trs[0].children).filter((c) => c.tagName === 'TH' || c.tagName === 'TD');
-              firstCells.forEach((c) => colWidthsPx.push(c.getBoundingClientRect().width));
+              firstCells.forEach((c) => {
+                const span = Math.max(1, c.colSpan || 1);
+                const wEach = c.getBoundingClientRect().width / span;
+                for (let k = 0; k < span; k++) colWidthsPx.push(wEach);
+              });
             }
             trs.forEach((tr) => {
               const rowCells = [];
@@ -446,7 +491,7 @@ async function main() {
                   text: (cell.innerText || '').trim(),
                   bgColor: ccs.backgroundColor,
                   color: ccs.color,
-                  fontSizePx: parseFloat(ccs.fontSize) || 13,
+                  fontSizePx: parseFloat(ccs.fontSize) || 14,
                   bold: cell.tagName === 'TH' || (!isNaN(fw) && fw >= 600),
                   align: ccs.textAlign,
                   borderColor: ccs.borderBottomColor || ccs.borderColor,
@@ -455,7 +500,10 @@ async function main() {
                   fontFamily: ccs.fontFamily,
                 });
               });
-              if (rowCells.length > 0) rows.push(rowCells);
+              if (rowCells.length > 0) {
+                rows.push(rowCells);
+                rowHeightsPx.push(Math.max(18, tr.getBoundingClientRect().height));
+              }
             });
             elements.push({
               kind: 'table',
@@ -464,6 +512,7 @@ async function main() {
               w: relW,
               h: relH,
               colWidthsPx,
+              rowHeightsPx,
               rows,
             });
             return;
@@ -482,14 +531,16 @@ async function main() {
             const radiusPx = parseFloat(cs.borderTopLeftRadius) || 0;
             const hasShadow = cs.boxShadow && cs.boxShadow !== 'none';
 
-            if (hasBgGrad && !isTextLeafBlock(el) && el.children.length === 0) {
+            if (hasBgGrad) {
               const captureId = `s${slideIdx}_c${captureCounter++}`;
               el.setAttribute('data-pptx-capture-id', captureId);
-              elements.push({ kind: 'image', captureId, x: relX, y: relY, w: relW, h: relH });
-              return;
-            }
-
-            if (hasVisibleBg || hasFullBorder) {
+              if (!isTextLeafBlock(el) && el.children.length === 0) {
+                elements.push({ kind: 'image', captureId, x: relX, y: relY, w: relW, h: relH });
+                return;
+              }
+              // Capture clean gradient card/banner backdrop while keeping children 100% natively editable on top!
+              elements.push({ kind: 'bg_image', captureId, x: relX, y: relY, w: relW, h: relH });
+            } else if (hasVisibleBg || hasFullBorder) {
               // If one accent side (top or left) is thicker/differently colored than the base border,
               // draw the card with the subtle base border (right/bottom) and emit the accent bar separately.
               const hasTopAccent = hasFullBorder && (bwTop >= bwBottom + 1.5 || (bwTop >= 3 && cs.borderTopColor !== cs.borderBottomColor));
@@ -728,10 +779,31 @@ async function main() {
       await sLoc.scrollIntoViewIfNeeded();
 
       for (const el of slideData.elements) {
-        if (el.kind === 'image' && el.captureId) {
+        if ((el.kind === 'image' || el.kind === 'bg_image') && el.captureId) {
           const loc = page.locator(`[data-pptx-capture-id="${el.captureId}"]`);
           try {
-            const buf = await loc.screenshot({ omitBackground: true, animations: 'disabled' });
+            let buf;
+            if (el.kind === 'bg_image') {
+              await loc.evaluate((node) => {
+                node.dataset._prevColor = node.style.color || '';
+                node.style.color = 'transparent';
+                Array.from(node.children).forEach((c) => {
+                  c.dataset._prevVis = c.style.visibility || '';
+                  c.style.visibility = 'hidden';
+                });
+              });
+              buf = await loc.screenshot({ omitBackground: true, animations: 'disabled' });
+              await loc.evaluate((node) => {
+                node.style.color = node.dataset._prevColor || '';
+                delete node.dataset._prevColor;
+                Array.from(node.children).forEach((c) => {
+                  c.style.visibility = c.dataset._prevVis || '';
+                  delete c.dataset._prevVis;
+                });
+              });
+            } else {
+              buf = await loc.screenshot({ omitBackground: true, animations: 'disabled' });
+            }
             capturedImages.set(el.captureId, `data:image/png;base64,${buf.toString('base64')}`);
           } catch (err) {
             console.warn(`[html2pptx_pro] Warn: screenshot failed for ${el.captureId}: ${err.message}`);
@@ -823,7 +895,7 @@ async function main() {
           } else {
             slide.addShape(pptx.ShapeType.rect, shapeOpts);
           }
-        } else if (el.kind === 'image') {
+        } else if (el.kind === 'image' || el.kind === 'bg_image') {
           const dataUri = capturedImages.get(el.captureId);
           if (dataUri) {
             slide.addImage({ data: dataUri, x, y, w, h });
@@ -848,7 +920,7 @@ async function main() {
               showLegend: spec.showLegend !== false,
               showTitle: Boolean(spec.title),
               title: spec.title || '',
-              chartColors: spec.colors || ['2563EB', '0EA5E9', '10B981', 'F59E0B', '8B5CF6'],
+              chartColors: spec.colors || ['1D4ED8', '0EA5E9', '10B981', 'F59E0B', '6366F1'],
               ...(spec.options || {}),
             });
           }
@@ -859,14 +931,15 @@ async function main() {
               const fill = rgbaToHexAndAlpha(cell.bgColor);
               const fg = rgbaToHexAndAlpha(cell.color);
               const brd = rgbaToHexAndAlpha(cell.borderColor);
+              const cellFontPt = Math.max(7, Math.round(cell.fontSizePx * PX_TO_PT * 10) / 10);
               const opts = {
                 fontFace: normalizeFontFace(cell.fontFamily),
-                fontSize: Math.max(9, Math.round(cell.fontSizePx * PX_TO_PT * 10) / 10),
+                fontSize: cellFontPt,
                 bold: Boolean(cell.bold),
                 color: fg.hex || '1E293B',
                 align: mapAlign(cell.align),
                 valign: 'middle',
-                margin: [4, 6, 4, 6],
+                margin: [2, 5, 2, 5],
                 border: {
                   type: 'solid',
                   pt: 0.5,
@@ -882,13 +955,19 @@ async function main() {
             })
           );
           const colW = el.colWidthsPx.length
-            ? el.colWidthsPx.map((cw) => Math.max(0.4, cw * PX_TO_IN))
+            ? el.colWidthsPx.map((cw) => Math.max(0.35, cw * PX_TO_IN))
             : undefined;
+          const rowH =
+            Array.isArray(el.rowHeightsPx) && el.rowHeightsPx.length === pptxRows.length
+              ? el.rowHeightsPx.map((rh) => Math.max(0.18, rh * PX_TO_IN))
+              : undefined;
           slide.addTable(pptxRows, {
             x,
             y,
             w,
+            h: Math.max(0.25, h),
             colW,
+            rowH,
             autoPage: false,
           });
         } else if (el.kind === 'text') {
@@ -903,11 +982,12 @@ async function main() {
             }
             if (!rn.text) continue;
             const fg = rgbaToHexAndAlpha(rn.color);
+            const runFontPt = Math.max(6.5, Math.round(rn.fontSizePx * PX_TO_PT * 10) / 10);
             textRuns.push({
               text: rn.text,
               options: {
                 fontFace: normalizeFontFace(rn.fontFamily),
-                fontSize: Math.max(8, Math.round(rn.fontSizePx * PX_TO_PT * 10) / 10),
+                fontSize: runFontPt,
                 bold: Boolean(rn.bold),
                 italic: Boolean(rn.italic),
                 color: fg.hex || '1E293B',
@@ -915,13 +995,18 @@ async function main() {
             });
           }
           if (textRuns.length === 0) continue;
-          // Width cushion prevents PowerPoint/LibreOffice CJK font metric differences
-          // from wrapping the final character onto a stray second line.
-          const basePx = el.runs[0]?.fontSizePx || 14;
+          // Exact point lineSpacing (<a:spcPts>) matches Chromium CSS line-height within +-3%
+          // in both LibreOffice Impress and PowerPoint (avoiding Noto CJK 1.45x multiplier bloat).
+          const basePx = el.runs[0]?.fontSizePx || 15;
+          const basePt = Math.max(6.5, basePx * PX_TO_PT);
           const isSingleLine = el.h < basePx * 1.9;
-          const wPad = isSingleLine ? 0.28 : 0.12;
-          const safeW = Math.min(SLIDE_W_IN - x - 0.05, w + wPad);
-          const safeH = Math.min(SLIDE_H_IN - y, h + 0.06);
+          const wPad = isSingleLine ? 0.24 : 0.10;
+          const safeW = Math.min(SLIDE_W_IN - x - 0.04, w + wPad);
+          const safeH = Math.min(SLIDE_H_IN - y, h + 0.08);
+          const exactLineSpcPt = Math.max(
+            Math.round(basePt * 1.05 * 10) / 10,
+            Math.round(basePt * (el.lineMultiple || 1.25) * 0.96 * 10) / 10
+          );
           slide.addText(textRuns, {
             x,
             y,
@@ -930,8 +1015,10 @@ async function main() {
             align: mapAlign(el.align),
             valign: el.valign || 'top',
             margin: 0,
+            paraSpaceBefore: 0,
+            paraSpaceAfter: 0,
             wrap: true,
-            lineSpacingMultiple: el.lineMultiple || 1.2,
+            lineSpacing: exactLineSpcPt,
           });
         }
       }
@@ -942,6 +1029,18 @@ async function main() {
     console.log(
       `HTML2PPTX_PRO_OK slides=${extracted.length} output=${outputPptx} size_bytes=${stat.size} qa_issues=${allIssues.length}`
     );
+
+    if (qaOut) {
+      const qaScript = path.resolve(__dirname, 'render_pptx_qa.py');
+      const res = spawnSync('python3', [qaScript, outputPptx, qaOut], {
+        stdio: 'inherit',
+        timeout: 180000,
+      });
+      if (res.status !== 0) {
+        console.error(`[html2pptx_pro] Visual QA render exited with status ${res.status}`);
+        process.exit(res.status || 4);
+      }
+    }
   } finally {
     await browser.close();
   }

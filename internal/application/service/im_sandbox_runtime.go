@@ -637,9 +637,13 @@ func (m *imGuardedSandbox) StatSessionFile(ctx context.Context, sid, p string) (
 	return item, nil
 }
 
+const imMaxSandboxReadFileBytes int64 = 4 << 20
+
 // ReadSessionFile serves tools and bounded Skill integrity checks.
+// Images (e.g. visual QA sheets and generated charts) routinely exceed the 256 KiB
+// shell stdout cap, so read_file permits up to 4 MiB while shell output stays 256 KiB.
 func (m *imGuardedSandbox) ReadSessionFile(ctx context.Context, sid, p string) ([]byte, error) {
-	return m.readSessionFileBounded(ctx, sid, p, int64(sandbox.IMMaxOutputBytes), false)
+	return m.readSessionFileBounded(ctx, sid, p, imMaxSandboxReadFileBytes, false)
 }
 
 // ReadSessionFileBounded is the artifact collector capability. It permits

@@ -22,8 +22,8 @@ const IMTrustedImageEnv = "OCTO_IM_SANDBOX_CLEAN_IMAGE_ID"
 // Resource and execution limits for IM sandboxes.
 const (
 	IMMaxCPU               = 2.0
-	IMMaxMemoryBytes int64 = 2 * 1024 * 1024 * 1024
-	IMMaxPIDs        int64 = 256
+	IMMaxMemoryBytes int64 = 3 * 1024 * 1024 * 1024
+	IMMaxPIDs        int64 = 384
 	IMMaxCommandTime       = 120 * time.Second
 	IMMaxListingTime       = 10 * time.Second
 	IMMaxOutputBytes       = 256 * 1024
